@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rodeos — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item activo"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Rodeos</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-secundario" onclick="mostrarTipos()">Tipos de Rodeo</button>
+                <button class="btn btn-primario" onclick="abrirNuevoRodeo()">+ Nuevo rodeo</button>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="filtros-barra">
+                <div class="form-grupo">
+                    <label class="form-label">Mes</label>
+                    <select id="f-mes" class="form-control" onchange="cargar()">
+                        <option value="">Todos</option>
+                        ${Array.from({length:12}, (_,i) => `<option value="${i+1}" ${i+1===new Date().getMonth()+1?'selected':''}>${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][i]}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Año</label>
+                    <select id="f-año" class="form-control" onchange="cargar()">
+                        ${[new Date().getFullYear(), new Date().getFullYear()-1].map(y => `<option value="${y}" ${y===new Date().getFullYear()?'selected':''}>${y}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Buscar</label>
+                    <input type="text" id="f-buscar" class="form-control" placeholder="Club o asociación" oninput="debounce(cargar, 400)()">
+                </div>
+                <button class="btn btn-secundario" onclick="limpiar()">Limpiar</button>
+                <a href="javascript:exportar()" class="btn btn-outline">↓ Exportar</a>
+            </div>
+
+            <div class="card">
+                <div id="tabla-wrap" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <div id="paginacion" class="paginacion"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Rodeo -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal" style="max-width:700px;">
+    <div class="modal-header">
+        <h3 id="modal-titulo">Nuevo rodeo</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let paginaActual = 1;
+const POR_PAGINA = 25;
+let tiposRodeo = [];
+let rodeoActual = null;
+
+let debounceTimer;
+function debounce(fn, d) { return () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(fn, d); }; }
+
+async function init() {
+    const data = await api.get('/admin/rodeos/tipos/lista?activo=true');
+    tiposRodeo = data || [];
+    cargar();
+}
+
+function limpiar() {
+    document.getElementById('f-buscar').value = '';
+    cargar();
+}
+
+async function cargar(pagina = 1) {
+    paginaActual = pagina;
+    mostrarSpinner(document.getElementById('tabla-wrap'));
+    const p = toQueryString({
+        mes: document.getElementById('f-mes').value,
+        año: document.getElementById('f-año').value,
+        buscar: document.getElementById('f-buscar').value.trim(),
+        page: paginaActual, limit: POR_PAGINA
+    });
+    try {
+        const data = await api.get('/admin/rodeos?' + p);
+        renderTabla(data.data, data.total);
+        renderPag(data.total);
+    } catch(err) { mostrarError(err); }
+}
+
+function renderTabla(rodeos, total) {
+    const wrap = document.getElementById('tabla-wrap');
+    if (!rodeos || rodeos.length === 0) { wrap.innerHTML = '<p class="tabla-vacia">Sin rodeos para los filtros seleccionados</p>'; return; }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Días</th><th>Origen</th><th>Estado</th><th>Acciones</th>
+        </tr></thead>
+        <tbody>
+        ${rodeos.map(r => `<tr>
+            <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
+            <td><strong>${sanitizar(r.club)}</strong></td>
+            <td>${sanitizar(r.asociacion)}</td>
+            <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
+            <td style="text-align:center;">${r.duracion_dias}</td>
+            <td>${r.origen === 'importado' ? '<span class="badge badge-delegado">Excel</span>' : '<span class="badge">Manual</span>'}</td>
+            <td>${r.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-anulado">Anulado</span>'}</td>
+            <td>
+                <div class="flex gap-8">
+                    <button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver</button>
+                    <button class="btn btn-pequeño btn-secundario" onclick="abrirEditar('${r.id}')">Editar</button>
+                </div>
+            </td>
+        </tr>`).join('')}
+        </tbody>
+    </table><div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s)</div>`;
+}
+
+function renderPag(total) {
+    const totalPags = Math.ceil(total / POR_PAGINA);
+    const div = document.getElementById('paginacion');
+    if (totalPags <= 1) { div.innerHTML = ''; return; }
+    let html = `<button class="pag-btn" onclick="cargar(${paginaActual-1})" ${paginaActual===1?'disabled':''}>‹</button>`;
+    for (let i=1; i<=totalPags; i++) {
+        if (i===paginaActual || Math.abs(i-paginaActual)<=2 || i===1 || i===totalPags)
+            html += `<button class="pag-btn ${i===paginaActual?'activo':''}" onclick="cargar(${i})">${i}</button>`;
+    }
+    html += `<button class="pag-btn" onclick="cargar(${paginaActual+1})" ${paginaActual===totalPags?'disabled':''}>›</button>`;
+    div.innerHTML = html;
+}
+
+function abrirNuevoRodeo() {
+    rodeoActual = null;
+    document.getElementById('modal-titulo').textContent = 'Nuevo rodeo';
+    document.getElementById('modal-body').innerHTML = formRodeo(null);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function abrirEditar(id) {
+    try {
+        const r = await api.get('/admin/rodeos/' + id);
+        rodeoActual = r;
+        document.getElementById('modal-titulo').textContent = 'Editar rodeo — ' + r.club;
+        document.getElementById('modal-body').innerHTML = formRodeo(r);
+        document.getElementById('modal-overlay').classList.remove('oculto');
+    } catch(err) { mostrarError(err); }
+}
+
+async function verDetalle(id) {
+    try {
+        const r = await api.get('/admin/rodeos/' + id);
+        rodeoActual = r;
+        document.getElementById('modal-titulo').textContent = 'Detalle — ' + r.club;
+        document.getElementById('modal-body').innerHTML = htmlDetalle(r);
+        document.getElementById('modal-overlay').classList.remove('oculto');
+    } catch(err) { mostrarError(err); }
+}
+
+function htmlDetalle(r) {
+    const asigs = r.asignaciones || [];
+    return `
+    <div class="form-fila" style="margin-bottom:16px;">
+        <div><strong>Club:</strong> ${sanitizar(r.club)}</div>
+        <div><strong>Asociación:</strong> ${sanitizar(r.asociacion)}</div>
+        <div><strong>Fecha:</strong> ${formatFecha(r.fecha)}</div>
+        <div><strong>Tipo:</strong> ${sanitizar(r.tipo_rodeo_nombre)}</div>
+        <div><strong>Duración:</strong> ${r.duracion_dias} día(s)</div>
+        <div><strong>Origen:</strong> ${r.origen}</div>
+    </div>
+    <div class="divider"></div>
+    <div class="card-titulo">Personas asignadas</div>
+    ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
+    <table>
+        <thead><tr><th>Nombre</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Estado</th></tr></thead>
+        <tbody>
+        ${asigs.map(a => `<tr>
+            <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>
+            <td>${a.tipo_persona === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
+            <td>${a.categoria_aplicada || '—'}</td>
+            <td>${formatCLP(a.valor_diario_aplicado)}</td>
+            <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
+            <td>${a.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-anulado">Anulado</span>'}</td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`}
+    <div class="form-acciones">
+        <button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>
+        <button class="btn btn-peligro btn-pequeño" onclick="anularRodeo('${r.id}')">Anular rodeo</button>
+        <button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
+    </div>`;
+}
+
+function formRodeo(r) {
+    const tipos = tiposRodeo.map(t => `<option value="${t.id}" data-dias="${t.duracion_dias}" ${r?.tipo_rodeo_id===t.id?'selected':''}>${sanitizar(t.nombre)} (${t.duracion_dias} día(s))</option>`).join('');
+    return `<form onsubmit="guardarRodeo(event)">
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Club <span class="req">*</span></label>
+                <input type="text" name="club" class="form-control" required value="${sanitizar(r?.club||'')}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Asociación <span class="req">*</span></label>
+                <input type="text" name="asociacion" class="form-control" required value="${sanitizar(r?.asociacion||'')}">
+            </div>
+        </div>
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Fecha <span class="req">*</span></label>
+                <input type="date" name="fecha" class="form-control" required value="${r?.fecha||''}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Tipo de rodeo <span class="req">*</span></label>
+                <select name="tipo_rodeo_id" class="form-control" required>
+                    <option value="">Seleccione...</option>
+                    ${tipos}
+                </select>
+            </div>
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Observación</label>
+            <textarea name="observacion" class="form-control" rows="2">${sanitizar(r?.observacion||'')}</textarea>
+        </div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">${r ? 'Guardar cambios' : 'Crear rodeo'}</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+}
+
+async function guardarRodeo(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        if (rodeoActual) {
+            await api.patch('/admin/rodeos/' + rodeoActual.id, datos);
+            mostrarToast('Rodeo actualizado', 'success');
+        } else {
+            await api.post('/admin/rodeos', datos);
+            mostrarToast('Rodeo creado', 'success');
+        }
+        cerrarModal();
+        cargar(paginaActual);
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function anularRodeo(id) {
+    const ok = await confirmar('¿Anular este rodeo? También se anularán todas sus asignaciones.');
+    if (!ok) return;
+    try {
+        await api.delete('/admin/rodeos/' + id);
+        mostrarToast('Rodeo anulado', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch(err) { mostrarError(err); }
+}
+
+function abrirAsignarPersona(rodeoId) {
+    document.getElementById('modal-titulo').textContent = 'Asignar persona';
+    document.getElementById('modal-body').innerHTML = formAsignar(rodeoId);
+}
+
+function formAsignar(rodeoId) {
+    return `
+    <form onsubmit="guardarAsignacion(event, '${rodeoId}')">
+        <div class="form-grupo">
+            <label class="form-label">Buscar persona</label>
+            <input type="text" id="buscar-persona" class="form-control" placeholder="Escriba nombre..." oninput="buscarPersona(this.value)">
+            <div id="resultados-persona" style="margin-top:8px;"></div>
+            <input type="hidden" name="usuario_pagado_id" id="usr-seleccionado">
+            <input type="hidden" name="tipo_persona" id="tipo-seleccionado">
+        </div>
+        <div id="persona-sel" class="alerta alerta-info oculto" style="margin-bottom:0;"></div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">Asignar</button>
+            <button type="button" class="btn btn-secundario" onclick="verDetalle('${rodeoId}')">Cancelar</button>
+        </div>
+    </form>`;
+}
+
+let buscarTimer;
+async function buscarPersona(q) {
+    clearTimeout(buscarTimer);
+    if (q.length < 2) { document.getElementById('resultados-persona').innerHTML = ''; return; }
+    buscarTimer = setTimeout(async () => {
+        const data = await api.get('/admin/usuarios?buscar=' + encodeURIComponent(q) + '&activo=true&limit=8');
+        const div = document.getElementById('resultados-persona');
+        if (!data?.data?.length) { div.innerHTML = '<div class="texto-gris">Sin resultados</div>'; return; }
+        div.innerHTML = data.data.map(u => `
+            <div onclick="seleccionarPersona('${u.id}', '${sanitizar(u.nombre_completo)}', '${u.tipo_persona}', '${u.categoria||''}')"
+                 style="padding:8px 12px; cursor:pointer; border:1px solid var(--gris-borde); border-radius:6px; margin-bottom:4px; background:white;">
+                <strong>${sanitizar(u.nombre_completo)}</strong>
+                <span class="badge badge-${u.tipo_persona==='jurado'?'jurado':'delegado'}" style="margin-left:6px;">${u.tipo_persona==='jurado'?'Jurado':'Delegado'}</span>
+                ${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}" style="margin-left:4px;">${u.categoria}</span>` : ''}
+            </div>`).join('');
+    }, 300);
+}
+
+function seleccionarPersona(id, nombre, tipo, cat) {
+    document.getElementById('usr-seleccionado').value = id;
+    document.getElementById('tipo-seleccionado').value = tipo;
+    document.getElementById('buscar-persona').value = nombre;
+    document.getElementById('resultados-persona').innerHTML = '';
+    const info = document.getElementById('persona-sel');
+    info.textContent = `Seleccionado: ${nombre} (${tipo}${cat ? ', cat. '+cat : ''})`;
+    info.classList.remove('oculto');
+}
+
+async function guardarAsignacion(e, rodeoId) {
+    e.preventDefault();
+    const usr = document.getElementById('usr-seleccionado').value;
+    const tipo = document.getElementById('tipo-seleccionado').value;
+    if (!usr) { mostrarToast('Debe seleccionar una persona', 'error'); return; }
+    try {
+        await api.post('/admin/asignaciones', {
+            rodeo_id: rodeoId,
+            personas: [{ usuario_pagado_id: usr, tipo_persona: tipo }]
+        });
+        mostrarToast('Persona asignada correctamente', 'success');
+        verDetalle(rodeoId);
+    } catch(err) { mostrarError(err); }
+}
+
+async function mostrarTipos() {
+    const data = await api.get('/admin/rodeos/tipos/lista');
+    document.getElementById('modal-titulo').textContent = 'Tipos de Rodeo';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="form-acciones" style="margin-bottom:16px;">
+            <button class="btn btn-primario btn-pequeño" onclick="formularioTipo(null)">+ Nuevo tipo</button>
+        </div>
+        <table>
+            <thead><tr><th>Nombre</th><th>Días</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>
+            ${(data||[]).map(t => `<tr>
+                <td>${sanitizar(t.nombre)}</td>
+                <td style="text-align:center;">${t.duracion_dias}</td>
+                <td>${t.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
+                <td>
+                    <button class="btn btn-pequeño btn-outline" onclick="formularioTipo(${JSON.stringify(t).replace(/"/g,'&quot;')})">Editar</button>
+                </td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function formularioTipo(t) {
+    document.getElementById('modal-body').innerHTML = `
+        <form onsubmit="guardarTipo(event, '${t?.id||''}')">
+            <div class="form-grupo">
+                <label class="form-label">Nombre <span class="req">*</span></label>
+                <input type="text" name="nombre" class="form-control" required value="${sanitizar(t?.nombre||'')}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Duración (días) <span class="req">*</span></label>
+                <select name="duracion_dias" class="form-control" required>
+                    ${[1,2,3,4,5].map(d => `<option value="${d}" ${t?.duracion_dias===d?'selected':''}>${d} día(s)</option>`).join('')}
+                </select>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Observación</label>
+                <input type="text" name="observacion" class="form-control" value="${sanitizar(t?.observacion||'')}">
+            </div>
+            ${t ? `<div class="form-grupo">
+                <label class="form-label">Estado</label>
+                <select name="activo" class="form-control">
+                    <option value="true" ${t.activo?'selected':''}>Activo</option>
+                    <option value="false" ${!t.activo?'selected':''}>Inactivo</option>
+                </select>
+            </div>` : ''}
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">${t ? 'Guardar' : 'Crear'}</button>
+                <button type="button" class="btn btn-secundario" onclick="mostrarTipos()">Volver</button>
+            </div>
+        </form>`;
+}
+
+async function guardarTipo(e, id) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    if (datos.activo) datos.activo = datos.activo === 'true';
+    try {
+        if (id) await api.patch('/admin/rodeos/tipos/' + id, datos);
+        else await api.post('/admin/rodeos/tipos', datos);
+        mostrarToast('Tipo de rodeo guardado', 'success');
+        tiposRodeo = await api.get('/admin/rodeos/tipos/lista?activo=true');
+        mostrarTipos();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); rodeoActual = null; }
+async function exportar() {
+    const año = document.getElementById('f-año').value;
+    const mes = document.getElementById('f-mes').value;
+    try {
+        await api.descargar('/admin/exportacion/resumen-mensual?' + toQueryString({ año, mes }), `resumen_${año}_${mes}.xlsx`);
+    } catch(err) { mostrarError(err); }
+}
+
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+init();
+</script>
+</body>
+</html>

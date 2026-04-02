@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bonos — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item activo"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Gestión de Bonos</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-outline" onclick="exportar()">↓ Exportar</button>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- Filtros -->
+            <div class="filtros-barra">
+                <div class="form-grupo">
+                    <label class="form-label">Estado</label>
+                    <select id="f-estado" class="form-control" onchange="cargar()">
+                        <option value="pendiente">Pendientes</option>
+                        <option value="aprobado">Aprobados</option>
+                        <option value="rechazado">Rechazados</option>
+                        <option value="modificado">Modificados</option>
+                        <option value="">Todos</option>
+                    </select>
+                </div>
+                <button class="btn btn-secundario" onclick="cargar()">↻ Actualizar</button>
+            </div>
+
+            <div class="card">
+                <div id="tabla-wrap" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <div id="paginacion" class="paginacion"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal acción bono -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+        <h3 id="modal-titulo">Revisar bono</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let paginaActual = 1;
+const POR_PAGINA = 30;
+
+async function cargar(pagina = 1) {
+    paginaActual = pagina;
+    mostrarSpinner(document.getElementById('tabla-wrap'));
+    const estado = document.getElementById('f-estado').value;
+    try {
+        const data = await api.get('/admin/bonos?' + toQueryString({ estado, page: paginaActual, limit: POR_PAGINA }));
+        renderTabla(data.data, data.total);
+        renderPag(data.total);
+    } catch(err) { mostrarError(err); }
+}
+
+function renderTabla(bonos, total) {
+    const wrap = document.getElementById('tabla-wrap');
+    if (!bonos || bonos.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin bonos en este estado</p>';
+        return;
+    }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Persona</th><th>Tipo</th><th>Club / Fecha</th><th>Km</th>
+            <th>Monto solicitado</th><th>Monto aprobado</th><th>Estado</th><th>Acciones</th>
+        </tr></thead>
+        <tbody>
+        ${bonos.map(b => {
+            const est = estadoBono(b.estado);
+            const rodeo = b.asignaciones?.rodeos;
+            return `<tr>
+                <td><strong>${sanitizar(b.usuarios_pagados?.nombre_completo||'—')}</strong></td>
+                <td>${b.usuarios_pagados?.tipo_persona==='jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
+                <td style="font-size:13px;">${sanitizar(rodeo?.club||'—')}<br><span class="texto-gris">${formatFecha(rodeo?.fecha)}</span></td>
+                <td style="text-align:center;">${b.distancia_declarada} km</td>
+                <td>${formatCLP(b.monto_solicitado)}</td>
+                <td class="${b.monto_aprobado ? 'monto-positivo' : 'texto-gris'}">${b.monto_aprobado ? formatCLP(b.monto_aprobado) : '—'}</td>
+                <td><span class="bono-chip ${b.estado}">${est.texto}</span></td>
+                <td>
+                    <div class="flex gap-8">
+                        ${b.estado === 'pendiente' ? `
+                            <button class="btn btn-pequeño btn-success" onclick="aprobar('${b.id}', '${sanitizar(b.usuarios_pagados?.nombre_completo||'')}', ${b.monto_solicitado})">✓</button>
+                            <button class="btn btn-pequeño btn-advertencia" onclick="abrirModificar('${b.id}', ${b.monto_solicitado})">✎</button>
+                            <button class="btn btn-pequeño btn-peligro" onclick="abrirRechazar('${b.id}')">✗</button>
+                        ` : `
+                            <button class="btn btn-pequeño btn-secundario" onclick="verDetalle(${JSON.stringify(b).replace(/"/g,'&quot;')})">Ver</button>
+                        `}
+                    </div>
+                </td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>
+    <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
+        Total: ${total} bono(s)
+    </div>`;
+}
+
+function renderPag(total) {
+    const totalPags = Math.ceil(total / POR_PAGINA);
+    const div = document.getElementById('paginacion');
+    if (totalPags <= 1) { div.innerHTML = ''; return; }
+    let html = `<button class="pag-btn" onclick="cargar(${paginaActual-1})" ${paginaActual===1?'disabled':''}>‹</button>`;
+    for (let i=1; i<=totalPags; i++) {
+        html += `<button class="pag-btn ${i===paginaActual?'activo':''}" onclick="cargar(${i})">${i}</button>`;
+    }
+    html += `<button class="pag-btn" onclick="cargar(${paginaActual+1})" ${paginaActual===totalPags?'disabled':''}>›</button>`;
+    div.innerHTML = html;
+}
+
+async function aprobar(id, nombre, monto) {
+    const ok = await confirmar(`¿Aprobar bono de ${formatCLP(monto)} para ${nombre}?`);
+    if (!ok) return;
+    try {
+        await api.patch('/admin/bonos/' + id + '/aprobar');
+        mostrarToast('Bono aprobado', 'success');
+        cargar(paginaActual);
+    } catch(err) { mostrarError(err); }
+}
+
+function abrirRechazar(id) {
+    document.getElementById('modal-titulo').textContent = 'Rechazar bono';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
+            ⚠️ El usuario verá el motivo del rechazo.
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Motivo del rechazo <span class="req">*</span></label>
+            <textarea id="obs-rechazo" class="form-control" rows="3" placeholder="Explique el motivo..." required></textarea>
+        </div>
+        <div class="form-acciones">
+            <button class="btn btn-peligro" onclick="rechazar('${id}')">Rechazar bono</button>
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function rechazar(id) {
+    const obs = document.getElementById('obs-rechazo').value.trim();
+    if (!obs) { mostrarToast('Debe indicar el motivo del rechazo', 'error'); return; }
+    try {
+        await api.patch('/admin/bonos/' + id + '/rechazar', { observacion_admin: obs });
+        mostrarToast('Bono rechazado', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch(err) { mostrarError(err); }
+}
+
+function abrirModificar(id, montoOriginal) {
+    document.getElementById('modal-titulo').textContent = 'Modificar bono';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-info" style="margin-bottom:16px;">
+            Monto solicitado: <strong>${formatCLP(montoOriginal)}</strong>
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Nuevo monto aprobado <span class="req">*</span></label>
+            <input type="number" id="nuevo-monto" class="form-control" min="1" value="${montoOriginal}">
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Observación (opcional)</label>
+            <textarea id="obs-mod" class="form-control" rows="2" placeholder="Motivo de la modificación..."></textarea>
+        </div>
+        <div class="form-acciones">
+            <button class="btn btn-primario" onclick="modificar('${id}')">Guardar modificación</button>
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function modificar(id) {
+    const monto = parseInt(document.getElementById('nuevo-monto').value);
+    const obs = document.getElementById('obs-mod').value.trim();
+    if (!monto || monto <= 0) { mostrarToast('Monto inválido', 'error'); return; }
+    try {
+        await api.patch('/admin/bonos/' + id + '/modificar', { monto_aprobado: monto, observacion_admin: obs || undefined });
+        mostrarToast('Bono modificado', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch(err) { mostrarError(err); }
+}
+
+function verDetalle(b) {
+    const est = estadoBono(b.estado);
+    document.getElementById('modal-titulo').textContent = 'Detalle del bono';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="form-fila">
+            <div><strong>Persona:</strong> ${sanitizar(b.usuarios_pagados?.nombre_completo||'—')}</div>
+            <div><strong>Estado:</strong> <span class="bono-chip ${b.estado}">${est.texto}</span></div>
+        </div>
+        <div class="divider"></div>
+        <div class="form-fila">
+            <div><strong>Distancia declarada:</strong> ${b.distancia_declarada} km</div>
+            <div><strong>Monto solicitado:</strong> ${formatCLP(b.monto_solicitado)}</div>
+            <div><strong>Monto aprobado:</strong> ${b.monto_aprobado ? formatCLP(b.monto_aprobado) : '—'}</div>
+        </div>
+        ${b.observacion_usuario ? `<div class="mt-8"><strong>Observación usuario:</strong><br>${sanitizar(b.observacion_usuario)}</div>` : ''}
+        ${b.observacion_admin ? `<div class="mt-8"><strong>Observación admin:</strong><br>${sanitizar(b.observacion_admin)}</div>` : ''}
+        <div class="mt-8"><strong>Solicitado:</strong> ${formatFecha(b.created_at)}</div>
+        ${b.revisado_at ? `<div class="mt-8"><strong>Revisado:</strong> ${formatFecha(b.revisado_at)}</div>` : ''}
+        <div class="form-acciones">
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function exportar() {
+    const estado = document.getElementById('f-estado').value;
+    try {
+        await api.descargar(`/admin/exportacion/bonos?estado=${estado}`, `bonos_${estado||'todos'}.xlsx`);
+    } catch(err) { mostrarError(err); }
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+cargar();
+</script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <div style="font-size:36px; margin-bottom:6px;">🐴</div>
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item activo">
+                <span class="icon">📊</span> Dashboard
+            </a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item">
+                <span class="icon">👥</span> Jurados y Delegados
+            </a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item">
+                <span class="icon">🏆</span> Rodeos
+            </a>
+            <a href="/admin/importacion.html" class="nav-item">
+                <span class="icon">📥</span> Importar Excel
+            </a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item">
+                <span class="icon">💰</span> Bonos
+            </a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item">
+                <span class="icon">⚙️</span> Configuración
+            </a>
+            <a href="/admin/auditoria.html" class="nav-item">
+                <span class="icon">📋</span> Auditoría
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin">Cargando...</div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">
+                Cerrar Sesión
+            </button>
+        </div>
+    </aside>
+
+    <!-- CONTENIDO -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Dashboard</h1>
+            </div>
+            <div class="topbar-acciones">
+                <span id="fecha-actual" class="texto-gris" style="font-size:13px;"></span>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- Alertas -->
+            <div id="alertas-criticas"></div>
+
+            <!-- Stats principales -->
+            <div class="stats-grid" id="stats-grid">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+
+            <!-- Fila de cards -->
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+
+                <!-- Importaciones recientes -->
+                <div class="card">
+                    <div class="card-titulo">📥 Últimas Importaciones</div>
+                    <div id="tabla-importaciones">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+                </div>
+
+                <!-- Bonos pendientes -->
+                <div class="card">
+                    <div class="card-titulo">⏳ Bonos Pendientes de Revisión</div>
+                    <div id="tabla-bonos-pend">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+                    <div class="mt-8">
+                        <a href="/admin/bonos.html" class="btn btn-outline btn-pequeño">Ver todos los bonos →</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+document.getElementById('fecha-actual').textContent = new Date().toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+async function cargarDashboard() {
+    try {
+        const data = await api.get('/admin/dashboard');
+
+        // Stats grid
+        const grid = document.getElementById('stats-grid');
+        grid.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-valor">${data.totales.jurados}</div>
+                <div class="stat-label">Jurados activos</div>
+            </div>
+            <div class="stat-card verde">
+                <div class="stat-valor">${data.totales.delegados_rentados}</div>
+                <div class="stat-label">Delegados rentados</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-valor">${data.mes_actual.rodeos}</div>
+                <div class="stat-label">Rodeos este mes</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-valor">${data.mes_actual.asignaciones}</div>
+                <div class="stat-label">Asignaciones este mes</div>
+            </div>
+            <div class="stat-card verde">
+                <div class="stat-valor" style="font-size:20px;">${formatCLP(data.mes_actual.bruto_total)}</div>
+                <div class="stat-label">Bruto total del mes</div>
+            </div>
+            <div class="stat-card naranja">
+                <div class="stat-valor">${data.alertas.bonos_pendientes}</div>
+                <div class="stat-label">Bonos pendientes</div>
+            </div>
+        `;
+
+        // Alertas críticas
+        const alertasDiv = document.getElementById('alertas-criticas');
+        let alertasHtml = '';
+
+        if (data.alertas.bonos_pendientes > 0) {
+            alertasHtml += `<div class="alerta alerta-advertencia mb-8">
+                ⚠️ <strong>${data.alertas.bonos_pendientes}</strong> bono(s) esperando aprobación.
+                <a href="/admin/bonos.html" style="margin-left:8px; color:inherit; font-weight:600;">Revisar →</a>
+            </div>`;
+        }
+        if (data.alertas.pendientes_revision > 0) {
+            alertasHtml += `<div class="alerta alerta-advertencia mb-8">
+                📋 <strong>${data.alertas.pendientes_revision}</strong> registro(s) de importación requieren revisión manual.
+                <a href="/admin/importacion.html" style="margin-left:8px; color:inherit; font-weight:600;">Revisar →</a>
+            </div>`;
+        }
+        if (data.alertas.duplicados_detectados > 0) {
+            alertasHtml += `<div class="alerta alerta-advertencia mb-8">
+                🔁 <strong>${data.alertas.duplicados_detectados}</strong> duplicado(s) detectado(s) en importaciones.
+                <a href="/admin/importacion.html" style="margin-left:8px; color:inherit; font-weight:600;">Revisar →</a>
+            </div>`;
+        }
+        if (data.alertas.perfiles_incompletos > 0) {
+            alertasHtml += `<div class="alerta alerta-info mb-8">
+                👤 <strong>${data.alertas.perfiles_incompletos}</strong> usuario(s) con perfil incompleto.
+            </div>`;
+        }
+        alertasDiv.innerHTML = alertasHtml;
+
+        // Importaciones recientes
+        const impDiv = document.getElementById('tabla-importaciones');
+        if (!data.ultimas_importaciones || data.ultimas_importaciones.length === 0) {
+            impDiv.innerHTML = '<p class="texto-gris texto-centrado">Sin importaciones</p>';
+        } else {
+            impDiv.innerHTML = `<table>
+                <thead><tr>
+                    <th>Archivo</th><th>Insertadas</th><th>Pendientes</th><th>Fecha</th>
+                </tr></thead>
+                <tbody>
+                ${data.ultimas_importaciones.map(i => `
+                    <tr>
+                        <td style="font-size:13px;">${sanitizar(i.nombre_archivo)}</td>
+                        <td><span class="badge badge-activo">${i.insertadas}</span></td>
+                        <td>${i.pendientes > 0 ? `<span class="badge badge-pendiente">${i.pendientes}</span>` : '-'}</td>
+                        <td style="font-size:13px;">${formatFecha(i.created_at)}</td>
+                    </tr>
+                `).join('')}
+                </tbody>
+            </table>`;
+        }
+
+        // Bonos pendientes
+        const bonosDiv = document.getElementById('tabla-bonos-pend');
+        if (!data.bonos_pendientes_recientes || data.bonos_pendientes_recientes.length === 0) {
+            bonosDiv.innerHTML = '<p class="texto-gris texto-centrado">Sin bonos pendientes ✓</p>';
+        } else {
+            bonosDiv.innerHTML = `<table>
+                <thead><tr>
+                    <th>Persona</th><th>Club</th><th>Monto</th><th>Fecha</th>
+                </tr></thead>
+                <tbody>
+                ${data.bonos_pendientes_recientes.map(b => `
+                    <tr>
+                        <td style="font-size:13px;">${sanitizar(b.usuarios_pagados?.nombre_completo || '-')}</td>
+                        <td style="font-size:13px;">${sanitizar(b.asignaciones?.rodeos?.club || '-')}</td>
+                        <td class="monto-positivo">${formatCLP(b.monto_solicitado)}</td>
+                        <td style="font-size:13px;">${formatFecha(b.created_at)}</td>
+                    </tr>
+                `).join('')}
+                </tbody>
+            </table>`;
+        }
+
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+cargarDashboard();
+</script>
+</body>
+</html>

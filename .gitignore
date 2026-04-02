@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+backend/node_modules/
+
+# Variables de entorno (contienen credenciales)
+.env
+backend/.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Uploads temporales
+backend/uploads/
+
+# Archivos Excel (subir manualmente si es necesario)
+*.xlsx
+*.xls

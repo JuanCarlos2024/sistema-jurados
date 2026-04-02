@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Importar Excel — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item activo"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Importar Excel</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Instrucciones -->
+            <div class="alerta alerta-info" style="margin-bottom:20px;">
+                <div>
+                    <strong>Columnas requeridas en el Excel:</strong> Club, Asociación, Fecha, Tipo Rodeo, Nombre Jurado<br>
+                    <strong>Columnas opcionales (serán ignoradas en el cálculo):</strong> CAT, PAGO, BONO, TOTAL<br>
+                    <strong>Formato de fecha aceptado:</strong> DD/MM/YYYY o YYYY-MM-DD
+                </div>
+            </div>
+
+            <!-- Zona de carga -->
+            <div class="card">
+                <div class="card-titulo">📤 Subir archivo Excel</div>
+
+                <div class="drop-zone" id="drop-zone" onclick="document.getElementById('input-archivo').click()">
+                    <div class="icono">📊</div>
+                    <p><strong>Haga clic aquí</strong> o arrastre su archivo Excel</p>
+                    <p style="font-size:12px; margin-top:6px;">Formatos: .xlsx, .xls — Máximo 10 MB</p>
+                </div>
+
+                <input type="file" id="input-archivo" accept=".xlsx,.xls" style="display:none" onchange="archivoSeleccionado(this)">
+
+                <div id="archivo-info" class="oculto" style="margin-top:16px;">
+                    <div class="alerta alerta-info">
+                        <div>
+                            <strong>Archivo:</strong> <span id="nombre-archivo"></span><br>
+                            <strong>Tamaño:</strong> <span id="tamaño-archivo"></span>
+                        </div>
+                    </div>
+                    <div class="form-acciones">
+                        <button class="btn btn-primario" id="btn-importar" onclick="importar()">📥 Importar ahora</button>
+                        <button class="btn btn-secundario" onclick="cancelarArchivo()">Cancelar</button>
+                    </div>
+                </div>
+
+                <div id="progreso" class="oculto" style="margin-top:20px; text-align:center;">
+                    <div class="spinner" style="margin:0 auto 12px;"></div>
+                    <p class="texto-gris">Procesando archivo, por favor espere...</p>
+                </div>
+            </div>
+
+            <!-- Resultado -->
+            <div id="resultado" class="oculto">
+                <div class="card">
+                    <div class="card-titulo">📊 Resultado de la importación</div>
+                    <div id="resultado-contenido"></div>
+                </div>
+            </div>
+
+            <!-- Registros pendientes -->
+            <div class="card" style="margin-top:20px;">
+                <div class="card-titulo flex justify-between items-center">
+                    <span>📋 Registros pendientes de revisión</span>
+                    <div class="flex gap-8">
+                        <button class="btn btn-outline btn-pequeño" onclick="exportarPendientes()">↓ Exportar</button>
+                        <button class="btn btn-secundario btn-pequeño" onclick="cargarPendientes()">↻ Actualizar</button>
+                    </div>
+                </div>
+
+                <div class="filtros-barra" style="padding:0; background:transparent; box-shadow:none; margin-bottom:12px;">
+                    <select id="f-problema" class="form-control" onchange="cargarPendientes()" style="max-width:220px;">
+                        <option value="">Todos los problemas</option>
+                        <option value="jurado_no_encontrado">Jurado no encontrado</option>
+                        <option value="tipo_rodeo_no_encontrado">Tipo de rodeo no encontrado</option>
+                        <option value="datos_incompletos">Datos incompletos</option>
+                        <option value="duplicado">Duplicado</option>
+                    </select>
+                </div>
+
+                <div id="tabla-pendientes" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+            <!-- Historial de importaciones -->
+            <div class="card" style="margin-top:20px;">
+                <div class="card-titulo">🗂️ Historial de importaciones</div>
+                <div id="tabla-historial" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal resolver pendiente -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal">
+    <div class="modal-header">
+        <h3>Resolver registro pendiente</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let archivoActual = null;
+
+// Drag & drop
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) procesarArchivo(file);
+});
+
+function archivoSeleccionado(input) {
+    if (input.files[0]) procesarArchivo(input.files[0]);
+}
+
+function procesarArchivo(file) {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+        mostrarToast('Solo se permiten archivos Excel (.xlsx, .xls)', 'error');
+        return;
+    }
+    archivoActual = file;
+    document.getElementById('nombre-archivo').textContent = file.name;
+    document.getElementById('tamaño-archivo').textContent = (file.size / 1024).toFixed(1) + ' KB';
+    document.getElementById('archivo-info').classList.remove('oculto');
+    document.getElementById('resultado').classList.add('oculto');
+}
+
+function cancelarArchivo() {
+    archivoActual = null;
+    document.getElementById('archivo-info').classList.add('oculto');
+    document.getElementById('input-archivo').value = '';
+}
+
+async function importar() {
+    if (!archivoActual) return;
+    document.getElementById('archivo-info').classList.add('oculto');
+    document.getElementById('progreso').classList.remove('oculto');
+    document.getElementById('resultado').classList.add('oculto');
+
+    const formData = new FormData();
+    formData.append('archivo', archivoActual);
+
+    try {
+        const data = await api.upload('/admin/importacion/excel', formData);
+        mostrarResultado(data);
+        cargarPendientes();
+        cargarHistorial();
+    } catch(err) {
+        mostrarError(err);
+    } finally {
+        document.getElementById('progreso').classList.add('oculto');
+        cancelarArchivo();
+    }
+}
+
+function mostrarResultado(data) {
+    const div = document.getElementById('resultado');
+    document.getElementById('resultado-contenido').innerHTML = `
+        <div class="resultado-importacion">
+            <div class="res-item azul"><div class="numero">${data.total}</div><div class="texto">Total filas</div></div>
+            <div class="res-item verde"><div class="numero">${data.insertadas}</div><div class="texto">Insertadas</div></div>
+            <div class="res-item naranja"><div class="numero">${data.pendientes}</div><div class="texto">Pendientes</div></div>
+            <div class="res-item naranja"><div class="numero">${data.duplicadas}</div><div class="texto">Duplicadas</div></div>
+            <div class="res-item rojo"><div class="numero">${data.errores}</div><div class="texto">Errores</div></div>
+        </div>
+        ${data.pendientes > 0 || data.duplicadas > 0 ? `
+        <div class="alerta alerta-advertencia" style="margin-top:16px;">
+            ⚠️ Hay <strong>${data.pendientes + data.duplicadas}</strong> registro(s) que requieren revisión manual abajo.
+        </div>` : `
+        <div class="alerta alerta-exito" style="margin-top:16px;">
+            ✅ Todos los registros fueron procesados correctamente.
+        </div>`}`;
+    div.classList.remove('oculto');
+}
+
+async function cargarPendientes() {
+    const wrap = document.getElementById('tabla-pendientes');
+    mostrarSpinner(wrap);
+    const problema = document.getElementById('f-problema').value;
+    try {
+        const data = await api.get('/admin/asignaciones/pendientes/lista?' + toQueryString({ problema }));
+        renderPendientes(data.data, data.total);
+    } catch(err) { wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+const PROBLEMAS = {
+    jurado_no_encontrado: 'Jurado no encontrado',
+    tipo_rodeo_no_encontrado: 'Tipo de rodeo no encontrado',
+    datos_incompletos: 'Datos incompletos',
+    duplicado: 'Posible duplicado'
+};
+
+function renderPendientes(pends, total) {
+    const wrap = document.getElementById('tabla-pendientes');
+    if (!pends || pends.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin registros pendientes ✓</p>';
+        return;
+    }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Archivo</th><th>Problema</th><th>Club</th><th>Tipo Rodeo</th><th>Jurado</th><th>Fecha</th><th>Acciones</th>
+        </tr></thead>
+        <tbody>
+        ${pends.map(p => {
+            const d = p.datos_originales || {};
+            const club = d.Club || d.club || '—';
+            const tipo = d['Tipo Rodeo'] || d.tipo_rodeo || d.tipo || '—';
+            const jurado = d['Nombre Jurado'] || d.nombre_jurado || d.Jurado || '—';
+            const fecha = d.Fecha || d.fecha || '—';
+            return `<tr>
+                <td style="font-size:12px;">${sanitizar(p.importaciones?.nombre_archivo||'—')}</td>
+                <td><span class="badge badge-pendiente">${PROBLEMAS[p.problema]||p.problema}</span></td>
+                <td>${sanitizar(club)}</td>
+                <td>${sanitizar(tipo)}</td>
+                <td>${sanitizar(jurado)}</td>
+                <td style="font-size:13px;">${sanitizar(String(fecha))}</td>
+                <td>
+                    <div class="flex gap-8">
+                        <button class="btn btn-pequeño btn-success" onclick="abrirResolver('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">Resolver</button>
+                        <button class="btn btn-pequeño btn-peligro" onclick="descartar('${p.id}')">Descartar</button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>
+    <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
+        Total pendientes: ${total}
+    </div>`;
+}
+
+async function abrirResolver(id, pendiente) {
+    const d = pendiente.datos_originales || {};
+    // Cargar usuarios y tipos de rodeo
+    const [usuarios, tipos] = await Promise.all([
+        api.get('/admin/usuarios?tipo=jurado&activo=true&limit=200'),
+        api.get('/admin/rodeos/tipos/lista?activo=true')
+    ]);
+
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
+            <strong>Problema:</strong> ${PROBLEMAS[pendiente.problema]||pendiente.problema}
+        </div>
+        <div class="form-fila" style="margin-bottom:16px;">
+            <div><strong>Club:</strong> ${sanitizar(d.Club||d.club||'—')}</div>
+            <div><strong>Fecha:</strong> ${sanitizar(String(d.Fecha||d.fecha||'—'))}</div>
+            <div><strong>Jurado Excel:</strong> ${sanitizar(d['Nombre Jurado']||d.nombre_jurado||'—')}</div>
+            <div><strong>Tipo Excel:</strong> ${sanitizar(d['Tipo Rodeo']||d.tipo_rodeo||'—')}</div>
+        </div>
+        <form onsubmit="insertar(event, '${id}')">
+            <div class="form-fila">
+                <div class="form-grupo">
+                    <label class="form-label">Jurado correcto</label>
+                    <select name="usuario_pagado_id" class="form-control" required>
+                        <option value="">Seleccione jurado...</option>
+                        ${(usuarios.data||[]).map(u => `<option value="${u.id}">${sanitizar(u.nombre_completo)} (${u.categoria||'—'})</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Tipo de rodeo correcto</label>
+                    <select name="tipo_rodeo_id" class="form-control" required>
+                        <option value="">Seleccione tipo...</option>
+                        ${(tipos||[]).map(t => `<option value="${t.id}">${sanitizar(t.nombre)} (${t.duracion_dias}d)</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Fecha (si es incorrecta)</label>
+                <input type="date" name="fecha" class="form-control">
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Insertar correctamente</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function insertar(e, id) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        await api.post('/admin/asignaciones/pendientes/' + id + '/resolver', { ...datos, accion: 'insertar' });
+        mostrarToast('Registro resuelto e insertado', 'success');
+        cerrarModal();
+        cargarPendientes();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function descartar(id) {
+    const ok = await confirmar('¿Descartar este registro? No se insertará en el sistema.');
+    if (!ok) return;
+    try {
+        await api.post('/admin/asignaciones/pendientes/' + id + '/resolver', { accion: 'descartar' });
+        mostrarToast('Registro descartado', 'success');
+        cargarPendientes();
+    } catch(err) { mostrarError(err); }
+}
+
+async function cargarHistorial() {
+    const wrap = document.getElementById('tabla-historial');
+    try {
+        const data = await api.get('/admin/importacion/historial');
+        if (!data.data || data.data.length === 0) { wrap.innerHTML = '<p class="tabla-vacia">Sin historial</p>'; return; }
+        wrap.innerHTML = `<table>
+            <thead><tr><th>Archivo</th><th>Total</th><th>Insertadas</th><th>Pendientes</th><th>Duplicadas</th><th>Errores</th><th>Por</th><th>Fecha</th></tr></thead>
+            <tbody>
+            ${data.data.map(i => `<tr>
+                <td style="font-size:13px;">${sanitizar(i.nombre_archivo)}</td>
+                <td style="text-align:center;">${i.total_filas}</td>
+                <td style="text-align:center;"><span class="badge badge-activo">${i.insertadas}</span></td>
+                <td style="text-align:center;">${i.pendientes > 0 ? `<span class="badge badge-pendiente">${i.pendientes}</span>` : '—'}</td>
+                <td style="text-align:center;">${i.duplicadas > 0 ? `<span class="badge badge-pendiente">${i.duplicadas}</span>` : '—'}</td>
+                <td style="text-align:center;">${i.errores > 0 ? `<span class="badge badge-anulado">${i.errores}</span>` : '—'}</td>
+                <td style="font-size:13px;">${sanitizar(i.administradores?.nombre_completo||'—')}</td>
+                <td style="font-size:13px;">${formatFecha(i.created_at)}</td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    } catch(err) { wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+async function exportarPendientes() {
+    try {
+        await api.descargar('/admin/exportacion/pendientes', 'pendientes_revision.xlsx');
+    } catch(err) { mostrarError(err); }
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+cargarPendientes();
+cargarHistorial();
+</script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jurados y Delegados — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <div style="font-size:36px; margin-bottom:6px;">🐴</div>
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item activo"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Jurados y Delegados Rentados</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-primario" onclick="abrirModal()">+ Nuevo usuario</button>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- Filtros -->
+            <div class="filtros-barra">
+                <div class="form-grupo">
+                    <label class="form-label">Tipo</label>
+                    <select id="f-tipo" class="form-control" onchange="cargar()">
+                        <option value="">Todos</option>
+                        <option value="jurado">Jurados</option>
+                        <option value="delegado_rentado">Delegados rentados</option>
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Estado</label>
+                    <select id="f-activo" class="form-control" onchange="cargar()">
+                        <option value="true">Activos</option>
+                        <option value="false">Inactivos</option>
+                        <option value="">Todos</option>
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Buscar</label>
+                    <input type="text" id="f-buscar" class="form-control" placeholder="Nombre, código o RUT" oninput="debounce(cargar, 400)()">
+                </div>
+                <button class="btn btn-secundario" onclick="limpiarFiltros()">Limpiar</button>
+            </div>
+
+            <!-- Tabla -->
+            <div class="card">
+                <div id="tabla-wrap" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <div id="paginacion" class="paginacion"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal usuario -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal">
+    <div class="modal-header">
+        <h3 id="modal-titulo">Nuevo usuario</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body">
+        <div id="modal-contenido"></div>
+    </div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let paginaActual = 1;
+const POR_PAGINA = 20;
+let usuarioEditando = null;
+
+let debounceTimer;
+function debounce(fn, delay) {
+    return (...args) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => fn(...args), delay);
+    };
+}
+
+function limpiarFiltros() {
+    document.getElementById('f-tipo').value = '';
+    document.getElementById('f-activo').value = 'true';
+    document.getElementById('f-buscar').value = '';
+    paginaActual = 1;
+    cargar();
+}
+
+async function cargar(pagina = 1) {
+    paginaActual = pagina;
+    const wrap = document.getElementById('tabla-wrap');
+    mostrarSpinner(wrap);
+
+    const params = toQueryString({
+        tipo: document.getElementById('f-tipo').value,
+        activo: document.getElementById('f-activo').value,
+        buscar: document.getElementById('f-buscar').value.trim(),
+        page: paginaActual,
+        limit: POR_PAGINA
+    });
+
+    try {
+        const data = await api.get('/admin/usuarios?' + params);
+        renderTabla(data.data, data.total);
+        renderPaginacion(data.total);
+    } catch (err) {
+        wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
+}
+
+function renderTabla(usuarios, total) {
+    const wrap = document.getElementById('tabla-wrap');
+    if (!usuarios || usuarios.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">No se encontraron usuarios</p>';
+        return;
+    }
+
+    wrap.innerHTML = `
+    <table>
+        <thead><tr>
+            <th>Código</th>
+            <th>Nombre</th>
+            <th>Tipo</th>
+            <th>Cat.</th>
+            <th>RUT</th>
+            <th>Ciudad</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+        </tr></thead>
+        <tbody>
+        ${usuarios.map(u => `
+            <tr>
+                <td><code>${sanitizar(u.codigo_interno)}</code></td>
+                <td><strong>${sanitizar(u.nombre_completo)}</strong>${!u.perfil_completo ? ' <span title="Perfil incompleto" style="color:orange;">⚠</span>' : ''}</td>
+                <td>${u.tipo_persona === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
+                <td>${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}">${u.categoria}</span>` : '<span class="texto-gris">—</span>'}</td>
+                <td style="font-size:13px;">${sanitizar(u.rut || '—')}</td>
+                <td style="font-size:13px;">${sanitizar(u.ciudad || '—')}</td>
+                <td>${u.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
+                <td>
+                    <div class="flex gap-8">
+                        <button class="btn btn-pequeño btn-outline" onclick="abrirEditar('${u.id}')">Editar</button>
+                        <button class="btn btn-pequeño btn-secundario" onclick="abrirAcciones('${u.id}', '${sanitizar(u.nombre_completo)}', '${u.tipo_persona}', '${u.activo}', '${u.categoria || ''}')">▾</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('')}
+        </tbody>
+    </table>
+    <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
+        Total: ${total} usuario(s)
+    </div>`;
+}
+
+function renderPaginacion(total) {
+    const totalPags = Math.ceil(total / POR_PAGINA);
+    const div = document.getElementById('paginacion');
+    if (totalPags <= 1) { div.innerHTML = ''; return; }
+
+    let html = `<button class="pag-btn" onclick="cargar(${paginaActual-1})" ${paginaActual===1?'disabled':''}>‹</button>`;
+    for (let i = 1; i <= totalPags; i++) {
+        if (i === paginaActual || Math.abs(i - paginaActual) <= 2 || i === 1 || i === totalPags) {
+            html += `<button class="pag-btn ${i===paginaActual?'activo':''}" onclick="cargar(${i})">${i}</button>`;
+        } else if (Math.abs(i - paginaActual) === 3) {
+            html += `<span class="pag-info">…</span>`;
+        }
+    }
+    html += `<button class="pag-btn" onclick="cargar(${paginaActual+1})" ${paginaActual===totalPags?'disabled':''}>›</button>`;
+    div.innerHTML = html;
+}
+
+function abrirModal(usuario = null) {
+    usuarioEditando = usuario;
+    document.getElementById('modal-titulo').textContent = usuario ? 'Editar usuario' : 'Nuevo usuario';
+    document.getElementById('modal-contenido').innerHTML = formUsuario(usuario);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function cerrarModal() {
+    document.getElementById('modal-overlay').classList.add('oculto');
+    usuarioEditando = null;
+}
+
+function formUsuario(u) {
+    const esNuevo = !u;
+    return `
+    <form onsubmit="guardarUsuario(event)">
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Nombre completo <span class="req">*</span></label>
+                <input type="text" name="nombre_completo" class="form-control" required
+                       value="${sanitizar(u?.nombre_completo || '')}" placeholder="Juan Pérez González">
+            </div>
+            ${esNuevo ? `
+            <div class="form-grupo">
+                <label class="form-label">Tipo de persona <span class="req">*</span></label>
+                <select name="tipo_persona" class="form-control" required onchange="toggleCategoria(this)">
+                    <option value="">Seleccione...</option>
+                    <option value="jurado">Jurado</option>
+                    <option value="delegado_rentado">Delegado rentado</option>
+                </select>
+            </div>
+            ` : ''}
+        </div>
+        ${esNuevo ? `
+        <div class="form-grupo" id="grupo-categoria" style="display:none;">
+            <label class="form-label">Categoría <span class="req">*</span></label>
+            <select name="categoria" class="form-control">
+                <option value="">Seleccione...</option>
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+            </select>
+        </div>
+        ` : ''}
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Email</label>
+                <input type="email" name="email" class="form-control" value="${sanitizar(u?.email || '')}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Teléfono</label>
+                <input type="text" name="telefono" class="form-control" value="${sanitizar(u?.telefono || '')}">
+            </div>
+        </div>
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Ciudad</label>
+                <input type="text" name="ciudad" class="form-control" value="${sanitizar(u?.ciudad || '')}">
+            </div>
+        </div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">${esNuevo ? 'Crear usuario' : 'Guardar cambios'}</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+}
+
+function toggleCategoria(sel) {
+    const grupo = document.getElementById('grupo-categoria');
+    if (grupo) grupo.style.display = sel.value === 'jurado' ? 'block' : 'none';
+}
+
+async function guardarUsuario(e) {
+    e.preventDefault();
+    const form = e.target;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+
+    const datos = Object.fromEntries(new FormData(form));
+
+    try {
+        if (usuarioEditando) {
+            await api.patch('/admin/usuarios/' + usuarioEditando.id, datos);
+            mostrarToast('Usuario actualizado', 'success');
+        } else {
+            await api.post('/admin/usuarios', datos);
+            mostrarToast('Usuario creado correctamente', 'success');
+        }
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function abrirEditar(id) {
+    try {
+        const u = await api.get('/admin/usuarios/' + id);
+        abrirModal(u);
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+function abrirAcciones(id, nombre, tipo, activo, categoria) {
+    const esBool = activo === 'true';
+    document.getElementById('modal-titulo').textContent = 'Acciones — ' + nombre;
+    document.getElementById('modal-contenido').innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            ${tipo === 'jurado' ? `
+            <button class="btn btn-outline w-100" onclick="cambiarCategoria('${id}', '${categoria}')">
+                🏅 Cambiar categoría
+            </button>
+            ` : ''}
+            <button class="btn btn-advertencia w-100" onclick="resetPassword('${id}', '${nombre}')">
+                🔑 Resetear contraseña
+            </button>
+            <button class="btn ${esBool ? 'btn-peligro' : 'btn-success'} w-100" onclick="toggleActivo('${id}', ${!esBool}, '${nombre}')">
+                ${esBool ? '🚫 Desactivar usuario' : '✅ Activar usuario'}
+            </button>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function cambiarCategoria(id, catActual) {
+    document.getElementById('modal-contenido').innerHTML = `
+        <div class="form-grupo">
+            <label class="form-label">Nueva categoría</label>
+            <select id="nueva-cat" class="form-control">
+                <option value="A" ${catActual==='A'?'selected':''}>A — Categoría A</option>
+                <option value="B" ${catActual==='B'?'selected':''}>B — Categoría B</option>
+                <option value="C" ${catActual==='C'?'selected':''}>C — Categoría C</option>
+            </select>
+            <div class="form-hint">Los pagos ya registrados NO cambiarán. Solo afecta nuevas asignaciones.</div>
+        </div>
+        <div class="form-acciones">
+            <button class="btn btn-primario" onclick="guardarCategoria('${id}')">Cambiar</button>
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>`;
+}
+
+async function guardarCategoria(id) {
+    const cat = document.getElementById('nueva-cat').value;
+    try {
+        await api.patch('/admin/usuarios/' + id + '/categoria', { categoria: cat });
+        mostrarToast('Categoría actualizada a ' + cat, 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) { mostrarError(err); }
+}
+
+async function resetPassword(id, nombre) {
+    const ok = await confirmar(`¿Resetear contraseña de ${nombre}? El usuario deberá ingresar con la clave "jurados" en su próximo acceso.`);
+    if (!ok) return;
+    try {
+        await api.post('/admin/usuarios/' + id + '/resetear-password');
+        mostrarToast('Contraseña reseteada', 'success');
+        cerrarModal();
+    } catch (err) { mostrarError(err); }
+}
+
+async function toggleActivo(id, nuevoEstado, nombre) {
+    const accion = nuevoEstado ? 'activar' : 'desactivar';
+    const ok = await confirmar(`¿Desea ${accion} a ${nombre}?`);
+    if (!ok) return;
+    try {
+        await api.patch('/admin/usuarios/' + id + '/activar', { activo: nuevoEstado });
+        mostrarToast(`Usuario ${nuevoEstado ? 'activado' : 'desactivado'}`, 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) { mostrarError(err); }
+}
+
+// Cerrar modal al hacer clic fuera
+document.getElementById('modal-overlay').addEventListener('click', function(e) {
+    if (e.target === this) cerrarModal();
+});
+
+cargar();
+</script>
+</body>
+</html>

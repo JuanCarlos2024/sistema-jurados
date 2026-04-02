@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Panel — Sistema de Jurados</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados</h2></div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item activo"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Mi Panel</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="perfil-incompleto" class="oculto">
+                <div class="primer-login-banner">
+                    <div class="icon">⚠️</div>
+                    <div>
+                        <h3>Complete su perfil</h3>
+                        <p>Para acceder a todas las funciones, complete su información de perfil.</p>
+                    </div>
+                    <a href="/usuario/perfil.html" class="btn btn-advertencia" style="margin-left:auto;">Completar ahora →</a>
+                </div>
+            </div>
+
+            <!-- Resumen del mes actual -->
+            <div id="resumen-mes" class="card">
+                <div class="card-titulo">💵 Resumen del mes actual</div>
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+
+            <!-- Mis rodeos del mes -->
+            <div class="card">
+                <div class="card-titulo flex justify-between items-center">
+                    <span>🏆 Mis rodeos este mes</span>
+                    <a href="/usuario/resumen.html" class="btn btn-outline btn-pequeño">Ver historial completo →</a>
+                </div>
+                <div id="rodeos-mes" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+const u = api.getUsuario();
+document.getElementById('nombre-usr').textContent = u?.nombre || '';
+
+async function init() {
+    // Cargar perfil
+    const perfil = await api.get('/usuario/perfil');
+    if (!perfil.perfil_completo) {
+        document.getElementById('perfil-incompleto').classList.remove('oculto');
+    }
+
+    // Resumen del mes
+    const ahora = new Date();
+    const año = ahora.getFullYear();
+    const mes = ahora.getMonth() + 1;
+    const resumen = await api.get(`/usuario/resumen?año=${año}&mes=${mes}`);
+    renderResumen(resumen);
+    renderRodeos(resumen.asignaciones);
+}
+
+function renderResumen(r) {
+    const div = document.getElementById('resumen-mes');
+    div.innerHTML = `
+        <div class="card-titulo">💵 ${nombreMes(r.mes)} ${r.año}</div>
+        <div class="resumen-totales">
+            <div class="total-card">
+                <div class="valor">${formatCLP(r.total_pago_base)}</div>
+                <div class="etiqueta">Pago base</div>
+            </div>
+            <div class="total-card">
+                <div class="valor">${formatCLP(r.total_bono_aprobado)}</div>
+                <div class="etiqueta">Bonos aprobados</div>
+            </div>
+            <div class="total-card">
+                <div class="valor">${formatCLP(r.bruto)}</div>
+                <div class="etiqueta">Total bruto</div>
+            </div>
+            <div class="total-card retencion">
+                <div class="valor">-${formatCLP(r.retencion_monto)}</div>
+                <div class="etiqueta">Retención (${r.retencion_porcentaje}%)</div>
+            </div>
+            <div class="total-card liquido">
+                <div class="valor">${formatCLP(r.liquido)}</div>
+                <div class="etiqueta">Total líquido</div>
+            </div>
+        </div>`;
+}
+
+function renderRodeos(asignaciones) {
+    const div = document.getElementById('rodeos-mes');
+    if (!asignaciones || asignaciones.length === 0) {
+        div.innerHTML = '<p class="tabla-vacia">Sin rodeos registrados este mes</p>';
+        return;
+    }
+    div.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th><th>Club</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th><th>Pago base</th><th>Bono</th>
+        </tr></thead>
+        <tbody>
+        ${asignaciones.map(a => {
+            const bono = a.bonos && a.bonos.length > 0 ? a.bonos[a.bonos.length-1] : null;
+            return `<tr>
+                <td>${formatFecha(a.rodeos?.fecha)}</td>
+                <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
+                <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
+                <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
+                <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '—'}</td>
+                <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
+                <td>
+                    ${bono ? `<span class="bono-chip ${bono.estado}">${formatCLP(bono.estado==='aprobado'||bono.estado==='modificado' ? bono.monto_aprobado : bono.monto_solicitado)} (${estadoBono(bono.estado).texto})</span>` :
+                    `<a href="/usuario/resumen.html" class="btn btn-pequeño btn-outline">Solicitar</a>`}
+                </td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
+}
+
+init().catch(mostrarError);
+</script>
+</body>
+</html>

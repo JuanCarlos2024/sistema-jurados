@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Pagos — Sistema de Jurados</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados</h2></div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item activo"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Mis Pagos</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Navegación mes -->
+            <div class="resumen-header">
+                <div>
+                    <div class="resumen-mes-titulo" id="titulo-mes">Cargando...</div>
+                    <div style="font-size:13px; opacity:0.8;" id="subtitulo-rodeos"></div>
+                </div>
+                <div class="resumen-nav">
+                    <button class="btn btn-secundario btn-pequeño" id="btn-anterior" onclick="navegarMes(-1)">‹ Mes anterior</button>
+                    <button class="btn btn-secundario btn-pequeño" id="btn-siguiente" onclick="navegarMes(1)">Mes siguiente ›</button>
+                </div>
+            </div>
+
+            <!-- Totales -->
+            <div class="resumen-totales" id="totales">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+
+            <!-- Alerta informativa -->
+            <div class="alerta alerta-info" style="margin-bottom:20px;">
+                <div>
+                    <strong>Información:</strong> Los montos mostrados son de referencia para que emita su boleta de honorarios en el SII.
+                    Solo los bonos <strong>aprobados</strong> se incluyen en el total líquido.
+                </div>
+            </div>
+
+            <!-- Tabla de asignaciones -->
+            <div class="card">
+                <div class="card-titulo">🏆 Detalle de rodeos</div>
+                <div id="tabla-asignaciones" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal solicitar bono -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+        <h3>Solicitar bono por distancia</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+
+const ahora = new Date();
+let añoActual = ahora.getFullYear();
+let mesActual = ahora.getMonth() + 1;
+
+let bonosConfig = [];
+
+async function init() {
+    bonosConfig = await api.get('/usuario/bonos/config-activos') || [];
+    cargarResumen();
+}
+
+async function cargarResumen() {
+    document.getElementById('titulo-mes').textContent = `${nombreMes(mesActual)} ${añoActual}`;
+
+    // Deshabilitar "siguiente" si ya estamos en el mes actual
+    const hoy = new Date();
+    const esActual = añoActual === hoy.getFullYear() && mesActual === hoy.getMonth() + 1;
+    document.getElementById('btn-siguiente').disabled = esActual;
+
+    mostrarSpinner(document.getElementById('totales'));
+    mostrarSpinner(document.getElementById('tabla-asignaciones'));
+
+    try {
+        const r = await api.get(`/usuario/resumen?año=${añoActual}&mes=${mesActual}`);
+        renderTotales(r);
+        renderAsignaciones(r.asignaciones || []);
+        document.getElementById('subtitulo-rodeos').textContent = `${r.asignaciones?.length || 0} rodeo(s) registrado(s)`;
+    } catch(err) {
+        mostrarError(err);
+    }
+}
+
+function navegarMes(delta) {
+    mesActual += delta;
+    if (mesActual > 12) { mesActual = 1; añoActual++; }
+    if (mesActual < 1)  { mesActual = 12; añoActual--; }
+    cargarResumen();
+}
+
+function renderTotales(r) {
+    document.getElementById('totales').innerHTML = `
+        <div class="total-card">
+            <div class="valor">${formatCLP(r.total_pago_base)}</div>
+            <div class="etiqueta">Pago base total</div>
+        </div>
+        <div class="total-card">
+            <div class="valor">${formatCLP(r.total_bono_aprobado)}</div>
+            <div class="etiqueta">Bonos aprobados</div>
+        </div>
+        <div class="total-card">
+            <div class="valor">${formatCLP(r.bruto)}</div>
+            <div class="etiqueta">Total bruto</div>
+        </div>
+        <div class="total-card retencion">
+            <div class="valor">-${formatCLP(r.retencion_monto)}</div>
+            <div class="etiqueta">Retención (${r.retencion_porcentaje}%)</div>
+        </div>
+        <div class="total-card liquido">
+            <div class="valor">${formatCLP(r.liquido)}</div>
+            <div class="etiqueta">Total líquido estimado</div>
+        </div>`;
+}
+
+function renderAsignaciones(asignaciones) {
+    const div = document.getElementById('tabla-asignaciones');
+    if (!asignaciones || asignaciones.length === 0) {
+        div.innerHTML = '<p class="tabla-vacia">Sin rodeos registrados en este período</p>';
+        return;
+    }
+
+    div.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th>
+            <th>Club</th>
+            <th>Asociación</th>
+            <th>Tipo rodeo</th>
+            <th>Días</th>
+            <th>Categoría</th>
+            <th>Pago base</th>
+            <th>Bono</th>
+        </tr></thead>
+        <tbody>
+        ${asignaciones.map(a => {
+            const bono = a.bonos && a.bonos.length > 0 ? a.bonos[a.bonos.length-1] : null;
+            let bonoHtml = '';
+            if (bono) {
+                const est = estadoBono(bono.estado);
+                const monto = ['aprobado','modificado'].includes(bono.estado) ? bono.monto_aprobado : bono.monto_solicitado;
+                bonoHtml = `<span class="bono-chip ${bono.estado}" title="${est.texto}">${formatCLP(monto)} (${est.texto})</span>`;
+            } else {
+                bonoHtml = `<button class="btn btn-pequeño btn-outline" onclick="abrirSolicitarBono('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Solicitar bono</button>`;
+            }
+            return `<tr>
+                <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
+                <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
+                <td>${sanitizar(a.rodeos?.asociacion||'—')}</td>
+                <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
+                <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
+                <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span class="badge badge-delegado">Delegado</span>'}</td>
+                <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
+                <td>${bonoHtml}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
+}
+
+function abrirSolicitarBono(asignacionId, clubNombre) {
+    if (!bonosConfig || bonosConfig.length === 0) {
+        mostrarToast('No hay bonos de distancia configurados. Consulte con el administrador.', 'error');
+        return;
+    }
+
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-info" style="margin-bottom:16px;">
+            <div>Solicitar bono para: <strong>${sanitizar(clubNombre)}</strong><br>
+            El administrador revisará y aprobará su solicitud.</div>
+        </div>
+        <form onsubmit="enviarBono(event, '${asignacionId}')">
+            <div class="form-grupo">
+                <label class="form-label">Distancia recorrida (km) <span class="req">*</span></label>
+                <input type="number" id="km-input" class="form-control" min="1" required placeholder="Ej: 420">
+                <div class="form-hint">El bono se determinará automáticamente según la distancia</div>
+            </div>
+            <div id="bono-sugerido" class="alerta alerta-info oculto" style="margin-bottom:12px;"></div>
+            <div class="form-grupo">
+                <label class="form-label">Observación (opcional)</label>
+                <textarea id="obs-bono" class="form-control" rows="2" placeholder="Información adicional..."></textarea>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Solicitar bono</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+
+    // Mostrar bono sugerido en tiempo real
+    document.getElementById('km-input').addEventListener('input', function() {
+        const km = parseInt(this.value);
+        const div = document.getElementById('bono-sugerido');
+        if (!km || km <= 0) { div.classList.add('oculto'); return; }
+        const bono = bonosConfig.find(b => km >= b.distancia_minima && (b.distancia_maxima == null || km <= b.distancia_maxima));
+        if (bono) {
+            div.textContent = `✓ Bono correspondiente: ${bono.nombre} — ${formatCLP(bono.monto)}`;
+            div.classList.remove('oculto');
+        } else {
+            div.className = 'alerta alerta-error';
+            div.textContent = `No existe bono configurado para ${km} km. Consulte con el administrador.`;
+            div.classList.remove('oculto');
+        }
+    });
+
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function enviarBono(e, asignacionId) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const km = parseInt(document.getElementById('km-input').value);
+    const obs = document.getElementById('obs-bono').value.trim();
+
+    try {
+        const result = await api.post('/usuario/bonos', {
+            asignacion_id: asignacionId,
+            distancia_km: km,
+            observacion: obs || undefined
+        });
+        mostrarToast(result.mensaje || 'Bono solicitado correctamente', 'success');
+        cerrarModal();
+        cargarResumen();
+    } catch(err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+init().catch(mostrarError);
+</script>
+</body>
+</html>

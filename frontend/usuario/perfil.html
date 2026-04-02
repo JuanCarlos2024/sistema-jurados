@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Perfil — Sistema de Jurados</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados</h2></div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item activo"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Mi Perfil</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Banner primer login -->
+            <div id="banner-primer-login" class="primer-login-banner oculto">
+                <div class="icon">🔐</div>
+                <div>
+                    <h3>Bienvenido al sistema</h3>
+                    <p>Debe completar su información y cambiar su contraseña antes de continuar.</p>
+                </div>
+            </div>
+
+            <!-- Formulario de perfil -->
+            <div class="card">
+                <div class="card-titulo">📋 Información personal</div>
+                <div id="info-codigo" style="margin-bottom:16px;"></div>
+
+                <form id="form-perfil" onsubmit="guardarPerfil(event)">
+                    <div class="form-fila">
+                        <div class="form-grupo">
+                            <label class="form-label">Nombre completo</label>
+                            <input type="text" name="nombre_completo" id="inp-nombre" class="form-control" placeholder="Juan Pérez González">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">RUT <span class="req">*</span> <span id="rut-bloqueado" class="texto-gris" style="font-size:12px;"></span></label>
+                            <input type="text" name="rut" id="inp-rut" class="form-control" placeholder="12345678-9"
+                                   oninput="validarRutInput(this)">
+                            <div class="form-hint">Sin puntos, con guión. Ej: 12345678-9</div>
+                            <div id="rut-error" class="form-error oculto"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-fila">
+                        <div class="form-grupo">
+                            <label class="form-label">Correo electrónico</label>
+                            <input type="email" name="email" id="inp-email" class="form-control" placeholder="juan@ejemplo.cl">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Teléfono</label>
+                            <input type="text" name="telefono" id="inp-telefono" class="form-control" placeholder="+56 9 1234 5678">
+                        </div>
+                    </div>
+
+                    <div class="form-grupo">
+                        <label class="form-label">Dirección</label>
+                        <input type="text" name="direccion" id="inp-direccion" class="form-control" placeholder="Av. Las Flores 123">
+                    </div>
+
+                    <div class="form-fila">
+                        <div class="form-grupo">
+                            <label class="form-label">Comuna</label>
+                            <input type="text" name="comuna" id="inp-comuna" class="form-control">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Ciudad</label>
+                            <input type="text" name="ciudad" id="inp-ciudad" class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="divider"></div>
+                    <div class="card-titulo" style="margin-bottom:12px;">🔑 Cambiar contraseña</div>
+
+                    <div id="campo-password-actual" class="form-grupo">
+                        <label class="form-label">Contraseña actual</label>
+                        <input type="password" name="password_actual_display" id="inp-pass-actual" class="form-control" placeholder="••••••••">
+                        <div class="form-hint">Requerida si cambia su contraseña</div>
+                    </div>
+
+                    <div class="form-fila">
+                        <div class="form-grupo">
+                            <label class="form-label" id="lbl-nueva-pass">Nueva contraseña</label>
+                            <input type="password" name="nueva_password" id="inp-pass-nueva" class="form-control" placeholder="••••••••"
+                                   oninput="validarPassword(this)">
+                            <div class="form-hint">Mínimo 8 caracteres</div>
+                            <div id="pass-error" class="form-error oculto"></div>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Confirmar nueva contraseña</label>
+                            <input type="password" id="inp-pass-confirm" class="form-control" placeholder="••••••••"
+                                   oninput="validarConfirm(this)">
+                            <div id="confirm-error" class="form-error oculto"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-acciones">
+                        <button type="submit" class="btn btn-primario" id="btn-guardar">Guardar perfil</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+const u = api.getUsuario();
+document.getElementById('nombre-usr').textContent = u?.nombre || '';
+
+const params = getQueryParams();
+let esPrimerLogin = params.primer_login === '1';
+
+async function init() {
+    try {
+        const perfil = await api.get('/usuario/perfil');
+        esPrimerLogin = perfil.primer_login;
+
+        // Mostrar banner primer login
+        if (esPrimerLogin) {
+            document.getElementById('banner-primer-login').classList.remove('oculto');
+            document.getElementById('lbl-nueva-pass').innerHTML = 'Nueva contraseña <span class="req">*</span>';
+            document.getElementById('campo-password-actual').style.display = 'none';
+        }
+
+        // Info del código
+        document.getElementById('info-codigo').innerHTML = `
+            <div class="alerta alerta-info" style="margin-bottom:0;">
+                <div>
+                    <strong>Código:</strong> ${sanitizar(perfil.codigo_interno)} &nbsp;|&nbsp;
+                    <strong>Tipo:</strong> ${perfil.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado'}
+                    ${perfil.categoria ? ` &nbsp;|&nbsp; <strong>Categoría:</strong> ${perfil.categoria}` : ''}
+                    ${perfil.perfil_completo ? '' : ' &nbsp;|&nbsp; <span style="color:orange; font-weight:600;">⚠ Perfil incompleto</span>'}
+                </div>
+            </div>`;
+
+        // Llenar campos
+        document.getElementById('inp-nombre').value = perfil.nombre_completo || '';
+        document.getElementById('inp-email').value = perfil.email || '';
+        document.getElementById('inp-telefono').value = perfil.telefono || '';
+        document.getElementById('inp-direccion').value = perfil.direccion || '';
+        document.getElementById('inp-comuna').value = perfil.comuna || '';
+        document.getElementById('inp-ciudad').value = perfil.ciudad || '';
+
+        // RUT
+        const rutInput = document.getElementById('inp-rut');
+        if (perfil.rut && !perfil.primer_login) {
+            rutInput.value = perfil.rut;
+            rutInput.readOnly = true;
+            rutInput.style.background = '#f4f6f9';
+            document.getElementById('rut-bloqueado').textContent = '(el RUT no puede modificarse)';
+        } else {
+            rutInput.value = perfil.rut || '';
+        }
+
+    } catch(err) { mostrarError(err); }
+}
+
+function validarRutInput(input) {
+    const val = input.value.trim();
+    if (!val) { document.getElementById('rut-error').classList.add('oculto'); return; }
+
+    // Normalizar: quitar puntos
+    input.value = val.replace(/\./g, '').toUpperCase();
+
+    // Validar formato básico
+    const errorDiv = document.getElementById('rut-error');
+    if (val.length > 5 && !val.includes('-')) {
+        errorDiv.textContent = 'Ingrese el RUT con guión (ej: 12345678-9)';
+        errorDiv.classList.remove('oculto');
+    } else {
+        errorDiv.classList.add('oculto');
+    }
+}
+
+function validarPassword(input) {
+    const errorDiv = document.getElementById('pass-error');
+    if (input.value && input.value.length < 8) {
+        errorDiv.textContent = 'La contraseña debe tener al menos 8 caracteres';
+        errorDiv.classList.remove('oculto');
+    } else {
+        errorDiv.classList.add('oculto');
+    }
+}
+
+function validarConfirm(input) {
+    const nueva = document.getElementById('inp-pass-nueva').value;
+    const errorDiv = document.getElementById('confirm-error');
+    if (input.value && input.value !== nueva) {
+        errorDiv.textContent = 'Las contraseñas no coinciden';
+        errorDiv.classList.remove('oculto');
+    } else {
+        errorDiv.classList.add('oculto');
+    }
+}
+
+async function guardarPerfil(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-guardar');
+    btn.disabled = true;
+    btn.textContent = 'Guardando...';
+
+    // Validar contraseñas si se ingresaron
+    const passNueva = document.getElementById('inp-pass-nueva').value;
+    const passConfirm = document.getElementById('inp-pass-confirm').value;
+
+    if (passNueva && passNueva !== passConfirm) {
+        mostrarToast('Las contraseñas no coinciden', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Guardar perfil';
+        return;
+    }
+    if (passNueva && passNueva.length < 8) {
+        mostrarToast('La contraseña debe tener al menos 8 caracteres', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Guardar perfil';
+        return;
+    }
+    if (esPrimerLogin && !passNueva) {
+        mostrarToast('Debe establecer una nueva contraseña en el primer ingreso', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Guardar perfil';
+        return;
+    }
+
+    const datos = {};
+    const nombre = document.getElementById('inp-nombre').value.trim();
+    const rut    = document.getElementById('inp-rut').value.trim();
+    const email  = document.getElementById('inp-email').value.trim();
+    const tel    = document.getElementById('inp-telefono').value.trim();
+    const dir    = document.getElementById('inp-direccion').value.trim();
+    const com    = document.getElementById('inp-comuna').value.trim();
+    const ciu    = document.getElementById('inp-ciudad').value.trim();
+
+    if (nombre)  datos.nombre_completo = nombre;
+    if (rut)     datos.rut = rut;
+    if (email)   datos.email = email;
+    if (tel)     datos.telefono = tel;
+    if (dir)     datos.direccion = dir;
+    if (com)     datos.comuna = com;
+    if (ciu)     datos.ciudad = ciu;
+    if (passNueva) datos.nueva_password = passNueva;
+
+    try {
+        const resultado = await api.patch('/usuario/perfil', datos);
+        mostrarToast('Perfil actualizado correctamente', 'success');
+
+        if (esPrimerLogin) {
+            // Si era primer login, actualizar el token (nuevo login)
+            setTimeout(() => {
+                mostrarToast('Redirigiendo al panel...', 'info', 2000);
+                setTimeout(() => { window.location.href = '/index.html'; }, 2000);
+            }, 500);
+        } else {
+            // Limpiar campos de contraseña
+            document.getElementById('inp-pass-actual').value = '';
+            document.getElementById('inp-pass-nueva').value = '';
+            document.getElementById('inp-pass-confirm').value = '';
+        }
+    } catch(err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Guardar perfil';
+    }
+}
+
+init();
+</script>
+</body>
+</html>

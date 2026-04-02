@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auditoría — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item activo"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Registro de Auditoría</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="filtros-barra">
+                <div class="form-grupo">
+                    <label class="form-label">Acción</label>
+                    <select id="f-accion" class="form-control" onchange="cargar()">
+                        <option value="">Todas</option>
+                        <option value="login">Login</option>
+                        <option value="crear">Crear</option>
+                        <option value="editar">Editar</option>
+                        <option value="eliminar">Eliminar</option>
+                        <option value="aprobar_bono">Aprobar bono</option>
+                        <option value="rechazar_bono">Rechazar bono</option>
+                        <option value="modificar_bono">Modificar bono</option>
+                        <option value="importar_excel">Importar Excel</option>
+                        <option value="resetear_clave">Resetear clave</option>
+                        <option value="cambiar_categoria">Cambiar categoría</option>
+                        <option value="modificar_tarifa">Modificar tarifa</option>
+                        <option value="primer_login">Primer login</option>
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Tabla</label>
+                    <select id="f-tabla" class="form-control" onchange="cargar()">
+                        <option value="">Todas</option>
+                        <option value="usuarios_pagados">Usuarios pagados</option>
+                        <option value="rodeos">Rodeos</option>
+                        <option value="asignaciones">Asignaciones</option>
+                        <option value="bonos_solicitados">Bonos</option>
+                        <option value="importaciones">Importaciones</option>
+                        <option value="administradores">Administradores</option>
+                        <option value="configuracion_tarifas">Tarifas</option>
+                    </select>
+                </div>
+                <button class="btn btn-secundario" onclick="limpiar()">Limpiar</button>
+            </div>
+
+            <div class="card">
+                <div id="tabla-wrap" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <div id="paginacion" class="paginacion"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal detalle -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal" style="max-width:600px;">
+    <div class="modal-header">
+        <h3>Detalle del registro</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let paginaActual = 1;
+const POR_PAGINA = 30;
+
+function limpiar() {
+    document.getElementById('f-accion').value = '';
+    document.getElementById('f-tabla').value = '';
+    cargar();
+}
+
+async function cargar(pagina = 1) {
+    paginaActual = pagina;
+    mostrarSpinner(document.getElementById('tabla-wrap'));
+    const p = toQueryString({
+        accion: document.getElementById('f-accion').value,
+        tabla: document.getElementById('f-tabla').value,
+        page: paginaActual, limit: POR_PAGINA
+    });
+    try {
+        const data = await api.get('/admin/dashboard/auditoria?' + p);
+        renderTabla(data.data, data.total);
+        renderPag(data.total);
+    } catch(err) { mostrarError(err); }
+}
+
+const ACCIONES_COLORES = {
+    login: '#2196f3', crear: '#27ae60', editar: '#f39c12',
+    eliminar: '#c0392b', aprobar_bono: '#27ae60', rechazar_bono: '#c0392b',
+    modificar_bono: '#2196f3', importar_excel: '#9b59b6', resetear_clave: '#e67e22',
+    cambiar_categoria: '#1abc9c', modificar_tarifa: '#e74c3c', primer_login: '#3498db'
+};
+
+function renderTabla(registros, total) {
+    const wrap = document.getElementById('tabla-wrap');
+    if (!registros || registros.length === 0) { wrap.innerHTML = '<p class="tabla-vacia">Sin registros</p>'; return; }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha y hora</th><th>Tabla</th><th>Acción</th><th>Actor</th><th>Descripción</th><th>Ver</th>
+        </tr></thead>
+        <tbody>
+        ${registros.map(r => {
+            const color = ACCIONES_COLORES[r.accion] || '#7f8c8d';
+            return `<tr>
+                <td style="font-size:12px; white-space:nowrap;">${new Date(r.created_at).toLocaleString('es-CL')}</td>
+                <td><code style="font-size:12px;">${r.tabla}</code></td>
+                <td><span style="background:${color}20; color:${color}; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600;">${r.accion}</span></td>
+                <td style="font-size:13px;">${sanitizar(r.actor_tipo)}</td>
+                <td style="font-size:13px; max-width:300px;">${sanitizar(r.descripcion||'—')}</td>
+                <td>
+                    ${(r.datos_anteriores || r.datos_nuevos) ? `<button class="btn btn-icono btn-pequeño" onclick='verDetalle(${JSON.stringify(r).replace(/'/g,"&#39;")})'>🔍</button>` : ''}
+                </td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>
+    <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} registros</div>`;
+}
+
+function renderPag(total) {
+    const totalPags = Math.ceil(total / POR_PAGINA);
+    const div = document.getElementById('paginacion');
+    if (totalPags <= 1) { div.innerHTML = ''; return; }
+    let html = `<button class="pag-btn" onclick="cargar(${paginaActual-1})" ${paginaActual===1?'disabled':''}>‹</button>`;
+    for (let i=1; i<=totalPags; i++) {
+        if (i===paginaActual || Math.abs(i-paginaActual)<=2 || i===1 || i===totalPags)
+            html += `<button class="pag-btn ${i===paginaActual?'activo':''}" onclick="cargar(${i})">${i}</button>`;
+    }
+    html += `<button class="pag-btn" onclick="cargar(${paginaActual+1})" ${paginaActual===totalPags?'disabled':''}>›</button>`;
+    div.innerHTML = html;
+}
+
+function verDetalle(r) {
+    document.getElementById('modal-body').innerHTML = `
+        <div style="margin-bottom:12px;">
+            <strong>Acción:</strong> ${r.accion} &nbsp;|&nbsp; <strong>Tabla:</strong> ${r.tabla}<br>
+            <strong>Fecha:</strong> ${new Date(r.created_at).toLocaleString('es-CL')}<br>
+            <strong>Actor:</strong> ${r.actor_tipo} (${r.actor_id})<br>
+            ${r.ip_address ? `<strong>IP:</strong> ${r.ip_address}` : ''}
+        </div>
+        ${r.datos_anteriores ? `
+        <div style="margin-bottom:12px;">
+            <strong>Datos anteriores:</strong>
+            <pre style="background:#f4f6f9; padding:10px; border-radius:6px; font-size:12px; overflow-x:auto; margin-top:6px;">${JSON.stringify(r.datos_anteriores, null, 2)}</pre>
+        </div>` : ''}
+        ${r.datos_nuevos ? `
+        <div>
+            <strong>Datos nuevos:</strong>
+            <pre style="background:#f4f6f9; padding:10px; border-radius:6px; font-size:12px; overflow-x:auto; margin-top:6px;">${JSON.stringify(r.datos_nuevos, null, 2)}</pre>
+        </div>` : ''}
+        <div class="form-acciones"><button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button></div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+cargar();
+</script>
+</body>
+</html>

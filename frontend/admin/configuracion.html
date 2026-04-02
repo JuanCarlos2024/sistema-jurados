@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuración — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item activo"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Configuración del Sistema</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; align-items:start;">
+
+                <!-- Tarifas -->
+                <div class="card">
+                    <div class="card-titulo">💵 Tarifas por categoría</div>
+                    <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
+                        ⚠️ Cambiar tarifas afecta solo asignaciones <strong>futuras</strong>. Los registros existentes conservan sus valores.
+                    </div>
+                    <div id="form-tarifas">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+                </div>
+
+                <!-- Retención -->
+                <div class="card">
+                    <div class="card-titulo">📊 Retención</div>
+                    <div id="form-retencion">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <!-- Administradores -->
+                    <div class="card-titulo" style="margin-top:8px;">👤 Administradores del sistema</div>
+                    <div class="form-acciones" style="margin-bottom:12px;">
+                        <button class="btn btn-primario btn-pequeño" onclick="abrirNuevoAdmin()">+ Nuevo admin</button>
+                    </div>
+                    <div id="tabla-admins">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bonos de distancia -->
+            <div class="card">
+                <div class="card-titulo flex justify-between items-center">
+                    <span>🛣️ Bonos por distancia</span>
+                    <button class="btn btn-primario btn-pequeño" onclick="abrirNuevoBono()">+ Nuevo bono</button>
+                </div>
+                <div id="tabla-bonos">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+        <h3 id="modal-titulo"></h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+async function init() {
+    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins()]);
+}
+
+async function cargarTarifas() {
+    const div = document.getElementById('form-tarifas');
+    try {
+        const data = await api.get('/admin/configuracion/tarifas');
+        div.innerHTML = data.map(t => `
+            <div style="border:1px solid var(--gris-borde); border-radius:8px; padding:14px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <strong>Categoría ${t.categoria}</strong>
+                    <span class="badge badge-${t.categoria.toLowerCase()}">Cat. ${t.categoria}</span>
+                </div>
+                <form onsubmit="guardarTarifa(event, '${t.categoria}')">
+                    <div class="form-fila">
+                        <div class="form-grupo">
+                            <label class="form-label">Valor diario (CLP)</label>
+                            <input type="number" name="valor_diario" class="form-control" value="${t.valor_diario}" min="1" required>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Valor 2 días</label>
+                            <input type="number" name="valor_2_dias" class="form-control" value="${t.valor_2_dias}" min="1">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primario btn-pequeño">Guardar Cat. ${t.categoria}</button>
+                </form>
+            </div>`).join('');
+
+        // Agregar nota sobre delegado rentado
+        div.innerHTML += `<div class="alerta alerta-info">
+            <small>El delegado rentado usa automáticamente el valor diario de <strong>Categoría A</strong>.</small>
+        </div>`;
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+async function guardarTarifa(e, cat) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        await api.patch('/admin/configuracion/tarifas/' + cat, datos);
+        mostrarToast(`Tarifa categoría ${cat} actualizada`, 'success');
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function cargarRetencion() {
+    const div = document.getElementById('form-retencion');
+    try {
+        const data = await api.get('/admin/configuracion/retencion');
+        div.innerHTML = `
+            <div class="alerta alerta-info" style="margin-bottom:16px;">
+                <small>Porcentaje actual: <strong>${data.porcentaje}%</strong><br>
+                Bruto × ${data.porcentaje}% = Retención</small>
+            </div>
+            <form onsubmit="guardarRetencion(event)">
+                <div class="form-grupo">
+                    <label class="form-label">Porcentaje de retención (%)</label>
+                    <input type="number" name="porcentaje" class="form-control" value="${data.porcentaje}" min="0" max="100" step="0.01" required>
+                </div>
+                <button type="submit" class="btn btn-primario btn-pequeño">Actualizar retención</button>
+            </form>`;
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+async function guardarRetencion(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        await api.patch('/admin/configuracion/retencion', { porcentaje: parseFloat(datos.porcentaje) });
+        mostrarToast('Retención actualizada a ' + datos.porcentaje + '%', 'success');
+        cargarRetencion();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function cargarBonos() {
+    const div = document.getElementById('tabla-bonos');
+    try {
+        const data = await api.get('/admin/configuracion/bonos');
+        if (!data || data.length === 0) { div.innerHTML = '<p class="texto-gris">Sin bonos configurados</p>'; return; }
+        div.innerHTML = `<table>
+            <thead><tr><th>Nombre</th><th>Desde (km)</th><th>Hasta (km)</th><th>Monto</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>
+            ${data.map(b => `<tr>
+                <td><strong>${sanitizar(b.nombre)}</strong></td>
+                <td>${b.distancia_minima} km</td>
+                <td>${b.distancia_maxima != null ? b.distancia_maxima + ' km' : 'Sin límite'}</td>
+                <td class="monto-positivo">${formatCLP(b.monto)}</td>
+                <td>${b.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
+                <td>
+                    <div class="flex gap-8">
+                        <button class="btn btn-pequeño btn-outline" onclick="abrirEditarBono(${JSON.stringify(b).replace(/"/g,'&quot;')})">Editar</button>
+                        <button class="btn btn-pequeño btn-peligro" onclick="eliminarBono('${b.id}')">Eliminar</button>
+                    </div>
+                </td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function abrirNuevoBono() {
+    document.getElementById('modal-titulo').textContent = 'Nuevo bono por distancia';
+    document.getElementById('modal-body').innerHTML = formBono(null);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function abrirEditarBono(b) {
+    document.getElementById('modal-titulo').textContent = 'Editar bono';
+    document.getElementById('modal-body').innerHTML = formBono(b);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function formBono(b) {
+    return `<form onsubmit="guardarBono(event, '${b?.id||''}')">
+        <div class="form-grupo">
+            <label class="form-label">Nombre del bono <span class="req">*</span></label>
+            <input type="text" name="nombre" class="form-control" required value="${sanitizar(b?.nombre||'')}" placeholder="Ej: Bono 350-499 km">
+        </div>
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Distancia mínima (km) <span class="req">*</span></label>
+                <input type="number" name="distancia_minima" class="form-control" required min="0" value="${b?.distancia_minima||''}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Distancia máxima (km)</label>
+                <input type="number" name="distancia_maxima" class="form-control" min="0" value="${b?.distancia_maxima!=null?b.distancia_maxima:''}" placeholder="Vacío = sin límite">
+            </div>
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Monto del bono (CLP) <span class="req">*</span></label>
+            <input type="number" name="monto" class="form-control" required min="1" value="${b?.monto||''}">
+        </div>
+        ${b ? `<div class="form-grupo">
+            <label class="form-label">Estado</label>
+            <select name="activo" class="form-control">
+                <option value="true" ${b.activo?'selected':''}>Activo</option>
+                <option value="false" ${!b.activo?'selected':''}>Inactivo</option>
+            </select>
+        </div>` : ''}
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">${b ? 'Guardar cambios' : 'Crear bono'}</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+}
+
+async function guardarBono(e, id) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    if (datos.activo) datos.activo = datos.activo === 'true';
+    if (datos.distancia_maxima === '') datos.distancia_maxima = null;
+    try {
+        if (id) await api.patch('/admin/configuracion/bonos/' + id, datos);
+        else await api.post('/admin/configuracion/bonos', datos);
+        mostrarToast('Bono guardado', 'success');
+        cerrarModal();
+        cargarBonos();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function eliminarBono(id) {
+    const ok = await confirmar('¿Eliminar este bono? Si tiene solicitudes asociadas, solo se desactivará.');
+    if (!ok) return;
+    try {
+        await api.delete('/admin/configuracion/bonos/' + id);
+        mostrarToast('Bono eliminado/desactivado', 'success');
+        cargarBonos();
+    } catch(err) { mostrarError(err); }
+}
+
+async function cargarAdmins() {
+    const div = document.getElementById('tabla-admins');
+    try {
+        const data = await api.get('/admin/configuracion/administradores');
+        div.innerHTML = `<table>
+            <thead><tr><th>Nombre</th><th>Email</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>
+            ${(data||[]).map(a => `<tr>
+                <td>${sanitizar(a.nombre_completo)}</td>
+                <td style="font-size:13px;">${sanitizar(a.email)}</td>
+                <td>${a.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
+                <td>
+                    <button class="btn btn-pequeño btn-advertencia" onclick="resetAdminPass('${a.id}', '${sanitizar(a.nombre_completo)}')">Reset</button>
+                </td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function abrirNuevoAdmin() {
+    document.getElementById('modal-titulo').textContent = 'Nuevo administrador';
+    document.getElementById('modal-body').innerHTML = `
+        <form onsubmit="crearAdmin(event)">
+            <div class="form-grupo">
+                <label class="form-label">Nombre completo <span class="req">*</span></label>
+                <input type="text" name="nombre_completo" class="form-control" required>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Email <span class="req">*</span></label>
+                <input type="email" name="email" class="form-control" required>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Contraseña <span class="req">*</span></label>
+                <input type="password" name="password" class="form-control" required minlength="8">
+                <div class="form-hint">Mínimo 8 caracteres</div>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Crear administrador</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function crearAdmin(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        await api.post('/admin/configuracion/administradores', datos);
+        mostrarToast('Administrador creado', 'success');
+        cerrarModal();
+        cargarAdmins();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+function resetAdminPass(id, nombre) {
+    document.getElementById('modal-titulo').textContent = 'Reset contraseña — ' + nombre;
+    document.getElementById('modal-body').innerHTML = `
+        <form onsubmit="guardarResetAdmin(event, '${id}')">
+            <div class="form-grupo">
+                <label class="form-label">Nueva contraseña <span class="req">*</span></label>
+                <input type="password" name="nueva_password" class="form-control" required minlength="8">
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Actualizar</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function guardarResetAdmin(e, id) {
+    e.preventDefault();
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        await api.post('/admin/configuracion/administradores/' + id + '/resetear-password', datos);
+        mostrarToast('Contraseña actualizada', 'success');
+        cerrarModal();
+    } catch(err) { mostrarError(err); }
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar Sesión — Sistema de Jurados</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="login-page">
+    <div class="login-card">
+        <div class="login-logo">
+            <div style="font-size:48px; margin-bottom:10px;">🐴</div>
+            <h1>Sistema de Jurados</h1>
+            <p>Federación de Rodeo Chileno</p>
+        </div>
+
+        <!-- Pestañas -->
+        <div class="login-tabs">
+            <button class="login-tab activo" id="tab-admin" onclick="mostrarTab('admin')">
+                Administrador
+            </button>
+            <button class="login-tab" id="tab-usuario" onclick="mostrarTab('usuario')">
+                Jurado / Delegado
+            </button>
+        </div>
+
+        <!-- Formulario Admin -->
+        <form id="form-admin" onsubmit="loginAdmin(event)">
+            <div class="form-grupo">
+                <label class="form-label">Correo electrónico</label>
+                <input type="email" id="admin-email" class="form-control"
+                       placeholder="admin@federacion.cl" required autocomplete="email">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Contraseña</label>
+                <input type="password" id="admin-password" class="form-control"
+                       placeholder="••••••••" required autocomplete="current-password">
+            </div>
+            <div id="admin-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
+            <button type="submit" class="btn btn-primario w-100" id="btn-admin-login">
+                Iniciar Sesión
+            </button>
+        </form>
+
+        <!-- Formulario Usuario Pagado -->
+        <form id="form-usuario" class="oculto" onsubmit="loginUsuario(event)">
+            <div class="alerta alerta-info" style="margin-bottom:16px; font-size:13px;">
+                <div>
+                    <strong>Primer ingreso:</strong> use su código <strong>USR-XXXX</strong><br>
+                    <strong>Siguientes ingresos:</strong> use su RUT (ej: 12345678-9)
+                </div>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Código o RUT</label>
+                <input type="text" id="usr-identificador" class="form-control"
+                       placeholder="USR-0001 o 12345678-9" required autocomplete="username">
+                <div class="form-hint">Sin puntos, con guión</div>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Contraseña</label>
+                <input type="password" id="usr-password" class="form-control"
+                       placeholder="••••••••" required autocomplete="current-password">
+                <div class="form-hint">Contraseña inicial: <strong>jurados</strong></div>
+            </div>
+            <div id="usr-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
+            <button type="submit" class="btn btn-primario w-100" id="btn-usr-login">
+                Iniciar Sesión
+            </button>
+        </form>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+    // Si ya está logueado, redirigir
+    (function() {
+        const token = localStorage.getItem('token');
+        const usuario = localStorage.getItem('usuario');
+        if (token && usuario) {
+            const u = JSON.parse(usuario);
+            if (u.tipo === 'administrador') window.location.href = '/admin/dashboard.html';
+            else window.location.href = '/usuario/dashboard.html';
+        }
+    })();
+
+    function mostrarTab(tab) {
+        document.getElementById('form-admin').classList.toggle('oculto', tab !== 'admin');
+        document.getElementById('form-usuario').classList.toggle('oculto', tab !== 'usuario');
+        document.getElementById('tab-admin').classList.toggle('activo', tab === 'admin');
+        document.getElementById('tab-usuario').classList.toggle('activo', tab === 'usuario');
+    }
+
+    async function loginAdmin(e) {
+        e.preventDefault();
+        const btnLogin = document.getElementById('btn-admin-login');
+        const errorDiv = document.getElementById('admin-error');
+        errorDiv.classList.add('oculto');
+        btnLogin.disabled = true;
+        btnLogin.textContent = 'Verificando...';
+
+        try {
+            const data = await api.post('/auth/admin/login', {
+                email: document.getElementById('admin-email').value.trim(),
+                password: document.getElementById('admin-password').value
+            });
+
+            api.guardarSesion(data.token, data.usuario);
+            window.location.href = '/admin/dashboard.html';
+        } catch (err) {
+            errorDiv.textContent = err.message || 'Error al iniciar sesión';
+            errorDiv.classList.remove('oculto');
+        } finally {
+            btnLogin.disabled = false;
+            btnLogin.textContent = 'Iniciar Sesión';
+        }
+    }
+
+    async function loginUsuario(e) {
+        e.preventDefault();
+        const btnLogin = document.getElementById('btn-usr-login');
+        const errorDiv = document.getElementById('usr-error');
+        errorDiv.classList.add('oculto');
+        btnLogin.disabled = true;
+        btnLogin.textContent = 'Verificando...';
+
+        try {
+            const data = await api.post('/auth/usuario/login', {
+                identificador: document.getElementById('usr-identificador').value.trim(),
+                password: document.getElementById('usr-password').value
+            });
+
+            api.guardarSesion(data.token, data.usuario);
+
+            if (data.usuario.primer_login) {
+                window.location.href = '/usuario/perfil.html?primer_login=1';
+            } else {
+                window.location.href = '/usuario/dashboard.html';
+            }
+        } catch (err) {
+            errorDiv.textContent = err.message || 'Error al iniciar sesión';
+            errorDiv.classList.remove('oculto');
+        } finally {
+            btnLogin.disabled = false;
+            btnLogin.textContent = 'Iniciar Sesión';
+        }
+    }
+</script>
+</body>
+</html>
