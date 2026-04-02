@@ -229,11 +229,37 @@ async function cargarPendientes() {
 }
 
 const PROBLEMAS = {
-    jurado_no_encontrado: 'Jurado no encontrado',
-    tipo_rodeo_no_encontrado: 'Tipo de rodeo no encontrado',
-    datos_incompletos: 'Datos incompletos',
-    duplicado: 'Posible duplicado'
+    jurado_no_encontrado:      'Jurado no encontrado',
+    tipo_rodeo_no_encontrado:  'Tipo de rodeo no encontrado',
+    datos_incompletos:         'Datos incompletos',
+    duplicado:                 'Posible duplicado'
 };
+
+// Extrae los campos limpios del pendiente, usando _campos como fuente principal.
+function getCampos(d) {
+    const c = d._campos || {};
+    // Fallback: las keys del Excel pueden tener espacios al final
+    const rawKey = (obj, ...keys) => {
+        for (const k of keys) {
+            // Búsqueda exacta
+            if (obj[k] !== undefined && obj[k] !== '') return String(obj[k]).trim();
+            // Búsqueda con espacios al final
+            const found = Object.keys(obj).find(ok => ok.trim() === k);
+            if (found && obj[found] !== undefined && obj[found] !== '') return String(obj[found]).trim();
+        }
+        return '';
+    };
+    return {
+        club:          c.club          || rawKey(d, 'Club', 'club') || '—',
+        asociacion:    c.asociacion    || rawKey(d, 'Asociación', 'Asociacion', 'asociacion') || '—',
+        fecha:         c.fecha_original || rawKey(d, 'Fecha', 'fecha') || '—',
+        tipo_rodeo:    c.tipo_rodeo    || rawKey(d, 'Tipo Rodeo', 'tipo_rodeo') || '—',
+        nombre_jurado: c.nombre_jurado || rawKey(d, 'Nombre Jurado', 'nombre_jurado') || '—',
+        fecha_norm:    c.fecha_norm    || '',
+        tipo_rodeo_id: c.tipo_rodeo_id || '',
+        motivo:        c._motivo       || '',
+    };
+}
 
 function renderPendientes(pends, total) {
     const wrap = document.getElementById('tabla-pendientes');
@@ -243,26 +269,46 @@ function renderPendientes(pends, total) {
     }
     wrap.innerHTML = `<table>
         <thead><tr>
-            <th>Archivo</th><th>Problema</th><th>Club</th><th>Tipo Rodeo</th><th>Jurado</th><th>Fecha</th><th>Acciones</th>
+            <th>Archivo</th><th>Problema</th>
+            <th>Jurado (Excel)</th><th>Tipo Rodeo (Excel)</th>
+            <th>Club</th><th>Fecha</th><th>Acciones</th>
         </tr></thead>
         <tbody>
         ${pends.map(p => {
             const d = p.datos_originales || {};
-            const club = d.Club || d.club || '—';
-            const tipo = d['Tipo Rodeo'] || d.tipo_rodeo || d.tipo || '—';
-            const jurado = d['Nombre Jurado'] || d.nombre_jurado || d.Jurado || '—';
-            const fecha = d.Fecha || d.fecha || '—';
+            const c = getCampos(d);
+            const esJurado = p.problema === 'jurado_no_encontrado';
+            const esTipo   = p.problema === 'tipo_rodeo_no_encontrado';
+            const similares = d._similares || [];
+            const tooltipSim = similares.length > 0
+                ? ` title="Posibles coincidencias:\n${similares.slice(0,3).map(s => s.nombre||s).join('\n')}"`
+                : '';
             return `<tr>
-                <td style="font-size:12px;">${sanitizar(p.importaciones?.nombre_archivo||'—')}</td>
-                <td><span class="badge badge-pendiente">${PROBLEMAS[p.problema]||p.problema}</span></td>
-                <td>${sanitizar(club)}</td>
-                <td>${sanitizar(tipo)}</td>
-                <td>${sanitizar(jurado)}</td>
-                <td style="font-size:13px;">${sanitizar(String(fecha))}</td>
+                <td style="font-size:12px; max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                    title="${sanitizar(p.importaciones?.nombre_archivo||'')}"
+                    >${sanitizar(p.importaciones?.nombre_archivo||'—')}</td>
+                <td>
+                    <span class="badge badge-pendiente"${tooltipSim}>${PROBLEMAS[p.problema]||p.problema}</span>
+                    ${similares.length > 0 ? `<br><span style="font-size:11px; color:var(--primario);">💡 ${similares.length} sugerencia(s)</span>` : ''}
+                </td>
+                <td style="${esJurado ? 'color:#c0392b; font-weight:600;' : ''}"
+                    title="${sanitizar(c.nombre_jurado)}">
+                    ${sanitizar(c.nombre_jurado)}
+                </td>
+                <td style="${esTipo ? 'color:#c0392b; font-weight:600;' : ''}"
+                    title="${sanitizar(c.tipo_rodeo)}">
+                    ${sanitizar(c.tipo_rodeo)}
+                </td>
+                <td title="${sanitizar(c.club)}">${sanitizar(c.club)}</td>
+                <td style="font-size:13px;">${sanitizar(c.fecha)}</td>
                 <td>
                     <div class="flex gap-8">
-                        <button class="btn btn-pequeño btn-success" onclick="abrirResolver('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">Resolver</button>
-                        <button class="btn btn-pequeño btn-peligro" onclick="descartar('${p.id}')">Descartar</button>
+                        <button class="btn btn-pequeño btn-success"
+                            onclick="abrirResolver('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">
+                            ✏️ Resolver
+                        </button>
+                        <button class="btn btn-pequeño btn-peligro"
+                            onclick="descartar('${p.id}')">✕</button>
                     </div>
                 </td>
             </tr>`;
@@ -276,49 +322,199 @@ function renderPendientes(pends, total) {
 
 async function abrirResolver(id, pendiente) {
     const d = pendiente.datos_originales || {};
-    // Cargar usuarios y tipos de rodeo
-    const [usuarios, tipos] = await Promise.all([
-        api.get('/admin/usuarios?tipo=jurado&activo=true&limit=200'),
-        api.get('/admin/rodeos/tipos/lista?activo=true')
-    ]);
+    const c = getCampos(d);
+    const similares = d._similares || [];
+    const prob = pendiente.problema;
+
+    // Cargar tipos de rodeo (siempre necesario)
+    const tipos = await api.get('/admin/rodeos/tipos/lista?activo=true');
+
+    // Color del campo problemático
+    const estiloProblema = 'background:#fff3cd; border-left:4px solid #f39c12; padding:8px 12px; border-radius:4px;';
+    const estiloNormal   = 'background:var(--fondo); padding:8px 12px; border-radius:4px;';
+
+    // Sección de datos originales del Excel
+    const datosExcel = `
+        <div style="background:#f8f9fa; border:1px solid #dee2e6; border-radius:6px; padding:14px; margin-bottom:16px;">
+            <div style="font-size:12px; color:var(--gris); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">
+                📋 Datos originales del Excel
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:13px;">
+                <div style="${prob==='jurado_no_encontrado' ? estiloProblema : estiloNormal}">
+                    <div style="font-size:11px; color:var(--gris); margin-bottom:2px;">Nombre Jurado</div>
+                    <strong>${sanitizar(c.nombre_jurado)}</strong>
+                    ${prob==='jurado_no_encontrado' ? ' <span style="color:#c0392b;">⚠ No encontrado</span>' : ''}
+                </div>
+                <div style="${prob==='tipo_rodeo_no_encontrado' ? estiloProblema : estiloNormal}">
+                    <div style="font-size:11px; color:var(--gris); margin-bottom:2px;">Tipo Rodeo</div>
+                    <strong>${sanitizar(c.tipo_rodeo)}</strong>
+                    ${prob==='tipo_rodeo_no_encontrado' ? ' <span style="color:#c0392b;">⚠ No encontrado</span>' : ''}
+                </div>
+                <div style="${estiloNormal}">
+                    <div style="font-size:11px; color:var(--gris); margin-bottom:2px;">Club</div>
+                    <strong>${sanitizar(c.club)}</strong>
+                </div>
+                <div style="${prob==='datos_incompletos' && !c.fecha ? estiloProblema : estiloNormal}">
+                    <div style="font-size:11px; color:var(--gris); margin-bottom:2px;">Fecha</div>
+                    <strong>${sanitizar(c.fecha)}</strong>
+                    ${c.fecha_norm ? ` <span style="color:var(--gris); font-size:11px;">(→ ${c.fecha_norm})</span>` : ''}
+                </div>
+                <div style="${estiloNormal}; grid-column:1/-1;">
+                    <div style="font-size:11px; color:var(--gris); margin-bottom:2px;">Asociación</div>
+                    <strong>${sanitizar(c.asociacion)}</strong>
+                </div>
+                ${c.motivo ? `<div style="background:#ffeaa7; padding:6px 10px; border-radius:4px; font-size:12px; grid-column:1/-1;">
+                    ℹ️ ${sanitizar(c.motivo)}
+                </div>` : ''}
+            </div>
+        </div>`;
+
+    // Sección de sugerencias (solo si hay)
+    let seccionSugerencias = '';
+    if (similares.length > 0 && (prob === 'jurado_no_encontrado' || prob === 'tipo_rodeo_no_encontrado')) {
+        const tituloSug = prob === 'jurado_no_encontrado' ? 'Jurados similares encontrados' : 'Tipos de rodeo similares';
+        seccionSugerencias = `
+            <div style="margin-bottom:16px;">
+                <div style="font-size:12px; color:var(--gris); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+                    💡 ${tituloSug}
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                    ${similares.map(s => {
+                        const nombre = s.nombre || s;
+                        const cat = s.categoria ? ` (Cat. ${s.categoria})` : s.duracion_dias ? ` (${s.duracion_dias}d)` : '';
+                        const idVal = s.id || '';
+                        const campo = prob === 'jurado_no_encontrado' ? 'usuario_pagado_id' : 'tipo_rodeo_id';
+                        return `<button type="button"
+                            style="background:#e8f4fd; border:1px solid #3498db; color:#2980b9; border-radius:4px; padding:4px 10px; font-size:12px; cursor:pointer;"
+                            onclick="seleccionarSugerencia('${campo}', '${idVal}', \`${nombre.replace(/`/g,'\\`')}${cat}\`)">
+                            ${sanitizar(nombre)}${sanitizar(cat)}
+                        </button>`;
+                    }).join('')}
+                </div>
+            </div>`;
+    }
+
+    // Formulario de corrección
+    const busquedaJurado = prob === 'jurado_no_encontrado' ? `
+        <div style="margin-bottom:6px;">
+            <input type="text" id="buscar-jurado" class="form-control" placeholder="Buscar jurado por nombre..."
+                style="font-size:13px;" oninput="buscarJurado(this.value)">
+        </div>` : '';
 
     document.getElementById('modal-body').innerHTML = `
-        <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
-            <strong>Problema:</strong> ${PROBLEMAS[pendiente.problema]||pendiente.problema}
+        <div class="alerta alerta-advertencia" style="margin-bottom:14px; padding:10px 14px;">
+            <strong>Problema detectado:</strong> ${PROBLEMAS[prob]||prob}
+            &nbsp;·&nbsp; <span style="font-size:12px; color:var(--gris);">Fila ${d._fila||'?'} del Excel</span>
         </div>
-        <div class="form-fila" style="margin-bottom:16px;">
-            <div><strong>Club:</strong> ${sanitizar(d.Club||d.club||'—')}</div>
-            <div><strong>Fecha:</strong> ${sanitizar(String(d.Fecha||d.fecha||'—'))}</div>
-            <div><strong>Jurado Excel:</strong> ${sanitizar(d['Nombre Jurado']||d.nombre_jurado||'—')}</div>
-            <div><strong>Tipo Excel:</strong> ${sanitizar(d['Tipo Rodeo']||d.tipo_rodeo||'—')}</div>
+        ${datosExcel}
+        ${seccionSugerencias}
+        <div style="font-size:12px; color:var(--gris); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">
+            ✏️ Seleccionar valores correctos
         </div>
         <form onsubmit="insertar(event, '${id}')">
             <div class="form-fila">
                 <div class="form-grupo">
-                    <label class="form-label">Jurado correcto</label>
-                    <select name="usuario_pagado_id" class="form-control" required>
+                    <label class="form-label">
+                        Jurado correcto
+                        ${prob==='jurado_no_encontrado' ? '<span style="color:#c0392b;"> *</span>' : ''}
+                    </label>
+                    ${busquedaJurado}
+                    <select name="usuario_pagado_id" id="sel-jurado" class="form-control" required>
                         <option value="">Seleccione jurado...</option>
-                        ${(usuarios.data||[]).map(u => `<option value="${u.id}">${sanitizar(u.nombre_completo)} (${u.categoria||'—'})</option>`).join('')}
                     </select>
+                    <div id="resultado-busqueda" style="font-size:11px; color:var(--gris); margin-top:3px;"></div>
                 </div>
                 <div class="form-grupo">
-                    <label class="form-label">Tipo de rodeo correcto</label>
-                    <select name="tipo_rodeo_id" class="form-control" required>
+                    <label class="form-label">
+                        Tipo de rodeo correcto
+                        ${prob==='tipo_rodeo_no_encontrado' ? '<span style="color:#c0392b;"> *</span>' : ''}
+                    </label>
+                    <select name="tipo_rodeo_id" id="sel-tipo" class="form-control" required>
                         <option value="">Seleccione tipo...</option>
-                        ${(tipos||[]).map(t => `<option value="${t.id}">${sanitizar(t.nombre)} (${t.duracion_dias}d)</option>`).join('')}
+                        ${(tipos||[]).map(t => {
+                            const sel = c.tipo_rodeo_id === t.id ? ' selected' : '';
+                            return `<option value="${t.id}"${sel}>${sanitizar(t.nombre)} (${t.duracion_dias}d)</option>`;
+                        }).join('')}
                     </select>
                 </div>
             </div>
             <div class="form-grupo">
-                <label class="form-label">Fecha (si es incorrecta)</label>
-                <input type="date" name="fecha" class="form-control">
+                <label class="form-label">
+                    Fecha
+                    ${c.fecha_norm ? `<span style="color:var(--gris); font-weight:normal;"> — detectada: ${c.fecha_norm}</span>` : ''}
+                </label>
+                <input type="date" name="fecha" class="form-control" value="${c.fecha_norm||''}">
             </div>
             <div class="form-acciones">
-                <button type="submit" class="btn btn-primario">Insertar correctamente</button>
+                <button type="submit" class="btn btn-primario">✅ Insertar correctamente</button>
                 <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
             </div>
         </form>`;
+
+    // Pre-cargar lista inicial de jurados (los primeros 100)
+    cargarJuradosIniciales();
     document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+// Carga la lista inicial de jurados en el select
+async function cargarJuradosIniciales() {
+    const sel = document.getElementById('sel-jurado');
+    if (!sel) return;
+    try {
+        const data = await api.get('/admin/usuarios?tipo=jurado&activo=true&limit=200');
+        (data.data || []).forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.id;
+            opt.textContent = `${u.nombre_completo} (Cat. ${u.categoria||'—'})`;
+            sel.appendChild(opt);
+        });
+    } catch(e) {}
+}
+
+// Búsqueda en tiempo real de jurados
+let _buscarTimeout = null;
+async function buscarJurado(q) {
+    clearTimeout(_buscarTimeout);
+    const sel = document.getElementById('sel-jurado');
+    const info = document.getElementById('resultado-busqueda');
+    if (!sel) return;
+    if (q.trim().length < 2) {
+        info.textContent = '';
+        return;
+    }
+    _buscarTimeout = setTimeout(async () => {
+        try {
+            const data = await api.get('/admin/asignaciones/pendientes/sugerencias?q=' + encodeURIComponent(q));
+            const jurados = data.data || [];
+            // Limpiar y repoblar select
+            sel.innerHTML = '<option value="">Seleccione jurado...</option>';
+            jurados.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = `${u.nombre_completo} (Cat. ${u.categoria||'—'})`;
+                sel.appendChild(opt);
+            });
+            info.textContent = jurados.length > 0 ? `${jurados.length} resultado(s)` : 'Sin coincidencias';
+        } catch(e) {}
+    }, 300);
+}
+
+// Pre-selecciona un valor en el formulario desde una sugerencia
+function seleccionarSugerencia(campo, id, etiqueta) {
+    const el = document.getElementById(campo === 'usuario_pagado_id' ? 'sel-jurado' : 'sel-tipo');
+    if (!el) return;
+    // Buscar si la opción ya existe
+    let opt = Array.from(el.options).find(o => o.value === id);
+    if (!opt) {
+        opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = etiqueta;
+        el.appendChild(opt);
+    }
+    el.value = id;
+    // Feedback visual
+    el.style.borderColor = '#27ae60';
+    setTimeout(() => { el.style.borderColor = ''; }, 1500);
 }
 
 async function insertar(e, id) {

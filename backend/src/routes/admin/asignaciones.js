@@ -224,6 +224,25 @@ router.delete('/:id', async (req, res) => {
     res.json({ mensaje: 'Asignación anulada' });
 });
 
+// GET /api/admin/asignaciones/pendientes/sugerencias?q=texto
+// Búsqueda en tiempo real de jurados por nombre (para el modal de resolver)
+router.get('/pendientes/sugerencias', async (req, res) => {
+    const { q = '' } = req.query;
+    if (q.trim().length < 2) return res.json({ data: [] });
+
+    const { data, error } = await supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, codigo_interno, categoria, tipo_persona')
+        .eq('activo', true)
+        .eq('tipo_persona', 'jurado')
+        .ilike('nombre_completo', `%${q.trim()}%`)
+        .order('nombre_completo')
+        .limit(8);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ data: data || [] });
+});
+
 // GET /api/admin/asignaciones/pendientes
 router.get('/pendientes/lista', async (req, res) => {
     const { page = 1, limit = 50, problema } = req.query;

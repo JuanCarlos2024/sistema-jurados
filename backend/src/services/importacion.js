@@ -137,6 +137,38 @@ function extraerCampos(filaRaw) {
     };
 }
 
+// ─── Helper: objeto _campos limpio para pendientes ────────────
+/**
+ * Construye el objeto _campos con valores extraídos y limpios
+ * para guardar en datos_originales de cada registro pendiente.
+ */
+function buildCampos(campos, extras = {}) {
+    return {
+        club:          campos.club || '',
+        asociacion:    campos.asociacion || '',
+        fecha_original: campos.fecha !== null && campos.fecha !== undefined ? String(campos.fecha) : '',
+        tipo_rodeo:    campos.tipo_rodeo || '',
+        nombre_jurado: campos.nombre_jurado || '',
+        ...extras
+    };
+}
+
+/**
+ * Busca jurados similares por coincidencia de palabras.
+ * Devuelve hasta maxRes objetos { id, nombre, categoria }.
+ */
+function buscarJuradosSimilares(nombreNorm, mapaJurados, maxRes = 5) {
+    const palabras = nombreNorm.split(' ').filter(p => p.length >= 4);
+    const resultados = [];
+    for (const [k, v] of Object.entries(mapaJurados)) {
+        if (palabras.some(p => k.includes(p))) {
+            resultados.push({ id: v.id, nombre: v.nombre_completo, categoria: v.categoria });
+            if (resultados.length >= maxRes) break;
+        }
+    }
+    return resultados;
+}
+
 // ─── Proceso principal ────────────────────────────────────────
 /**
  * Procesa un buffer de Excel e inserta rodeos y asignaciones.
@@ -212,8 +244,14 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         if (!campos.fecha || !campos.tipo_rodeo || !campos.nombre_jurado) {
             pendientesBatch.push({
                 importacion_id:   impId,
-                datos_originales: { ...filasRaw[i], _fila: numFila, _campos_extraidos: campos },
-                problema:         'datos_incompletos'
+                datos_originales: {
+                    ...filasRaw[i],
+                    _fila:   numFila,
+                    _campos: buildCampos(campos, {
+                        _motivo: `Falta: ${[!campos.fecha&&'fecha', !campos.tipo_rodeo&&'tipo rodeo', !campos.nombre_jurado&&'nombre jurado'].filter(Boolean).join(', ')}`
+                    })
+                },
+                problema: 'datos_incompletos'
             });
             pendientes++;
             continue;
@@ -224,8 +262,12 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         if (!fechaNorm) {
             pendientesBatch.push({
                 importacion_id:   impId,
-                datos_originales: { ...filasRaw[i], _fila: numFila, _fecha_original: campos.fecha },
-                problema:         'datos_incompletos'
+                datos_originales: {
+                    ...filasRaw[i],
+                    _fila:   numFila,
+                    _campos: buildCampos(campos, { _motivo: `Fecha inválida: "${campos.fecha}"` })
+                },
+                problema: 'datos_incompletos'
             });
             pendientes++;
             continue;
@@ -236,20 +278,23 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         const tipoEncontrado = mapaTipos[tipoKey];
 
         if (!tipoEncontrado) {
-            // Buscar similares para el mensaje de diagnóstico
-            const similares = Object.keys(mapaTipos)
+            // Buscar tipos similares para sugerencias (con id)
+            const similaresTipos = Object.keys(mapaTipos)
                 .filter(k => k.includes(tipoKey.slice(0, 8)) || tipoKey.includes(k.slice(0, 8)))
-                .slice(0, 3)
-                .map(k => (tiposDB || []).find(t => normalizar(t.nombre) === k)?.nombre);
+                .slice(0, 5)
+                .map(k => {
+                    const t = (tiposDB || []).find(t => normalizar(t.nombre) === k);
+                    return t ? { id: t.id, nombre: t.nombre, duracion_dias: t.duracion_dias } : null;
+                })
+                .filter(Boolean);
 
             pendientesBatch.push({
                 importacion_id:   impId,
                 datos_originales: {
                     ...filasRaw[i],
-                    _fila:           numFila,
-                    _tipo_buscado:   campos.tipo_rodeo,
-                    _tipo_norm:      tipoKey,
-                    _similares:      similares.filter(Boolean)
+                    _fila:      numFila,
+                    _similares: similaresTipos,
+                    _campos:    buildCampos(campos, { fecha_norm: fechaNorm })
                 },
                 problema: 'tipo_rodeo_no_encontrado'
             });
@@ -262,13 +307,15 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         const juradoEncontrado = mapaJurados[juradoKey];
 
         if (!juradoEncontrado) {
+            const similaResJurados = buscarJuradosSimilares(juradoKey, mapaJurados, 5);
+
             pendientesBatch.push({
                 importacion_id:   impId,
                 datos_originales: {
                     ...filasRaw[i],
-                    _fila:           numFila,
-                    _nombre_buscado: campos.nombre_jurado,
-                    _nombre_norm:    juradoKey
+                    _fila:      numFila,
+                    _similares: similaResJurados,
+                    _campos:    buildCampos(campos, { fecha_norm: fechaNorm, tipo_rodeo_id: tipoEncontrado.id })
                 },
                 problema: 'jurado_no_encontrado'
             });
@@ -285,8 +332,12 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         if (dupEnLote) {
             pendientesBatch.push({
                 importacion_id:   impId,
-                datos_originales: { ...filasRaw[i], _fila: numFila, _dup_key: dupKey },
-                problema:         'duplicado'
+                datos_originales: {
+                    ...filasRaw[i],
+                    _fila:   numFila,
+                    _campos: buildCampos(campos, { fecha_norm: fechaNorm, _motivo: 'Duplicado en el mismo archivo' })
+                },
+                problema: 'duplicado'
             });
             duplicadas++;
             continue;
@@ -317,8 +368,12 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         if (esDuplicadoDB) {
             pendientesBatch.push({
                 importacion_id:   impId,
-                datos_originales: { ...filasRaw[i], _fila: numFila, _motivo: 'ya existe en DB' },
-                problema:         'duplicado'
+                datos_originales: {
+                    ...filasRaw[i],
+                    _fila:   numFila,
+                    _campos: buildCampos(campos, { fecha_norm: fechaNorm, _motivo: 'Ya existe en la base de datos' })
+                },
+                problema: 'duplicado'
             });
             duplicadas++;
             continue;
@@ -336,8 +391,12 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         } catch (calcErr) {
             pendientesBatch.push({
                 importacion_id:   impId,
-                datos_originales: { ...filasRaw[i], _fila: numFila, _error_calculo: calcErr.message },
-                problema:         'datos_incompletos'
+                datos_originales: {
+                    ...filasRaw[i],
+                    _fila:   numFila,
+                    _campos: buildCampos(campos, { fecha_norm: fechaNorm, _motivo: calcErr.message })
+                },
+                problema: 'datos_incompletos'
             });
             errores++;
             continue;
