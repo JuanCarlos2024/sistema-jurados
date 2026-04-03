@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reportes — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .tabs { display:flex; gap:4px; border-bottom:2px solid var(--gris-borde); margin-bottom:20px; flex-wrap:wrap; }
+        .tab  { padding:8px 18px; border:none; background:none; cursor:pointer; font-size:14px; color:var(--gris); border-bottom:3px solid transparent; margin-bottom:-2px; }
+        .tab.activo { color:var(--primario); border-bottom-color:var(--primario); font-weight:600; }
+        .panel { display:none; } .panel.activo { display:block; }
+        .filtros-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px; margin-bottom:20px; }
+        .stat-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:12px; margin-bottom:20px; }
+        .stat-card { background:var(--fondo); border:1px solid var(--gris-borde); border-radius:8px; padding:14px 16px; text-align:center; }
+        .stat-card .val { font-size:22px; font-weight:700; color:var(--primario); }
+        .stat-card .lbl { font-size:12px; color:var(--gris); margin-top:4px; }
+        .export-bar { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center; }
+        .export-bar strong { font-size:13px; color:var(--gris); margin-right:4px; }
+        table td.monto { text-align:right; font-variant-numeric:tabular-nums; }
+        table th.monto { text-align:right; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item activo"><span class="icon">📈</span> Reportes</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Reportes</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Filtros globales -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-titulo" style="margin-bottom:12px;">🔍 Filtros globales</div>
+                <div class="filtros-grid">
+                    <div class="form-grupo">
+                        <label class="form-label">Mes</label>
+                        <select id="g-mes" class="form-control">
+                            <option value="">Todos</option>
+                            <option value="1">Enero</option><option value="2">Febrero</option>
+                            <option value="3">Marzo</option><option value="4">Abril</option>
+                            <option value="5">Mayo</option><option value="6">Junio</option>
+                            <option value="7">Julio</option><option value="8">Agosto</option>
+                            <option value="9">Septiembre</option><option value="10">Octubre</option>
+                            <option value="11">Noviembre</option><option value="12">Diciembre</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Año</label>
+                        <select id="g-año" class="form-control"><!-- Poblado por JS --></select>
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Desde</label>
+                        <input type="date" id="g-desde" class="form-control">
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Hasta</label>
+                        <input type="date" id="g-hasta" class="form-control">
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Jurado</label>
+                        <select id="g-jurado" class="form-control">
+                            <option value="">Todos</option>
+                            <!-- Poblado por JS -->
+                        </select>
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Categoría</label>
+                        <select id="g-cat" class="form-control">
+                            <option value="">Todas</option>
+                            <option value="A">A</option>
+                            <option value="B">B</option>
+                            <option value="C">C</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Asociación</label>
+                        <input type="text" id="g-asoc" class="form-control" placeholder="Filtrar...">
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Club</label>
+                        <input type="text" id="g-club" class="form-control" placeholder="Filtrar...">
+                    </div>
+                </div>
+                <div class="flex gap-8">
+                    <button class="btn btn-primario" onclick="aplicarFiltros()">Generar reporte</button>
+                    <button class="btn btn-secundario" onclick="limpiarFiltros()">Limpiar filtros</button>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab activo" onclick="cambiarTab('resumen')">Resumen por jurado</button>
+                <button class="tab" onclick="cambiarTab('detalle')">Detalle por jurado</button>
+                <button class="tab" onclick="cambiarTab('asociacion')">Por asociación</button>
+                <button class="tab" onclick="cambiarTab('club')">Por club</button>
+                <button class="tab" onclick="cambiarTab('tipo')">Por tipo de rodeo</button>
+            </div>
+
+            <!-- ════ PANEL: Resumen por jurado ═══════════════════════════ -->
+            <div id="panel-resumen" class="panel activo">
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Resumen mensual por jurado</span>
+                        <div class="export-bar">
+                            <strong>Exportar:</strong>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('resumen-jurados','xlsx')">Excel</button>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('resumen-jurados','csv')">CSV</button>
+                        </div>
+                    </div>
+                    <div id="stats-resumen" class="stat-grid" style="display:none;"></div>
+                    <div id="tabla-resumen" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════ PANEL: Detalle por jurado ══════════════════════════ -->
+            <div id="panel-detalle" class="panel">
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Detalle rodeo a rodeo</span>
+                        <div class="export-bar">
+                            <strong>Exportar:</strong>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('detalle-jurado','xlsx')">Excel</button>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('detalle-jurado','csv')">CSV</button>
+                        </div>
+                    </div>
+                    <div class="alerta alerta-info" style="margin-bottom:12px; font-size:13px;">
+                        Seleccione un jurado en los filtros para ver su detalle. Sin jurado seleccionado muestra todos.
+                    </div>
+                    <div id="stats-detalle" class="stat-grid" style="display:none;"></div>
+                    <div id="tabla-detalle" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════ PANEL: Por asociación ══════════════════════════════ -->
+            <div id="panel-asociacion" class="panel">
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Reporte por asociación</span>
+                        <div class="export-bar">
+                            <strong>Exportar:</strong>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','xlsx','asociacion')">Excel</button>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','csv','asociacion')">CSV</button>
+                        </div>
+                    </div>
+                    <div id="tabla-asociacion" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════ PANEL: Por club ═════════════════════════════════════ -->
+            <div id="panel-club" class="panel">
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Reporte por club</span>
+                        <div class="export-bar">
+                            <strong>Exportar:</strong>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','xlsx','club')">Excel</button>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','csv','club')">CSV</button>
+                        </div>
+                    </div>
+                    <div id="tabla-club" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════ PANEL: Por tipo de rodeo ════════════════════════════ -->
+            <div id="panel-tipo" class="panel">
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Reporte por tipo de rodeo</span>
+                        <div class="export-bar">
+                            <strong>Exportar:</strong>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','xlsx','tipo-rodeo')">Excel</button>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','csv','tipo-rodeo')">CSV</button>
+                        </div>
+                    </div>
+                    <div id="tabla-tipo" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /page-body -->
+    </div><!-- /main-content -->
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let tabActiva = 'resumen';
+let ultimosFiltros = {};
+
+// ── Inicializar filtros ──────────────────────────────────────
+function poblarAnios() {
+    const sel = document.getElementById('g-año');
+    const hoy = new Date().getFullYear();
+    sel.innerHTML = '<option value="">Todos</option>';
+    for (let y = hoy; y >= hoy - 4; y--) {
+        const o = document.createElement('option');
+        o.value = String(y); o.textContent = String(y);
+        if (y === hoy) o.selected = true;
+        sel.appendChild(o);
+    }
+}
+
+async function poblarJurados() {
+    try {
+        const data = await api.get('/admin/usuarios?tipo=jurado&activo=true&limit=200');
+        const sel = document.getElementById('g-jurado');
+        (data.data || []).forEach(u => {
+            const o = document.createElement('option');
+            o.value = u.id;
+            o.textContent = `${u.nombre_completo} (${u.categoria||'—'})`;
+            sel.appendChild(o);
+        });
+    } catch(e) {}
+}
+
+function getFiltros() {
+    return {
+        año:              document.getElementById('g-año').value,
+        mes:              document.getElementById('g-mes').value,
+        fechaDesde:       document.getElementById('g-desde').value,
+        fechaHasta:       document.getElementById('g-hasta').value,
+        usuario_pagado_id: document.getElementById('g-jurado').value,
+        categoria:        document.getElementById('g-cat').value,
+        asociacion:       document.getElementById('g-asoc').value.trim(),
+        club:             document.getElementById('g-club').value.trim(),
+    };
+}
+
+function limpiarFiltros() {
+    document.getElementById('g-año').value = new Date().getFullYear();
+    document.getElementById('g-mes').value = '';
+    document.getElementById('g-desde').value = '';
+    document.getElementById('g-hasta').value = '';
+    document.getElementById('g-jurado').value = '';
+    document.getElementById('g-cat').value = '';
+    document.getElementById('g-asoc').value = '';
+    document.getElementById('g-club').value = '';
+}
+
+// ── Tabs ─────────────────────────────────────────────────────
+function cambiarTab(tab) {
+    tabActiva = tab;
+    document.querySelectorAll('.tab').forEach((el, i) => {
+        const tabs = ['resumen','detalle','asociacion','club','tipo'];
+        el.classList.toggle('activo', tabs[i] === tab);
+    });
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('activo'));
+    document.getElementById('panel-' + tab).classList.add('activo');
+}
+
+// ── Aplicar filtros ───────────────────────────────────────────
+async function aplicarFiltros() {
+    ultimosFiltros = getFiltros();
+    if      (tabActiva === 'resumen')    cargarResumen();
+    else if (tabActiva === 'detalle')    cargarDetalle();
+    else if (tabActiva === 'asociacion') cargarAgregado('por-asociacion', 'tabla-asociacion', renderTablaAsociacion);
+    else if (tabActiva === 'club')       cargarAgregado('por-club', 'tabla-club', renderTablaClub);
+    else if (tabActiva === 'tipo')       cargarAgregado('por-tipo-rodeo', 'tabla-tipo', renderTablaTipo);
+}
+
+// ── Resumen por jurado ────────────────────────────────────────
+async function cargarResumen() {
+    const wrap = document.getElementById('tabla-resumen');
+    mostrarSpinner(wrap);
+    document.getElementById('stats-resumen').style.display = 'none';
+    try {
+        const data = await api.get('/admin/reportes/resumen-mensual?' + toQueryString(ultimosFiltros));
+        renderResumen(data);
+    } catch(err) { wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function renderResumen(data) {
+    const wrap = document.getElementById('tabla-resumen');
+    const stats = document.getElementById('stats-resumen');
+    const t = data.totales_global || {};
+
+    if (!data.data || data.data.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin datos para los filtros seleccionados</p>';
+        stats.style.display = 'none';
+        return;
+    }
+
+    stats.style.display = 'grid';
+    stats.innerHTML = `
+        <div class="stat-card"><div class="val">${data.data.length}</div><div class="lbl">Jurados</div></div>
+        <div class="stat-card"><div class="val">${t.cant_rodeos||0}</div><div class="lbl">Asignaciones</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.total_pago_base||0)}</div><div class="lbl">Total pago base</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.total_bono_aprobado||0)}</div><div class="lbl">Total bonos</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Total bruto</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Total líquido</div></div>`;
+
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Código</th><th>Nombre</th><th>RUT</th><th>Cat.</th>
+            <th style="text-align:center;">Rodeos</th>
+            <th class="monto">Pago base</th><th class="monto">Bonos</th>
+            <th class="monto">Bruto</th><th class="monto">Retención</th><th class="monto">Líquido</th>
+            <th>Detalle</th>
+        </tr></thead>
+        <tbody>
+        ${data.data.map(j => `<tr>
+            <td style="font-size:12px;">${sanitizar(j.codigo_interno)}</td>
+            <td><strong>${sanitizar(j.nombre_completo)}</strong></td>
+            <td style="font-size:12px;">${sanitizar(j.rut||'—')}</td>
+            <td><span class="badge badge-${(j.categoria||'').toLowerCase()}">${j.categoria||'—'}</span></td>
+            <td style="text-align:center;">${j.cant_rodeos}</td>
+            <td class="monto">${formatCLP(j.total_pago_base)}</td>
+            <td class="monto">${formatCLP(j.total_bono_aprobado)}</td>
+            <td class="monto"><strong>${formatCLP(j.bruto)}</strong></td>
+            <td class="monto" style="color:#c0392b;">-${formatCLP(j.retencion_monto)}</td>
+            <td class="monto monto-positivo"><strong>${formatCLP(j.liquido)}</strong></td>
+            <td><button class="btn btn-pequeño btn-outline" onclick="verDetalleJurado('${j.id}','${sanitizar(j.nombre_completo)}')">Ver</button></td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+function verDetalleJurado(id, nombre) {
+    document.getElementById('g-jurado').value = id;
+    ultimosFiltros = getFiltros();
+    cambiarTab('detalle');
+    cargarDetalle();
+}
+
+// ── Detalle por jurado ────────────────────────────────────────
+async function cargarDetalle() {
+    const wrap = document.getElementById('tabla-detalle');
+    mostrarSpinner(wrap);
+    document.getElementById('stats-detalle').style.display = 'none';
+    try {
+        const data = await api.get('/admin/reportes/detalle-jurado?' + toQueryString(ultimosFiltros));
+        renderDetalle(data);
+    } catch(err) { wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function renderDetalle(data) {
+    const wrap  = document.getElementById('tabla-detalle');
+    const stats = document.getElementById('stats-detalle');
+
+    if (!data.data || data.data.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin datos para los filtros seleccionados</p>';
+        stats.style.display = 'none';
+        return;
+    }
+
+    const t = data.totales || {};
+    const j = data.jurado;
+
+    stats.style.display = 'grid';
+    stats.innerHTML = `
+        ${j ? `<div class="stat-card" style="grid-column:1/-1; text-align:left; background:#e8f4fd;">
+            <strong>${sanitizar(j.nombre_completo)}</strong>
+            &nbsp;&nbsp;${sanitizar(j.codigo_interno)} · Cat. ${j.categoria||'—'} · RUT: ${sanitizar(j.rut||'—')}
+        </div>` : ''}
+        <div class="stat-card"><div class="val">${data.data.length}</div><div class="lbl">Rodeos</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.pago_base||0)}</div><div class="lbl">Pago base</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.bono_aprobado||0)}</div><div class="lbl">Bonos</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Bruto</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Líquido</div></div>`;
+
+    const ESTADOS_BONO = { aprobado:'✅ Aprobado', pendiente:'⏳ Pendiente', rechazado:'❌ Rechazado', modificado:'✏️ Modificado' };
+
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo Rodeo</th>
+            <th style="text-align:center;">Días</th><th style="text-align:center;">Cat.</th>
+            <th class="monto">Pago base</th><th class="monto">Bono</th>
+            <th>Estado bono</th><th class="monto">Bruto</th><th class="monto">Líquido</th>
+        </tr></thead>
+        <tbody>
+        ${data.data.map(f => `<tr>
+            <td style="white-space:nowrap;">${formatFecha(f.fecha)}</td>
+            <td><strong>${sanitizar(f.club||'—')}</strong></td>
+            <td>${sanitizar(f.asociacion||'—')}</td>
+            <td>${sanitizar(f.tipo_rodeo||'—')}</td>
+            <td style="text-align:center;">${f.duracion_dias}</td>
+            <td style="text-align:center;"><span class="badge badge-${(f.categoria||'').toLowerCase()}">${f.categoria||'—'}</span></td>
+            <td class="monto">${formatCLP(f.pago_base)}</td>
+            <td class="monto">${f.bono_aprobado ? formatCLP(f.bono_aprobado) : '—'}</td>
+            <td style="font-size:12px;">${ESTADOS_BONO[f.estado_bono]||'—'}</td>
+            <td class="monto"><strong>${formatCLP(f.bruto)}</strong></td>
+            <td class="monto monto-positivo">${formatCLP(f.liquido)}</td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+// ── Reportes agregados ────────────────────────────────────────
+async function cargarAgregado(endpoint, wrapId, renderFn) {
+    const wrap = document.getElementById(wrapId);
+    mostrarSpinner(wrap);
+    try {
+        const data = await api.get('/admin/reportes/' + endpoint + '?' + toQueryString(ultimosFiltros));
+        renderFn(data.data || [], wrap);
+    } catch(err) { wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function renderTablaAsociacion(data, wrap) {
+    if (!data.length) { wrap.innerHTML = '<p class="tabla-vacia">Sin datos</p>'; return; }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Asociación</th><th style="text-align:center;">Rodeos</th>
+            <th style="text-align:center;">Asignaciones</th>
+            <th class="monto">Total pago base</th><th class="monto">Total bonos</th><th class="monto">Total bruto</th>
+        </tr></thead>
+        <tbody>
+        ${data.map(d => `<tr>
+            <td><strong>${sanitizar(d.asociacion)}</strong></td>
+            <td style="text-align:center;">${d.cant_rodeos}</td>
+            <td style="text-align:center;">${d.cant_jurados}</td>
+            <td class="monto">${formatCLP(d.total_pago_base)}</td>
+            <td class="monto">${formatCLP(d.total_bono_aprobado)}</td>
+            <td class="monto"><strong>${formatCLP(d.total_bruto)}</strong></td>
+        </tr>`).join('')}
+        </tbody>
+    </table>
+    <div style="padding:8px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-borde);">
+        Total bruto global: <strong>${formatCLP(data.reduce((s,d)=>s+d.total_bruto,0))}</strong>
+    </div>`;
+}
+
+function renderTablaClub(data, wrap) {
+    if (!data.length) { wrap.innerHTML = '<p class="tabla-vacia">Sin datos</p>'; return; }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Club</th><th>Asociación</th><th style="text-align:center;">Rodeos</th>
+            <th style="text-align:center;">Asignaciones</th>
+            <th class="monto">Total pago base</th><th class="monto">Total bruto</th>
+        </tr></thead>
+        <tbody>
+        ${data.map(d => `<tr>
+            <td><strong>${sanitizar(d.club)}</strong></td>
+            <td>${sanitizar(d.asociacion)}</td>
+            <td style="text-align:center;">${d.cant_rodeos}</td>
+            <td style="text-align:center;">${d.cant_jurados}</td>
+            <td class="monto">${formatCLP(d.total_pago_base)}</td>
+            <td class="monto"><strong>${formatCLP(d.total_bruto)}</strong></td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+function renderTablaTipo(data, wrap) {
+    if (!data.length) { wrap.innerHTML = '<p class="tabla-vacia">Sin datos</p>'; return; }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Tipo de Rodeo</th><th style="text-align:center;">Veces realizado</th>
+            <th style="text-align:center;">Jurados asignados</th>
+            <th class="monto">Total pago base</th><th class="monto">Total bonos</th><th class="monto">Total bruto</th>
+        </tr></thead>
+        <tbody>
+        ${data.map(d => `<tr>
+            <td><strong>${sanitizar(d.tipo_rodeo)}</strong></td>
+            <td style="text-align:center;">${d.cant_rodeos}</td>
+            <td style="text-align:center;">${d.cant_jurados}</td>
+            <td class="monto">${formatCLP(d.total_pago_base)}</td>
+            <td class="monto">${formatCLP(d.total_bono_aprobado)}</td>
+            <td class="monto"><strong>${formatCLP(d.total_bruto)}</strong></td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+// ── Exportaciones ─────────────────────────────────────────────
+async function exportar(tipo, formato, subtipo) {
+    const f = { ...ultimosFiltros, formato };
+    if (subtipo) f.tipo = subtipo;
+    const endpoint = subtipo ? 'agregado' : tipo;
+    const qs = toQueryString(f);
+    const nombre = `${endpoint}_${subtipo||''}${f.año?'_'+f.año:''}${f.mes?'_'+f.mes:''}.${formato}`;
+    try {
+        await api.descargar('/admin/exportacion/' + endpoint + '?' + qs, nombre);
+    } catch(err) { mostrarError(err); }
+}
+
+// ── Init ──────────────────────────────────────────────────────
+poblarAnios();
+poblarJurados();
+// Aplicar automáticamente con año actual al cargar
+setTimeout(() => {
+    ultimosFiltros = getFiltros();
+    cargarResumen();
+}, 200);
+</script>
+</body>
+</html>

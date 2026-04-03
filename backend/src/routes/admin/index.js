@@ -12,6 +12,7 @@ router.use('/bonos', require('./bonos'));
 router.use('/configuracion', require('./configuracion'));
 router.use('/importacion', require('./importacion'));
 router.use('/exportacion', require('./exportacion'));
+router.use('/reportes', require('./reportes'));
 router.use('/dashboard', require('./dashboard'));
 
 module.exports = router;

@@ -4,40 +4,63 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
 
-// GET /api/admin/rodeos?mes=&año=&asociacion=&tipo=&estado=&page=&limit=
+// GET /api/admin/rodeos?mes=&año=&asociacion=&tipo=&estado=&buscar=&page=&limit=
 router.get('/', async (req, res) => {
     const { mes, año, asociacion, tipo, estado, buscar, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
+    // Query base: sin join a tipos_rodeo (usamos snapshot tipo_rodeo_nombre)
     let query = supabase
         .from('rodeos')
-        .select(`
-            id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias,
-            origen, estado, observacion, created_at, importacion_id,
-            tipos_rodeo(nombre, duracion_dias)
-        `, { count: 'exact' })
+        .select('id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, origen, estado, created_at', { count: 'exact' })
         .order('fecha', { ascending: false })
         .range(offset, offset + parseInt(limit) - 1);
 
     if (estado) query = query.eq('estado', estado);
-    else query = query.eq('estado', 'activo');
+    else        query = query.eq('estado', 'activo');
 
     if (asociacion) query = query.ilike('asociacion', `%${asociacion}%`);
-    if (tipo) query = query.eq('tipo_rodeo_id', tipo);
-    if (buscar) query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
+    if (tipo)       query = query.eq('tipo_rodeo_id', tipo);
+    if (buscar)     query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
 
-    if (mes && año) {
-        const inicio = `${año}-${mes.padStart(2, '0')}-01`;
-        const fin = new Date(parseInt(año), parseInt(mes), 0).toISOString().split('T')[0];
+    // Filtro de fechas — solo aplicar si los valores son numéricos válidos
+    const añoNum = parseInt(año);
+    const mesNum = parseInt(mes);
+    if (!isNaN(añoNum) && !isNaN(mesNum) && mesNum >= 1 && mesNum <= 12) {
+        const inicio = `${añoNum}-${String(mesNum).padStart(2, '0')}-01`;
+        const fin = new Date(añoNum, mesNum, 0).toISOString().split('T')[0];
         query = query.gte('fecha', inicio).lte('fecha', fin);
-    } else if (año) {
-        query = query.gte('fecha', `${año}-01-01`).lte('fecha', `${año}-12-31`);
+    } else if (!isNaN(añoNum)) {
+        query = query.gte('fecha', `${añoNum}-01-01`).lte('fecha', `${añoNum}-12-31`);
     }
 
-    const { data, error, count } = await query;
+    const { data: rodeos, error, count } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json({ data, total: count, page: parseInt(page), limit: parseInt(limit) });
+    // Agregar totales de asignaciones en una segunda query (evitar N+1)
+    if (rodeos && rodeos.length > 0) {
+        const ids = rodeos.map(r => r.id);
+        const { data: asigs } = await supabase
+            .from('asignaciones')
+            .select('rodeo_id, pago_base_calculado')
+            .in('rodeo_id', ids)
+            .eq('estado', 'activo');
+
+        const statsPorRodeo = {};
+        (asigs || []).forEach(a => {
+            if (!statsPorRodeo[a.rodeo_id]) statsPorRodeo[a.rodeo_id] = { total_asignaciones: 0, total_pago_base: 0 };
+            statsPorRodeo[a.rodeo_id].total_asignaciones++;
+            statsPorRodeo[a.rodeo_id].total_pago_base += (a.pago_base_calculado || 0);
+        });
+
+        rodeos.forEach(r => {
+            const s = statsPorRodeo[r.id] || { total_asignaciones: 0, total_pago_base: 0 };
+            r.total_asignaciones = s.total_asignaciones;
+            r.total_pago_base    = s.total_pago_base;
+        });
+    }
+
+    res.json({ data: rodeos, total: count, page: parseInt(page), limit: parseInt(limit) });
 });
 
 // GET /api/admin/rodeos/:id (con asignaciones)

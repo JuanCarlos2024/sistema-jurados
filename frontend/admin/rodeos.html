@@ -20,6 +20,8 @@
             <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
             <div class="nav-seccion">Pagos</div>
             <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -48,13 +50,24 @@
                     <label class="form-label">Mes</label>
                     <select id="f-mes" class="form-control" onchange="cargar()">
                         <option value="">Todos</option>
-                        ${Array.from({length:12}, (_,i) => `<option value="${i+1}" ${i+1===new Date().getMonth()+1?'selected':''}>${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][i]}</option>`).join('')}
+                        <option value="1">Enero</option>
+                        <option value="2">Febrero</option>
+                        <option value="3">Marzo</option>
+                        <option value="4">Abril</option>
+                        <option value="5">Mayo</option>
+                        <option value="6">Junio</option>
+                        <option value="7">Julio</option>
+                        <option value="8">Agosto</option>
+                        <option value="9">Septiembre</option>
+                        <option value="10">Octubre</option>
+                        <option value="11">Noviembre</option>
+                        <option value="12">Diciembre</option>
                     </select>
                 </div>
                 <div class="form-grupo">
                     <label class="form-label">Año</label>
                     <select id="f-año" class="form-control" onchange="cargar()">
-                        ${[new Date().getFullYear(), new Date().getFullYear()-1].map(y => `<option value="${y}" ${y===new Date().getFullYear()?'selected':''}>${y}</option>`).join('')}
+                        <!-- Poblado por JS en init() -->
                     </select>
                 </div>
                 <div class="form-grupo">
@@ -62,7 +75,7 @@
                     <input type="text" id="f-buscar" class="form-control" placeholder="Club o asociación" oninput="debounce(cargar, 400)()">
                 </div>
                 <button class="btn btn-secundario" onclick="limpiar()">Limpiar</button>
-                <a href="javascript:exportar()" class="btn btn-outline">↓ Exportar</a>
+                <button class="btn btn-outline" onclick="exportar()">↓ Exportar</button>
             </div>
 
             <div class="card">
@@ -100,39 +113,69 @@ let rodeoActual = null;
 let debounceTimer;
 function debounce(fn, d) { return () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(fn, d); }; }
 
+// Poblar selector de año con JS (no con template literals en HTML)
+function poblarAnios() {
+    const sel = document.getElementById('f-año');
+    const añoActual = new Date().getFullYear();
+    sel.innerHTML = '<option value="">Todos</option>';
+    for (let y = añoActual; y >= añoActual - 4; y--) {
+        const opt = document.createElement('option');
+        opt.value = String(y);
+        opt.textContent = String(y);
+        if (y === añoActual) opt.selected = true;
+        sel.appendChild(opt);
+    }
+}
+
 async function init() {
-    const data = await api.get('/admin/rodeos/tipos/lista?activo=true');
-    tiposRodeo = data || [];
+    poblarAnios();
+    try {
+        const data = await api.get('/admin/rodeos/tipos/lista?activo=true');
+        tiposRodeo = data || [];
+    } catch(err) {
+        console.warn('[Rodeos] No se pudieron cargar tipos:', err.message);
+        tiposRodeo = [];
+    }
     cargar();
 }
 
 function limpiar() {
     document.getElementById('f-buscar').value = '';
+    document.getElementById('f-mes').value = '';
+    document.getElementById('f-año').value = '';
     cargar();
 }
 
 async function cargar(pagina = 1) {
     paginaActual = pagina;
-    mostrarSpinner(document.getElementById('tabla-wrap'));
+    const wrap = document.getElementById('tabla-wrap');
+    mostrarSpinner(wrap);
     const p = toQueryString({
-        mes: document.getElementById('f-mes').value,
-        año: document.getElementById('f-año').value,
+        mes:    document.getElementById('f-mes').value,
+        año:    document.getElementById('f-año').value,
         buscar: document.getElementById('f-buscar').value.trim(),
-        page: paginaActual, limit: POR_PAGINA
+        page:   paginaActual,
+        limit:  POR_PAGINA
     });
     try {
         const data = await api.get('/admin/rodeos?' + p);
         renderTabla(data.data, data.total);
         renderPag(data.total);
-    } catch(err) { mostrarError(err); }
+    } catch(err) {
+        wrap.innerHTML = `<div class="alerta alerta-error">${err.message || 'Error al cargar rodeos'}</div>`;
+    }
 }
 
 function renderTabla(rodeos, total) {
     const wrap = document.getElementById('tabla-wrap');
-    if (!rodeos || rodeos.length === 0) { wrap.innerHTML = '<p class="tabla-vacia">Sin rodeos para los filtros seleccionados</p>'; return; }
+    if (!rodeos || rodeos.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin rodeos para los filtros seleccionados</p>';
+        return;
+    }
     wrap.innerHTML = `<table>
         <thead><tr>
-            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Días</th><th>Origen</th><th>Estado</th><th>Acciones</th>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th>
+            <th>Días</th><th>Jurados</th><th>Total pagos</th><th>Origen</th><th>Acciones</th>
         </tr></thead>
         <tbody>
         ${rodeos.map(r => `<tr>
@@ -141,8 +184,9 @@ function renderTabla(rodeos, total) {
             <td>${sanitizar(r.asociacion)}</td>
             <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
             <td style="text-align:center;">${r.duracion_dias}</td>
+            <td style="text-align:center;">${r.total_asignaciones || 0}</td>
+            <td class="monto-positivo">${formatCLP(r.total_pago_base || 0)}</td>
             <td>${r.origen === 'importado' ? '<span class="badge badge-delegado">Excel</span>' : '<span class="badge">Manual</span>'}</td>
-            <td>${r.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-anulado">Anulado</span>'}</td>
             <td>
                 <div class="flex gap-8">
                     <button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver</button>
@@ -196,6 +240,7 @@ async function verDetalle(id) {
 
 function htmlDetalle(r) {
     const asigs = r.asignaciones || [];
+    const totalBase = asigs.reduce((s,a) => s + (a.pago_base_calculado||0), 0);
     return `
     <div class="form-fila" style="margin-bottom:16px;">
         <div><strong>Club:</strong> ${sanitizar(r.club)}</div>
@@ -206,13 +251,14 @@ function htmlDetalle(r) {
         <div><strong>Origen:</strong> ${r.origen}</div>
     </div>
     <div class="divider"></div>
-    <div class="card-titulo">Personas asignadas</div>
+    <div class="card-titulo">Personas asignadas (${asigs.length})</div>
     ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
     <table>
-        <thead><tr><th>Nombre</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Estado</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Estado</th></tr></thead>
         <tbody>
         ${asigs.map(a => `<tr>
             <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>
+            <td style="font-size:12px; color:var(--gris);">${sanitizar(a.usuarios_pagados?.codigo_interno || '—')}</td>
             <td>${a.tipo_persona === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
             <td>${a.categoria_aplicada || '—'}</td>
             <td>${formatCLP(a.valor_diario_aplicado)}</td>
@@ -220,7 +266,8 @@ function htmlDetalle(r) {
             <td>${a.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-anulado">Anulado</span>'}</td>
         </tr>`).join('')}
         </tbody>
-    </table>`}
+    </table>
+    <div style="text-align:right; padding:8px 0; font-weight:600;">Total pagos base: ${formatCLP(totalBase)}</div>`}
     <div class="form-acciones">
         <button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>
         <button class="btn btn-peligro btn-pequeño" onclick="anularRodeo('${r.id}')">Anular rodeo</button>
@@ -430,11 +477,13 @@ async function guardarTipo(e, id) {
 }
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); rodeoActual = null; }
+
 async function exportar() {
-    const año = document.getElementById('f-año').value;
-    const mes = document.getElementById('f-mes').value;
+    const año  = document.getElementById('f-año').value;
+    const mes  = document.getElementById('f-mes').value;
+    const buscar = document.getElementById('f-buscar').value.trim();
     try {
-        await api.descargar('/admin/exportacion/resumen-mensual?' + toQueryString({ año, mes }), `resumen_${año}_${mes}.xlsx`);
+        await api.descargar('/admin/exportacion/rodeos?' + toQueryString({ año, mes, buscar }), `rodeos${año?'_'+año:''}${mes?'_'+mes:''}.xlsx`);
     } catch(err) { mostrarError(err); }
 }
 

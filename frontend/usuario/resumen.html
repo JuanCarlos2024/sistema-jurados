@@ -91,7 +91,19 @@ let mesActual = ahora.getMonth() + 1;
 let bonosConfig = [];
 
 async function init() {
-    bonosConfig = await api.get('/usuario/bonos/config-activos') || [];
+    try {
+        bonosConfig = await api.get('/usuario/bonos/config-activos') || [];
+    } catch(e) { bonosConfig = []; }
+
+    // Auto-navegar al mes más reciente con datos (evita mostrar mes vacío por defecto)
+    try {
+        const meses = await api.get('/usuario/resumen/meses-disponibles');
+        if (meses && meses.length > 0) {
+            añoActual = meses[0].año;
+            mesActual = meses[0].mes;
+        }
+    } catch(e) { /* usar mes actual si falla */ }
+
     cargarResumen();
 }
 
