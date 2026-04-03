@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exportación de Pagos — Administrador</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .modo-selector { display:flex; gap:0; margin-bottom:24px; border:1px solid var(--primario); border-radius:6px; overflow:hidden; width:fit-content; }
+        .modo-btn { padding:10px 28px; border:none; background:white; cursor:pointer; font-size:14px; font-weight:600; color:var(--primario); transition:all .15s; }
+        .modo-btn.activo { background:var(--primario); color:white; }
+
+        .filtros-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:14px; }
+        .filtro-fechas { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+
+        .preview-header { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+        .ph-card { background:var(--fondo); border:1px solid var(--gris-borde); border-radius:8px; padding:12px 16px; text-align:center; }
+        .ph-card .val { font-size:20px; font-weight:700; color:var(--primario); }
+        .ph-card .lbl { font-size:11px; color:var(--gris); margin-top:3px; text-transform:uppercase; letter-spacing:.4px; }
+        .ph-card.verde .val { color:#27ae60; }
+        .ph-card.rojo .val { color:#c0392b; }
+
+        .jurado-info-box { background:#e8f4fd; border:1px solid #3498db; border-radius:6px; padding:12px 16px; margin-bottom:16px; }
+
+        .export-buttons { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+        .export-buttons .label { font-size:13px; font-weight:600; color:var(--gris); }
+
+        table td.monto { text-align:right; font-variant-numeric:tabular-nums; }
+        table th.monto { text-align:right; }
+        table td.centro { text-align:center; }
+
+        .error-fecha { color:#c0392b; font-size:12px; margin-top:4px; display:none; }
+        .error-fecha.visible { display:block; }
+
+        .seccion-titulo { font-size:13px; font-weight:700; color:var(--primario); text-transform:uppercase;
+                          letter-spacing:.5px; margin-bottom:10px; border-bottom:2px solid var(--primario);
+                          padding-bottom:4px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><div style="font-size:36px;">🐴</div><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item activo"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Exportación de Pagos</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Aviso de acceso restringido -->
+            <div class="alerta alerta-advertencia" style="margin-bottom:20px;">
+                <strong>Acceso restringido — solo administrador.</strong>
+                Esta sección genera planillas para contabilidad. Los jurados no tienen acceso a estas exportaciones.
+            </div>
+
+            <!-- Selector de modo -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="seccion-titulo">Tipo de exportación</div>
+                <div class="modo-selector">
+                    <button class="modo-btn activo" id="btn-modo-general" onclick="cambiarModo('general')">
+                        👥 General — todos los jurados
+                    </button>
+                    <button class="modo-btn" id="btn-modo-individual" onclick="cambiarModo('individual')">
+                        👤 Individual — un jurado
+                    </button>
+                </div>
+
+                <!-- Filtros comunes: rango de fechas (obligatorio) -->
+                <div class="seccion-titulo">Rango de fechas <span style="color:#c0392b;">*</span></div>
+                <div class="filtro-fechas">
+                    <div class="form-grupo">
+                        <label class="form-label">Fecha desde <span class="req">*</span></label>
+                        <input type="date" id="f-desde" class="form-control" onchange="validarFechas()">
+                        <div class="error-fecha" id="err-desde">Ingrese la fecha de inicio</div>
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Fecha hasta <span class="req">*</span></label>
+                        <input type="date" id="f-hasta" class="form-control" onchange="validarFechas()">
+                        <div class="error-fecha" id="err-hasta">Ingrese la fecha de término</div>
+                    </div>
+                </div>
+                <div class="error-fecha" id="err-rango" style="font-size:13px; margin-bottom:12px;">
+                    ⚠️ La fecha "desde" no puede ser mayor que la fecha "hasta"
+                </div>
+
+                <!-- Filtros opcionales — modo general -->
+                <div id="filtros-general">
+                    <div class="seccion-titulo">Filtros opcionales</div>
+                    <div class="filtros-grid">
+                        <div class="form-grupo">
+                            <label class="form-label">Jurado (opcional)</label>
+                            <select id="f-jurado-g" class="form-control">
+                                <option value="">Todos los jurados</option>
+                            </select>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Categoría</label>
+                            <select id="f-cat" class="form-control">
+                                <option value="">Todas</option>
+                                <option value="A">A</option>
+                                <option value="B">B</option>
+                                <option value="C">C</option>
+                            </select>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Asociación</label>
+                            <input type="text" id="f-asoc" class="form-control" placeholder="Filtrar por asociación...">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Tipo de rodeo</label>
+                            <select id="f-tipo" class="form-control">
+                                <option value="">Todos</option>
+                                <!-- Poblado por JS -->
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filtros — modo individual -->
+                <div id="filtros-individual" style="display:none;">
+                    <div class="seccion-titulo">Jurado <span style="color:#c0392b;">*</span></div>
+                    <div class="form-grupo" style="max-width:420px;">
+                        <label class="form-label">Seleccione el jurado <span class="req">*</span></label>
+                        <select id="f-jurado-i" class="form-control">
+                            <option value="">Seleccione un jurado...</option>
+                        </select>
+                        <div class="error-fecha" id="err-jurado">Debe seleccionar un jurado</div>
+                    </div>
+                </div>
+
+                <div class="flex gap-8" style="margin-top:20px;">
+                    <button class="btn btn-primario" id="btn-preview" onclick="generarPreview()">
+                        🔍 Previsualizar
+                    </button>
+                    <button class="btn btn-secundario" onclick="limpiarTodo()">Limpiar</button>
+                </div>
+            </div>
+
+            <!-- Zona de preview y exportación -->
+            <div id="zona-resultado" style="display:none;">
+
+                <!-- Cabecera de exportación con botones -->
+                <div class="card" style="margin-bottom:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div>
+                            <div style="font-weight:700; font-size:15px;" id="titulo-resultado"></div>
+                            <div style="font-size:12px; color:var(--gris); margin-top:3px;" id="subtitulo-resultado"></div>
+                        </div>
+                        <div class="export-buttons">
+                            <span class="label">Descargar:</span>
+                            <button class="btn btn-primario" onclick="descargar('xlsx')">
+                                📊 Excel (.xlsx)
+                            </button>
+                            <button class="btn btn-outline" onclick="descargar('csv')">
+                                📄 CSV (.csv)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cards de resumen -->
+                <div class="preview-header" id="cards-resumen"></div>
+
+                <!-- Tabla de preview -->
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <div class="seccion-titulo" style="margin-bottom:0; border:none;">Vista previa</div>
+                        <span style="font-size:12px; color:var(--gris);" id="info-filas"></span>
+                    </div>
+                    <div id="tabla-preview" class="tabla-wrap"></div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let modoActual = 'general';
+let datosActuales = null;
+let juradoActual  = null;
+
+// ── Init ─────────────────────────────────────────────────────
+async function init() {
+    await Promise.all([poblarJurados(), poblarTipos()]);
+    // Prellenar con mes actual
+    const hoy = new Date();
+    const y = hoy.getFullYear();
+    const m = String(hoy.getMonth() + 1).padStart(2,'0');
+    document.getElementById('f-desde').value = `${y}-${m}-01`;
+    document.getElementById('f-hasta').value = new Date(y, hoy.getMonth()+1, 0).toISOString().split('T')[0];
+}
+
+async function poblarJurados() {
+    try {
+        const data = await api.get('/admin/usuarios?tipo=jurado&activo=true&limit=300');
+        const opts = (data.data || []).map(u =>
+            `<option value="${u.id}" data-nombre="${sanitizar(u.nombre_completo)}" data-rut="${sanitizar(u.rut||'')}" data-cat="${u.categoria||''}">
+                ${sanitizar(u.nombre_completo)} (${u.categoria||'—'})
+            </option>`).join('');
+        document.getElementById('f-jurado-g').innerHTML += opts;
+        document.getElementById('f-jurado-i').innerHTML += opts;
+    } catch(e) {}
+}
+
+async function poblarTipos() {
+    try {
+        const data = await api.get('/admin/rodeos/tipos/lista?activo=true');
+        const opts = (data||[]).map(t => `<option value="${t.id}">${sanitizar(t.nombre)} (${t.duracion_dias}d)</option>`).join('');
+        document.getElementById('f-tipo').innerHTML += opts;
+    } catch(e) {}
+}
+
+// ── Modo ──────────────────────────────────────────────────────
+function cambiarModo(modo) {
+    modoActual = modo;
+    document.getElementById('btn-modo-general').classList.toggle('activo', modo === 'general');
+    document.getElementById('btn-modo-individual').classList.toggle('activo', modo === 'individual');
+    document.getElementById('filtros-general').style.display   = modo === 'general'    ? '' : 'none';
+    document.getElementById('filtros-individual').style.display = modo === 'individual' ? '' : 'none';
+    document.getElementById('zona-resultado').style.display = 'none';
+    datosActuales = null;
+}
+
+// ── Validación de fechas ──────────────────────────────────────
+function validarFechas() {
+    const desde = document.getElementById('f-desde').value;
+    const hasta = document.getElementById('f-hasta').value;
+    let ok = true;
+
+    document.getElementById('err-desde').classList.toggle('visible', !desde);
+    document.getElementById('err-hasta').classList.toggle('visible', !hasta);
+    if (!desde || !hasta) ok = false;
+
+    const rangoErr = desde && hasta && desde > hasta;
+    document.getElementById('err-rango').classList.toggle('visible', !!rangoErr);
+    if (rangoErr) ok = false;
+
+    return ok;
+}
+
+function validarJuradoIndividual() {
+    const ok = !!document.getElementById('f-jurado-i').value;
+    document.getElementById('err-jurado').classList.toggle('visible', !ok);
+    return ok;
+}
+
+function getFiltros() {
+    return {
+        fechaDesde:       document.getElementById('f-desde').value,
+        fechaHasta:       document.getElementById('f-hasta').value,
+        usuario_pagado_id: modoActual === 'general'
+            ? document.getElementById('f-jurado-g').value
+            : document.getElementById('f-jurado-i').value,
+        categoria:  document.getElementById('f-cat')?.value  || '',
+        asociacion: document.getElementById('f-asoc')?.value.trim() || '',
+        tipo_rodeo_id: document.getElementById('f-tipo')?.value || '',
+    };
+}
+
+// ── Generar preview ───────────────────────────────────────────
+async function generarPreview() {
+    if (!validarFechas()) return;
+    if (modoActual === 'individual' && !validarJuradoIndividual()) return;
+
+    const btn = document.getElementById('btn-preview');
+    btn.disabled = true;
+    btn.textContent = '⏳ Cargando...';
+    document.getElementById('zona-resultado').style.display = 'none';
+
+    try {
+        const f = getFiltros();
+        const qs = toQueryString(f);
+
+        if (modoActual === 'general') {
+            const data = await api.get('/admin/reportes/resumen-mensual?' + qs);
+            datosActuales = data;
+            juradoActual  = null;
+            renderGeneral(data, f);
+        } else {
+            const data = await api.get('/admin/reportes/detalle-jurado?' + qs);
+            datosActuales = data;
+            juradoActual  = data.jurado;
+            renderIndividual(data, f);
+        }
+        document.getElementById('zona-resultado').style.display = '';
+    } catch(err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Previsualizar';
+    }
+}
+
+function formatRangoTitulo(f) {
+    return `${f.fechaDesde} al ${f.fechaHasta}`;
+}
+
+// ── Render General ────────────────────────────────────────────
+function renderGeneral(data, f) {
+    const t = data.totales_global || {};
+    const filas = data.data || [];
+
+    document.getElementById('titulo-resultado').textContent =
+        `Planilla general de pagos — ${filas.length} jurado(s)`;
+    document.getElementById('subtitulo-resultado').textContent =
+        `Período: ${formatRangoTitulo(f)} · Retención: ${data.retencion_porcentaje}%`;
+    document.getElementById('info-filas').textContent = `${filas.length} fila(s)`;
+
+    // Cards resumen
+    document.getElementById('cards-resumen').innerHTML = filas.length === 0 ? '' : `
+        <div class="ph-card"><div class="val">${filas.length}</div><div class="lbl">Jurados</div></div>
+        <div class="ph-card"><div class="val">${t.cant_rodeos||0}</div><div class="lbl">Asignaciones</div></div>
+        <div class="ph-card"><div class="val">${formatCLP(t.total_pago_base||0)}</div><div class="lbl">Total pago base</div></div>
+        <div class="ph-card"><div class="val">${formatCLP(t.total_bono_aprobado||0)}</div><div class="lbl">Bonos aprobados</div></div>
+        <div class="ph-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Total bruto</div></div>
+        <div class="ph-card rojo"><div class="val">-${formatCLP(t.retencion_monto||0)}</div><div class="lbl">Retención total</div></div>
+        <div class="ph-card verde"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Total líquido</div></div>`;
+
+    const wrap = document.getElementById('tabla-preview');
+    if (!filas.length) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin datos para el rango de fechas seleccionado</p>';
+        return;
+    }
+
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Código</th>
+            <th>Nombre jurado</th>
+            <th>RUT</th>
+            <th class="centro">Cat.</th>
+            <th class="centro">Rodeos</th>
+            <th class="monto">Pago base</th>
+            <th class="monto">Bonos aprobados</th>
+            <th class="monto">Bruto</th>
+            <th class="monto">Retención (${data.retencion_porcentaje}%)</th>
+            <th class="monto">Líquido a pagar</th>
+        </tr></thead>
+        <tbody>
+        ${filas.map(j => `<tr>
+            <td style="font-size:12px;">${sanitizar(j.codigo_interno)}</td>
+            <td><strong>${sanitizar(j.nombre_completo)}</strong></td>
+            <td style="font-size:12px;">${sanitizar(j.rut||'—')}</td>
+            <td class="centro">
+                <span class="badge badge-${(j.categoria||'').toLowerCase()}">${j.categoria||'—'}</span>
+            </td>
+            <td class="centro">${j.cant_rodeos}</td>
+            <td class="monto">${formatCLP(j.total_pago_base)}</td>
+            <td class="monto">${j.total_bono_aprobado ? formatCLP(j.total_bono_aprobado) : '—'}</td>
+            <td class="monto"><strong>${formatCLP(j.bruto)}</strong></td>
+            <td class="monto" style="color:#c0392b;">-${formatCLP(j.retencion_monto)}</td>
+            <td class="monto monto-positivo"><strong>${formatCLP(j.liquido)}</strong></td>
+        </tr>`).join('')}
+        </tbody>
+        <tfoot>
+        <tr style="background:#fff3e0; font-weight:700;">
+            <td colspan="4" style="text-align:right; padding-right:8px;">TOTALES</td>
+            <td class="centro">${t.cant_rodeos||0}</td>
+            <td class="monto">${formatCLP(t.total_pago_base||0)}</td>
+            <td class="monto">${formatCLP(t.total_bono_aprobado||0)}</td>
+            <td class="monto">${formatCLP(t.bruto||0)}</td>
+            <td class="monto" style="color:#c0392b;">-${formatCLP(t.retencion_monto||0)}</td>
+            <td class="monto monto-positivo">${formatCLP(t.liquido||0)}</td>
+        </tr>
+        </tfoot>
+    </table>`;
+}
+
+// ── Render Individual ─────────────────────────────────────────
+function renderIndividual(data, f) {
+    const j    = data.jurado || {};
+    const t    = data.totales || {};
+    const filas = data.data || [];
+
+    document.getElementById('titulo-resultado').textContent =
+        `Planilla individual — ${j.nombre_completo || '—'}`;
+    document.getElementById('subtitulo-resultado').textContent =
+        `Período: ${formatRangoTitulo(f)} · ${filas.length} rodeo(s) · Retención: ${data.retencion_porcentaje}%`;
+    document.getElementById('info-filas').textContent = `${filas.length} rodeo(s)`;
+
+    // Cards + encabezado jurado
+    const cardsDiv = document.getElementById('cards-resumen');
+    cardsDiv.innerHTML = filas.length === 0 ? '' : `
+        <div class="jurado-info-box" style="grid-column:1/-1;">
+            <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; font-size:13px;">
+                <div><strong>Jurado:</strong> ${sanitizar(j.nombre_completo||'—')}</div>
+                <div><strong>RUT:</strong> ${sanitizar(j.rut||'—')}</div>
+                <div><strong>Código:</strong> ${sanitizar(j.codigo_interno||'—')}</div>
+                <div><strong>Categoría:</strong> ${j.categoria||'—'}</div>
+            </div>
+        </div>
+        <div class="ph-card"><div class="val">${filas.length}</div><div class="lbl">Rodeos</div></div>
+        <div class="ph-card"><div class="val">${formatCLP(t.pago_base||0)}</div><div class="lbl">Pago base</div></div>
+        <div class="ph-card"><div class="val">${formatCLP(t.bono_aprobado||0)}</div><div class="lbl">Bonos aprobados</div></div>
+        <div class="ph-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Bruto</div></div>
+        <div class="ph-card rojo"><div class="val">-${formatCLP(t.retencion||0)}</div><div class="lbl">Retención (${data.retencion_porcentaje}%)</div></div>
+        <div class="ph-card verde"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Líquido a pagar</div></div>`;
+
+    const wrap = document.getElementById('tabla-preview');
+    if (!filas.length) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin rodeos para este jurado en el rango de fechas seleccionado</p>';
+        return;
+    }
+
+    const ESTADOS = { aprobado:'✅ Aprobado', pendiente:'⏳ Pendiente', rechazado:'❌ Rechazado', modificado:'✏️ Modificado' };
+
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th>
+            <th>Club</th>
+            <th>Asociación</th>
+            <th>Tipo rodeo</th>
+            <th class="centro">Días</th>
+            <th class="centro">Cat.</th>
+            <th class="monto">Pago base</th>
+            <th class="monto">Bono aprobado</th>
+            <th>Estado bono</th>
+            <th class="monto">Total rodeo</th>
+        </tr></thead>
+        <tbody>
+        ${filas.map(r => `<tr>
+            <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
+            <td><strong>${sanitizar(r.club||'—')}</strong></td>
+            <td>${sanitizar(r.asociacion||'—')}</td>
+            <td>${sanitizar(r.tipo_rodeo||'—')}</td>
+            <td class="centro">${r.duracion_dias}</td>
+            <td class="centro">
+                <span class="badge badge-${(r.categoria||'').toLowerCase()}">${r.categoria||'—'}</span>
+            </td>
+            <td class="monto">${formatCLP(r.pago_base)}</td>
+            <td class="monto">${r.bono_aprobado ? formatCLP(r.bono_aprobado) : '—'}</td>
+            <td style="font-size:12px;">${ESTADOS[r.estado_bono]||'—'}</td>
+            <td class="monto monto-positivo"><strong>${formatCLP(r.bruto)}</strong></td>
+        </tr>`).join('')}
+        </tbody>
+        <tfoot>
+        <tr style="background:#fff3e0; font-weight:700;">
+            <td colspan="6" style="text-align:right; padding-right:8px;">TOTALES</td>
+            <td class="monto">${formatCLP(t.pago_base||0)}</td>
+            <td class="monto">${formatCLP(t.bono_aprobado||0)}</td>
+            <td></td>
+            <td class="monto monto-positivo">${formatCLP(t.bruto||0)}</td>
+        </tr>
+        </tfoot>
+    </table>`;
+}
+
+// ── Descarga ──────────────────────────────────────────────────
+async function descargar(formato) {
+    if (!datosActuales) { mostrarToast('Primero genere la previsualización', 'error'); return; }
+    if (!validarFechas()) return;
+    if (modoActual === 'individual' && !validarJuradoIndividual()) return;
+
+    const f   = getFiltros();
+    const qs  = toQueryString({ ...f, formato });
+    const desde = f.fechaDesde.replace(/-/g,'');
+    const hasta = f.fechaHasta.replace(/-/g,'');
+
+    try {
+        if (modoActual === 'general') {
+            const nombre = `pagos_general_${desde}_${hasta}.${formato}`;
+            await api.descargar('/admin/exportacion/resumen-jurados?' + qs, nombre);
+        } else {
+            const cod  = juradoActual?.codigo_interno || 'jurado';
+            const nombre = `pagos_${cod}_${desde}_${hasta}.${formato}`;
+            await api.descargar('/admin/exportacion/detalle-jurado?' + qs, nombre);
+        }
+    } catch(err) { mostrarError(err); }
+}
+
+// ── Limpiar ───────────────────────────────────────────────────
+function limpiarTodo() {
+    document.getElementById('f-desde').value = '';
+    document.getElementById('f-hasta').value = '';
+    document.getElementById('f-jurado-g').value = '';
+    document.getElementById('f-jurado-i').value = '';
+    document.getElementById('f-cat').value = '';
+    document.getElementById('f-asoc').value = '';
+    document.getElementById('f-tipo').value = '';
+    ['err-desde','err-hasta','err-rango','err-jurado'].forEach(id =>
+        document.getElementById(id).classList.remove('visible'));
+    document.getElementById('zona-resultado').style.display = 'none';
+    datosActuales = null;
+    juradoActual  = null;
+}
+
+init();
+</script>
+</body>
+</html>
