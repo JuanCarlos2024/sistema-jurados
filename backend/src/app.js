@@ -8,7 +8,13 @@ const app = express();
 // ─── CORS ───────────────────────────────────────────────────
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5500';
 app.use(cors({
-    origin: [FRONTEND_URL, 'http://127.0.0.1:5500', 'http://localhost:3001', 'null'],
+    origin: [
+        FRONTEND_URL,
+        'https://sistema-jurados.onrender.com',
+        'http://127.0.0.1:5500',
+        'http://localhost:3000',
+        'http://localhost:3001'
+    ],
     credentials: true
 }));
 
