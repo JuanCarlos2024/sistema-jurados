@@ -193,6 +193,7 @@ function renderTabla(rodeos, total) {
                 <div class="flex gap-8">
                     <button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver</button>
                     <button class="btn btn-pequeño btn-secundario" onclick="abrirEditar('${r.id}')">Editar</button>
+                    <button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${r.total_asignaciones || 0})">Eliminar</button>
                 </div>
             </td>
         </tr>`).join('')}
@@ -272,7 +273,7 @@ function htmlDetalle(r) {
     <div style="text-align:right; padding:8px 0; font-weight:600;">Total pagos base: ${formatCLP(totalBase)}</div>`}
     <div class="form-acciones">
         <button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>
-        <button class="btn btn-peligro btn-pequeño" onclick="anularRodeo('${r.id}')">Anular rodeo</button>
+        <button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${asigs.length})">Eliminar rodeo</button>
         <button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
     </div>`;
 }
@@ -332,12 +333,36 @@ async function guardarRodeo(e) {
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }
 
-async function anularRodeo(id) {
-    const ok = await confirmar('¿Anular este rodeo? También se anularán todas sus asignaciones.');
-    if (!ok) return;
+function confirmarEliminar(id, club, fecha, nAsignaciones) {
+    document.getElementById('modal-titulo').textContent = '⚠️ Eliminar rodeo';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-error" style="margin-bottom:16px;">
+            <strong>Esta acción no se puede deshacer.</strong><br>
+            Se eliminará permanentemente el rodeo y todos sus datos asociados.
+        </div>
+        <div style="margin-bottom:16px;">
+            <strong>Rodeo:</strong> ${sanitizar(club)}<br>
+            <strong>Fecha:</strong> ${sanitizar(fecha)}
+        </div>
+        <div style="background:var(--fondo); border:1px solid var(--gris-borde); border-radius:6px; padding:12px 16px; margin-bottom:20px;">
+            <div style="font-size:13px; font-weight:600; color:var(--texto); margin-bottom:8px;">Se eliminarán también:</div>
+            <ul style="margin:0; padding-left:18px; font-size:13px; color:var(--gris); line-height:1.8;">
+                <li><strong>${nAsignaciones}</strong> asignación(es) de jurados/delegados</li>
+                <li>Los bonos pendientes de esas asignaciones (quedarán rechazados)</li>
+                <li>Este rodeo desaparecerá del panel de todos los jurados y delegados</li>
+            </ul>
+        </div>
+        <div class="form-acciones">
+            <button class="btn btn-peligro" onclick="ejecutarEliminar('${id}')">Sí, eliminar definitivamente</button>
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function ejecutarEliminar(id) {
     try {
         await api.delete('/admin/rodeos/' + id);
-        mostrarToast('Rodeo anulado', 'success');
+        mostrarToast('Rodeo eliminado correctamente', 'success');
         cerrarModal();
         cargar(paginaActual);
     } catch(err) { mostrarError(err); }

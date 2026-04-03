@@ -192,7 +192,7 @@ router.patch('/:id', async (req, res) => {
     res.json(data);
 });
 
-// DELETE /api/admin/rodeos/:id (anular)
+// DELETE /api/admin/rodeos/:id (eliminar — soft delete en cascada)
 router.delete('/:id', async (req, res) => {
     const { data: r } = await supabase
         .from('rodeos')
@@ -202,16 +202,35 @@ router.delete('/:id', async (req, res) => {
 
     if (!r) return res.status(404).json({ error: 'Rodeo no encontrado' });
 
-    await supabase
-        .from('rodeos')
-        .update({ estado: 'anulado', updated_at: new Date().toISOString() })
-        .eq('id', req.params.id);
+    const ahora = new Date().toISOString();
 
-    // Anular también las asignaciones
+    // 1. Obtener asignaciones del rodeo para luego rechazar sus bonos
+    const { data: asigs } = await supabase
+        .from('asignaciones')
+        .select('id')
+        .eq('rodeo_id', req.params.id);
+
+    // 2. Rechazar bonos pendientes de esas asignaciones
+    if (asigs && asigs.length > 0) {
+        const asigIds = asigs.map(a => a.id);
+        await supabase
+            .from('bonos_solicitados')
+            .update({ estado: 'rechazado', updated_at: ahora })
+            .in('asignacion_id', asigIds)
+            .eq('estado', 'pendiente');
+    }
+
+    // 3. Anular asignaciones
     await supabase
         .from('asignaciones')
-        .update({ estado: 'anulado', updated_at: new Date().toISOString() })
+        .update({ estado: 'anulado', updated_at: ahora })
         .eq('rodeo_id', req.params.id);
+
+    // 4. Anular rodeo
+    await supabase
+        .from('rodeos')
+        .update({ estado: 'anulado', updated_at: ahora })
+        .eq('id', req.params.id);
 
     await auditoria.registrar({
         tabla: 'rodeos',
@@ -219,11 +238,11 @@ router.delete('/:id', async (req, res) => {
         accion: 'eliminar',
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: `Rodeo anulado: ${r.club} - ${r.fecha}`,
+        descripcion: `Rodeo eliminado: ${r.club} - ${r.fecha} (${asigs?.length || 0} asignaciones anuladas)`,
         ip_address: req.ip
     });
 
-    res.json({ mensaje: 'Rodeo anulado correctamente' });
+    res.json({ mensaje: 'Rodeo eliminado correctamente junto con sus asignaciones y bonos pendientes' });
 });
 
 // ─────────────────────────────────────────────

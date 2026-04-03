@@ -42,16 +42,27 @@
                 </div>
             </div>
 
-            <!-- Resumen del mes actual -->
+            <!-- Navegación de mes -->
+            <div class="resumen-header">
+                <div>
+                    <div class="resumen-mes-titulo" id="titulo-mes">Cargando...</div>
+                    <div style="font-size:13px; opacity:0.8;" id="subtitulo-rodeos"></div>
+                </div>
+                <div class="resumen-nav">
+                    <button class="btn btn-secundario btn-pequeño" onclick="navegarMes(-1)">‹ Mes anterior</button>
+                    <button class="btn btn-secundario btn-pequeño" id="btn-siguiente" onclick="navegarMes(1)">Mes siguiente ›</button>
+                </div>
+            </div>
+
+            <!-- Resumen del mes -->
             <div id="resumen-mes" class="card">
-                <div class="card-titulo">💵 Resumen del mes actual</div>
                 <div class="spinner-wrap"><div class="spinner"></div></div>
             </div>
 
-            <!-- Mis rodeos del mes -->
+            <!-- Rodeos del mes -->
             <div class="card">
                 <div class="card-titulo flex justify-between items-center">
-                    <span>🏆 Mis rodeos este mes</span>
+                    <span>🏆 Mis rodeos del mes</span>
                     <a href="/usuario/resumen.html" class="btn btn-outline btn-pequeño">Ver historial completo →</a>
                 </div>
                 <div id="rodeos-mes" class="tabla-wrap">
@@ -69,20 +80,58 @@ protegerRuta('usuario_pagado');
 const u = api.getUsuario();
 document.getElementById('nombre-usr').textContent = u?.nombre || '';
 
+const ahora = new Date();
+let añoActual = ahora.getFullYear();
+let mesActual = ahora.getMonth() + 1;
+
 async function init() {
     // Cargar perfil
-    const perfil = await api.get('/usuario/perfil');
-    if (!perfil.perfil_completo) {
-        document.getElementById('perfil-incompleto').classList.remove('oculto');
-    }
+    try {
+        const perfil = await api.get('/usuario/perfil');
+        if (!perfil.perfil_completo) {
+            document.getElementById('perfil-incompleto').classList.remove('oculto');
+        }
+    } catch(e) {}
 
-    // Resumen del mes
-    const ahora = new Date();
-    const año = ahora.getFullYear();
-    const mes = ahora.getMonth() + 1;
-    const resumen = await api.get(`/usuario/resumen?año=${año}&mes=${mes}`);
-    renderResumen(resumen);
-    renderRodeos(resumen.asignaciones);
+    // Auto-navegar al mes más reciente con datos
+    try {
+        const meses = await api.get('/usuario/resumen/meses-disponibles');
+        if (meses && meses.length > 0) {
+            añoActual = meses[0].año;
+            mesActual = meses[0].mes;
+        }
+    } catch(e) { /* usar mes actual si falla */ }
+
+    cargarResumen();
+}
+
+function navegarMes(delta) {
+    mesActual += delta;
+    if (mesActual > 12) { mesActual = 1; añoActual++; }
+    if (mesActual < 1)  { mesActual = 12; añoActual--; }
+    cargarResumen();
+}
+
+async function cargarResumen() {
+    document.getElementById('titulo-mes').textContent = `${nombreMes(mesActual)} ${añoActual}`;
+
+    // Deshabilitar "siguiente" si ya estamos en el mes actual
+    const hoy = new Date();
+    const esActual = añoActual === hoy.getFullYear() && mesActual === hoy.getMonth() + 1;
+    document.getElementById('btn-siguiente').disabled = esActual;
+
+    mostrarSpinner(document.getElementById('resumen-mes'));
+    mostrarSpinner(document.getElementById('rodeos-mes'));
+
+    try {
+        const r = await api.get(`/usuario/resumen?año=${añoActual}&mes=${mesActual}`);
+        renderResumen(r);
+        renderRodeos(r.asignaciones || []);
+        document.getElementById('subtitulo-rodeos').textContent =
+            `${r.asignaciones?.length || 0} rodeo(s) registrado(s)`;
+    } catch(err) {
+        mostrarError(err);
+    }
 }
 
 function renderResumen(r) {
@@ -116,7 +165,7 @@ function renderResumen(r) {
 function renderRodeos(asignaciones) {
     const div = document.getElementById('rodeos-mes');
     if (!asignaciones || asignaciones.length === 0) {
-        div.innerHTML = '<p class="tabla-vacia">Sin rodeos registrados este mes</p>';
+        div.innerHTML = '<p class="tabla-vacia">Sin rodeos registrados en este mes</p>';
         return;
     }
     div.innerHTML = `<table>

@@ -2,11 +2,11 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
 
-// GET /api/admin/dashboard
+// GET /api/admin/dashboard?mes=&año=
 router.get('/', async (req, res) => {
     const ahora = new Date();
-    const año = ahora.getFullYear();
-    const mes = ahora.getMonth() + 1;
+    const año = req.query.año ? parseInt(req.query.año) : ahora.getFullYear();
+    const mes = req.query.mes ? parseInt(req.query.mes) : ahora.getMonth() + 1;
     const inicioMes = `${año}-${String(mes).padStart(2, '0')}-01`;
     const finMes = new Date(año, mes, 0).toISOString().split('T')[0];
 
@@ -47,12 +47,14 @@ router.get('/', async (req, res) => {
 
         const totalBrutoMes = (asigMes || []).reduce((s, a) => s + (a.pago_base_calculado || 0), 0);
 
-        // Últimas importaciones
+        // Importaciones del mes seleccionado
         const { data: ultimasImportaciones } = await supabase
             .from('importaciones')
             .select('id, nombre_archivo, insertadas, pendientes, duplicadas, created_at')
+            .gte('created_at', inicioMes + 'T00:00:00')
+            .lte('created_at', finMes + 'T23:59:59')
             .order('created_at', { ascending: false })
-            .limit(5);
+            .limit(10);
 
         // Últimos bonos pendientes (para mostrar en dashboard)
         const { data: ultBonosPend } = await supabase

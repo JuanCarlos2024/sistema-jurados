@@ -6,6 +6,21 @@
     <title>Dashboard — Administrador</title>
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .selector-mes {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: white;
+            border: 1px solid var(--gris-borde);
+            border-radius: 8px;
+            padding: 6px 12px;
+        }
+        .selector-mes label { font-size: 13px; color: var(--gris); white-space: nowrap; }
+        .selector-mes select { border: none; background: none; font-size: 14px; font-weight: 600; color: var(--texto); padding: 0; cursor: pointer; outline: none; }
+        .nav-mes-btns { display: flex; gap: 4px; }
+        .nav-mes-btns button { padding: 6px 12px; font-size: 18px; line-height: 1; }
+    </style>
 </head>
 <body>
 <div class="layout">
@@ -62,16 +77,40 @@
                 <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
                 <h1>Dashboard</h1>
             </div>
-            <div class="topbar-acciones">
-                <span id="fecha-actual" class="texto-gris" style="font-size:13px;"></span>
+            <div class="topbar-acciones" style="gap:8px;">
+                <div class="nav-mes-btns">
+                    <button class="btn btn-secundario btn-pequeño" onclick="navegarMes(-1)" title="Mes anterior">‹</button>
+                    <button class="btn btn-secundario btn-pequeño" id="btn-sig-mes" onclick="navegarMes(1)" title="Mes siguiente">›</button>
+                </div>
+                <div class="selector-mes">
+                    <label>Mes:</label>
+                    <select id="sel-mes" onchange="cargarDashboard()">
+                        <option value="1">Enero</option>
+                        <option value="2">Febrero</option>
+                        <option value="3">Marzo</option>
+                        <option value="4">Abril</option>
+                        <option value="5">Mayo</option>
+                        <option value="6">Junio</option>
+                        <option value="7">Julio</option>
+                        <option value="8">Agosto</option>
+                        <option value="9">Septiembre</option>
+                        <option value="10">Octubre</option>
+                        <option value="11">Noviembre</option>
+                        <option value="12">Diciembre</option>
+                    </select>
+                    <label>Año:</label>
+                    <select id="sel-año" onchange="cargarDashboard()">
+                        <!-- Poblado por JS -->
+                    </select>
+                </div>
             </div>
         </div>
 
         <div class="page-body">
-            <!-- Alertas -->
+            <!-- Alertas globales (siempre, independiente del mes) -->
             <div id="alertas-criticas"></div>
 
-            <!-- Stats principales -->
+            <!-- Stats del mes -->
             <div class="stats-grid" id="stats-grid">
                 <div class="spinner-wrap"><div class="spinner"></div></div>
             </div>
@@ -79,15 +118,15 @@
             <!-- Fila de cards -->
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
 
-                <!-- Importaciones recientes -->
+                <!-- Importaciones del mes -->
                 <div class="card">
-                    <div class="card-titulo">📥 Últimas Importaciones</div>
+                    <div class="card-titulo">📥 Importaciones del mes</div>
                     <div id="tabla-importaciones">
                         <div class="spinner-wrap"><div class="spinner"></div></div>
                     </div>
                 </div>
 
-                <!-- Bonos pendientes -->
+                <!-- Bonos pendientes (global) -->
                 <div class="card">
                     <div class="card-titulo">⏳ Bonos Pendientes de Revisión</div>
                     <div id="tabla-bonos-pend">
@@ -108,11 +147,49 @@
 protegerRuta('administrador');
 
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
-document.getElementById('fecha-actual').textContent = new Date().toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+const ahora = new Date();
+let mesActual = ahora.getMonth() + 1;
+let añoActual = ahora.getFullYear();
+
+// Poblar selector año
+function poblarAnios() {
+    const sel = document.getElementById('sel-año');
+    sel.innerHTML = '';
+    for (let y = añoActual + 1; y >= añoActual - 4; y--) {
+        const opt = document.createElement('option');
+        opt.value = String(y);
+        opt.textContent = String(y);
+        if (y === añoActual) opt.selected = true;
+        sel.appendChild(opt);
+    }
+}
+
+function sincronizarSelectores() {
+    document.getElementById('sel-mes').value = String(mesActual);
+    document.getElementById('sel-año').value = String(añoActual);
+    // Deshabilitar "siguiente" si ya estamos en el mes actual o futuro
+    const hoy = new Date();
+    const esActualOFuturo = (añoActual > hoy.getFullYear()) ||
+        (añoActual === hoy.getFullYear() && mesActual >= hoy.getMonth() + 1);
+    document.getElementById('btn-sig-mes').disabled = esActualOFuturo;
+}
+
+function navegarMes(delta) {
+    mesActual += delta;
+    if (mesActual > 12) { mesActual = 1; añoActual++; }
+    if (mesActual < 1)  { mesActual = 12; añoActual--; }
+    sincronizarSelectores();
+    cargarDashboard();
+}
 
 async function cargarDashboard() {
+    mesActual = parseInt(document.getElementById('sel-mes').value);
+    añoActual = parseInt(document.getElementById('sel-año').value);
+    sincronizarSelectores();
+
     try {
-        const data = await api.get('/admin/dashboard');
+        const data = await api.get(`/admin/dashboard?mes=${mesActual}&año=${añoActual}`);
 
         // Stats grid
         const grid = document.getElementById('stats-grid');
@@ -127,11 +204,11 @@ async function cargarDashboard() {
             </div>
             <div class="stat-card">
                 <div class="stat-valor">${data.mes_actual.rodeos}</div>
-                <div class="stat-label">Rodeos este mes</div>
+                <div class="stat-label">Rodeos en el mes</div>
             </div>
             <div class="stat-card">
                 <div class="stat-valor">${data.mes_actual.asignaciones}</div>
-                <div class="stat-label">Asignaciones este mes</div>
+                <div class="stat-label">Asignaciones en el mes</div>
             </div>
             <div class="stat-card verde">
                 <div class="stat-valor" style="font-size:20px;">${formatCLP(data.mes_actual.bruto_total)}</div>
@@ -143,10 +220,9 @@ async function cargarDashboard() {
             </div>
         `;
 
-        // Alertas críticas
+        // Alertas críticas (siempre globales)
         const alertasDiv = document.getElementById('alertas-criticas');
         let alertasHtml = '';
-
         if (data.alertas.bonos_pendientes > 0) {
             alertasHtml += `<div class="alerta alerta-advertencia mb-8">
                 ⚠️ <strong>${data.alertas.bonos_pendientes}</strong> bono(s) esperando aprobación.
@@ -172,10 +248,10 @@ async function cargarDashboard() {
         }
         alertasDiv.innerHTML = alertasHtml;
 
-        // Importaciones recientes
+        // Importaciones del mes
         const impDiv = document.getElementById('tabla-importaciones');
         if (!data.ultimas_importaciones || data.ultimas_importaciones.length === 0) {
-            impDiv.innerHTML = '<p class="texto-gris texto-centrado">Sin importaciones</p>';
+            impDiv.innerHTML = '<p class="texto-gris texto-centrado">Sin importaciones en este mes</p>';
         } else {
             impDiv.innerHTML = `<table>
                 <thead><tr>
@@ -194,7 +270,7 @@ async function cargarDashboard() {
             </table>`;
         }
 
-        // Bonos pendientes
+        // Bonos pendientes (global, no filtrado por mes)
         const bonosDiv = document.getElementById('tabla-bonos-pend');
         if (!data.bonos_pendientes_recientes || data.bonos_pendientes_recientes.length === 0) {
             bonosDiv.innerHTML = '<p class="texto-gris texto-centrado">Sin bonos pendientes ✓</p>';
@@ -221,6 +297,8 @@ async function cargarDashboard() {
     }
 }
 
+poblarAnios();
+sincronizarSelectores();
 cargarDashboard();
 </script>
 </body>
