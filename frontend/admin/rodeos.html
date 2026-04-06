@@ -226,7 +226,10 @@ function renderPag(total) {
     div.innerHTML = html;
 }
 
-function abrirNuevoRodeo() {
+async function abrirNuevoRodeo() {
+    if (categoriasRodeo.length === 0) {
+        try { categoriasRodeo = await api.get('/admin/reportes/categorias-rodeo/lista?activo=true'); } catch(e) {}
+    }
     rodeoActual = null;
     document.getElementById('modal-titulo').textContent = 'Nuevo rodeo';
     document.getElementById('modal-body').innerHTML = formRodeo(null);
@@ -235,6 +238,10 @@ function abrirNuevoRodeo() {
 
 async function abrirEditar(id) {
     try {
+        // Recargar categorías si no están en memoria (ej: fallo en init)
+        if (categoriasRodeo.length === 0) {
+            try { categoriasRodeo = await api.get('/admin/reportes/categorias-rodeo/lista?activo=true'); } catch(e) {}
+        }
         const r = await api.get('/admin/rodeos/' + id);
         rodeoActual = r;
         document.getElementById('modal-titulo').textContent = 'Editar rodeo — ' + r.club;
