@@ -110,20 +110,51 @@ router.post('/', async (req, res) => {
 });
 
 // PATCH /api/admin/asignaciones/:id — editar una asignación
+// Acepta: usuario_pagado_id (cambio de persona), observacion, valor_diario_aplicado (override manual)
 router.patch('/:id', async (req, res) => {
-    const { observacion, estado } = req.body;
+    const { usuario_pagado_id, observacion, valor_diario_aplicado } = req.body;
 
     const { data: anterior } = await supabase
         .from('asignaciones')
-        .select('*')
+        .select('*, rodeos(duracion_dias)')
         .eq('id', req.params.id)
         .single();
 
     if (!anterior) return res.status(404).json({ error: 'Asignación no encontrada' });
+    if (anterior.estado === 'anulado') return res.status(400).json({ error: 'No se puede editar una asignación anulada' });
 
     const cambios = { updated_at: new Date().toISOString() };
     if (observacion !== undefined) cambios.observacion = observacion;
-    if (estado) cambios.estado = estado;
+
+    // Cambio de persona asignada
+    if (usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id) {
+        const { data: usuario } = await supabase
+            .from('usuarios_pagados')
+            .select('id, nombre_completo, tipo_persona, categoria, activo')
+            .eq('id', usuario_pagado_id)
+            .single();
+
+        if (!usuario || !usuario.activo) {
+            return res.status(400).json({ error: 'Usuario no encontrado o inactivo' });
+        }
+
+        const tarifas = await obtenerTarifas();
+        const duracion = anterior.rodeos?.duracion_dias || anterior.duracion_dias_aplicada;
+        const calculo = calcularPagoBase(usuario.tipo_persona, usuario.categoria, duracion, tarifas);
+
+        cambios.usuario_pagado_id = usuario_pagado_id;
+        cambios.tipo_persona = usuario.tipo_persona;
+        cambios.nombre_importado = usuario.nombre_completo;
+        cambios.categoria_aplicada = calculo.categoria_aplicada;
+        cambios.valor_diario_aplicado = calculo.valor_diario_aplicado;
+        cambios.pago_base_calculado = calculo.pago_base_calculado;
+    } else if (valor_diario_aplicado !== undefined) {
+        // Override manual del valor diario (sin cambiar persona)
+        const vd = parseFloat(valor_diario_aplicado);
+        if (isNaN(vd) || vd < 0) return res.status(400).json({ error: 'valor_diario_aplicado inválido' });
+        cambios.valor_diario_aplicado = vd;
+        cambios.pago_base_calculado = Math.round(vd * anterior.duracion_dias_aplicada);
+    }
 
     const { data, error } = await supabase
         .from('asignaciones')
@@ -138,11 +169,13 @@ router.patch('/:id', async (req, res) => {
         tabla: 'asignaciones',
         registro_id: req.params.id,
         accion: 'editar',
-        datos_anteriores: anterior,
+        datos_anteriores: { usuario_pagado_id: anterior.usuario_pagado_id, pago_base_calculado: anterior.pago_base_calculado },
         datos_nuevos: cambios,
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: 'Asignación editada',
+        descripcion: usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id
+            ? `Persona reasignada en rodeo ${anterior.rodeo_id}`
+            : 'Asignación editada',
         ip_address: req.ip
     });
 
@@ -196,19 +229,29 @@ router.post('/:id/recalcular', async (req, res) => {
     res.json(data);
 });
 
-// DELETE /api/admin/asignaciones/:id
+// DELETE /api/admin/asignaciones/:id — anula asignación y rechaza sus bonos pendientes
 router.delete('/:id', async (req, res) => {
     const { data: asig } = await supabase
         .from('asignaciones')
-        .select('rodeo_id, usuario_pagado_id, tipo_persona')
+        .select('rodeo_id, usuario_pagado_id, tipo_persona, nombre_importado')
         .eq('id', req.params.id)
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
 
+    const ahora = new Date().toISOString();
+
+    // 1. Rechazar bonos pendientes de esta asignación
+    await supabase
+        .from('bonos_solicitados')
+        .update({ estado: 'rechazado', updated_at: ahora })
+        .eq('asignacion_id', req.params.id)
+        .eq('estado', 'pendiente');
+
+    // 2. Anular la asignación
     await supabase
         .from('asignaciones')
-        .update({ estado: 'anulado', updated_at: new Date().toISOString() })
+        .update({ estado: 'anulado', updated_at: ahora })
         .eq('id', req.params.id);
 
     await auditoria.registrar({
@@ -217,11 +260,11 @@ router.delete('/:id', async (req, res) => {
         accion: 'eliminar',
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: 'Asignación anulada',
+        descripcion: `Asignación eliminada: ${asig.nombre_importado || asig.usuario_pagado_id} del rodeo ${asig.rodeo_id}`,
         ip_address: req.ip
     });
 
-    res.json({ mensaje: 'Asignación anulada' });
+    res.json({ mensaje: 'Asignación eliminada y bonos pendientes rechazados' });
 });
 
 // GET /api/admin/asignaciones/pendientes/sugerencias?q=texto

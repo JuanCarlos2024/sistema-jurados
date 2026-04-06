@@ -257,7 +257,7 @@ function htmlDetalle(r) {
     <div class="card-titulo">Personas asignadas (${asigs.length})</div>
     ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
     <table>
-        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Estado</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Estado</th><th>Acciones</th></tr></thead>
         <tbody>
         ${asigs.map(a => `<tr>
             <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>
@@ -267,6 +267,12 @@ function htmlDetalle(r) {
             <td>${formatCLP(a.valor_diario_aplicado)}</td>
             <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
             <td>${a.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-anulado">Anulado</span>'}</td>
+            <td>
+                ${a.estado === 'activo' ? `<div class="flex gap-8">
+                    <button class="btn btn-pequeño btn-outline" onclick="abrirEditarAsignacion('${a.id}', '${r.id}')">Editar</button>
+                    <button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminarAsignacion('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${r.id}')">Eliminar</button>
+                </div>` : '<span style="color:#aaa;font-size:12px;">—</span>'}
+            </td>
         </tr>`).join('')}
         </tbody>
     </table>
@@ -501,6 +507,135 @@ async function guardarTipo(e, id) {
         tiposRodeo = await api.get('/admin/rodeos/tipos/lista?activo=true');
         mostrarTipos();
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+// ── EDITAR ASIGNACIÓN ─────────────────────────────────────────────
+async function abrirEditarAsignacion(asigId, rodeoId) {
+    // Buscar la asignación en los datos del rodeo actual
+    const asig = (rodeoActual?.asignaciones || []).find(a => a.id === asigId);
+    if (!asig) { mostrarToast('No se encontró la asignación', 'error'); return; }
+
+    document.getElementById('modal-titulo').textContent = 'Editar asignación';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-info" style="margin-bottom:14px;">
+            <strong>Asignación actual:</strong> ${sanitizar(asig.usuarios_pagados?.nombre_completo || asig.nombre_importado || '—')}
+            &nbsp;·&nbsp; Cat. ${asig.categoria_aplicada || '—'}
+            &nbsp;·&nbsp; ${formatCLP(asig.pago_base_calculado)} pago base
+        </div>
+
+        <form onsubmit="guardarEdicionAsignacion(event, '${asigId}', '${rodeoId}')">
+            <div class="form-grupo">
+                <label class="form-label">Cambiar persona asignada</label>
+                <input type="text" id="ea-buscar" class="form-control" placeholder="Buscar por nombre (dejar vacío para no cambiar)" oninput="buscarPersonaEditar(this.value)">
+                <div id="ea-resultados" style="margin-top:6px;"></div>
+                <input type="hidden" id="ea-usr-id" value="">
+                <div id="ea-persona-sel" class="alerta alerta-info oculto" style="margin-top:6px; margin-bottom:0;"></div>
+            </div>
+
+            <div class="form-grupo">
+                <label class="form-label">Override valor diario (opcional)</label>
+                <input type="number" id="ea-valor-diario" class="form-control"
+                    placeholder="Ej: ${asig.valor_diario_aplicado} — dejar vacío para usar tarifa automática"
+                    min="0">
+                <div class="form-hint">Solo aplica si no cambia la persona. Si cambia la persona, se usa su tarifa de categoría.</div>
+            </div>
+
+            <div class="form-grupo">
+                <label class="form-label">Observación</label>
+                <textarea id="ea-obs" class="form-control" rows="2">${sanitizar(asig.observacion || '')}</textarea>
+            </div>
+
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Guardar cambios</button>
+                <button type="button" class="btn btn-secundario" onclick="verDetalle('${rodeoId}')">Cancelar</button>
+            </div>
+        </form>`;
+}
+
+let eaBuscarTimer;
+async function buscarPersonaEditar(q) {
+    clearTimeout(eaBuscarTimer);
+    const res = document.getElementById('ea-resultados');
+    if (q.length < 2) { res.innerHTML = ''; return; }
+    eaBuscarTimer = setTimeout(async () => {
+        const data = await api.get('/admin/usuarios?buscar=' + encodeURIComponent(q) + '&activo=true&limit=8');
+        if (!data?.data?.length) { res.innerHTML = '<div class="texto-gris" style="font-size:13px;">Sin resultados</div>'; return; }
+        res.innerHTML = data.data.map(u => `
+            <div onclick="seleccionarPersonaEditar('${u.id}','${sanitizar(u.nombre_completo)}','${u.tipo_persona}','${u.categoria||''}')"
+                 style="padding:8px 12px; cursor:pointer; border:1px solid var(--gris-borde); border-radius:6px; margin-bottom:4px; background:white;">
+                <strong>${sanitizar(u.nombre_completo)}</strong>
+                <span class="badge badge-${u.tipo_persona==='jurado'?'jurado':'delegado'}" style="margin-left:6px;">${u.tipo_persona==='jurado'?'Jurado':'Delegado'}</span>
+                ${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}" style="margin-left:4px;">${u.categoria}</span>` : ''}
+            </div>`).join('');
+    }, 300);
+}
+
+function seleccionarPersonaEditar(id, nombre, tipo, cat) {
+    document.getElementById('ea-usr-id').value = id;
+    document.getElementById('ea-buscar').value = nombre;
+    document.getElementById('ea-resultados').innerHTML = '';
+    document.getElementById('ea-valor-diario').disabled = true;
+    document.getElementById('ea-valor-diario').value = '';
+    const info = document.getElementById('ea-persona-sel');
+    info.textContent = `Nueva persona: ${nombre} (${tipo}${cat ? ', cat. '+cat : ''}) — el pago base se recalculará automáticamente`;
+    info.classList.remove('oculto');
+}
+
+async function guardarEdicionAsignacion(e, asigId, rodeoId) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+
+    const usrId = document.getElementById('ea-usr-id').value.trim();
+    const valorDiario = document.getElementById('ea-valor-diario').value.trim();
+    const obs = document.getElementById('ea-obs').value.trim();
+
+    const body = {};
+    if (usrId) body.usuario_pagado_id = usrId;
+    if (!usrId && valorDiario) body.valor_diario_aplicado = parseFloat(valorDiario);
+    if (obs !== undefined) body.observacion = obs;
+
+    if (!usrId && !valorDiario && obs === (rodeoActual?.asignaciones?.find(a=>a.id===asigId)?.observacion || '')) {
+        mostrarToast('No hay cambios para guardar', 'error');
+        btn.disabled = false;
+        return;
+    }
+
+    try {
+        await api.patch('/admin/asignaciones/' + asigId, body);
+        mostrarToast('Asignación actualizada', 'success');
+        verDetalle(rodeoId);
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+// ── ELIMINAR ASIGNACIÓN ──────────────────────────────────────────
+function confirmarEliminarAsignacion(asigId, nombre, rodeoId) {
+    document.getElementById('modal-titulo').textContent = '⚠️ Eliminar asignación';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-error" style="margin-bottom:14px;">
+            <strong>Esta acción no se puede deshacer.</strong>
+        </div>
+        <p>Se eliminará la asignación de <strong>${sanitizar(nombre)}</strong> de este rodeo.</p>
+        <div style="background:var(--fondo); border:1px solid var(--gris-borde); border-radius:6px; padding:12px 16px; margin-bottom:20px;">
+            <div style="font-size:13px; color:var(--gris); line-height:1.8;">
+                <strong>Consecuencias:</strong><br>
+                • Esta persona ya no verá el rodeo en su panel<br>
+                • Su pago base del mes se reducirá en consecuencia<br>
+                • Sus bonos pendientes de este rodeo quedarán rechazados
+            </div>
+        </div>
+        <div class="form-acciones">
+            <button class="btn btn-peligro" onclick="ejecutarEliminarAsignacion('${asigId}', '${rodeoId}')">Sí, eliminar asignación</button>
+            <button class="btn btn-secundario" onclick="verDetalle('${rodeoId}')">Cancelar</button>
+        </div>`;
+}
+
+async function ejecutarEliminarAsignacion(asigId, rodeoId) {
+    try {
+        await api.delete('/admin/asignaciones/' + asigId);
+        mostrarToast('Asignación eliminada', 'success');
+        verDetalle(rodeoId);
+    } catch(err) { mostrarError(err); }
 }
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); rodeoActual = null; }
