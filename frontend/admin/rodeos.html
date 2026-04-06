@@ -41,6 +41,7 @@
                 <h1>Rodeos</h1>
             </div>
             <div class="topbar-acciones">
+                <button class="btn btn-secundario" onclick="mostrarCategorias()">Categorías</button>
                 <button class="btn btn-secundario" onclick="mostrarTipos()">Tipos de Rodeo</button>
                 <button class="btn btn-primario" onclick="abrirNuevoRodeo()">+ Nuevo rodeo</button>
             </div>
@@ -110,6 +111,7 @@ document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre |
 let paginaActual = 1;
 const POR_PAGINA = 25;
 let tiposRodeo = [];
+let categoriasRodeo = [];
 let rodeoActual = null;
 
 let debounceTimer;
@@ -132,11 +134,16 @@ function poblarAnios() {
 async function init() {
     poblarAnios();
     try {
-        const data = await api.get('/admin/rodeos/tipos/lista?activo=true');
-        tiposRodeo = data || [];
+        const [tipos, cats] = await Promise.all([
+            api.get('/admin/rodeos/tipos/lista?activo=true'),
+            api.get('/admin/reportes/categorias-rodeo/lista?activo=true')
+        ]);
+        tiposRodeo = tipos || [];
+        categoriasRodeo = cats || [];
     } catch(err) {
-        console.warn('[Rodeos] No se pudieron cargar tipos:', err.message);
+        console.warn('[Rodeos] No se pudieron cargar tipos/categorías:', err.message);
         tiposRodeo = [];
+        categoriasRodeo = [];
     }
     cargar();
 }
@@ -176,19 +183,22 @@ function renderTabla(rodeos, total) {
     }
     wrap.innerHTML = `<table>
         <thead><tr>
-            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th>
-            <th>Días</th><th>Jurados / Deleg.</th><th>Total pagos</th><th>Origen</th><th>Acciones</th>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Categoría</th>
+            <th>Días</th><th>Estado designaciones</th><th>Total pagos</th><th>Origen</th><th>Acciones</th>
         </tr></thead>
         <tbody>
-        ${rodeos.map(r => `<tr>
+        ${rodeos.map(r => {
+            const A = r.aceptados || 0, R = r.rechazados || 0, P = r.pendientes || 0;
+            let estadoHtml = `<span style="color:#27ae60; font-weight:600;">${A}A</span> / <span style="color:#e74c3c;">${R}R</span> / <span style="color:#f39c12;">${P}P</span>`;
+            if (A + R + P === 0) estadoHtml = '<span style="color:#aaa;">—</span>';
+            return `<tr>
             <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
             <td><strong>${sanitizar(r.club)}</strong></td>
             <td>${sanitizar(r.asociacion)}</td>
             <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
+            <td>${r.categoria_rodeo_nombre ? `<span class="badge">${sanitizar(r.categoria_rodeo_nombre)}</span>` : '<span style="color:#aaa; font-size:12px;">—</span>'}</td>
             <td style="text-align:center;">${r.duracion_dias}</td>
-            <td style="text-align:center;">
-                ${r.jurados || 0}J / ${r.delegados || 0}D
-            </td>
+            <td style="text-align:center; font-size:13px;">${estadoHtml}</td>
             <td class="monto-positivo">${formatCLP(r.total_pago_base || 0)}</td>
             <td>${r.origen === 'importado' ? '<span class="badge badge-delegado">Excel</span>' : '<span class="badge">Manual</span>'}</td>
             <td>
@@ -198,9 +208,9 @@ function renderTabla(rodeos, total) {
                     <button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${r.total_asignaciones || 0})">Eliminar</button>
                 </div>
             </td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
         </tbody>
-    </table><div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s)</div>`;
+    </table><div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; A=Aceptado R=Rechazado P=Pendiente</div>`;
 }
 
 function renderPag(total) {
@@ -252,6 +262,7 @@ function htmlDetalle(r) {
         <div><strong>Asociación:</strong> ${sanitizar(r.asociacion)}</div>
         <div><strong>Fecha:</strong> ${formatFecha(r.fecha)}</div>
         <div><strong>Tipo:</strong> ${sanitizar(r.tipo_rodeo_nombre)}</div>
+        <div><strong>Categoría:</strong> ${r.categoria_rodeo_nombre ? `<span class="badge">${sanitizar(r.categoria_rodeo_nombre)}</span>` : '<span style="color:#aaa;">Sin categoría</span>'}</div>
         <div><strong>Duración:</strong> ${r.duracion_dias} día(s)</div>
         <div><strong>Origen:</strong> ${r.origen}</div>
     </div>
@@ -300,6 +311,7 @@ function htmlDetalle(r) {
 
 function formRodeo(r) {
     const tipos = tiposRodeo.map(t => `<option value="${t.id}" data-dias="${t.duracion_dias}" ${r?.tipo_rodeo_id===t.id?'selected':''}>${sanitizar(t.nombre)} (${t.duracion_dias} día(s))</option>`).join('');
+    const cats  = categoriasRodeo.map(c => `<option value="${c.id}" ${r?.categoria_rodeo_id===c.id?'selected':''}>${sanitizar(c.nombre)}</option>`).join('');
     return `<form onsubmit="guardarRodeo(event)">
         <div class="form-fila">
             <div class="form-grupo">
@@ -324,9 +336,18 @@ function formRodeo(r) {
                 </select>
             </div>
         </div>
-        <div class="form-grupo">
-            <label class="form-label">Observación</label>
-            <textarea name="observacion" class="form-control" rows="2">${sanitizar(r?.observacion||'')}</textarea>
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Categoría de rodeo</label>
+                <select name="categoria_rodeo_id" class="form-control">
+                    <option value="">Sin categoría</option>
+                    ${cats}
+                </select>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Observación</label>
+                <textarea name="observacion" class="form-control" rows="2">${sanitizar(r?.observacion||'')}</textarea>
+            </div>
         </div>
         <div class="form-acciones">
             <button type="submit" class="btn btn-primario">${r ? 'Guardar cambios' : 'Crear rodeo'}</button>
@@ -650,6 +671,64 @@ async function ejecutarEliminarAsignacion(asigId, rodeoId) {
         mostrarToast('Asignación eliminada', 'success');
         verDetalle(rodeoId);
     } catch(err) { mostrarError(err); }
+}
+
+// ── CATEGORÍAS DE RODEO ─────────────────────────────────────────
+async function mostrarCategorias() {
+    const data = await api.get('/admin/reportes/categorias-rodeo/lista');
+    document.getElementById('modal-titulo').textContent = 'Categorías de Rodeo';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="form-acciones" style="margin-bottom:16px;">
+            <button class="btn btn-primario btn-pequeño" onclick="formularioCategoria(null)">+ Nueva categoría</button>
+        </div>
+        <table>
+            <thead><tr><th>Nombre</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>
+            ${(data||[]).map(c => `<tr>
+                <td>${sanitizar(c.nombre)}</td>
+                <td>${c.activo ? '<span class="badge badge-activo">Activa</span>' : '<span class="badge badge-inactivo">Inactiva</span>'}</td>
+                <td><button class="btn btn-pequeño btn-outline" onclick="formularioCategoria(${JSON.stringify(c).replace(/"/g,'&quot;')})">Editar</button></td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function formularioCategoria(c) {
+    document.getElementById('modal-body').innerHTML = `
+        <form onsubmit="guardarCategoria(event, '${c?.id||''}')">
+            <div class="form-grupo">
+                <label class="form-label">Nombre <span class="req">*</span></label>
+                <input type="text" name="nombre" class="form-control" required value="${sanitizar(c?.nombre||'')}">
+            </div>
+            ${c ? `<div class="form-grupo">
+                <label class="form-label">Estado</label>
+                <select name="activo" class="form-control">
+                    <option value="true" ${c.activo?'selected':''}>Activa</option>
+                    <option value="false" ${!c.activo?'selected':''}>Inactiva</option>
+                </select>
+            </div>` : ''}
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">${c ? 'Guardar' : 'Crear'}</button>
+                <button type="button" class="btn btn-secundario" onclick="mostrarCategorias()">Volver</button>
+            </div>
+        </form>`;
+}
+
+async function guardarCategoria(e, id) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    if (datos.activo) datos.activo = datos.activo === 'true';
+    try {
+        if (id) await api.patch('/admin/reportes/categorias-rodeo/' + id, datos);
+        else    await api.post('/admin/reportes/categorias-rodeo', datos);
+        mostrarToast('Categoría guardada', 'success');
+        // Recargar categorías en memoria
+        categoriasRodeo = await api.get('/admin/reportes/categorias-rodeo/lista?activo=true');
+        mostrarCategorias();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); rodeoActual = null; }

@@ -111,6 +111,12 @@
                         <label class="form-label">Club</label>
                         <input type="text" id="g-club" class="form-control" placeholder="Filtrar...">
                     </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Categoría de rodeo</label>
+                        <select id="g-cat-rodeo" class="form-control">
+                            <option value="">Todas</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="flex gap-8">
                     <button class="btn btn-primario" onclick="aplicarFiltros()">Generar reporte</button>
@@ -125,6 +131,7 @@
                 <button class="tab" onclick="cambiarTab('asociacion')">Por asociación</button>
                 <button class="tab" onclick="cambiarTab('club')">Por club</button>
                 <button class="tab" onclick="cambiarTab('tipo')">Por tipo de rodeo</button>
+                <button class="tab" onclick="cambiarTab('categoria')">Por categoría</button>
             </div>
 
             <!-- ════ PANEL: Resumen por jurado ═══════════════════════════ -->
@@ -220,6 +227,18 @@
                 </div>
             </div>
 
+            <!-- ════ PANEL: Por categoría de rodeo ══════════════════════ -->
+            <div id="panel-categoria" class="panel">
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Reporte por categoría de rodeo</span>
+                    </div>
+                    <div id="tabla-categoria" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
         </div><!-- /page-body -->
     </div><!-- /main-content -->
 </div>
@@ -270,16 +289,30 @@ async function poblarJurados() {
     } catch(e) {}
 }
 
+async function poblarCategoriasRodeo() {
+    try {
+        const data = await api.get('/admin/reportes/categorias-rodeo/lista?activo=true');
+        const sel = document.getElementById('g-cat-rodeo');
+        (data || []).forEach(c => {
+            const o = document.createElement('option');
+            o.value = c.id;
+            o.textContent = c.nombre;
+            sel.appendChild(o);
+        });
+    } catch(e) {}
+}
+
 function getFiltros() {
     return {
-        año:              document.getElementById('g-año').value,
-        mes:              document.getElementById('g-mes').value,
-        fechaDesde:       document.getElementById('g-desde').value,
-        fechaHasta:       document.getElementById('g-hasta').value,
+        año:               document.getElementById('g-año').value,
+        mes:               document.getElementById('g-mes').value,
+        fechaDesde:        document.getElementById('g-desde').value,
+        fechaHasta:        document.getElementById('g-hasta').value,
         usuario_pagado_id: document.getElementById('g-jurado').value,
-        categoria:        document.getElementById('g-cat').value,
-        asociacion:       document.getElementById('g-asoc').value.trim(),
-        club:             document.getElementById('g-club').value.trim(),
+        categoria:         document.getElementById('g-cat').value,
+        asociacion:        document.getElementById('g-asoc').value.trim(),
+        club:              document.getElementById('g-club').value.trim(),
+        categoria_rodeo_id: document.getElementById('g-cat-rodeo').value,
     };
 }
 
@@ -292,13 +325,14 @@ function limpiarFiltros() {
     document.getElementById('g-cat').value = '';
     document.getElementById('g-asoc').value = '';
     document.getElementById('g-club').value = '';
+    document.getElementById('g-cat-rodeo').value = '';
 }
 
 // ── Tabs ─────────────────────────────────────────────────────
 function cambiarTab(tab) {
     tabActiva = tab;
     document.querySelectorAll('.tab').forEach((el, i) => {
-        const tabs = ['resumen','detalle','asociacion','club','tipo'];
+        const tabs = ['resumen','detalle','asociacion','club','tipo','categoria'];
         el.classList.toggle('activo', tabs[i] === tab);
     });
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('activo'));
@@ -313,6 +347,7 @@ async function aplicarFiltros() {
     else if (tabActiva === 'asociacion') cargarAgregado('por-asociacion', 'tabla-asociacion', renderTablaAsociacion);
     else if (tabActiva === 'club')       cargarAgregado('por-club', 'tabla-club', renderTablaClub);
     else if (tabActiva === 'tipo')       cargarAgregado('por-tipo-rodeo', 'tabla-tipo', renderTablaTipo);
+    else if (tabActiva === 'categoria')  cargarAgregado('por-categoria-rodeo', 'tabla-categoria', renderTablaCategoria);
 }
 
 // ── Resumen por jurado ────────────────────────────────────────
@@ -415,29 +450,41 @@ function renderDetalle(data) {
         <div class="stat-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Bruto</div></div>
         <div class="stat-card"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Líquido</div></div>`;
 
-    const ESTADOS_BONO = { aprobado:'✅ Aprobado', pendiente:'⏳ Pendiente', rechazado:'❌ Rechazado', modificado:'✏️ Modificado' };
+    const ESTADOS_BONO = { aprobado:'Aprobado', pendiente:'Pendiente', rechazado:'Rechazado', modificado:'Modificado' };
+    const COLORES_BONO = { aprobado:'badge-activo', pendiente:'', rechazado:'badge-anulado', modificado:'' };
+    const ESTADOS_DESIG = {
+        aceptado:  '<span class="badge badge-activo">Aceptado</span>',
+        rechazado: '<span class="badge" style="background:#e74c3c;color:#fff;">Rechazado</span>',
+        pendiente: '<span class="badge" style="background:#f39c12;color:#fff;">Pendiente</span>',
+    };
 
     wrap.innerHTML = `<table>
         <thead><tr>
-            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo Rodeo</th>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo Rodeo</th><th>Cat. Rodeo</th>
             <th style="text-align:center;">Días</th><th style="text-align:center;">Cat.</th>
-            <th class="monto">Pago base</th><th class="monto">Bono</th>
+            <th>Designación</th><th class="monto">Pago base</th><th class="monto">Bono</th>
             <th>Estado bono</th><th class="monto">Bruto</th><th class="monto">Líquido</th>
         </tr></thead>
         <tbody>
-        ${data.data.map(f => `<tr>
+        ${data.data.map(f => {
+            const esRechazada = f.excluido;
+            const desigKey = f.estado_designacion || 'aceptado';
+            const desigHtml = ESTADOS_DESIG[desigKey] || ESTADOS_DESIG.aceptado;
+            return `<tr style="${esRechazada ? 'opacity:0.55;' : ''}">
             <td style="white-space:nowrap;">${formatFecha(f.fecha)}</td>
             <td><strong>${sanitizar(f.club||'—')}</strong></td>
             <td>${sanitizar(f.asociacion||'—')}</td>
             <td>${sanitizar(f.tipo_rodeo||'—')}</td>
+            <td>${sanitizar(f.categoria_rodeo||'—')}</td>
             <td style="text-align:center;">${f.duracion_dias}</td>
             <td style="text-align:center;"><span class="badge badge-${(f.categoria||'').toLowerCase()}">${f.categoria||'—'}</span></td>
-            <td class="monto">${formatCLP(f.pago_base)}</td>
+            <td>${desigHtml}</td>
+            <td class="monto">${esRechazada ? '<span style="text-decoration:line-through;color:#aaa;">'+formatCLP(f.pago_base)+'</span>' : formatCLP(f.pago_base)}</td>
             <td class="monto">${f.bono_aprobado ? formatCLP(f.bono_aprobado) : '—'}</td>
-            <td style="font-size:12px;">${ESTADOS_BONO[f.estado_bono]||'—'}</td>
-            <td class="monto"><strong>${formatCLP(f.bruto)}</strong></td>
-            <td class="monto monto-positivo">${formatCLP(f.liquido)}</td>
-        </tr>`).join('')}
+            <td style="font-size:12px;">${f.estado_bono ? `<span class="badge ${COLORES_BONO[f.estado_bono]||''}">${ESTADOS_BONO[f.estado_bono]||f.estado_bono}</span>` : '—'}</td>
+            <td class="monto"><strong>${esRechazada ? '—' : formatCLP(f.bruto)}</strong></td>
+            <td class="monto monto-positivo">${esRechazada ? '—' : formatCLP(f.liquido)}</td>
+        </tr>`;}).join('')}
         </tbody>
     </table>`;
 }
@@ -581,9 +628,34 @@ async function exportar(tipo, formato, subtipo) {
     } catch(err) { mostrarError(err); }
 }
 
+function renderTablaCategoria(data, wrap) {
+    if (!data.length) { wrap.innerHTML = '<p class="tabla-vacia">Sin datos</p>'; return; }
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Categoría</th><th style="text-align:center;">Rodeos</th>
+            <th style="text-align:center;">Asignaciones</th>
+            <th class="monto">Total pago base</th><th class="monto">Total bonos</th><th class="monto">Total bruto</th>
+        </tr></thead>
+        <tbody>
+        ${data.map(d => `<tr>
+            <td><strong>${sanitizar(d.categoria)}</strong></td>
+            <td style="text-align:center;">${d.cant_rodeos}</td>
+            <td style="text-align:center;">${d.cant_asignaciones}</td>
+            <td class="monto">${formatCLP(d.total_pago_base)}</td>
+            <td class="monto">${formatCLP(d.total_bono_aprobado)}</td>
+            <td class="monto"><strong>${formatCLP(d.total_bruto)}</strong></td>
+        </tr>`).join('')}
+        </tbody>
+    </table>
+    <div style="padding:8px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-borde);">
+        Total bruto global: <strong>${formatCLP(data.reduce((s,d)=>s+d.total_bruto,0))}</strong>
+    </div>`;
+}
+
 // ── Init ──────────────────────────────────────────────────────
 poblarAnios();
 poblarJurados();
+poblarCategoriasRodeo();
 // Aplicar automáticamente con año actual al cargar
 setTimeout(() => {
     ultimosFiltros = getFiltros();

@@ -180,6 +180,7 @@ function renderAsignaciones(asignaciones) {
             <th>Designación</th>
             <th>Pago base</th>
             <th>Bono</th>
+            <th>Total aprobado</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
@@ -189,11 +190,16 @@ function renderAsignaciones(asignaciones) {
             if (esRechazada) {
                 bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
             } else if (bono) {
-                const est = estadoBono(bono.estado);
-                const monto = ['aprobado','modificado'].includes(bono.estado) ? bono.monto_aprobado : bono.monto_solicitado;
-                bonoHtml = `<span class="bono-chip ${bono.estado}" title="${est.texto}">${formatCLP(monto)} (${est.texto})</span>`;
+                // Mostrar estado del bono con color
+                const colores = { aprobado: '#27ae60', pendiente: '#f39c12', rechazado: '#e74c3c', modificado: '#2980b9' };
+                const etiquetas = { aprobado: 'Aprobado', pendiente: 'Pendiente revisión', rechazado: 'Rechazado', modificado: 'Modificado' };
+                const monto = ['aprobado','modificado'].includes(bono.estado) ? (bono.monto_aprobado || bono.monto_solicitado) : bono.monto_solicitado;
+                bonoHtml = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${formatCLP(monto)}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
             } else if (a.estado_designacion === 'aceptado' || a.estado_designacion === null) {
+                // Solo mostrar "Solicitar bono" si fue aceptada/legacy y no tiene bono aún
                 bonoHtml = `<button class="btn btn-pequeño btn-outline" onclick="abrirSolicitarBono('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Solicitar bono</button>`;
+            } else if (a.estado_designacion === 'pendiente') {
+                bonoHtml = '<span style="color:#aaa; font-size:12px;">Pendiente designación</span>';
             }
 
             let designacionHtml = '';
@@ -208,6 +214,8 @@ function renderAsignaciones(asignaciones) {
                 designacionHtml = `<span class="badge badge-activo">Aceptada</span>`;
             }
 
+            const bonoAprobado = (a.bonos||[]).filter(b => ['aprobado','modificado'].includes(b.estado)).reduce((s,b)=>s+(b.monto_aprobado||b.monto_solicitado||0),0);
+            const totalAprobado = esRechazada ? 0 : (a.pago_base_calculado||0) + bonoAprobado;
             return `<tr style="${esRechazada ? 'opacity:0.6;' : ''}">
                 <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
@@ -218,6 +226,7 @@ function renderAsignaciones(asignaciones) {
                 <td>${designacionHtml}</td>
                 <td class="${esRechazada ? '' : 'monto-positivo'}">${esRechazada ? `<span style="text-decoration:line-through; color:#aaa;">${formatCLP(a.pago_base_calculado)}</span>` : formatCLP(a.pago_base_calculado)}</td>
                 <td>${bonoHtml}</td>
+                <td class="${esRechazada ? '' : 'monto-positivo'}" style="font-weight:600;">${esRechazada ? '—' : formatCLP(totalAprobado)}</td>
             </tr>`;
         }).join('')}
         </tbody>

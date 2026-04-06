@@ -33,16 +33,16 @@ function buildRango(año, mes, fechaDesde, fechaHasta) {
 
 // ─── Query base de asignaciones con filtros ───────────────────
 async function queryAsignaciones(filtros) {
-    const { año, mes, fechaDesde, fechaHasta, usuario_pagado_id, categoria, asociacion, club, tipo_rodeo_id } = filtros;
+    const { año, mes, fechaDesde, fechaHasta, usuario_pagado_id, categoria, asociacion, club, tipo_rodeo_id, categoria_rodeo_id } = filtros;
 
     let q = supabase
         .from('asignaciones')
         .select(`
             id, tipo_persona, categoria_aplicada, valor_diario_aplicado,
             duracion_dias_aplicada, pago_base_calculado, estado,
-            nombre_importado, created_at,
+            estado_designacion, distancia_km, nombre_importado, created_at,
             usuarios_pagados(id, codigo_interno, nombre_completo, rut, categoria, tipo_persona),
-            rodeos!inner(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, tipo_rodeo_id)
+            rodeos!inner(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, tipo_rodeo_id, categoria_rodeo_nombre)
         `)
         .eq('estado', 'activo');
 
@@ -50,11 +50,12 @@ async function queryAsignaciones(filtros) {
     if (rango) {
         q = q.gte('rodeos.fecha', rango.inicio).lte('rodeos.fecha', rango.fin);
     }
-    if (usuario_pagado_id) q = q.eq('usuario_pagado_id', usuario_pagado_id);
-    if (categoria)         q = q.eq('categoria_aplicada', categoria);
-    if (asociacion)        q = q.ilike('rodeos.asociacion', `%${asociacion}%`);
-    if (club)              q = q.ilike('rodeos.club', `%${club}%`);
-    if (tipo_rodeo_id)     q = q.eq('rodeos.tipo_rodeo_id', tipo_rodeo_id);
+    if (usuario_pagado_id)  q = q.eq('usuario_pagado_id', usuario_pagado_id);
+    if (categoria)          q = q.eq('categoria_aplicada', categoria);
+    if (asociacion)         q = q.ilike('rodeos.asociacion', `%${asociacion}%`);
+    if (club)               q = q.ilike('rodeos.club', `%${club}%`);
+    if (tipo_rodeo_id)      q = q.eq('rodeos.tipo_rodeo_id', tipo_rodeo_id);
+    if (categoria_rodeo_id) q = q.eq('rodeos.categoria_rodeo_id', categoria_rodeo_id);
 
     const { data, error } = await q.order('rodeos(fecha)', { ascending: false });
     if (error) throw new Error('Error en query asignaciones: ' + error.message);
@@ -87,6 +88,7 @@ async function agregarBonos(asignaciones) {
 }
 
 // ─── Calcular totales por jurado ──────────────────────────────
+// Las asignaciones con estado_designacion='rechazado' no suman a totales
 function calcularTotalesPorJurado(asignaciones, porcentajeRetencion) {
     const mapa = {};
 
@@ -94,6 +96,7 @@ function calcularTotalesPorJurado(asignaciones, porcentajeRetencion) {
         const u = a.usuarios_pagados;
         if (!u) continue;
         const uid = u.id;
+        const esRechazada = a.estado_designacion === 'rechazado';
         if (!mapa[uid]) {
             mapa[uid] = {
                 id:             uid,
@@ -107,9 +110,11 @@ function calcularTotalesPorJurado(asignaciones, porcentajeRetencion) {
                 total_bono_aprobado: 0,
             };
         }
-        mapa[uid].cant_rodeos++;
-        mapa[uid].total_pago_base     += (a.pago_base_calculado || 0);
-        mapa[uid].total_bono_aprobado += (a.bono_aprobado || 0);
+        if (!esRechazada) {
+            mapa[uid].cant_rodeos++;
+            mapa[uid].total_pago_base     += (a.pago_base_calculado || 0);
+            mapa[uid].total_bono_aprobado += (a.bono_aprobado || 0);
+        }
     }
 
     return Object.values(mapa).map(j => {
@@ -125,8 +130,8 @@ function calcularTotalesPorJurado(asignaciones, porcentajeRetencion) {
 // ══════════════════════════════════════════════════════════════
 router.get('/resumen-mensual', async (req, res) => {
     try {
-        const { año, mes, fechaDesde, fechaHasta, categoria, asociacion, club, tipo_rodeo_id } = req.query;
-        const asignaciones = await queryAsignaciones({ año, mes, fechaDesde, fechaHasta, categoria, asociacion, club, tipo_rodeo_id });
+        const { año, mes, fechaDesde, fechaHasta, categoria, asociacion, club, tipo_rodeo_id, categoria_rodeo_id } = req.query;
+        const asignaciones = await queryAsignaciones({ año, mes, fechaDesde, fechaHasta, categoria, asociacion, club, tipo_rodeo_id, categoria_rodeo_id });
         const conBonos     = await agregarBonos(asignaciones);
         const porcentaje   = await obtenerRetencion();
         const totales      = calcularTotalesPorJurado(conBonos, porcentaje);
@@ -152,34 +157,42 @@ router.get('/resumen-mensual', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 router.get('/detalle-jurado', async (req, res) => {
     try {
-        const { usuario_pagado_id, año, mes, fechaDesde, fechaHasta } = req.query;
+        const { usuario_pagado_id, año, mes, fechaDesde, fechaHasta, categoria_rodeo_id } = req.query;
         if (!usuario_pagado_id) return res.status(400).json({ error: 'usuario_pagado_id requerido' });
 
-        const asignaciones = await queryAsignaciones({ usuario_pagado_id, año, mes, fechaDesde, fechaHasta });
+        const asignaciones = await queryAsignaciones({ usuario_pagado_id, año, mes, fechaDesde, fechaHasta, categoria_rodeo_id });
         const conBonos     = await agregarBonos(asignaciones);
         const porcentaje   = await obtenerRetencion();
 
+        // Rechazados: visibles en historial pero con montos en 0 y marcados
         const filas = conBonos.map(a => {
-            const bruto     = (a.pago_base_calculado || 0) + (a.bono_aprobado || 0);
-            const retencion = Math.round(bruto * porcentaje / 100);
+            const esRechazada = a.estado_designacion === 'rechazado';
+            const pago_base   = esRechazada ? 0 : (a.pago_base_calculado || 0);
+            const bono_ap     = esRechazada ? 0 : (a.bono_aprobado || 0);
+            const bruto       = pago_base + bono_ap;
+            const retencion   = Math.round(bruto * porcentaje / 100);
             return {
-                fecha:            a.rodeos?.fecha,
-                club:             a.rodeos?.club,
-                asociacion:       a.rodeos?.asociacion,
-                tipo_rodeo:       a.rodeos?.tipo_rodeo_nombre,
-                duracion_dias:    a.duracion_dias_aplicada,
-                categoria:        a.categoria_aplicada,
-                pago_base:        a.pago_base_calculado,
-                bono_aprobado:    a.bono_aprobado,
-                estado_bono:      a.ultimo_bono?.estado || null,
-                distancia_km:     a.ultimo_bono?.distancia_declarada || null,
+                fecha:              a.rodeos?.fecha,
+                club:               a.rodeos?.club,
+                asociacion:         a.rodeos?.asociacion,
+                tipo_rodeo:         a.rodeos?.tipo_rodeo_nombre,
+                categoria_rodeo:    a.rodeos?.categoria_rodeo_nombre || null,
+                duracion_dias:      a.duracion_dias_aplicada,
+                categoria:          a.categoria_aplicada,
+                estado_designacion: a.estado_designacion || null,
+                distancia_km:       a.distancia_km || a.ultimo_bono?.distancia_declarada || null,
+                pago_base,
+                bono_aprobado:      bono_ap,
+                estado_bono:        a.ultimo_bono?.estado || null,
                 bruto,
-                retencion_monto:  retencion,
-                liquido:          bruto - retencion,
+                retencion_monto:    retencion,
+                liquido:            bruto - retencion,
+                excluido:           esRechazada,
             };
         });
 
-        const totales = filas.reduce((acc, f) => ({
+        // Totales: solo filas no rechazadas
+        const totales = filas.filter(f => !f.excluido).reduce((acc, f) => ({
             pago_base:     acc.pago_base     + f.pago_base,
             bono_aprobado: acc.bono_aprobado + f.bono_aprobado,
             bruto:         acc.bruto         + f.bruto,
@@ -187,7 +200,6 @@ router.get('/detalle-jurado', async (req, res) => {
             liquido:       acc.liquido       + f.liquido,
         }), { pago_base:0, bono_aprobado:0, bruto:0, retencion:0, liquido:0 });
 
-        // Datos del jurado
         const { data: usr } = await supabase
             .from('usuarios_pagados')
             .select('codigo_interno, nombre_completo, rut, categoria, tipo_persona')
@@ -359,6 +371,79 @@ router.get('/por-jurado', async (req, res) => {
     } catch(err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// ══════════════════════════════════════════════════════════════
+// GET /api/admin/reportes/por-categoria-rodeo
+// Agrupado por categoría de rodeo
+// ══════════════════════════════════════════════════════════════
+router.get('/por-categoria-rodeo', async (req, res) => {
+    try {
+        const asignaciones = await queryAsignaciones(req.query);
+        const conBonos     = await agregarBonos(asignaciones);
+
+        const mapa = {};
+        for (const a of conBonos) {
+            const esRechazada = a.estado_designacion === 'rechazado';
+            const cat  = a.rodeos?.categoria_rodeo_nombre || 'Sin categoría';
+            if (!mapa[cat]) mapa[cat] = { categoria: cat, cant_rodeos: new Set(), cant_asignaciones: 0, total_pago_base: 0, total_bono_aprobado: 0 };
+            mapa[cat].cant_rodeos.add(a.rodeos?.id);
+            if (!esRechazada) {
+                mapa[cat].cant_asignaciones++;
+                mapa[cat].total_pago_base     += (a.pago_base_calculado || 0);
+                mapa[cat].total_bono_aprobado += (a.bono_aprobado || 0);
+            }
+        }
+
+        const data = Object.values(mapa).map(c => ({
+            ...c,
+            cant_rodeos:  c.cant_rodeos.size,
+            total_bruto:  c.total_pago_base + c.total_bono_aprobado,
+        })).sort((a, b) => b.total_bruto - a.total_bruto);
+
+        res.json({ data, total: data.length });
+    } catch(err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+// GET /api/admin/reportes/categorias-rodeo/lista
+// ══════════════════════════════════════════════════════════════
+router.get('/categorias-rodeo/lista', async (req, res) => {
+    const { activo } = req.query;
+    let q = supabase.from('categorias_rodeo').select('*').order('nombre');
+    if (activo !== undefined) q = q.eq('activo', activo === 'true');
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+});
+
+// POST /api/admin/reportes/categorias-rodeo
+router.post('/categorias-rodeo', async (req, res) => {
+    const { nombre } = req.body;
+    if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'nombre requerido' });
+    const { data, error } = await supabase
+        .from('categorias_rodeo')
+        .insert({ nombre: nombre.trim() })
+        .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json(data);
+});
+
+// PATCH /api/admin/reportes/categorias-rodeo/:id
+router.patch('/categorias-rodeo/:id', async (req, res) => {
+    const { nombre, activo } = req.body;
+    const cambios = {};
+    if (nombre) cambios.nombre = nombre.trim();
+    if (activo !== undefined) cambios.activo = !!activo;
+    const { data, error } = await supabase
+        .from('categorias_rodeo')
+        .update(cambios)
+        .eq('id', req.params.id)
+        .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
 });
 
 module.exports = router;

@@ -42,25 +42,32 @@ router.get('/', async (req, res) => {
         const ids = rodeos.map(r => r.id);
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('rodeo_id, tipo_persona, pago_base_calculado')
+            .select('rodeo_id, tipo_persona, pago_base_calculado, estado_designacion')
             .in('rodeo_id', ids)
             .eq('estado', 'activo');
 
         const statsPorRodeo = {};
         (asigs || []).forEach(a => {
-            if (!statsPorRodeo[a.rodeo_id]) statsPorRodeo[a.rodeo_id] = { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0 };
+            if (!statsPorRodeo[a.rodeo_id]) statsPorRodeo[a.rodeo_id] = { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0, aceptados: 0, rechazados: 0, pendientes: 0 };
             statsPorRodeo[a.rodeo_id].total_asignaciones++;
             if (a.tipo_persona === 'jurado') statsPorRodeo[a.rodeo_id].jurados++;
             else statsPorRodeo[a.rodeo_id].delegados++;
             statsPorRodeo[a.rodeo_id].total_pago_base += (a.pago_base_calculado || 0);
+            const ed = a.estado_designacion;
+            if (ed === 'rechazado') statsPorRodeo[a.rodeo_id].rechazados++;
+            else if (ed === 'aceptado') statsPorRodeo[a.rodeo_id].aceptados++;
+            else statsPorRodeo[a.rodeo_id].pendientes++; // null o 'pendiente'
         });
 
         rodeos.forEach(r => {
-            const s = statsPorRodeo[r.id] || { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0 };
+            const s = statsPorRodeo[r.id] || { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0, aceptados: 0, rechazados: 0, pendientes: 0 };
             r.total_asignaciones = s.total_asignaciones;
             r.jurados            = s.jurados;
             r.delegados          = s.delegados;
             r.total_pago_base    = s.total_pago_base;
+            r.aceptados          = s.aceptados;
+            r.rechazados         = s.rechazados;
+            r.pendientes         = s.pendientes;
         });
     }
 
@@ -93,7 +100,7 @@ router.get('/:id', async (req, res) => {
 
 // POST /api/admin/rodeos
 router.post('/', async (req, res) => {
-    const { club, asociacion, fecha, tipo_rodeo_id, observacion } = req.body;
+    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion } = req.body;
 
     if (!club || !asociacion || !fecha || !tipo_rodeo_id) {
         return res.status(400).json({ error: 'club, asociacion, fecha y tipo_rodeo_id son requeridos' });
@@ -108,6 +115,13 @@ router.post('/', async (req, res) => {
 
     if (!tipo) return res.status(400).json({ error: 'Tipo de rodeo no encontrado o inactivo' });
 
+    // Snapshot del nombre de categoría
+    let categoria_rodeo_nombre = null;
+    if (categoria_rodeo_id) {
+        const { data: cat } = await supabase.from('categorias_rodeo').select('nombre').eq('id', categoria_rodeo_id).single();
+        if (cat) categoria_rodeo_nombre = cat.nombre;
+    }
+
     const { data, error } = await supabase
         .from('rodeos')
         .insert({
@@ -117,6 +131,8 @@ router.post('/', async (req, res) => {
             tipo_rodeo_id,
             tipo_rodeo_nombre: tipo.nombre,
             duracion_dias: tipo.duracion_dias,
+            categoria_rodeo_id: categoria_rodeo_id || null,
+            categoria_rodeo_nombre,
             observacion,
             origen: 'manual',
             created_by: req.usuario.id
@@ -142,7 +158,7 @@ router.post('/', async (req, res) => {
 
 // PATCH /api/admin/rodeos/:id
 router.patch('/:id', async (req, res) => {
-    const { club, asociacion, fecha, tipo_rodeo_id, observacion, estado } = req.body;
+    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, estado } = req.body;
 
     const { data: anterior } = await supabase
         .from('rodeos')
@@ -170,6 +186,17 @@ router.patch('/:id', async (req, res) => {
         cambios.tipo_rodeo_id = tipo_rodeo_id;
         cambios.tipo_rodeo_nombre = tipo.nombre;
         cambios.duracion_dias = tipo.duracion_dias;
+    }
+
+    if (categoria_rodeo_id !== undefined) {
+        if (categoria_rodeo_id) {
+            const { data: cat } = await supabase.from('categorias_rodeo').select('nombre').eq('id', categoria_rodeo_id).single();
+            cambios.categoria_rodeo_id = categoria_rodeo_id;
+            cambios.categoria_rodeo_nombre = cat?.nombre || null;
+        } else {
+            cambios.categoria_rodeo_id = null;
+            cambios.categoria_rodeo_nombre = null;
+        }
     }
 
     const { data, error } = await supabase
