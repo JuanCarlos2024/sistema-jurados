@@ -72,6 +72,7 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
 
     // Obtener asignaciones activas del usuario en el período
     // Filtramos por fecha del rodeo usando inner join
+    // Incluye rechazadas (estado_designacion='rechazado') para historial, pero se excluyen de los totales
     const { data: asignaciones, error: errA } = await supabase
         .from('asignaciones')
         .select(`
@@ -118,11 +119,14 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
     });
 
     // Calcular totales
+    // Las asignaciones con estado_designacion='rechazado' se incluyen en el array
+    // para historial, pero NO se suman a los totales financieros
     let total_pago_base = 0;
     let total_bono_aprobado = 0;
 
     const asignacionesConBonos = asignaciones.map(a => {
         const bonosDeEsta = bonosPorAsignacion[a.id] || [];
+        const esRechazada = a.estado_designacion === 'rechazado';
 
         const bono_pendiente = bonosDeEsta.filter(b => b.estado === 'pendiente')
             .reduce((s, b) => s + b.monto_solicitado, 0);
@@ -131,15 +135,18 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
         const bono_rechazado = bonosDeEsta.filter(b => b.estado === 'rechazado')
             .reduce((s, b) => s + b.monto_solicitado, 0);
 
-        total_pago_base += a.pago_base_calculado;
-        total_bono_aprobado += bono_aprobado;
+        if (!esRechazada) {
+            total_pago_base += a.pago_base_calculado;
+            total_bono_aprobado += bono_aprobado;
+        }
 
         return {
             ...a,
             bonos: bonosDeEsta,
             bono_pendiente,
             bono_aprobado,
-            bono_rechazado
+            bono_rechazado,
+            excluido_de_totales: esRechazada
         };
     });
 

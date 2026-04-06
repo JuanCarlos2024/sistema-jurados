@@ -42,20 +42,24 @@ router.get('/', async (req, res) => {
         const ids = rodeos.map(r => r.id);
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('rodeo_id, pago_base_calculado')
+            .select('rodeo_id, tipo_persona, pago_base_calculado')
             .in('rodeo_id', ids)
             .eq('estado', 'activo');
 
         const statsPorRodeo = {};
         (asigs || []).forEach(a => {
-            if (!statsPorRodeo[a.rodeo_id]) statsPorRodeo[a.rodeo_id] = { total_asignaciones: 0, total_pago_base: 0 };
+            if (!statsPorRodeo[a.rodeo_id]) statsPorRodeo[a.rodeo_id] = { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0 };
             statsPorRodeo[a.rodeo_id].total_asignaciones++;
+            if (a.tipo_persona === 'jurado') statsPorRodeo[a.rodeo_id].jurados++;
+            else statsPorRodeo[a.rodeo_id].delegados++;
             statsPorRodeo[a.rodeo_id].total_pago_base += (a.pago_base_calculado || 0);
         });
 
         rodeos.forEach(r => {
-            const s = statsPorRodeo[r.id] || { total_asignaciones: 0, total_pago_base: 0 };
+            const s = statsPorRodeo[r.id] || { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0 };
             r.total_asignaciones = s.total_asignaciones;
+            r.jurados            = s.jurados;
+            r.delegados          = s.delegados;
             r.total_pago_base    = s.total_pago_base;
         });
     }
@@ -78,7 +82,7 @@ router.get('/:id', async (req, res) => {
         .select(`
             id, tipo_persona, nombre_importado, categoria_aplicada,
             valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
-            estado, observacion, created_at,
+            estado, estado_designacion, distancia_km, aceptado_en, observacion, created_at,
             usuarios_pagados(id, codigo_interno, nombre_completo, tipo_persona, categoria)
         `)
         .eq('rodeo_id', req.params.id)

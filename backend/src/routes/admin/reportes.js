@@ -296,6 +296,56 @@ router.get('/por-tipo-rodeo', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// GET /api/admin/reportes/detalle-asociacion?asociacion=...
+// Rodeos de una asociación específica con sus jurados
+// ══════════════════════════════════════════════════════════════
+router.get('/detalle-asociacion', async (req, res) => {
+    try {
+        const { asociacion, año, mes, fechaDesde, fechaHasta } = req.query;
+        if (!asociacion) return res.status(400).json({ error: 'asociacion requerida' });
+
+        const asignaciones = await queryAsignaciones({ asociacion, año, mes, fechaDesde, fechaHasta });
+        const conBonos     = await agregarBonos(asignaciones);
+
+        // Agrupar por rodeo
+        const rodeoMap = {};
+        for (const a of conBonos) {
+            const rid = a.rodeos?.id;
+            if (!rid) continue;
+            if (!rodeoMap[rid]) {
+                rodeoMap[rid] = {
+                    rodeo_id: rid,
+                    club:          a.rodeos?.club,
+                    fecha:         a.rodeos?.fecha,
+                    tipo_rodeo:    a.rodeos?.tipo_rodeo_nombre,
+                    duracion_dias: a.rodeos?.duracion_dias,
+                    personas: [],
+                    total_pago_base: 0,
+                    total_bono_aprobado: 0
+                };
+            }
+            rodeoMap[rid].personas.push({
+                nombre:    a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—',
+                tipo:      a.tipo_persona,
+                categoria: a.categoria_aplicada,
+                pago_base: a.pago_base_calculado || 0,
+                bono:      a.bono_aprobado || 0
+            });
+            rodeoMap[rid].total_pago_base     += (a.pago_base_calculado || 0);
+            rodeoMap[rid].total_bono_aprobado += (a.bono_aprobado || 0);
+        }
+
+        const data = Object.values(rodeoMap)
+            .map(r => ({ ...r, total_bruto: r.total_pago_base + r.total_bono_aprobado }))
+            .sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+        res.json({ asociacion, data, total: data.length });
+    } catch(err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
 // GET /api/admin/reportes/por-jurado
 // Lista todos los jurados con su conteo de rodeos y total
 // ══════════════════════════════════════════════════════════════

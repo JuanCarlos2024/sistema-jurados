@@ -137,6 +137,8 @@ function navegarMes(delta) {
 }
 
 function renderTotales(r) {
+    const pendientes = (r.asignaciones || []).filter(a => a.estado_designacion === 'pendiente').length;
+    const rechazadas = (r.asignaciones || []).filter(a => a.estado_designacion === 'rechazado').length;
     document.getElementById('totales').innerHTML = `
         <div class="total-card">
             <div class="valor">${formatCLP(r.total_pago_base)}</div>
@@ -150,14 +152,14 @@ function renderTotales(r) {
             <div class="valor">${formatCLP(r.bruto)}</div>
             <div class="etiqueta">Total bruto</div>
         </div>
-        <div class="total-card retencion">
-            <div class="valor">-${formatCLP(r.retencion_monto)}</div>
-            <div class="etiqueta">Retención (${r.retencion_porcentaje}%)</div>
-        </div>
-        <div class="total-card liquido">
-            <div class="valor">${formatCLP(r.liquido)}</div>
-            <div class="etiqueta">Total líquido estimado</div>
-        </div>`;
+        ${pendientes > 0 ? `<div class="total-card" style="border-color:#f39c12;">
+            <div class="valor" style="color:#f39c12;">${pendientes}</div>
+            <div class="etiqueta">Designación(es) pendiente(s)</div>
+        </div>` : ''}
+        ${rechazadas > 0 ? `<div class="total-card" style="border-color:#e74c3c;">
+            <div class="valor" style="color:#e74c3c;">${rechazadas}</div>
+            <div class="etiqueta">Designación(es) rechazada(s)</div>
+        </div>` : ''}`;
 }
 
 function renderAsignaciones(asignaciones) {
@@ -175,28 +177,46 @@ function renderAsignaciones(asignaciones) {
             <th>Tipo rodeo</th>
             <th>Días</th>
             <th>Categoría</th>
+            <th>Designación</th>
             <th>Pago base</th>
             <th>Bono</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
             const bono = a.bonos && a.bonos.length > 0 ? a.bonos[a.bonos.length-1] : null;
+            const esRechazada = a.estado_designacion === 'rechazado';
             let bonoHtml = '';
-            if (bono) {
+            if (esRechazada) {
+                bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
+            } else if (bono) {
                 const est = estadoBono(bono.estado);
                 const monto = ['aprobado','modificado'].includes(bono.estado) ? bono.monto_aprobado : bono.monto_solicitado;
                 bonoHtml = `<span class="bono-chip ${bono.estado}" title="${est.texto}">${formatCLP(monto)} (${est.texto})</span>`;
-            } else {
+            } else if (a.estado_designacion === 'aceptado' || a.estado_designacion === null) {
                 bonoHtml = `<button class="btn btn-pequeño btn-outline" onclick="abrirSolicitarBono('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Solicitar bono</button>`;
             }
-            return `<tr>
+
+            let designacionHtml = '';
+            if (a.estado_designacion === 'pendiente') {
+                designacionHtml = `<div style="display:flex; gap:4px; flex-wrap:wrap;">
+                    <button class="btn btn-pequeño btn-primario" onclick="abrirAceptar('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Aceptar</button>
+                    <button class="btn btn-pequeño btn-peligro" onclick="abrirRechazar('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Rechazar</button>
+                </div>`;
+            } else if (a.estado_designacion === 'rechazado') {
+                designacionHtml = `<span class="badge" style="background:#e74c3c; color:#fff;">Rechazada</span>`;
+            } else {
+                designacionHtml = `<span class="badge badge-activo">Aceptada</span>`;
+            }
+
+            return `<tr style="${esRechazada ? 'opacity:0.6;' : ''}">
                 <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
                 <td>${sanitizar(a.rodeos?.asociacion||'—')}</td>
                 <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
                 <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
                 <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span class="badge badge-delegado">Delegado</span>'}</td>
-                <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
+                <td>${designacionHtml}</td>
+                <td class="${esRechazada ? '' : 'monto-positivo'}">${esRechazada ? `<span style="text-decoration:line-through; color:#aaa;">${formatCLP(a.pago_base_calculado)}</span>` : formatCLP(a.pago_base_calculado)}</td>
                 <td>${bonoHtml}</td>
             </tr>`;
         }).join('')}
@@ -272,6 +292,82 @@ async function enviarBono(e, asignacionId) {
     } finally {
         btn.disabled = false;
     }
+}
+
+// ── Aceptar/Rechazar designación ────────────────────────────────
+function abrirAceptar(asigId, clubNombre) {
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-info" style="margin-bottom:16px;">
+            <strong>Aceptar designación:</strong> ${sanitizar(clubNombre)}<br>
+            <small>Indique la distancia recorrida. Si corresponde a un tramo con bono, se generará automáticamente.</small>
+        </div>
+        <form onsubmit="enviarRespuesta(event, '${asigId}', 'aceptar')">
+            <div class="form-grupo">
+                <label class="form-label">Distancia recorrida (km) <span class="req">*</span></label>
+                <input type="number" id="resp-km" class="form-control" min="0" required placeholder="Ej: 420">
+                <div id="resp-bono-preview" class="alerta alerta-info oculto" style="margin-top:8px;"></div>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Aceptar designación</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+
+    document.getElementById('resp-km').addEventListener('input', async function() {
+        const km = parseInt(this.value);
+        const prev = document.getElementById('resp-bono-preview');
+        if (!km || km <= 0) { prev.classList.add('oculto'); return; }
+        const bono = (bonosConfig || []).find(b => km >= b.distancia_minima && (b.distancia_maxima == null || km <= b.distancia_maxima));
+        if (bono) {
+            prev.textContent = `Bono automático: ${bono.nombre} — ${formatCLP(bono.monto)}`;
+            prev.className = 'alerta alerta-info';
+            prev.classList.remove('oculto');
+        } else {
+            prev.textContent = `Sin bono configurado para ${km} km`;
+            prev.className = 'alerta alerta-error';
+            prev.classList.remove('oculto');
+        }
+    });
+
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function abrirRechazar(asigId, clubNombre) {
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-error" style="margin-bottom:16px;">
+            <strong>¿Rechazar designación?</strong><br>
+            ${sanitizar(clubNombre)}<br>
+            <small>Esta acción quedará registrada. El administrador podrá reasignar a otra persona.</small>
+        </div>
+        <form onsubmit="enviarRespuesta(event, '${asigId}', 'rechazar')">
+            <div class="form-grupo">
+                <label class="form-label">Motivo (opcional)</label>
+                <textarea id="resp-obs" class="form-control" rows="2" placeholder="Explique brevemente por qué rechaza..."></textarea>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-peligro">Sí, rechazar</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function enviarRespuesta(e, asigId, accion) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const body = { accion };
+    if (accion === 'aceptar') body.distancia_km = parseInt(document.getElementById('resp-km').value);
+    if (accion === 'rechazar') {
+        const obs = document.getElementById('resp-obs').value.trim();
+        if (obs) body.observacion_designacion = obs;
+    }
+    try {
+        const r = await api.post(`/usuario/asignaciones/${asigId}/responder`, body);
+        mostrarToast(r.mensaje || 'Respuesta registrada', 'success');
+        cerrarModal();
+        cargarResumen();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }

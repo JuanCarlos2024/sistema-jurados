@@ -136,6 +136,8 @@ async function cargarResumen() {
 
 function renderResumen(r) {
     const div = document.getElementById('resumen-mes');
+    const pendientes = (r.asignaciones || []).filter(a => a.estado_designacion === 'pendiente').length;
+    const rechazadas = (r.asignaciones || []).filter(a => a.estado_designacion === 'rechazado').length;
     div.innerHTML = `
         <div class="card-titulo">💵 ${nombreMes(r.mes)} ${r.año}</div>
         <div class="resumen-totales">
@@ -151,14 +153,14 @@ function renderResumen(r) {
                 <div class="valor">${formatCLP(r.bruto)}</div>
                 <div class="etiqueta">Total bruto</div>
             </div>
-            <div class="total-card retencion">
-                <div class="valor">-${formatCLP(r.retencion_monto)}</div>
-                <div class="etiqueta">Retención (${r.retencion_porcentaje}%)</div>
-            </div>
-            <div class="total-card liquido">
-                <div class="valor">${formatCLP(r.liquido)}</div>
-                <div class="etiqueta">Total líquido</div>
-            </div>
+            ${pendientes > 0 ? `<div class="total-card" style="border-color:#f39c12;">
+                <div class="valor" style="color:#f39c12;">${pendientes}</div>
+                <div class="etiqueta">Designación(es) pendiente(s)</div>
+            </div>` : ''}
+            ${rechazadas > 0 ? `<div class="total-card" style="border-color:#e74c3c;">
+                <div class="valor" style="color:#e74c3c;">${rechazadas}</div>
+                <div class="etiqueta">Designación(es) rechazada(s)</div>
+            </div>` : ''}
         </div>`;
 }
 
@@ -170,21 +172,31 @@ function renderRodeos(asignaciones) {
     }
     div.innerHTML = `<table>
         <thead><tr>
-            <th>Fecha</th><th>Club</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th><th>Pago base</th><th>Bono</th>
+            <th>Fecha</th><th>Club</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th><th>Designación</th><th>Pago base</th><th>Bono</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
             const bono = a.bonos && a.bonos.length > 0 ? a.bonos[a.bonos.length-1] : null;
-            return `<tr>
+            const esRechazada = a.estado_designacion === 'rechazado';
+            let designBadge = '';
+            if (a.estado_designacion === 'pendiente') {
+                designBadge = `<span class="badge" style="background:#f39c12; color:#fff;">Pendiente</span> <a href="/usuario/resumen.html" style="font-size:11px; color:var(--primario);">Responder →</a>`;
+            } else if (esRechazada) {
+                designBadge = `<span class="badge" style="background:#e74c3c; color:#fff;">Rechazada</span>`;
+            } else {
+                designBadge = `<span class="badge badge-activo">Aceptada</span>`;
+            }
+            return `<tr style="${esRechazada ? 'opacity:0.6;' : ''}">
                 <td>${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
                 <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
                 <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
                 <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '—'}</td>
-                <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
+                <td>${designBadge}</td>
+                <td class="${esRechazada ? '' : 'monto-positivo'}">${esRechazada ? `<span style="text-decoration:line-through; color:#aaa;">${formatCLP(a.pago_base_calculado)}</span>` : formatCLP(a.pago_base_calculado)}</td>
                 <td>
                     ${bono ? `<span class="bono-chip ${bono.estado}">${formatCLP(bono.estado==='aprobado'||bono.estado==='modificado' ? bono.monto_aprobado : bono.monto_solicitado)} (${estadoBono(bono.estado).texto})</span>` :
-                    `<a href="/usuario/resumen.html" class="btn btn-pequeño btn-outline">Solicitar</a>`}
+                    (esRechazada ? '—' : `<a href="/usuario/resumen.html" class="btn btn-pequeño btn-outline">Solicitar</a>`)}
                 </td>
             </tr>`;
         }).join('')}

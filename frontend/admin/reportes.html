@@ -211,6 +211,9 @@
                             <button class="btn btn-outline btn-pequeño" onclick="exportar('agregado','csv','tipo-rodeo')">CSV</button>
                         </div>
                     </div>
+                    <div style="margin-bottom:10px;">
+                        <input type="text" id="filtro-tipo" class="form-control" placeholder="Buscar tipo de rodeo..." oninput="filtrarTablaTipo()" style="max-width:300px;">
+                    </div>
                     <div id="tabla-tipo" class="tabla-wrap">
                         <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
                     </div>
@@ -219,6 +222,17 @@
 
         </div><!-- /page-body -->
     </div><!-- /main-content -->
+</div>
+
+<!-- Modal detalle asociación -->
+<div class="modal-overlay oculto" id="modal-asoc">
+<div class="modal" style="max-width:820px;">
+    <div class="modal-header">
+        <h3 id="modal-asoc-titulo">Detalle asociación</h3>
+        <button class="modal-cerrar" onclick="document.getElementById('modal-asoc').classList.add('oculto')">×</button>
+    </div>
+    <div class="modal-body" id="modal-asoc-body"></div>
+</div>
 </div>
 
 <script src="/js/api.js"></script>
@@ -448,7 +462,7 @@ function renderTablaAsociacion(data, wrap) {
         </tr></thead>
         <tbody>
         ${data.map(d => `<tr>
-            <td><strong>${sanitizar(d.asociacion)}</strong></td>
+            <td><button class="btn btn-pequeño btn-outline" style="margin-right:6px;" onclick="verDetalleAsociacion('${sanitizar(d.asociacion)}')">Ver rodeos</button><strong>${sanitizar(d.asociacion)}</strong></td>
             <td style="text-align:center;">${d.cant_rodeos}</td>
             <td style="text-align:center;">${d.cant_jurados}</td>
             <td class="monto">${formatCLP(d.total_pago_base)}</td>
@@ -461,6 +475,44 @@ function renderTablaAsociacion(data, wrap) {
         Total bruto global: <strong>${formatCLP(data.reduce((s,d)=>s+d.total_bruto,0))}</strong>
     </div>`;
 }
+
+async function verDetalleAsociacion(nombre) {
+    const modal = document.getElementById('modal-asoc');
+    const body  = document.getElementById('modal-asoc-body');
+    document.getElementById('modal-asoc-titulo').textContent = 'Rodeos — ' + nombre;
+    body.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    modal.classList.remove('oculto');
+    try {
+        const qs = toQueryString({ ...ultimosFiltros, asociacion: nombre });
+        const r  = await api.get('/admin/reportes/detalle-asociacion?' + qs);
+        if (!r.data || r.data.length === 0) {
+            body.innerHTML = '<p class="tabla-vacia">Sin rodeos en el período seleccionado</p>';
+            return;
+        }
+        body.innerHTML = r.data.map(rodeo => `
+            <div style="margin-bottom:20px; border:1px solid var(--gris-borde); border-radius:8px; overflow:hidden;">
+                <div style="background:var(--fondo); padding:10px 14px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${sanitizar(rodeo.club)} — ${formatFecha(rodeo.fecha)} (${sanitizar(rodeo.tipo_rodeo||'—')})</span>
+                    <span class="monto-positivo">${formatCLP(rodeo.total_bruto)}</span>
+                </div>
+                <table style="margin:0;">
+                    <thead><tr><th>Nombre</th><th>Tipo</th><th>Cat.</th><th class="monto">Pago base</th><th class="monto">Bono</th></tr></thead>
+                    <tbody>
+                    ${(rodeo.personas || []).map(p => `<tr>
+                        <td>${sanitizar(p.nombre)}</td>
+                        <td>${p.tipo === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
+                        <td>${p.categoria || '—'}</td>
+                        <td class="monto">${formatCLP(p.pago_base)}</td>
+                        <td class="monto">${p.bono ? formatCLP(p.bono) : '—'}</td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>`).join('');
+    } catch(err) {
+        body.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
+}
+document.getElementById('modal-asoc').addEventListener('click', function(e) { if (e.target===this) this.classList.add('oculto'); });
 
 function renderTablaClub(data, wrap) {
     if (!data.length) { wrap.innerHTML = '<p class="tabla-vacia">Sin datos</p>'; return; }
@@ -483,7 +535,20 @@ function renderTablaClub(data, wrap) {
     </table>`;
 }
 
+let datosTipo = [];
 function renderTablaTipo(data, wrap) {
+    datosTipo = data;
+    document.getElementById('filtro-tipo').value = '';
+    renderTablaTipoFiltrada(data, wrap);
+}
+
+function filtrarTablaTipo() {
+    const q = document.getElementById('filtro-tipo').value.trim().toLowerCase();
+    const filtrado = q ? datosTipo.filter(d => d.tipo_rodeo.toLowerCase().includes(q)) : datosTipo;
+    renderTablaTipoFiltrada(filtrado, document.getElementById('tabla-tipo'));
+}
+
+function renderTablaTipoFiltrada(data, wrap) {
     if (!data.length) { wrap.innerHTML = '<p class="tabla-vacia">Sin datos</p>'; return; }
     wrap.innerHTML = `<table>
         <thead><tr>

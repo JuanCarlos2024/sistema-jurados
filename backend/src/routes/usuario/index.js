@@ -8,5 +8,6 @@ router.use(soloUsuario);
 router.use('/perfil', require('./perfil'));
 router.use('/resumen', require('./resumen'));
 router.use('/bonos', require('./bonos'));
+router.use('/asignaciones', require('./asignaciones'));
 
 module.exports = router;

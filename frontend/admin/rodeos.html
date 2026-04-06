@@ -177,7 +177,7 @@ function renderTabla(rodeos, total) {
     wrap.innerHTML = `<table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th>
-            <th>Días</th><th>Jurados</th><th>Total pagos</th><th>Origen</th><th>Acciones</th>
+            <th>Días</th><th>Jurados / Deleg.</th><th>Total pagos</th><th>Origen</th><th>Acciones</th>
         </tr></thead>
         <tbody>
         ${rodeos.map(r => `<tr>
@@ -186,7 +186,9 @@ function renderTabla(rodeos, total) {
             <td>${sanitizar(r.asociacion)}</td>
             <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
             <td style="text-align:center;">${r.duracion_dias}</td>
-            <td style="text-align:center;">${r.total_asignaciones || 0}</td>
+            <td style="text-align:center;">
+                ${r.jurados || 0}J / ${r.delegados || 0}D
+            </td>
             <td class="monto-positivo">${formatCLP(r.total_pago_base || 0)}</td>
             <td>${r.origen === 'importado' ? '<span class="badge badge-delegado">Excel</span>' : '<span class="badge">Manual</span>'}</td>
             <td>
@@ -257,23 +259,35 @@ function htmlDetalle(r) {
     <div class="card-titulo">Personas asignadas (${asigs.length})</div>
     ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
     <table>
-        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Designación</th><th>Acciones</th></tr></thead>
         <tbody>
-        ${asigs.map(a => `<tr>
+        ${asigs.map(a => {
+            let designBadge = '';
+            if (a.estado_designacion === 'pendiente') {
+                designBadge = `<span class="badge" style="background:#f39c12; color:#fff;">Pendiente</span>`;
+            } else if (a.estado_designacion === 'rechazado') {
+                designBadge = `<span class="badge" style="background:#e74c3c; color:#fff;">Rechazada</span>`;
+            } else if (a.estado_designacion === 'aceptado') {
+                const km = a.distancia_km ? ` · ${a.distancia_km} km` : '';
+                designBadge = `<span class="badge badge-activo">Aceptada${km}</span>`;
+            } else {
+                designBadge = `<span class="badge badge-activo">—</span>`;
+            }
+            return `<tr style="${a.estado_designacion === 'rechazado' ? 'opacity:0.65;' : ''}">
             <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>
             <td style="font-size:12px; color:var(--gris);">${sanitizar(a.usuarios_pagados?.codigo_interno || '—')}</td>
             <td>${a.tipo_persona === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
             <td>${a.categoria_aplicada || '—'}</td>
             <td>${formatCLP(a.valor_diario_aplicado)}</td>
             <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
-            <td>${a.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-anulado">Anulado</span>'}</td>
+            <td>${designBadge}</td>
             <td>
                 ${a.estado === 'activo' ? `<div class="flex gap-8">
                     <button class="btn btn-pequeño btn-outline" onclick="abrirEditarAsignacion('${a.id}', '${r.id}')">Editar</button>
                     <button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminarAsignacion('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${r.id}')">Eliminar</button>
                 </div>` : '<span style="color:#aaa;font-size:12px;">—</span>'}
             </td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
         </tbody>
     </table>
     <div style="text-align:right; padding:8px 0; font-weight:600;">Total pagos base: ${formatCLP(totalBase)}</div>`}

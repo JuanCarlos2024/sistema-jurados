@@ -75,6 +75,7 @@ router.post('/', async (req, res) => {
                     duracion_dias_aplicada: rodeo.duracion_dias,
                     pago_base_calculado: calculo.pago_base_calculado,
                     estado: 'activo',
+                    estado_designacion: 'pendiente',
                     created_by: req.usuario.id
                 })
                 .select()
@@ -404,6 +405,7 @@ router.post('/pendientes/:id/resolver', async (req, res) => {
                 duracion_dias_aplicada: tipo.duracion_dias,
                 pago_base_calculado: calculo.pago_base_calculado,
                 estado: 'activo',
+                estado_designacion: 'pendiente',
                 created_by: req.usuario.id
             })
             .select()
