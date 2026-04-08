@@ -22,9 +22,9 @@ async function generarCodigo() {
     return 'USR-' + String(num).padStart(4, '0');
 }
 
-// GET /api/admin/usuarios?tipo=&activo=&buscar=&page=&limit=
+// GET /api/admin/usuarios?tipo=&activo=&buscar=&categoria=&page=&limit=
 router.get('/', async (req, res) => {
-    const { tipo, activo, buscar, page = 1, limit = 50 } = req.query;
+    const { tipo, activo, buscar, categoria, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     let query = supabase
@@ -33,9 +33,10 @@ router.get('/', async (req, res) => {
         .order('nombre_completo', { ascending: true })
         .range(offset, offset + parseInt(limit) - 1);
 
-    if (tipo) query = query.eq('tipo_persona', tipo);
+    if (tipo)     query = query.eq('tipo_persona', tipo);
     if (activo !== undefined) query = query.eq('activo', activo === 'true');
-    if (buscar) query = query.or(`nombre_completo.ilike.%${buscar}%,codigo_interno.ilike.%${buscar}%,rut.ilike.%${buscar}%`);
+    if (buscar)   query = query.or(`nombre_completo.ilike.%${buscar}%,codigo_interno.ilike.%${buscar}%,rut.ilike.%${buscar}%`);
+    if (categoria) query = query.eq('categoria', categoria);
 
     const { data, error, count } = await query;
     if (error) return res.status(500).json({ error: error.message });
