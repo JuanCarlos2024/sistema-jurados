@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disponibilidad — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .filtros-disp {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .filtros-acciones { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+
+        /* Grilla de vista por fecha */
+        .fecha-bloque {
+            background: #fff;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+        }
+        .fecha-bloque-header {
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--primario);
+            margin-bottom: 8px;
+            border-bottom: 1px solid var(--gris-borde);
+            padding-bottom: 6px;
+        }
+        .fecha-personas {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .persona-chip {
+            background: #f0fff4;
+            border: 1px solid #b3e8c5;
+            border-radius: 20px;
+            padding: 3px 10px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .persona-chip .tipo-badge {
+            font-size: 10px;
+            font-weight: 700;
+            color: #888;
+            text-transform: uppercase;
+        }
+        .vista-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+        .vista-tab {
+            padding: 6px 16px; border-radius: 20px; font-size: 13px;
+            border: 1px solid var(--gris-borde); cursor: pointer;
+            background: #fff; color: var(--texto);
+        }
+        .vista-tab.activo { background: var(--primario); color: #fff; border-color: var(--primario); }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item activo"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Disponibilidad de Jurados y Delegados</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Filtros -->
+            <div class="card">
+                <div class="card-titulo">Filtros</div>
+                <div class="filtros-disp">
+                    <div>
+                        <label class="form-label">Fecha desde</label>
+                        <input type="date" id="f-desde" class="form-control">
+                    </div>
+                    <div>
+                        <label class="form-label">Fecha hasta</label>
+                        <input type="date" id="f-hasta" class="form-control">
+                    </div>
+                    <div>
+                        <label class="form-label">Tipo</label>
+                        <select id="f-tipo" class="form-control">
+                            <option value="">Todos</option>
+                            <option value="jurado">Jurado</option>
+                            <option value="delegado_rentado">Delegado Rentado</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Categoría</label>
+                        <select id="f-cat" class="form-control">
+                            <option value="">Todas</option>
+                            <option value="A">A</option>
+                            <option value="B">B</option>
+                            <option value="C">C</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Nombre</label>
+                        <input type="text" id="f-nombre" class="form-control" placeholder="Buscar nombre...">
+                    </div>
+                </div>
+                <div class="filtros-acciones">
+                    <button class="btn btn-primario" onclick="cargar()">Buscar</button>
+                    <button class="btn btn-secundario" onclick="limpiar()">Limpiar</button>
+                    <button class="btn btn-outline" onclick="exportar('xlsx')">Exportar Excel</button>
+                    <button class="btn btn-outline" onclick="exportar('csv')">Exportar CSV</button>
+                </div>
+                <div id="resumen-filtros" style="font-size:13px; color:#555;"></div>
+            </div>
+
+            <!-- Tabs de vista -->
+            <div class="vista-tabs">
+                <button class="vista-tab activo" id="tab-fecha" onclick="cambiarVista('fecha')">Por fecha</button>
+                <button class="vista-tab" id="tab-lista" onclick="cambiarVista('lista')">Lista completa</button>
+            </div>
+
+            <!-- Resultados -->
+            <div id="resultados">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
+
+let vistaActual = 'fecha';
+let ultimosDatos = [];
+
+// Precargar mes actual
+(function() {
+    const hoy = new Date();
+    const año = hoy.getFullYear();
+    const mes = String(hoy.getMonth() + 1).padStart(2, '0');
+    document.getElementById('f-desde').value = `${año}-${mes}-01`;
+    const fin = new Date(año, hoy.getMonth() + 1, 0);
+    document.getElementById('f-hasta').value = fin.toISOString().split('T')[0];
+})();
+
+function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+function toQS(p) {
+    return Object.entries(p)
+        .filter(([,v]) => v !== '' && v != null)
+        .map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+        .join('&');
+}
+
+async function cargar() {
+    mostrarSpinner(document.getElementById('resultados'));
+    document.getElementById('resumen-filtros').textContent = '';
+
+    const params = {
+        fecha_desde:  gv('f-desde'),
+        fecha_hasta:  gv('f-hasta'),
+        tipo_persona: gv('f-tipo'),
+        categoria:    gv('f-cat'),
+        nombre:       gv('f-nombre'),
+    };
+
+    try {
+        const endpoint = vistaActual === 'fecha'
+            ? `/admin/disponibilidad/por-fecha?${toQS(params)}`
+            : `/admin/disponibilidad?${toQS(params)}`;
+
+        const data = await api.get(endpoint);
+        ultimosDatos = data;
+
+        if (vistaActual === 'fecha') {
+            renderPorFecha(data);
+        } else {
+            renderLista(data);
+        }
+    } catch(err) {
+        document.getElementById('resultados').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar')}</div>`;
+    }
+}
+
+function renderPorFecha(porFecha) {
+    const fechas = Object.keys(porFecha).sort();
+    const div = document.getElementById('resultados');
+
+    if (fechas.length === 0) {
+        div.innerHTML = '<div class="card"><p class="tabla-vacia">Sin disponibilidad para el período consultado</p></div>';
+        document.getElementById('resumen-filtros').textContent = '0 fechas con disponibilidad';
+        return;
+    }
+
+    const totalPersonas = fechas.reduce((s, f) => s + porFecha[f].length, 0);
+    document.getElementById('resumen-filtros').textContent =
+        `${fechas.length} fecha(s) · ${totalPersonas} disponibilidad(es) en total`;
+
+    let html = '';
+    fechas.forEach(fecha => {
+        const personas = porFecha[fecha];
+        const [año, mes, dia] = fecha.split('-');
+        const d = new Date(parseInt(año), parseInt(mes)-1, parseInt(dia));
+        const diaNombre = DIAS_NOMBRE[d.getDay()];
+        const mesNombre = MESES[d.getMonth()];
+
+        html += `<div class="fecha-bloque">
+            <div class="fecha-bloque-header">
+                ${dia} de ${mesNombre} ${año} <span style="font-weight:400; color:#888; font-size:13px;">(${diaNombre})</span>
+                <span style="float:right; font-size:13px; font-weight:400; color:#27ae60;">${personas.length} disponible(s)</span>
+            </div>
+            <div class="fecha-personas">`;
+
+        personas.forEach(p => {
+            const tipo = TIPO_LABEL[p.tipo_persona] || p.tipo_persona;
+            const cat  = p.categoria ? ` · Cat. ${p.categoria}` : '';
+            html += `<div class="persona-chip">
+                <span>${sanitizar(p.nombre_completo)}</span>
+                <span class="tipo-badge">${tipo}${cat}</span>
+            </div>`;
+        });
+
+        html += `</div></div>`;
+    });
+
+    div.innerHTML = html;
+}
+
+function renderLista(datos) {
+    const div = document.getElementById('resultados');
+
+    if (!datos || datos.length === 0) {
+        div.innerHTML = '<div class="card"><p class="tabla-vacia">Sin disponibilidad para el período consultado</p></div>';
+        document.getElementById('resumen-filtros').textContent = '0 registros';
+        return;
+    }
+
+    document.getElementById('resumen-filtros').textContent = `${datos.length} registro(s)`;
+
+    div.innerHTML = `<div class="card"><div class="tabla-wrap"><div style="overflow-x:auto;"><table>
+        <thead><tr>
+            <th>Nombre</th>
+            <th>Tipo</th>
+            <th>Categoría</th>
+            <th>Fecha disponible</th>
+            <th>Día</th>
+        </tr></thead>
+        <tbody>
+        ${datos.map(d => {
+            const u = d.usuarios_pagados;
+            const [año, mes, dia] = d.fecha.split('-');
+            const fechaObj = new Date(parseInt(año), parseInt(mes)-1, parseInt(dia));
+            return `<tr>
+                <td><strong>${sanitizar(u.nombre_completo || '—')}</strong></td>
+                <td>${TIPO_LABEL[u.tipo_persona] || sanitizar(u.tipo_persona || '—')}</td>
+                <td style="text-align:center;">${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}">${u.categoria}</span>` : '—'}</td>
+                <td style="white-space:nowrap;">${formatFecha(d.fecha)}</td>
+                <td style="color:#888; font-size:12px;">${DIAS_NOMBRE[fechaObj.getDay()]}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table></div></div></div>`;
+}
+
+function cambiarVista(vista) {
+    vistaActual = vista;
+    document.getElementById('tab-fecha').classList.toggle('activo', vista === 'fecha');
+    document.getElementById('tab-lista').classList.toggle('activo', vista === 'lista');
+    cargar();
+}
+
+function limpiar() {
+    const hoy = new Date();
+    const año = hoy.getFullYear();
+    const mes = String(hoy.getMonth() + 1).padStart(2, '0');
+    document.getElementById('f-desde').value = `${año}-${mes}-01`;
+    const fin = new Date(año, hoy.getMonth() + 1, 0);
+    document.getElementById('f-hasta').value = fin.toISOString().split('T')[0];
+    document.getElementById('f-tipo').value   = '';
+    document.getElementById('f-cat').value    = '';
+    document.getElementById('f-nombre').value = '';
+    cargar();
+}
+
+async function exportar(formato) {
+    const params = toQS({
+        fecha_desde:  gv('f-desde'),
+        fecha_hasta:  gv('f-hasta'),
+        tipo_persona: gv('f-tipo'),
+        categoria:    gv('f-cat'),
+        nombre:       gv('f-nombre'),
+        formato,
+    });
+    const nombre = formato === 'csv' ? 'disponibilidad.csv' : 'disponibilidad.xlsx';
+    try {
+        await api.descargar(`/admin/disponibilidad/exportar?${params}`, nombre);
+    } catch(err) { mostrarError(err); }
+}
+
+// Cargar al inicio
+cargar();
+</script>
+</body>
+</html>

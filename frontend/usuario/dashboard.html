@@ -6,6 +6,48 @@
     <title>Mi Panel — Sistema de Jurados</title>
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ── Calendario de disponibilidad ── */
+        .cal-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 6px;
+            max-width: 560px;
+        }
+        .cal-dia-label {
+            text-align: center;
+            font-size: 11px;
+            font-weight: 700;
+            color: #888;
+            padding: 4px 0;
+            text-transform: uppercase;
+        }
+        .cal-dia {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            border: 2px solid var(--gris-borde);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            background: #fff;
+            color: var(--texto);
+            user-select: none;
+            min-width: 38px;
+        }
+        .cal-dia:hover:not(.cal-vacio):not(.cal-pasado) { border-color: #27ae60; background: #f0fff4; }
+        .cal-dia.disponible { background: #27ae60; color: #fff; border-color: #27ae60; }
+        .cal-dia.disponible:hover { background: #219a52; border-color: #219a52; }
+        .cal-dia.cal-hoy { border-color: #2980b9; box-shadow: 0 0 0 2px #d5eaff; }
+        .cal-dia.cal-hoy.disponible { box-shadow: 0 0 0 2px #b3f0cc; }
+        .cal-dia.cal-pasado { opacity: 0.35; cursor: default; }
+        .cal-dia.cal-vacio { border: none; background: none; cursor: default; }
+        .cal-resumen { margin-top: 10px; font-size: 13px; color: #555; }
+        .cal-resumen strong { color: #27ae60; }
+    </style>
 </head>
 <body>
 <div class="layout">
@@ -83,6 +125,20 @@
                 </div>
             </div>
 
+            <!-- Calendario de disponibilidad -->
+            <div class="card">
+                <div class="card-titulo flex justify-between items-center">
+                    <span>📅 Mi disponibilidad — <span id="cal-titulo-mes"></span></span>
+                    <div style="font-size:12px; color:#888;">Solo mes actual · Haga clic en un día para marcar/desmarcar</div>
+                </div>
+                <div id="cal-info" class="alerta alerta-info" style="margin-bottom:12px; font-size:13px;">
+                    Indique los días en que está disponible para ser asignado a un rodeo.
+                    Los días marcados en <strong style="color:#27ae60;">verde</strong> son sus días disponibles.
+                    Puede cambiar su disponibilidad en cualquier momento.
+                </div>
+                <div id="calendario-wrap" style="overflow-x:auto;"></div>
+            </div>
+
         </div>
     </div>
 </div>
@@ -141,6 +197,7 @@ async function init() {
     } catch(e) {}
 
     cargarResumen();
+    cargarCalendario();
 }
 
 function navegarMes(delta) {
@@ -551,6 +608,105 @@ async function eliminarAdjunto(id) {
         mostrarToast('Adjunto eliminado', 'success');
         await renderAdjuntos();
     } catch(err) { mostrarError(err); }
+}
+
+// ── Calendario de disponibilidad ────────────────────────────────
+const DIAS_SEMANA = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+const MESES_CAL   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+let diasDisponibles = new Set(); // strings "YYYY-MM-DD"
+let calCargando = false;
+
+async function cargarCalendario() {
+    const hoy = new Date();
+    const año = hoy.getFullYear();
+    const mes = hoy.getMonth() + 1;
+
+    document.getElementById('cal-titulo-mes').textContent = `${MESES_CAL[mes-1]} ${año}`;
+
+    try {
+        const data = await api.get(`/usuario/disponibilidad?año=${año}&mes=${mes}`);
+        diasDisponibles = new Set((data || []).map(d => d.fecha));
+        renderCalendario(año, mes);
+    } catch(err) {
+        document.getElementById('calendario-wrap').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar disponibilidad')}</div>`;
+    }
+}
+
+function renderCalendario(año, mes) {
+    const hoy = new Date();
+    const hoyStr = hoy.toISOString().split('T')[0];
+    const primerDia = new Date(año, mes - 1, 1).getDay(); // 0=Dom
+    const totalDias = new Date(año, mes, 0).getDate();
+    const disponiblesCount = diasDisponibles.size;
+
+    let html = '<div class="cal-grid">';
+
+    // Encabezados días de semana
+    DIAS_SEMANA.forEach(d => {
+        html += `<div class="cal-dia-label">${d}</div>`;
+    });
+
+    // Celdas vacías al inicio
+    for (let i = 0; i < primerDia; i++) {
+        html += '<div class="cal-dia cal-vacio"></div>';
+    }
+
+    // Días del mes
+    for (let d = 1; d <= totalDias; d++) {
+        const fechaStr = `${año}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const esHoy = fechaStr === hoyStr;
+        const esPasado = fechaStr < hoyStr;
+        const esDisponible = diasDisponibles.has(fechaStr);
+
+        let clases = 'cal-dia';
+        if (esDisponible) clases += ' disponible';
+        if (esHoy)        clases += ' cal-hoy';
+        if (esPasado)     clases += ' cal-pasado';
+
+        const onclick = esPasado ? '' : `onclick="toggleDia('${fechaStr}')"`;
+        html += `<div class="${clases}" ${onclick} title="${esPasado ? 'Día pasado' : (esDisponible ? 'Disponible — clic para quitar' : 'No disponible — clic para marcar')}">${d}</div>`;
+    }
+
+    html += '</div>';
+    html += `<div class="cal-resumen">Días disponibles este mes: <strong>${disponiblesCount}</strong></div>`;
+
+    document.getElementById('calendario-wrap').innerHTML = html;
+}
+
+async function toggleDia(fechaStr) {
+    if (calCargando) return;
+    calCargando = true;
+
+    const esDisponible = diasDisponibles.has(fechaStr);
+    // Actualizar UI inmediatamente (optimistic update)
+    if (esDisponible) {
+        diasDisponibles.delete(fechaStr);
+    } else {
+        diasDisponibles.add(fechaStr);
+    }
+    const hoy = new Date();
+    renderCalendario(hoy.getFullYear(), hoy.getMonth() + 1);
+
+    try {
+        if (esDisponible) {
+            await api.delete(`/usuario/disponibilidad/${fechaStr}`);
+        } else {
+            await api.post('/usuario/disponibilidad', { fecha: fechaStr });
+        }
+    } catch(err) {
+        // Revertir si falla
+        if (esDisponible) {
+            diasDisponibles.add(fechaStr);
+        } else {
+            diasDisponibles.delete(fechaStr);
+        }
+        renderCalendario(hoy.getFullYear(), hoy.getMonth() + 1);
+        mostrarError(err);
+    } finally {
+        calCargando = false;
+    }
 }
 
 init().catch(mostrarError);

@@ -53,7 +53,7 @@
             <div class="alerta alerta-info" style="margin-bottom:20px;">
                 <div>
                     <strong>Información:</strong> Los montos son de referencia para emitir su boleta de honorarios en el SII.
-                    Solo los bonos <strong>aprobados</strong> se incluyen en el total líquido.
+                    Solo los bonos <strong>aprobados</strong> se incluyen en el total bruto.
                     Para aceptar/rechazar designaciones o ingresar kilómetros, use <a href="/usuario/dashboard.html" style="color:inherit; font-weight:600;">Mi Panel</a>.
                 </div>
             </div>
@@ -138,10 +138,6 @@ async function cargarResumen() {
 }
 
 function renderTotales(r) {
-    const porcentaje = r.retencion_porcentaje || 0;
-    const retencion  = r.retencion_monto || 0;
-    const liquido    = r.liquido || 0;
-
     document.getElementById('totales').innerHTML = `
         <div class="total-card">
             <div class="valor">${formatCLP(r.total_pago_base)}</div>
@@ -154,16 +150,7 @@ function renderTotales(r) {
         <div class="total-card">
             <div class="valor">${formatCLP(r.bruto)}</div>
             <div class="etiqueta">Total bruto</div>
-        </div>
-        ${porcentaje > 0 ? `
-        <div class="total-card" style="border-color:#e67e22;">
-            <div class="valor" style="color:#e67e22;">−${formatCLP(retencion)}</div>
-            <div class="etiqueta">Retención ${porcentaje}%</div>
-        </div>
-        <div class="total-card" style="border-color:#27ae60;">
-            <div class="valor" style="color:#27ae60;">${formatCLP(liquido)}</div>
-            <div class="etiqueta">Total líquido</div>
-        </div>` : ''}`;
+        </div>`;
 }
 
 function renderPagos(aceptadas) {
