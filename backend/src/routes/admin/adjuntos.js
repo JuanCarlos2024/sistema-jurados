@@ -21,6 +21,37 @@ function esYouTube(url) {
     return /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/)|youtu\.be\/)/.test(url);
 }
 
+// ─── GET /api/admin/adjuntos/resumen?rodeo_ids= ─────────────
+// Devuelve indicadores CJ/CD/VY por rodeo (para la tabla principal)
+router.get('/resumen', async (req, res) => {
+    const { rodeo_ids } = req.query;
+    if (!rodeo_ids) return res.json({});
+
+    const ids = rodeo_ids.split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) return res.json({});
+
+    const [adjRes, linkRes] = await Promise.all([
+        supabase.from('rodeo_adjuntos').select('rodeo_id, tipo_adjunto').in('rodeo_id', ids),
+        supabase.from('rodeo_links').select('rodeo_id').in('rodeo_id', ids)
+    ]);
+
+    const result = {};
+    ids.forEach(id => { result[id] = { cj: false, cd: false, vy: false }; });
+
+    (adjRes.data || []).forEach(a => {
+        if (!result[a.rodeo_id]) return;
+        // CJ: tipo nuevo + tipo legacy ('cartilla' sin sufijo)
+        if (['cartilla_jurado', 'cartilla'].includes(a.tipo_adjunto)) result[a.rodeo_id].cj = true;
+        if (a.tipo_adjunto === 'cartilla_delegado')                   result[a.rodeo_id].cd = true;
+    });
+
+    (linkRes.data || []).forEach(l => {
+        if (result[l.rodeo_id]) result[l.rodeo_id].vy = true;
+    });
+
+    res.json(result);
+});
+
 // ─── GET /api/admin/adjuntos?rodeo_id= ──────────────────────
 // Devuelve adjuntos + links de un rodeo
 router.get('/', async (req, res) => {

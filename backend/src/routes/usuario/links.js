@@ -34,39 +34,10 @@ router.get('/', async (req, res) => {
     res.json(data || []);
 });
 
-// ─── POST /api/usuario/links ────────────────────────────────
-router.post('/', async (req, res) => {
-    const { rodeo_id, url, descripcion } = req.body;
-    if (!rodeo_id) return res.status(400).json({ error: 'rodeo_id requerido' });
-    if (!url)      return res.status(400).json({ error: 'url requerida' });
-    if (!esYouTube(url)) return res.status(400).json({ error: 'Solo se permiten links de YouTube' });
-
-    const { data: asig } = await supabase
-        .from('asignaciones')
-        .select('id, estado_designacion')
-        .eq('rodeo_id', rodeo_id)
-        .eq('usuario_pagado_id', req.usuario.id)
-        .eq('estado', 'activo')
-        .limit(1);
-
-    if (!asig || asig.length === 0) return res.status(403).json({ error: 'Sin asignación activa en este rodeo' });
-    if (asig[0].estado_designacion === 'rechazado') return res.status(403).json({ error: 'No puedes agregar links a una designación rechazada' });
-
-    const { data, error } = await supabase
-        .from('rodeo_links')
-        .insert({
-            rodeo_id,
-            asignacion_id:    asig[0].id,
-            usuario_pagado_id: req.usuario.id,
-            subido_por_admin: false,
-            url: url.trim(),
-            descripcion: descripcion?.trim() || null,
-            created_by: req.usuario.id
-        })
-        .select().single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ mensaje: 'Link agregado', link: data });
+// ─── POST /api/usuario/links — bloqueado para usuarios ──────
+// Solo el administrador puede agregar links de YouTube.
+router.post('/', (req, res) => {
+    res.status(403).json({ error: 'Solo el administrador puede agregar links de YouTube.' });
 });
 
 // ─── DELETE /api/usuario/links/:id ──────────────────────────

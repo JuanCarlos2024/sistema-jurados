@@ -431,9 +431,9 @@ async function renderAdjuntos() {
                         <div>
                             <label class="form-label">Tipo</label>
                             <select id="adj-tipo" class="form-control">
-                                <option value="cartilla">Cartilla</option>
-                                <option value="planilla">Planilla</option>
-                                <option value="contrato">Contrato</option>
+                                <option value="cartilla_jurado">Cartilla Jurado</option>
+                                <option value="cartilla_delegado">Cartilla Delegado</option>
+                                <option value="respaldo">Respaldo</option>
                                 <option value="foto">Foto</option>
                                 <option value="otro">Otro</option>
                             </select>
@@ -446,20 +446,8 @@ async function renderAdjuntos() {
                     <button type="submit" class="btn btn-primario btn-pequeño">Subir archivo</button>
                 </form>
             </div>
-            <div class="card" style="margin-bottom:16px; padding:14px;">
-                <div style="font-weight:600; margin-bottom:10px;">Agregar link de YouTube</div>
-                <form onsubmit="agregarLink(event)" style="display:flex; gap:8px; align-items:flex-end;">
-                    <div style="flex:1;">
-                        <label class="form-label">URL de YouTube</label>
-                        <input type="url" id="link-url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required>
-                    </div>
-                    <div style="flex:1;">
-                        <label class="form-label">Descripción (opcional)</label>
-                        <input type="text" id="link-desc" class="form-control" placeholder="Ej: Video rodada 1">
-                    </div>
-                    <button type="submit" class="btn btn-primario btn-pequeño">Agregar</button>
-                </form>
-            </div>`;
+            // Los links de YouTube son gestionados por el administrador
+
         }
 
         // ── Lista de adjuntos ──
@@ -468,14 +456,16 @@ async function renderAdjuntos() {
             html += '<p style="color:#888; font-size:13px; margin-bottom:16px;">Sin archivos adjuntos</p>';
         } else {
             html += '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">';
+            const tipoNombresUsr = { cartilla_jurado:'Cartilla Jurado', cartilla_delegado:'Cartilla Delegado', cartilla:'Cartilla Jurado', respaldo:'Respaldo', planilla:'Planilla', contrato:'Contrato', foto:'Foto', otro:'Otro' };
             adjuntos.forEach(adj => {
                 const icono = adj.mime_type?.includes('pdf') ? '📄' : adj.mime_type?.startsWith('image') ? '🖼️' : '📝';
                 const kb = adj.tamano_bytes ? `${Math.round(adj.tamano_bytes / 1024)} KB` : '';
+                const tipoLabel = tipoNombresUsr[adj.tipo_adjunto] || sanitizar(adj.tipo_adjunto);
                 html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
                     <span style="font-size:20px;">${icono}</span>
                     <div style="flex:1; min-width:0;">
                         <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${sanitizar(adj.nombre_archivo)}</div>
-                        <div style="font-size:12px; color:#888;">${sanitizar(adj.tipo_adjunto)} · ${kb}</div>
+                        <div style="font-size:12px; color:#888;">${tipoLabel} · ${kb}</div>
                     </div>
                     <button class="btn btn-pequeño btn-outline" onclick="descargarAdjunto('${adj.id}', '${sanitizar(adj.nombre_archivo)}')">Descargar</button>
                     ${!adj.subido_por_admin ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarAdjunto('${adj.id}')">Eliminar</button>` : ''}
@@ -499,7 +489,6 @@ async function renderAdjuntos() {
                         <div><a href="${lnk.url}" target="_blank" rel="noopener" style="color:#2980b9;">${sanitizar(lnk.descripcion || lnk.url)}</a></div>
                         <div style="font-size:12px; color:#888; clear:both;">${sanitizar(lnk.url)}</div>
                     </div>
-                    ${!lnk.subido_por_admin ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarLink('${lnk.id}')">Eliminar</button>` : ''}
                 </div>`;
             });
             html += '</div>';
@@ -559,30 +548,6 @@ async function eliminarAdjunto(id) {
     try {
         await api.delete(`/usuario/adjuntos/${id}`);
         mostrarToast('Adjunto eliminado', 'success');
-        await renderAdjuntos();
-    } catch(err) { mostrarError(err); }
-}
-
-async function agregarLink(e) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true;
-    const url = document.getElementById('link-url').value.trim();
-    const desc = document.getElementById('link-desc').value.trim();
-    try {
-        await api.post('/usuario/links', { rodeo_id: adjRodeoId, url, descripcion: desc || undefined });
-        mostrarToast('Link agregado', 'success');
-        document.getElementById('link-url').value = '';
-        document.getElementById('link-desc').value = '';
-        await renderAdjuntos();
-    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
-}
-
-async function eliminarLink(id) {
-    if (!confirm('¿Eliminar este link?')) return;
-    try {
-        await api.delete(`/usuario/links/${id}`);
-        mostrarToast('Link eliminado', 'success');
         await renderAdjuntos();
     } catch(err) { mostrarError(err); }
 }
