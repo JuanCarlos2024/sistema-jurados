@@ -193,7 +193,8 @@ function toQS(p) {
 }
 
 async function cargar() {
-    mostrarSpinner(document.getElementById('resultados'));
+    const divRes = document.getElementById('resultados');
+    mostrarSpinner(divRes);
     document.getElementById('resumen-filtros').textContent = '';
 
     const params = {
@@ -213,13 +214,21 @@ async function cargar() {
         ultimosDatos = data;
 
         if (vistaActual === 'fecha') {
-            renderPorFecha(data);
+            renderPorFecha(data || {});
         } else {
-            renderLista(data);
+            renderLista(data || []);
         }
     } catch(err) {
-        document.getElementById('resultados').innerHTML =
-            `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar')}</div>`;
+        // El finally siempre corre, así que el spinner ya fue limpiado.
+        // Mostramos el error en el contenedor de resultados.
+        divRes.innerHTML =
+            `<div class="alerta alerta-error" style="margin:0;">${sanitizar(err.message || 'Error al cargar disponibilidad. Intente nuevamente.')}</div>`;
+    } finally {
+        // Garantía: si el spinner sigue visible (p.ej. render lanzó excepción),
+        // lo reemplazamos con estado vacío para no dejar loading infinito.
+        if (divRes.querySelector('.spinner-wrap')) {
+            divRes.innerHTML = '<div class="alerta alerta-error" style="margin:0;">Error inesperado. Intente nuevamente.</div>';
+        }
     }
 }
 
