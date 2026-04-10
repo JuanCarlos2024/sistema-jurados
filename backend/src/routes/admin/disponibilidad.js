@@ -3,8 +3,9 @@ const router   = express.Router();
 const supabase = require('../../config/supabase');
 const ExcelJS  = require('exceljs');
 
-// Todos los filtros de usuario se aplican en memoria para evitar
-// problemas de sintaxis con filtros sobre tablas relacionadas en Supabase JS.
+const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
+
+// ─── Filtros en memoria ────────────────────────────────────────
 function filtrarRows(rows, { tipo_persona, categoria, nombre }) {
     if (tipo_persona) rows = rows.filter(d => d.usuarios_pagados?.tipo_persona === tipo_persona);
     if (categoria)    rows = rows.filter(d => d.usuarios_pagados?.categoria === categoria);
@@ -23,30 +24,56 @@ function ordenarPorNombre(rows) {
     );
 }
 
+/**
+ * Obtiene disponibilidad usando DOS queries separados (sin join de Supabase JS)
+ * para evitar problemas de detección automática de FK en PostgREST.
+ * 1. Lee disponibilidad_usuarios con filtros de fecha
+ * 2. Lee usuarios_pagados para los IDs encontrados
+ * 3. Une en memoria
+ */
+async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
+    // Paso 1: registros de disponibilidad (solo columnas propias)
+    let q = supabase
+        .from('disponibilidad_usuarios')
+        .select('id, fecha, usuario_pagado_id')
+        .order('fecha', { ascending: true });
+
+    if (fecha_desde) q = q.gte('fecha', fecha_desde);
+    if (fecha_hasta) q = q.lte('fecha', fecha_hasta);
+
+    const { data: dispRows, error: dispError } = await q;
+    if (dispError) throw new Error('Error consultando disponibilidad: ' + dispError.message);
+    if (!dispRows || dispRows.length === 0) return [];
+
+    // Paso 2: datos de usuarios involucrados
+    const userIds = [...new Set(dispRows.map(d => d.usuario_pagado_id))];
+    const { data: usuarios, error: userError } = await supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, tipo_persona, categoria, rut')
+        .in('id', userIds);
+
+    if (userError) throw new Error('Error consultando usuarios: ' + userError.message);
+
+    // Paso 3: unir en memoria
+    const userMap = {};
+    (usuarios || []).forEach(u => { userMap[u.id] = u; });
+
+    return dispRows
+        .map(d => ({ ...d, usuarios_pagados: userMap[d.usuario_pagado_id] || null }))
+        .filter(d => d.usuarios_pagados !== null);
+}
+
 // ─── GET /api/admin/disponibilidad ──────────────────────────
 router.get('/', async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre } = req.query;
-
-        let query = supabase
-            .from('disponibilidad_usuarios')
-            .select('id, fecha, usuarios_pagados(id, nombre_completo, tipo_persona, categoria, rut)')
-            .order('fecha', { ascending: true });
-
-        if (fecha_desde) query = query.gte('fecha', fecha_desde);
-        if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
-
-        const { data, error } = await query;
-        if (error) return res.status(500).json({ error: error.message });
-
-        // Excluir filas donde el usuario fue eliminado (usuarios_pagados = null)
-        let rows = (data || []).filter(d => d.usuarios_pagados != null);
+        let rows = await obtenerDisponibilidad(fecha_desde, fecha_hasta);
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
         rows = ordenarPorNombre(rows);
-
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: 'Error al obtener disponibilidad: ' + err.message });
+        console.error('[admin/disponibilidad GET /]', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -54,19 +81,7 @@ router.get('/', async (req, res) => {
 router.get('/por-fecha', async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre } = req.query;
-
-        let query = supabase
-            .from('disponibilidad_usuarios')
-            .select('fecha, usuarios_pagados(id, nombre_completo, tipo_persona, categoria)')
-            .order('fecha', { ascending: true });
-
-        if (fecha_desde) query = query.gte('fecha', fecha_desde);
-        if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
-
-        const { data, error } = await query;
-        if (error) return res.status(500).json({ error: error.message });
-
-        let rows = (data || []).filter(d => d.usuarios_pagados != null);
+        let rows = await obtenerDisponibilidad(fecha_desde, fecha_hasta);
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
 
         // Agrupar por fecha; ordenar personas dentro de cada fecha
@@ -83,7 +98,8 @@ router.get('/por-fecha', async (req, res) => {
 
         res.json(porFecha);
     } catch (err) {
-        res.status(500).json({ error: 'Error al obtener disponibilidad por fecha: ' + err.message });
+        console.error('[admin/disponibilidad GET /por-fecha]', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -91,23 +107,9 @@ router.get('/por-fecha', async (req, res) => {
 router.get('/exportar', async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre, formato = 'xlsx' } = req.query;
-
-        let query = supabase
-            .from('disponibilidad_usuarios')
-            .select('fecha, usuarios_pagados(nombre_completo, tipo_persona, categoria, rut)')
-            .order('fecha', { ascending: true });
-
-        if (fecha_desde) query = query.gte('fecha', fecha_desde);
-        if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
-
-        const { data, error } = await query;
-        if (error) return res.status(500).json({ error: error.message });
-
-        let rows = (data || []).filter(d => d.usuarios_pagados != null);
+        let rows = await obtenerDisponibilidad(fecha_desde, fecha_hasta);
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
         rows = ordenarPorNombre(rows);
-
-        const tipoLabel = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
 
         // ── CSV ──
         if (formato === 'csv') {
@@ -116,7 +118,7 @@ router.get('/exportar', async (req, res) => {
                 const u = d.usuarios_pagados;
                 lines.push([
                     `"${(u.nombre_completo || '').replace(/"/g, '""')}"`,
-                    `"${tipoLabel[u.tipo_persona] || u.tipo_persona || ''}"`,
+                    `"${TIPO_LABEL[u.tipo_persona] || u.tipo_persona || ''}"`,
                     `"${u.categoria || ''}"`,
                     `"${d.fecha}"`
                 ].join(','));
@@ -131,7 +133,7 @@ router.get('/exportar', async (req, res) => {
         wb.creator = 'Sistema Jurados - Rodeo Chileno';
         const ws = wb.addWorksheet('Disponibilidad');
 
-        const HEADER = {
+        const HEADER_STYLE = {
             font: { bold: true, color: { argb: 'FFFFFFFF' } },
             fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e3a5f' } },
             alignment: { horizontal: 'center' },
@@ -147,13 +149,13 @@ router.get('/exportar', async (req, res) => {
             { header: 'Categoría', key: 'categoria',  width: 12 },
             { header: 'Fecha',     key: 'fecha',      width: 14 },
         ];
-        ws.getRow(1).eachCell(cell => { Object.assign(cell, HEADER); });
+        ws.getRow(1).eachCell(cell => { Object.assign(cell, HEADER_STYLE); });
 
         rows.forEach(d => {
             const u = d.usuarios_pagados;
             ws.addRow({
                 nombre:    u.nombre_completo || '',
-                tipo:      tipoLabel[u.tipo_persona] || u.tipo_persona || '',
+                tipo:      TIPO_LABEL[u.tipo_persona] || u.tipo_persona || '',
                 categoria: u.categoria || '',
                 fecha:     d.fecha,
             });
@@ -164,8 +166,9 @@ router.get('/exportar', async (req, res) => {
         await wb.xlsx.write(res);
         res.end();
     } catch (err) {
+        console.error('[admin/disponibilidad GET /exportar]', err.message);
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Error al exportar: ' + err.message });
+            res.status(500).json({ error: err.message });
         }
     }
 });

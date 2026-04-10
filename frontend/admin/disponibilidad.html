@@ -15,7 +15,6 @@
         }
         .filtros-acciones { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
 
-        /* Grilla de vista por fecha */
         .fecha-bloque {
             background: #fff;
             border: 1px solid var(--gris-borde);
@@ -137,8 +136,8 @@
                     </div>
                 </div>
                 <div class="filtros-acciones">
-                    <button class="btn btn-primario" onclick="cargar()">Buscar</button>
-                    <button class="btn btn-secundario" onclick="limpiar()">Limpiar</button>
+                    <button class="btn btn-primario" id="btn-buscar" onclick="cargar()">Buscar</button>
+                    <button class="btn btn-secundario" id="btn-limpiar" onclick="limpiar()">Limpiar</button>
                     <button class="btn btn-outline" onclick="exportar('xlsx')">Exportar Excel</button>
                     <button class="btn btn-outline" onclick="exportar('csv')">Exportar CSV</button>
                 </div>
@@ -152,9 +151,7 @@
             </div>
 
             <!-- Resultados -->
-            <div id="resultados">
-                <div class="spinner-wrap"><div class="spinner"></div></div>
-            </div>
+            <div id="resultados"></div>
 
         </div>
     </div>
@@ -171,7 +168,7 @@ const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes',
 const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
 
 let vistaActual = 'fecha';
-let ultimosDatos = [];
+let abortController = null; // Para cancelar fetch anterior si se lanza uno nuevo
 
 // Precargar mes actual
 (function() {
@@ -183,19 +180,76 @@ let ultimosDatos = [];
     document.getElementById('f-hasta').value = fin.toISOString().split('T')[0];
 })();
 
-function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function gv(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+}
 
 function toQS(p) {
     return Object.entries(p)
-        .filter(([,v]) => v !== '' && v != null)
-        .map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+        .filter(([, v]) => v !== '' && v != null)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
         .join('&');
+}
+
+function setResultado(html) {
+    document.getElementById('resultados').innerHTML = html;
+}
+
+/**
+ * GET con AbortController y timeout de 20 segundos.
+ * Cancela el request anterior si se lanza uno nuevo antes de terminar.
+ */
+async function fetchDisponibilidad(endpoint) {
+    // Cancelar request anterior si existe
+    if (abortController) {
+        abortController.abort();
+    }
+    abortController = new AbortController();
+    const signal = abortController.signal;
+
+    const timeoutId = setTimeout(() => abortController.abort(), 20000);
+
+    try {
+        const token = api.getToken();
+        const response = await fetch('/api' + endpoint, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal
+        });
+        clearTimeout(timeoutId);
+
+        if (response.status === 401) {
+            api.cerrarSesion();
+            return null;
+        }
+
+        const data = await response.json().catch(() => null);
+
+        if (!response.ok) {
+            throw new Error(data?.error || `Error del servidor (${response.status})`);
+        }
+
+        return data;
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            throw new Error('El servidor tardó demasiado en responder. Verifique que el backend esté corriendo y que Supabase esté accesible.');
+        }
+        throw err;
+    }
 }
 
 async function cargar() {
     const divRes = document.getElementById('resultados');
     divRes.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
     document.getElementById('resumen-filtros').textContent = '';
+
+    // Deshabilitar botones durante carga
+    const btnBuscar  = document.getElementById('btn-buscar');
+    const btnLimpiar = document.getElementById('btn-limpiar');
+    if (btnBuscar)  btnBuscar.disabled  = true;
+    if (btnLimpiar) btnLimpiar.disabled = true;
 
     const params = {
         fecha_desde:  gv('f-desde'),
@@ -205,37 +259,45 @@ async function cargar() {
         nombre:       gv('f-nombre'),
     };
 
-    try {
-        const endpoint = vistaActual === 'fecha'
-            ? `/admin/disponibilidad/por-fecha?${toQS(params)}`
-            : `/admin/disponibilidad?${toQS(params)}`;
+    const endpoint = vistaActual === 'fecha'
+        ? `/admin/disponibilidad/por-fecha?${toQS(params)}`
+        : `/admin/disponibilidad?${toQS(params)}`;
 
-        const data = await api.get(endpoint);
-        ultimosDatos = data;
+    try {
+        const data = await fetchDisponibilidad(endpoint);
+
+        // null = redirigido por 401, no hacer nada más
+        if (data === null) return;
 
         if (vistaActual === 'fecha') {
-            renderPorFecha(data && typeof data === 'object' && !Array.isArray(data) ? data : {});
+            renderPorFecha(
+                data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+            );
         } else {
             renderLista(Array.isArray(data) ? data : []);
         }
-    } catch(err) {
-        divRes.innerHTML =
-            `<div class="alerta alerta-error" style="margin:0;">${sanitizar(err.message || 'Error al cargar disponibilidad. Verifique la conexión con el servidor.')}</div>`;
+    } catch (err) {
+        const msg = err?.message || 'Error desconocido al cargar disponibilidad';
+        setResultado(`<div class="alerta alerta-error" style="margin:0;">${sanitizar(msg)}</div>`);
+        document.getElementById('resumen-filtros').textContent = '';
     } finally {
-        // Garantía de último recurso: si el spinner sigue visible, mostrar error.
-        if (divRes.querySelector && divRes.querySelector('.spinner-wrap')) {
-            divRes.innerHTML =
-                '<div class="alerta alerta-error" style="margin:0;">No se pudo completar la carga. Intente nuevamente.</div>';
+        // Rehabilitar botones
+        if (btnBuscar)  btnBuscar.disabled  = false;
+        if (btnLimpiar) btnLimpiar.disabled = false;
+
+        // Red de seguridad: si el spinner sigue ahí por algún motivo inesperado, reemplazarlo
+        const spinner = divRes.querySelector('.spinner-wrap');
+        if (spinner) {
+            setResultado('<div class="alerta alerta-error" style="margin:0;">No se recibió respuesta del servidor. Intente nuevamente.</div>');
         }
     }
 }
 
 function renderPorFecha(porFecha) {
     const fechas = Object.keys(porFecha).sort();
-    const div = document.getElementById('resultados');
 
     if (fechas.length === 0) {
-        div.innerHTML = '<div class="card"><p class="tabla-vacia">Sin disponibilidad para el período consultado</p></div>';
+        setResultado('<div class="card"><p class="tabla-vacia">No hay disponibilidad para los filtros seleccionados</p></div>');
         document.getElementById('resumen-filtros').textContent = '0 fechas con disponibilidad';
         return;
     }
@@ -248,22 +310,23 @@ function renderPorFecha(porFecha) {
     fechas.forEach(fecha => {
         const personas = porFecha[fecha];
         const [año, mes, dia] = fecha.split('-');
-        const d = new Date(parseInt(año), parseInt(mes)-1, parseInt(dia));
+        const d = new Date(parseInt(año), parseInt(mes) - 1, parseInt(dia));
         const diaNombre = DIAS_NOMBRE[d.getDay()];
         const mesNombre = MESES[d.getMonth()];
 
         html += `<div class="fecha-bloque">
             <div class="fecha-bloque-header">
-                ${dia} de ${mesNombre} ${año} <span style="font-weight:400; color:#888; font-size:13px;">(${diaNombre})</span>
+                ${dia} de ${mesNombre} ${año}
+                <span style="font-weight:400; color:#888; font-size:13px;">(${diaNombre})</span>
                 <span style="float:right; font-size:13px; font-weight:400; color:#27ae60;">${personas.length} disponible(s)</span>
             </div>
             <div class="fecha-personas">`;
 
         personas.forEach(p => {
-            const tipo = TIPO_LABEL[p.tipo_persona] || p.tipo_persona;
+            const tipo = TIPO_LABEL[p.tipo_persona] || sanitizar(p.tipo_persona || '');
             const cat  = p.categoria ? ` · Cat. ${p.categoria}` : '';
             html += `<div class="persona-chip">
-                <span>${sanitizar(p.nombre_completo)}</span>
+                <span>${sanitizar(p.nombre_completo || '—')}</span>
                 <span class="tipo-badge">${tipo}${cat}</span>
             </div>`;
         });
@@ -271,21 +334,19 @@ function renderPorFecha(porFecha) {
         html += `</div></div>`;
     });
 
-    div.innerHTML = html;
+    setResultado(html);
 }
 
 function renderLista(datos) {
-    const div = document.getElementById('resultados');
-
     if (!datos || datos.length === 0) {
-        div.innerHTML = '<div class="card"><p class="tabla-vacia">Sin disponibilidad para el período consultado</p></div>';
+        setResultado('<div class="card"><p class="tabla-vacia">No hay disponibilidad para los filtros seleccionados</p></div>');
         document.getElementById('resumen-filtros').textContent = '0 registros';
         return;
     }
 
     document.getElementById('resumen-filtros').textContent = `${datos.length} registro(s)`;
 
-    div.innerHTML = `<div class="card"><div class="tabla-wrap"><div style="overflow-x:auto;"><table>
+    setResultado(`<div class="card"><div class="tabla-wrap"><div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Nombre</th>
             <th>Tipo</th>
@@ -297,7 +358,7 @@ function renderLista(datos) {
         ${datos.map(d => {
             const u = d.usuarios_pagados;
             const [año, mes, dia] = d.fecha.split('-');
-            const fechaObj = new Date(parseInt(año), parseInt(mes)-1, parseInt(dia));
+            const fechaObj = new Date(parseInt(año), parseInt(mes) - 1, parseInt(dia));
             return `<tr>
                 <td><strong>${sanitizar(u.nombre_completo || '—')}</strong></td>
                 <td>${TIPO_LABEL[u.tipo_persona] || sanitizar(u.tipo_persona || '—')}</td>
@@ -307,7 +368,7 @@ function renderLista(datos) {
             </tr>`;
         }).join('')}
         </tbody>
-    </table></div></div></div>`;
+    </table></div></div></div>`);
 }
 
 function cambiarVista(vista) {
@@ -342,7 +403,9 @@ async function exportar(formato) {
     const nombre = formato === 'csv' ? 'disponibilidad.csv' : 'disponibilidad.xlsx';
     try {
         await api.descargar(`/admin/disponibilidad/exportar?${params}`, nombre);
-    } catch(err) { mostrarError(err); }
+    } catch (err) {
+        mostrarError(err);
+    }
 }
 
 // Cargar al inicio
