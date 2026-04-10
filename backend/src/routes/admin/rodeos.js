@@ -4,71 +4,165 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
 
-// GET /api/admin/rodeos?mes=&año=&asociacion=&tipo=&estado=&buscar=&page=&limit=
+// ─── Helper: intersectar arrays de IDs para filtros complejos ───
+function intersectIds(current, newIds) {
+    const s = new Set(newIds);
+    if (current === null) return [...s];
+    return current.filter(id => s.has(id));
+}
+
+// ─── Helper: resolver filtros que requieren pre-queries ─────────
+async function resolverFiltrosComplejos(q) {
+    const { jurado_id, delegado_id, estado_jurado, estado_delegado,
+            cartilla_jurado, cartilla_delegado, video } = q;
+
+    const ninguno = !jurado_id && !delegado_id && !estado_jurado &&
+                    !estado_delegado && !cartilla_jurado && !cartilla_delegado && !video;
+    if (ninguno) return { incluir: null, excluir: [] };
+
+    let incluir = null;
+    const excluirSet = new Set();
+
+    if (jurado_id) {
+        const { data } = await supabase.from('asignaciones').select('rodeo_id')
+            .eq('usuario_pagado_id', jurado_id).eq('tipo_persona', 'jurado').eq('estado', 'activo');
+        incluir = intersectIds(incluir, (data||[]).map(r => r.rodeo_id));
+    }
+    if (delegado_id) {
+        const { data } = await supabase.from('asignaciones').select('rodeo_id')
+            .eq('usuario_pagado_id', delegado_id).eq('tipo_persona', 'delegado_rentado').eq('estado', 'activo');
+        incluir = intersectIds(incluir, (data||[]).map(r => r.rodeo_id));
+    }
+    if (estado_jurado) {
+        let sq = supabase.from('asignaciones').select('rodeo_id')
+            .eq('tipo_persona', 'jurado').eq('estado', 'activo');
+        sq = estado_jurado === 'aceptado'
+            ? sq.or('estado_designacion.eq.aceptado,estado_designacion.is.null')
+            : sq.eq('estado_designacion', estado_jurado);
+        const { data } = await sq;
+        incluir = intersectIds(incluir, (data||[]).map(r => r.rodeo_id));
+    }
+    if (estado_delegado) {
+        let sq = supabase.from('asignaciones').select('rodeo_id')
+            .eq('tipo_persona', 'delegado_rentado').eq('estado', 'activo');
+        sq = estado_delegado === 'aceptado'
+            ? sq.or('estado_designacion.eq.aceptado,estado_designacion.is.null')
+            : sq.eq('estado_designacion', estado_delegado);
+        const { data } = await sq;
+        incluir = intersectIds(incluir, (data||[]).map(r => r.rodeo_id));
+    }
+    if (cartilla_jurado) {
+        const { data } = await supabase.from('rodeo_adjuntos').select('rodeo_id')
+            .in('tipo_adjunto', ['cartilla_jurado', 'cartilla']);
+        const ids = [...new Set((data||[]).map(r => r.rodeo_id))];
+        if (cartilla_jurado === 'con') incluir = intersectIds(incluir, ids);
+        else ids.forEach(id => excluirSet.add(id));
+    }
+    if (cartilla_delegado) {
+        const { data } = await supabase.from('rodeo_adjuntos').select('rodeo_id')
+            .eq('tipo_adjunto', 'cartilla_delegado');
+        const ids = [...new Set((data||[]).map(r => r.rodeo_id))];
+        if (cartilla_delegado === 'con') incluir = intersectIds(incluir, ids);
+        else ids.forEach(id => excluirSet.add(id));
+    }
+    if (video) {
+        const { data } = await supabase.from('rodeo_links').select('rodeo_id');
+        const ids = [...new Set((data||[]).map(r => r.rodeo_id))];
+        if (video === 'con') incluir = intersectIds(incluir, ids);
+        else ids.forEach(id => excluirSet.add(id));
+    }
+
+    const excluir = [...excluirSet];
+    if (incluir !== null && excluir.length > 0)
+        incluir = incluir.filter(id => !excluirSet.has(id));
+
+    return { incluir, excluir };
+}
+
+// GET /api/admin/rodeos — filtros avanzados
 router.get('/', async (req, res) => {
-    const { mes, año, asociacion, tipo, estado, buscar, page = 1, limit = 50 } = req.query;
+    const {
+        mes, año, buscar, club, asociacion,
+        tipo_rodeo_id, tipo, categoria_rodeo_id, origen, estado,
+        fecha_desde, fecha_hasta,
+        jurado_id, delegado_id, estado_jurado, estado_delegado,
+        cartilla_jurado, cartilla_delegado, video,
+        page = 1, limit = 50
+    } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Query base: sin join a tipos_rodeo (usamos snapshot tipo_rodeo_nombre)
+    // Resolver filtros complejos (pre-queries)
+    const { incluir, excluir } = await resolverFiltrosComplejos(req.query);
+    if (Array.isArray(incluir) && incluir.length === 0)
+        return res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+
     let query = supabase
         .from('rodeos')
-        .select('id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, origen, estado, created_at', { count: 'exact' })
+        .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre, duracion_dias, origen, estado, created_at', { count: 'exact' })
         .order('fecha', { ascending: false })
         .range(offset, offset + parseInt(limit) - 1);
 
     if (estado) query = query.eq('estado', estado);
     else        query = query.eq('estado', 'activo');
 
-    if (asociacion) query = query.ilike('asociacion', `%${asociacion}%`);
-    if (tipo)       query = query.eq('tipo_rodeo_id', tipo);
-    if (buscar)     query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
+    if (categoria_rodeo_id) query = query.eq('categoria_rodeo_id', categoria_rodeo_id);
+    if (tipo_rodeo_id || tipo) query = query.eq('tipo_rodeo_id', tipo_rodeo_id || tipo);
+    if (origen) query = query.eq('origen', origen);
+    if (buscar) query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
+    if (club && !buscar)       query = query.ilike('club', `%${club}%`);
+    if (asociacion && !buscar) query = query.ilike('asociacion', `%${asociacion}%`);
 
-    // Filtro de fechas — solo aplicar si los valores son numéricos válidos
-    const añoNum = parseInt(año);
-    const mesNum = parseInt(mes);
-    if (!isNaN(añoNum) && !isNaN(mesNum) && mesNum >= 1 && mesNum <= 12) {
-        const inicio = `${añoNum}-${String(mesNum).padStart(2, '0')}-01`;
-        const fin = new Date(añoNum, mesNum, 0).toISOString().split('T')[0];
-        query = query.gte('fecha', inicio).lte('fecha', fin);
-    } else if (!isNaN(añoNum)) {
-        query = query.gte('fecha', `${añoNum}-01-01`).lte('fecha', `${añoNum}-12-31`);
+    if (fecha_desde) query = query.gte('fecha', fecha_desde);
+    if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
+
+    if (!fecha_desde && !fecha_hasta) {
+        const añoNum = parseInt(año), mesNum = parseInt(mes);
+        if (!isNaN(añoNum) && !isNaN(mesNum) && mesNum >= 1 && mesNum <= 12) {
+            const inicio = `${añoNum}-${String(mesNum).padStart(2,'0')}-01`;
+            const fin    = new Date(añoNum, mesNum, 0).toISOString().split('T')[0];
+            query = query.gte('fecha', inicio).lte('fecha', fin);
+        } else if (!isNaN(añoNum)) {
+            query = query.gte('fecha', `${añoNum}-01-01`).lte('fecha', `${añoNum}-12-31`);
+        }
     }
+
+    if (incluir !== null) query = query.in('id', incluir);
+    else if (excluir.length > 0) query = query.not('id', 'in', `(${excluir.join(',')})`);
 
     const { data: rodeos, error, count } = await query;
     if (error) return res.status(500).json({ error: error.message });
 
-    // Agregar totales de asignaciones en una segunda query (evitar N+1)
+    // Stats de asignaciones split por J/D y estado
     if (rodeos && rodeos.length > 0) {
         const ids = rodeos.map(r => r.id);
         const { data: asigs } = await supabase
             .from('asignaciones')
             .select('rodeo_id, tipo_persona, pago_base_calculado, estado_designacion')
-            .in('rodeo_id', ids)
-            .eq('estado', 'activo');
+            .in('rodeo_id', ids).eq('estado', 'activo');
 
-        const statsPorRodeo = {};
+        const emptyStats = () => ({
+            total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0,
+            j_acept: 0, j_rech: 0, j_pend: 0,
+            d_acept: 0, d_rech: 0, d_pend: 0
+        });
+        const sp = {};
         (asigs || []).forEach(a => {
-            if (!statsPorRodeo[a.rodeo_id]) statsPorRodeo[a.rodeo_id] = { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0, aceptados: 0, rechazados: 0, pendientes: 0 };
-            statsPorRodeo[a.rodeo_id].total_asignaciones++;
-            if (a.tipo_persona === 'jurado') statsPorRodeo[a.rodeo_id].jurados++;
-            else statsPorRodeo[a.rodeo_id].delegados++;
-            statsPorRodeo[a.rodeo_id].total_pago_base += (a.pago_base_calculado || 0);
+            if (!sp[a.rodeo_id]) sp[a.rodeo_id] = emptyStats();
+            const s = sp[a.rodeo_id];
+            s.total_asignaciones++;
+            s.total_pago_base += (a.pago_base_calculado || 0);
             const ed = a.estado_designacion;
-            if (ed === 'rechazado') statsPorRodeo[a.rodeo_id].rechazados++;
-            else if (ed === 'aceptado') statsPorRodeo[a.rodeo_id].aceptados++;
-            else statsPorRodeo[a.rodeo_id].pendientes++; // null o 'pendiente'
+            const acept = ed === 'aceptado' || ed === null; // null = legacy = aceptado
+            const rech  = ed === 'rechazado';
+            if (a.tipo_persona === 'jurado') {
+                s.jurados++;
+                if (rech) s.j_rech++; else if (acept) s.j_acept++; else s.j_pend++;
+            } else {
+                s.delegados++;
+                if (rech) s.d_rech++; else if (acept) s.d_acept++; else s.d_pend++;
+            }
         });
-
-        rodeos.forEach(r => {
-            const s = statsPorRodeo[r.id] || { total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0, aceptados: 0, rechazados: 0, pendientes: 0 };
-            r.total_asignaciones = s.total_asignaciones;
-            r.jurados            = s.jurados;
-            r.delegados          = s.delegados;
-            r.total_pago_base    = s.total_pago_base;
-            r.aceptados          = s.aceptados;
-            r.rechazados         = s.rechazados;
-            r.pendientes         = s.pendientes;
-        });
+        rodeos.forEach(r => Object.assign(r, sp[r.id] || emptyStats()));
     }
 
     res.json({ data: rodeos, total: count, page: parseInt(page), limit: parseInt(limit) });
@@ -297,7 +391,7 @@ router.get('/tipos/lista', async (req, res) => {
 
 // POST /api/admin/rodeos/tipos
 router.post('/tipos', async (req, res) => {
-    const { nombre, duracion_dias, observacion } = req.body;
+    const { nombre, duracion_dias, observacion, categoria_rodeo_id } = req.body;
 
     if (!nombre || !duracion_dias) {
         return res.status(400).json({ error: 'nombre y duracion_dias son requeridos' });
@@ -308,7 +402,12 @@ router.post('/tipos', async (req, res) => {
 
     const { data, error } = await supabase
         .from('tipos_rodeo')
-        .insert({ nombre: nombre.trim(), duracion_dias: parseInt(duracion_dias), observacion })
+        .insert({
+            nombre: nombre.trim(),
+            duracion_dias: parseInt(duracion_dias),
+            observacion,
+            categoria_rodeo_id: categoria_rodeo_id || null
+        })
         .select()
         .single();
 
@@ -318,13 +417,14 @@ router.post('/tipos', async (req, res) => {
 
 // PATCH /api/admin/rodeos/tipos/:id
 router.patch('/tipos/:id', async (req, res) => {
-    const { nombre, duracion_dias, observacion, activo } = req.body;
+    const { nombre, duracion_dias, observacion, activo, categoria_rodeo_id } = req.body;
     const cambios = { updated_at: new Date().toISOString() };
 
     if (nombre) cambios.nombre = nombre.trim();
     if (duracion_dias) cambios.duracion_dias = parseInt(duracion_dias);
     if (observacion !== undefined) cambios.observacion = observacion;
     if (activo !== undefined) cambios.activo = !!activo;
+    if (categoria_rodeo_id !== undefined) cambios.categoria_rodeo_id = categoria_rodeo_id || null;
 
     const { data, error } = await supabase
         .from('tipos_rodeo')

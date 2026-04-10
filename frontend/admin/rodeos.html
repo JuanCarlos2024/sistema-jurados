@@ -48,37 +48,127 @@
         </div>
 
         <div class="page-body">
+            <!-- Filtros básicos -->
             <div class="filtros-barra">
                 <div class="form-grupo">
                     <label class="form-label">Mes</label>
                     <select id="f-mes" class="form-control" onchange="cargar()">
                         <option value="">Todos</option>
-                        <option value="1">Enero</option>
-                        <option value="2">Febrero</option>
-                        <option value="3">Marzo</option>
-                        <option value="4">Abril</option>
-                        <option value="5">Mayo</option>
-                        <option value="6">Junio</option>
-                        <option value="7">Julio</option>
-                        <option value="8">Agosto</option>
-                        <option value="9">Septiembre</option>
-                        <option value="10">Octubre</option>
-                        <option value="11">Noviembre</option>
-                        <option value="12">Diciembre</option>
+                        <option value="1">Enero</option><option value="2">Febrero</option>
+                        <option value="3">Marzo</option><option value="4">Abril</option>
+                        <option value="5">Mayo</option><option value="6">Junio</option>
+                        <option value="7">Julio</option><option value="8">Agosto</option>
+                        <option value="9">Septiembre</option><option value="10">Octubre</option>
+                        <option value="11">Noviembre</option><option value="12">Diciembre</option>
                     </select>
                 </div>
                 <div class="form-grupo">
                     <label class="form-label">Año</label>
-                    <select id="f-año" class="form-control" onchange="cargar()">
-                        <!-- Poblado por JS en init() -->
-                    </select>
+                    <select id="f-año" class="form-control" onchange="cargar()"></select>
                 </div>
-                <div class="form-grupo">
-                    <label class="form-label">Buscar</label>
-                    <input type="text" id="f-buscar" class="form-control" placeholder="Club o asociación" oninput="debounce(cargar, 400)()">
+                <div class="form-grupo" style="flex:2; min-width:180px;">
+                    <label class="form-label">Buscar (club / asociación)</label>
+                    <input type="text" id="f-buscar" class="form-control" placeholder="Club o asociación" oninput="debounce(cargar,400)()">
                 </div>
+                <button class="btn btn-secundario" onclick="toggleFiltros()" id="btn-filtros-avz">Filtros avanzados ▼</button>
                 <button class="btn btn-secundario" onclick="limpiar()">Limpiar</button>
                 <button class="btn btn-outline" onclick="exportar()">↓ Exportar</button>
+            </div>
+
+            <!-- Panel filtros avanzados (colapsable) -->
+            <div id="panel-filtros-avz" class="oculto" style="background:#f8f9fa; border:1px solid var(--gris-claro); border-radius:8px; padding:16px; margin-bottom:16px;">
+                <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px;">
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Categoría de rodeo</label>
+                        <select id="f-cat" class="form-control" onchange="cargar()">
+                            <option value="">Todas</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Tipo de rodeo</label>
+                        <select id="f-tipo" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Asociación</label>
+                        <input type="text" id="f-asoc" class="form-control" placeholder="Nombre asociación" oninput="debounce(cargar,400)()">
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Club</label>
+                        <input type="text" id="f-club" class="form-control" placeholder="Nombre club" oninput="debounce(cargar,400)()">
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Jurado asignado</label>
+                        <select id="f-jurado" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Delegado asignado</label>
+                        <select id="f-delegado" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Fecha desde</label>
+                        <input type="date" id="f-desde" class="form-control" onchange="cargar()">
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Fecha hasta</label>
+                        <input type="date" id="f-hasta" class="form-control" onchange="cargar()">
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Estado designación Jurado</label>
+                        <select id="f-est-j" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="pendiente">Pendiente</option>
+                            <option value="aceptado">Aceptado</option>
+                            <option value="rechazado">Rechazado</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Estado designación Delegado</label>
+                        <select id="f-est-d" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="pendiente">Pendiente</option>
+                            <option value="aceptado">Aceptado</option>
+                            <option value="rechazado">Rechazado</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Cartilla Jurado</label>
+                        <select id="f-cj" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="con">Con cartilla</option>
+                            <option value="sin">Sin cartilla</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Cartilla Delegado</label>
+                        <select id="f-cd" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="con">Con cartilla</option>
+                            <option value="sin">Sin cartilla</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Video YouTube</label>
+                        <select id="f-video" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="con">Con video</option>
+                            <option value="sin">Sin video</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Origen</label>
+                        <select id="f-origen" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="manual">Manual</option>
+                            <option value="importado">Importado (Excel)</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <div class="card">
@@ -142,47 +232,104 @@ function poblarAnios() {
     }
 }
 
+let todosJurados = [];
+let todosDelegados = [];
+
 async function init() {
     poblarAnios();
     try {
-        const [tipos, cats] = await Promise.all([
+        const [tipos, cats, jurados, delegados] = await Promise.all([
             api.get('/admin/rodeos/tipos/lista?activo=true'),
-            api.get('/admin/reportes/categorias-rodeo/lista?activo=true')
+            api.get('/admin/reportes/categorias-rodeo/lista?activo=true'),
+            api.get('/admin/usuarios?tipo=jurado&activo=true&limit=500'),
+            api.get('/admin/usuarios?tipo=delegado_rentado&activo=true&limit=500')
         ]);
-        tiposRodeo = tipos || [];
-        categoriasRodeo = cats || [];
+        tiposRodeo      = tipos  || [];
+        categoriasRodeo = cats   || [];
+        todosJurados    = jurados?.data  || [];
+        todosDelegados  = delegados?.data || [];
     } catch(err) {
-        console.warn('[Rodeos] No se pudieron cargar tipos/categorías:', err.message);
-        tiposRodeo = [];
-        categoriasRodeo = [];
+        console.warn('[Rodeos] No se pudieron cargar datos iniciales:', err.message);
+        tiposRodeo = []; categoriasRodeo = [];
+        todosJurados = []; todosDelegados = [];
     }
+    poblarFiltrosAvanzados();
     cargar();
 }
 
+function poblarFiltrosAvanzados() {
+    // Categorías
+    const fCat = document.getElementById('f-cat');
+    categoriasRodeo.forEach(c => {
+        const o = document.createElement('option'); o.value = c.id; o.textContent = c.nombre; fCat.appendChild(o);
+    });
+    // Tipos
+    const fTipo = document.getElementById('f-tipo');
+    tiposRodeo.forEach(t => {
+        const o = document.createElement('option'); o.value = t.id; o.textContent = `${t.nombre} (${t.duracion_dias}d)`; fTipo.appendChild(o);
+    });
+    // Jurados
+    const fJurado = document.getElementById('f-jurado');
+    todosJurados.forEach(u => {
+        const o = document.createElement('option'); o.value = u.id; o.textContent = u.nombre_completo; fJurado.appendChild(o);
+    });
+    // Delegados
+    const fDeleg = document.getElementById('f-delegado');
+    todosDelegados.forEach(u => {
+        const o = document.createElement('option'); o.value = u.id; o.textContent = u.nombre_completo; fDeleg.appendChild(o);
+    });
+}
+
+function toggleFiltros() {
+    const panel = document.getElementById('panel-filtros-avz');
+    const btn   = document.getElementById('btn-filtros-avz');
+    const oculto = panel.classList.toggle('oculto');
+    btn.textContent = oculto ? 'Filtros avanzados ▼' : 'Filtros avanzados ▲';
+}
+
 function limpiar() {
-    document.getElementById('f-buscar').value = '';
-    document.getElementById('f-mes').value = '';
-    document.getElementById('f-año').value = '';
+    ['f-mes','f-año','f-buscar','f-cat','f-tipo','f-asoc','f-club',
+     'f-jurado','f-delegado','f-desde','f-hasta','f-est-j','f-est-d',
+     'f-cj','f-cd','f-video','f-origen'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
     cargar();
 }
+
+function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 
 async function cargar(pagina = 1) {
     paginaActual = pagina;
     const wrap = document.getElementById('tabla-wrap');
     mostrarSpinner(wrap);
     const p = toQueryString({
-        mes:    document.getElementById('f-mes').value,
-        año:    document.getElementById('f-año').value,
-        buscar: document.getElementById('f-buscar').value.trim(),
-        page:   paginaActual,
-        limit:  POR_PAGINA
+        mes:             gv('f-mes'),
+        año:             gv('f-año'),
+        buscar:          gv('f-buscar'),
+        categoria_rodeo_id: gv('f-cat'),
+        tipo_rodeo_id:   gv('f-tipo'),
+        asociacion:      gv('f-asoc'),
+        club:            gv('f-club'),
+        jurado_id:       gv('f-jurado'),
+        delegado_id:     gv('f-delegado'),
+        fecha_desde:     gv('f-desde'),
+        fecha_hasta:     gv('f-hasta'),
+        estado_jurado:   gv('f-est-j'),
+        estado_delegado: gv('f-est-d'),
+        cartilla_jurado: gv('f-cj'),
+        cartilla_delegado: gv('f-cd'),
+        video:           gv('f-video'),
+        origen:          gv('f-origen'),
+        page:  paginaActual,
+        limit: POR_PAGINA
     });
     try {
         const data = await api.get('/admin/rodeos?' + p);
         let indicadores = {};
         if (data.data && data.data.length > 0) {
             const ids = data.data.map(r => r.id).join(',');
-            try { indicadores = await api.get('/admin/adjuntos/resumen?rodeo_ids=' + ids); } catch(e) { /* ignorar si falla */ }
+            try { indicadores = await api.get('/admin/adjuntos/resumen?rodeo_ids=' + ids); } catch(e) { /* ignorar */ }
         }
         renderTabla(data.data, data.total, indicadores);
         renderPag(data.total);
@@ -206,9 +353,22 @@ function renderTabla(rodeos, total, indicadores = {}) {
         </tr></thead>
         <tbody>
         ${rodeos.map(r => {
-            const A = r.aceptados || 0, R = r.rechazados || 0, P = r.pendientes || 0;
-            let estadoHtml = `<span style="color:#27ae60; font-weight:600;">${A}A</span> / <span style="color:#e74c3c;">${R}R</span> / <span style="color:#f39c12;">${P}P</span>`;
-            if (A + R + P === 0) estadoHtml = '<span style="color:#aaa;">—</span>';
+            // Indicadores circulares por tipo de persona y estado
+            function dot(n, color, label) {
+                return n > 0 ? `<span style="color:${color}; font-weight:700;" title="${label}">● ${n}</span> ` : '';
+            }
+            const jStr = (dot(r.j_acept,'#27ae60','Jurado(s) aceptado(s)') +
+                          dot(r.j_pend, '#f39c12','Jurado(s) pendiente(s)') +
+                          dot(r.j_rech, '#e74c3c','Jurado(s) rechazado(s)')).trim();
+            const dStr = (dot(r.d_acept,'#27ae60','Delegado(s) aceptado(s)') +
+                          dot(r.d_pend, '#f39c12','Delegado(s) pendiente(s)') +
+                          dot(r.d_rech, '#e74c3c','Delegado(s) rechazado(s)')).trim();
+            const estadoHtml = (!r.jurados && !r.delegados)
+                ? '<span style="color:#aaa;">—</span>'
+                : `<div style="font-size:12px; line-height:1.8;">` +
+                  (r.jurados   ? `<span style="color:#888; font-size:11px;">J:</span> ${jStr  || '<span style="color:#aaa; font-size:11px;">—</span>'} ` : '') +
+                  (r.delegados ? `<span style="color:#888; font-size:11px;">D:</span> ${dStr  || '<span style="color:#aaa; font-size:11px;">—</span>'}` : '') +
+                  `</div>`;
             const ind = indicadores[r.id] || { cj: false, cd: false, vy: false };
             const si = '<span style="color:#27ae60; font-weight:700;">✔</span>';
             const no = '<span style="color:#ccc;">✖</span>';
@@ -234,7 +394,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
             </td>
         </tr>`;}).join('')}
         </tbody>
-    </table><div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; A=Aceptado R=Rechazado P=Pendiente &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube</div>`;
+    </table><div style="padding:10px 14px; font-size:12px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; <span style="color:#27ae60;">●</span>=Aceptado <span style="color:#f39c12;">●</span>=Pendiente <span style="color:#e74c3c;">●</span>=Rechazado &nbsp;·&nbsp; J=Jurado D=Delegado &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube</div>`;
 }
 
 function renderPag(total) {
@@ -305,15 +465,16 @@ function htmlDetalle(r) {
         <tbody>
         ${asigs.map(a => {
             let designBadge = '';
+            const km = a.distancia_km ? ` · ${a.distancia_km} km` : '';
             if (a.estado_designacion === 'pendiente') {
-                designBadge = `<span class="badge" style="background:#f39c12; color:#fff;">Pendiente</span>`;
+                designBadge = `<span style="color:#f39c12; font-size:15px;" title="Pendiente">●</span> <span style="font-size:12px; color:#f39c12;">Pendiente</span>`;
             } else if (a.estado_designacion === 'rechazado') {
-                designBadge = `<span class="badge" style="background:#e74c3c; color:#fff;">Rechazada</span>`;
+                designBadge = `<span style="color:#e74c3c; font-size:15px;" title="Rechazada">●</span> <span style="font-size:12px; color:#e74c3c;">Rechazada</span>`;
             } else if (a.estado_designacion === 'aceptado') {
-                const km = a.distancia_km ? ` · ${a.distancia_km} km` : '';
-                designBadge = `<span class="badge badge-activo">Aceptada${km}</span>`;
+                designBadge = `<span style="color:#27ae60; font-size:15px;" title="Aceptada">●</span> <span style="font-size:12px; color:#27ae60;">Aceptada${km}</span>`;
             } else {
-                designBadge = `<span class="badge badge-activo">—</span>`;
+                // null = legacy = aceptado implícito
+                designBadge = `<span style="color:#27ae60; font-size:15px;" title="Sin respuesta (legacy)">●</span> <span style="font-size:12px; color:#888;">—</span>`;
             }
             return `<tr style="${a.estado_designacion === 'rechazado' ? 'opacity:0.65;' : ''}">
             <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>
@@ -342,7 +503,9 @@ function htmlDetalle(r) {
 }
 
 function formRodeo(r) {
-    const tipos = tiposRodeo.map(t => `<option value="${t.id}" data-dias="${t.duracion_dias}" ${r?.tipo_rodeo_id===t.id?'selected':''}>${sanitizar(t.nombre)} (${t.duracion_dias} día(s))</option>`).join('');
+    const tipos = tiposRodeo.map(t =>
+        `<option value="${t.id}" data-dias="${t.duracion_dias}" data-cat="${t.categoria_rodeo_id||''}" ${r?.tipo_rodeo_id===t.id?'selected':''}>${sanitizar(t.nombre)} (${t.duracion_dias} día(s))</option>`
+    ).join('');
     const cats  = categoriasRodeo.map(c => `<option value="${c.id}" ${r?.categoria_rodeo_id===c.id?'selected':''}>${sanitizar(c.nombre)}</option>`).join('');
     return `<form onsubmit="guardarRodeo(event)">
         <div class="form-fila">
@@ -362,7 +525,7 @@ function formRodeo(r) {
             </div>
             <div class="form-grupo">
                 <label class="form-label">Tipo de rodeo <span class="req">*</span></label>
-                <select name="tipo_rodeo_id" class="form-control" required>
+                <select name="tipo_rodeo_id" id="sel-tipo-rodeo" class="form-control" required onchange="sugerirCategoria(this)">
                     <option value="">Seleccione...</option>
                     ${tipos}
                 </select>
@@ -371,10 +534,11 @@ function formRodeo(r) {
         <div class="form-fila">
             <div class="form-grupo">
                 <label class="form-label">Categoría de rodeo</label>
-                <select name="categoria_rodeo_id" class="form-control">
+                <select name="categoria_rodeo_id" id="sel-cat-rodeo" class="form-control">
                     <option value="">Sin categoría</option>
                     ${cats}
                 </select>
+                <div class="form-hint" id="hint-cat"></div>
             </div>
             <div class="form-grupo">
                 <label class="form-label">Observación</label>
@@ -515,33 +679,51 @@ async function mostrarTipos() {
             <button class="btn btn-primario btn-pequeño" onclick="formularioTipo(null)">+ Nuevo tipo</button>
         </div>
         <table>
-            <thead><tr><th>Nombre</th><th>Días</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Días</th><th>Categoría asociada</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
-            ${(data||[]).map(t => `<tr>
+            ${(data||[]).map(t => {
+                const catNombre = t.categoria_rodeo_id
+                    ? (categoriasRodeo.find(c => c.id === t.categoria_rodeo_id)?.nombre || '—')
+                    : '<span style="color:#aaa;">Sin categoría</span>';
+                return `<tr>
                 <td>${sanitizar(t.nombre)}</td>
                 <td style="text-align:center;">${t.duracion_dias}</td>
+                <td>${catNombre}</td>
                 <td>${t.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
                 <td>
                     <button class="btn btn-pequeño btn-outline" onclick="formularioTipo(${JSON.stringify(t).replace(/"/g,'&quot;')})">Editar</button>
                 </td>
-            </tr>`).join('')}
+            </tr>`;}).join('')}
             </tbody>
         </table>`;
     document.getElementById('modal-overlay').classList.remove('oculto');
 }
 
 function formularioTipo(t) {
+    const catsOpts = categoriasRodeo.map(c =>
+        `<option value="${c.id}" ${t?.categoria_rodeo_id===c.id?'selected':''}>${sanitizar(c.nombre)}</option>`
+    ).join('');
     document.getElementById('modal-body').innerHTML = `
         <form onsubmit="guardarTipo(event, '${t?.id||''}')">
             <div class="form-grupo">
                 <label class="form-label">Nombre <span class="req">*</span></label>
                 <input type="text" name="nombre" class="form-control" required value="${sanitizar(t?.nombre||'')}">
             </div>
-            <div class="form-grupo">
-                <label class="form-label">Duración (días) <span class="req">*</span></label>
-                <select name="duracion_dias" class="form-control" required>
-                    ${[1,2,3,4,5].map(d => `<option value="${d}" ${t?.duracion_dias===d?'selected':''}>${d} día(s)</option>`).join('')}
-                </select>
+            <div class="form-fila">
+                <div class="form-grupo">
+                    <label class="form-label">Duración (días) <span class="req">*</span></label>
+                    <select name="duracion_dias" class="form-control" required>
+                        ${[1,2,3,4,5].map(d => `<option value="${d}" ${t?.duracion_dias===d?'selected':''}>${d} día(s)</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Categoría asociada</label>
+                    <select name="categoria_rodeo_id" class="form-control">
+                        <option value="">Sin categoría</option>
+                        ${catsOpts}
+                    </select>
+                    <div class="form-hint">Se sugerirá automáticamente al crear rodeos con este tipo</div>
+                </div>
             </div>
             <div class="form-grupo">
                 <label class="form-label">Observación</label>
@@ -567,6 +749,7 @@ async function guardarTipo(e, id) {
     btn.disabled = true;
     const datos = Object.fromEntries(new FormData(e.target));
     if (datos.activo) datos.activo = datos.activo === 'true';
+    if (!datos.categoria_rodeo_id) datos.categoria_rodeo_id = null;
     try {
         if (id) await api.patch('/admin/rodeos/tipos/' + id, datos);
         else await api.post('/admin/rodeos/tipos', datos);
@@ -765,10 +948,26 @@ async function guardarCategoria(e, id) {
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); rodeoActual = null; }
 
+// Auto-sugerir categoría al cambiar tipo (solo si el campo categoría está vacío)
+function sugerirCategoria(sel) {
+    const opt = sel.options[sel.selectedIndex];
+    const catId = opt?.dataset?.cat || '';
+    const catSel = document.getElementById('sel-cat-rodeo');
+    const hint   = document.getElementById('hint-cat');
+    if (!catSel) return;
+    if (catId && !catSel.value) {
+        catSel.value = catId;
+        const catNombre = categoriasRodeo.find(c => c.id === catId)?.nombre || '';
+        if (hint) hint.textContent = `Sugerida por el tipo de rodeo: ${catNombre}`;
+    } else {
+        if (hint) hint.textContent = '';
+    }
+}
+
 async function exportar() {
-    const año  = document.getElementById('f-año').value;
-    const mes  = document.getElementById('f-mes').value;
-    const buscar = document.getElementById('f-buscar').value.trim();
+    const año    = gv('f-año');
+    const mes    = gv('f-mes');
+    const buscar = gv('f-buscar');
     try {
         await api.descargar('/admin/exportacion/rodeos?' + toQueryString({ año, mes, buscar }), `rodeos${año?'_'+año:''}${mes?'_'+mes:''}.xlsx`);
     } catch(err) { mostrarError(err); }
