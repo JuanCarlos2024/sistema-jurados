@@ -194,7 +194,7 @@ function toQS(p) {
 
 async function cargar() {
     const divRes = document.getElementById('resultados');
-    mostrarSpinner(divRes);
+    divRes.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
     document.getElementById('resumen-filtros').textContent = '';
 
     const params = {
@@ -214,20 +214,18 @@ async function cargar() {
         ultimosDatos = data;
 
         if (vistaActual === 'fecha') {
-            renderPorFecha(data || {});
+            renderPorFecha(data && typeof data === 'object' && !Array.isArray(data) ? data : {});
         } else {
-            renderLista(data || []);
+            renderLista(Array.isArray(data) ? data : []);
         }
     } catch(err) {
-        // El finally siempre corre, así que el spinner ya fue limpiado.
-        // Mostramos el error en el contenedor de resultados.
         divRes.innerHTML =
-            `<div class="alerta alerta-error" style="margin:0;">${sanitizar(err.message || 'Error al cargar disponibilidad. Intente nuevamente.')}</div>`;
+            `<div class="alerta alerta-error" style="margin:0;">${sanitizar(err.message || 'Error al cargar disponibilidad. Verifique la conexión con el servidor.')}</div>`;
     } finally {
-        // Garantía: si el spinner sigue visible (p.ej. render lanzó excepción),
-        // lo reemplazamos con estado vacío para no dejar loading infinito.
-        if (divRes.querySelector('.spinner-wrap')) {
-            divRes.innerHTML = '<div class="alerta alerta-error" style="margin:0;">Error inesperado. Intente nuevamente.</div>';
+        // Garantía de último recurso: si el spinner sigue visible, mostrar error.
+        if (divRes.querySelector && divRes.querySelector('.spinner-wrap')) {
+            divRes.innerHTML =
+                '<div class="alerta alerta-error" style="margin:0;">No se pudo completar la carga. Intente nuevamente.</div>';
         }
     }
 }

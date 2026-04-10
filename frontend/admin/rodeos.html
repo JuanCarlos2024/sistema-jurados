@@ -120,21 +120,21 @@
                         <input type="date" id="f-hasta" class="form-control" onchange="cargar()">
                     </div>
                     <div class="form-grupo" style="margin-bottom:0;">
-                        <label class="form-label">Estado designación Jurado</label>
+                        <label class="form-label">Asistencia Jurado</label>
                         <select id="f-est-j" class="form-control" onchange="cargar()">
                             <option value="">Todos</option>
-                            <option value="pendiente">Pendiente</option>
-                            <option value="aceptado">Aceptado</option>
-                            <option value="rechazado">Rechazado</option>
+                            <option value="pendiente">Sin respuesta</option>
+                            <option value="aceptado">Aceptó asistir</option>
+                            <option value="rechazado">Rechazó asistir</option>
                         </select>
                     </div>
                     <div class="form-grupo" style="margin-bottom:0;">
-                        <label class="form-label">Estado designación Delegado</label>
+                        <label class="form-label">Asistencia Delegado</label>
                         <select id="f-est-d" class="form-control" onchange="cargar()">
                             <option value="">Todos</option>
-                            <option value="pendiente">Pendiente</option>
-                            <option value="aceptado">Aceptado</option>
-                            <option value="rechazado">Rechazado</option>
+                            <option value="pendiente">Sin respuesta</option>
+                            <option value="aceptado">Aceptó asistir</option>
+                            <option value="rechazado">Rechazó asistir</option>
                         </select>
                     </div>
                     <div class="form-grupo" style="margin-bottom:0;">
@@ -348,7 +348,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
     wrap.innerHTML = `<table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Categoría</th>
-            <th>Días</th><th>Estado designaciones</th><th>Total pagos</th><th>Origen</th>
+            <th>Días</th><th>Asistencia J/D</th><th>Total pagos</th><th>Origen</th>
             <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube">CJ/CD/VY</th>
             <th>Acciones</th>
         </tr></thead>
@@ -358,12 +358,12 @@ function renderTabla(rodeos, total, indicadores = {}) {
             function dot(n, color, label) {
                 return n > 0 ? `<span style="color:${color}; font-weight:700;" title="${label}">● ${n}</span> ` : '';
             }
-            const jStr = (dot(r.j_acept,'#27ae60','Jurado(s) aceptado(s)') +
-                          dot(r.j_pend, '#f39c12','Jurado(s) pendiente(s)') +
-                          dot(r.j_rech, '#e74c3c','Jurado(s) rechazado(s)')).trim();
-            const dStr = (dot(r.d_acept,'#27ae60','Delegado(s) aceptado(s)') +
-                          dot(r.d_pend, '#f39c12','Delegado(s) pendiente(s)') +
-                          dot(r.d_rech, '#e74c3c','Delegado(s) rechazado(s)')).trim();
+            const jStr = (dot(r.j_acept,'#27ae60','Jurado(s) aceptó asistir') +
+                          dot(r.j_pend, '#f39c12','Jurado(s) sin respuesta') +
+                          dot(r.j_rech, '#e74c3c','Jurado(s) rechazó asistir')).trim();
+            const dStr = (dot(r.d_acept,'#27ae60','Delegado(s) aceptó asistir') +
+                          dot(r.d_pend, '#f39c12','Delegado(s) sin respuesta') +
+                          dot(r.d_rech, '#e74c3c','Delegado(s) rechazó asistir')).trim();
             const estadoHtml = (!r.jurados && !r.delegados)
                 ? '<span style="color:#aaa;">—</span>'
                 : `<div style="font-size:12px; line-height:1.8;">` +
@@ -462,20 +462,20 @@ function htmlDetalle(r) {
     <div class="card-titulo">Personas asignadas (${asigs.length})</div>
     ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
     <table>
-        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Designación</th><th>Acciones</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Asistencia</th><th>Acciones</th></tr></thead>
         <tbody>
         ${asigs.map(a => {
             let designBadge = '';
             const km = a.distancia_km ? ` · ${a.distancia_km} km` : '';
             if (a.estado_designacion === 'pendiente') {
-                designBadge = `<span style="color:#f39c12; font-size:15px;" title="Pendiente">●</span> <span style="font-size:12px; color:#f39c12;">Pendiente</span>`;
+                designBadge = `<span style="color:#f39c12; font-size:15px;" title="Sin respuesta">●</span> <span style="font-size:12px; color:#f39c12;">Sin respuesta</span>`;
             } else if (a.estado_designacion === 'rechazado') {
-                designBadge = `<span style="color:#e74c3c; font-size:15px;" title="Rechazada">●</span> <span style="font-size:12px; color:#e74c3c;">Rechazada</span>`;
+                designBadge = `<span style="color:#e74c3c; font-size:15px;" title="Rechazó asistir">●</span> <span style="font-size:12px; color:#e74c3c;">Rechazó asistir</span>`;
             } else if (a.estado_designacion === 'aceptado') {
-                designBadge = `<span style="color:#27ae60; font-size:15px;" title="Aceptada">●</span> <span style="font-size:12px; color:#27ae60;">Aceptada${km}</span>`;
+                designBadge = `<span style="color:#27ae60; font-size:15px;" title="Aceptó asistir">●</span> <span style="font-size:12px; color:#27ae60;">Aceptó asistir${km}</span>`;
             } else {
                 // null = legacy = aceptado implícito
-                designBadge = `<span style="color:#27ae60; font-size:15px;" title="Sin respuesta (legacy)">●</span> <span style="font-size:12px; color:#888;">—</span>`;
+                designBadge = `<span style="color:#27ae60; font-size:15px;" title="Aceptó asistir (registro anterior)">●</span> <span style="font-size:12px; color:#27ae60;">Aceptó asistir${km}</span>`;
             }
             return `<tr style="${a.estado_designacion === 'rechazado' ? 'opacity:0.65;' : ''}">
             <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>

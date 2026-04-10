@@ -98,7 +98,11 @@ router.get('/', async (req, res) => {
 
     let query = supabase
         .from('rodeos')
-        .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre, duracion_dias, origen, estado, created_at', { count: 'exact' })
+        .select(`
+            id, club, asociacion, fecha, tipo_rodeo_nombre, tipo_rodeo_id,
+            categoria_rodeo_id, categoria_rodeo_nombre, duracion_dias, origen, estado, created_at,
+            tipos_rodeo(categoria_rodeo_id, categorias_rodeo(nombre))
+        `, { count: 'exact' })
         .order('fecha', { ascending: false })
         .range(offset, offset + parseInt(limit) - 1);
 
@@ -131,6 +135,21 @@ router.get('/', async (req, res) => {
 
     const { data: rodeos, error, count } = await query;
     if (error) return res.status(500).json({ error: error.message });
+
+    // Herencia de categoría desde tipo_rodeo si el rodeo no tiene categoría propia
+    if (rodeos) {
+        rodeos.forEach(r => {
+            if (!r.categoria_rodeo_nombre) {
+                const catNombre = r.tipos_rodeo?.categorias_rodeo?.nombre;
+                if (catNombre) {
+                    r.categoria_rodeo_nombre = catNombre;
+                    r.categoria_heredada = true; // flag para el frontend si se necesita
+                }
+            }
+            // Limpiar el join auxiliar de la respuesta
+            delete r.tipos_rodeo;
+        });
+    }
 
     // Stats de asignaciones split por J/D y estado
     if (rodeos && rodeos.length > 0) {
@@ -172,11 +191,20 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
     const { data: rodeo, error } = await supabase
         .from('rodeos')
-        .select('*, tipos_rodeo(nombre, duracion_dias)')
+        .select('*, tipos_rodeo(nombre, duracion_dias, categoria_rodeo_id, categorias_rodeo(nombre))')
         .eq('id', req.params.id)
         .single();
 
     if (error) return res.status(404).json({ error: 'Rodeo no encontrado' });
+
+    // Herencia de categoría desde tipo_rodeo si el rodeo no tiene categoría propia
+    if (rodeo && !rodeo.categoria_rodeo_nombre) {
+        const catNombre = rodeo.tipos_rodeo?.categorias_rodeo?.nombre;
+        if (catNombre) {
+            rodeo.categoria_rodeo_nombre = catNombre;
+            rodeo.categoria_heredada = true;
+        }
+    }
 
     const { data: asignaciones } = await supabase
         .from('asignaciones')

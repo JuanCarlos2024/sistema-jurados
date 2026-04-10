@@ -3,81 +3,73 @@ const router   = express.Router();
 const supabase = require('../../config/supabase');
 const ExcelJS  = require('exceljs');
 
-// Helper: aplica filtros de fecha y tipo/categoría sobre relacionadas
-function aplicarFiltros(query, { fecha_desde, fecha_hasta, tipo_persona, categoria }) {
-    if (fecha_desde)  query = query.gte('fecha', fecha_desde);
-    if (fecha_hasta)  query = query.lte('fecha', fecha_hasta);
-    if (tipo_persona) query = query.eq('usuarios_pagados.tipo_persona', tipo_persona);
-    if (categoria)    query = query.eq('usuarios_pagados.categoria', categoria);
-    return query;
+// Todos los filtros de usuario se aplican en memoria para evitar
+// problemas de sintaxis con filtros sobre tablas relacionadas en Supabase JS.
+function filtrarRows(rows, { tipo_persona, categoria, nombre }) {
+    if (tipo_persona) rows = rows.filter(d => d.usuarios_pagados?.tipo_persona === tipo_persona);
+    if (categoria)    rows = rows.filter(d => d.usuarios_pagados?.categoria === categoria);
+    if (nombre) {
+        const q = nombre.toLowerCase();
+        rows = rows.filter(d => d.usuarios_pagados?.nombre_completo?.toLowerCase().includes(q));
+    }
+    return rows;
 }
 
-// Helper: filtro en memoria por nombre
-function filtrarPorNombre(rows, nombre) {
-    if (!nombre) return rows;
-    const q = nombre.toLowerCase();
-    return rows.filter(d =>
-        d.usuarios_pagados?.nombre_completo?.toLowerCase().includes(q)
+function ordenarPorNombre(rows) {
+    return rows.sort((a, b) =>
+        (a.usuarios_pagados?.nombre_completo || '').localeCompare(
+            b.usuarios_pagados?.nombre_completo || '', 'es'
+        )
     );
 }
 
 // ─── GET /api/admin/disponibilidad ──────────────────────────
-// Filtros: fecha_desde, fecha_hasta, tipo_persona, categoria, nombre
 router.get('/', async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre } = req.query;
 
         let query = supabase
             .from('disponibilidad_usuarios')
-            .select(`
-                id, fecha,
-                usuarios_pagados!inner(
-                    id, nombre_completo, tipo_persona, categoria, rut
-                )
-            `)
+            .select('id, fecha, usuarios_pagados(id, nombre_completo, tipo_persona, categoria, rut)')
             .order('fecha', { ascending: true });
 
-        query = aplicarFiltros(query, { fecha_desde, fecha_hasta, tipo_persona, categoria });
+        if (fecha_desde) query = query.gte('fecha', fecha_desde);
+        if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
 
         const { data, error } = await query;
         if (error) return res.status(500).json({ error: error.message });
 
-        const result = filtrarPorNombre(data || [], nombre);
-        // Ordenar por nombre en memoria (evita syntax inválida en Supabase JS)
-        result.sort((a, b) => {
-            const nA = a.usuarios_pagados?.nombre_completo || '';
-            const nB = b.usuarios_pagados?.nombre_completo || '';
-            return nA.localeCompare(nB, 'es');
-        });
+        // Excluir filas donde el usuario fue eliminado (usuarios_pagados = null)
+        let rows = (data || []).filter(d => d.usuarios_pagados != null);
+        rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
+        rows = ordenarPorNombre(rows);
 
-        res.json(result);
+        res.json(rows);
     } catch (err) {
         res.status(500).json({ error: 'Error al obtener disponibilidad: ' + err.message });
     }
 });
 
 // ─── GET /api/admin/disponibilidad/por-fecha ─────────────────
-// Agrupa disponibles por fecha para la vista del admin
 router.get('/por-fecha', async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre } = req.query;
 
         let query = supabase
             .from('disponibilidad_usuarios')
-            .select(`
-                fecha,
-                usuarios_pagados!inner(id, nombre_completo, tipo_persona, categoria)
-            `)
+            .select('fecha, usuarios_pagados(id, nombre_completo, tipo_persona, categoria)')
             .order('fecha', { ascending: true });
 
-        query = aplicarFiltros(query, { fecha_desde, fecha_hasta, tipo_persona, categoria });
+        if (fecha_desde) query = query.gte('fecha', fecha_desde);
+        if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
 
         const { data, error } = await query;
         if (error) return res.status(500).json({ error: error.message });
 
-        const rows = filtrarPorNombre(data || [], nombre);
+        let rows = (data || []).filter(d => d.usuarios_pagados != null);
+        rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
 
-        // Agrupar por fecha; dentro de cada fecha ordenar por nombre
+        // Agrupar por fecha; ordenar personas dentro de cada fecha
         const porFecha = {};
         rows.forEach(d => {
             if (!porFecha[d.fecha]) porFecha[d.fecha] = [];
@@ -96,30 +88,24 @@ router.get('/por-fecha', async (req, res) => {
 });
 
 // ─── GET /api/admin/disponibilidad/exportar ──────────────────
-// Exporta a Excel (.xlsx) o CSV. Parámetro: formato=xlsx|csv
 router.get('/exportar', async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre, formato = 'xlsx' } = req.query;
 
         let query = supabase
             .from('disponibilidad_usuarios')
-            .select(`
-                fecha,
-                usuarios_pagados!inner(nombre_completo, tipo_persona, categoria, rut)
-            `)
+            .select('fecha, usuarios_pagados(nombre_completo, tipo_persona, categoria, rut)')
             .order('fecha', { ascending: true });
 
-        query = aplicarFiltros(query, { fecha_desde, fecha_hasta, tipo_persona, categoria });
+        if (fecha_desde) query = query.gte('fecha', fecha_desde);
+        if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
 
         const { data, error } = await query;
         if (error) return res.status(500).json({ error: error.message });
 
-        let rows = filtrarPorNombre(data || [], nombre);
-        rows.sort((a, b) =>
-            (a.usuarios_pagados?.nombre_completo || '').localeCompare(
-                b.usuarios_pagados?.nombre_completo || '', 'es'
-            )
-        );
+        let rows = (data || []).filter(d => d.usuarios_pagados != null);
+        rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
+        rows = ordenarPorNombre(rows);
 
         const tipoLabel = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
 
