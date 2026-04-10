@@ -68,6 +68,17 @@
     </div>
 </div>
 
+<!-- Modal adjuntos -->
+<div class="modal-overlay oculto" id="modal-adj-overlay">
+<div class="modal" style="max-width:680px;">
+    <div class="modal-header">
+        <h3 id="modal-adj-titulo">Adjuntos del rodeo</h3>
+        <button class="modal-cerrar" onclick="cerrarModalAdj()">×</button>
+    </div>
+    <div class="modal-body" id="modal-adj-body"></div>
+</div>
+</div>
+
 <!-- Modal solicitar bono -->
 <div class="modal-overlay oculto" id="modal-overlay">
 <div class="modal" style="max-width:460px;">
@@ -181,6 +192,7 @@ function renderAsignaciones(asignaciones) {
             <th>Pago base</th>
             <th>Bono</th>
             <th>Total aprobado</th>
+            <th>Adjuntos</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
@@ -227,6 +239,7 @@ function renderAsignaciones(asignaciones) {
                 <td class="${esRechazada ? '' : 'monto-positivo'}">${esRechazada ? `<span style="text-decoration:line-through; color:#aaa;">${formatCLP(a.pago_base_calculado)}</span>` : formatCLP(a.pago_base_calculado)}</td>
                 <td>${bonoHtml}</td>
                 <td class="${esRechazada ? '' : 'monto-positivo'}" style="font-weight:600;">${esRechazada ? '—' : formatCLP(totalAprobado)}</td>
+                <td>${esRechazada ? '<span style="color:#aaa; font-size:12px;">—</span>' : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntos('${a.rodeo_id}', '${sanitizar(a.rodeos?.club||'')}', true)">📎 Adjuntos</button>`}</td>
             </tr>`;
         }).join('')}
         </tbody>
@@ -381,6 +394,197 @@ async function enviarRespuesta(e, asigId, accion) {
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
 document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+// ── Adjuntos y Links ─────────────────────────────────────────────
+let adjRodeoId = null;
+let adjPuedeSubir = false;
+
+function cerrarModalAdj() { document.getElementById('modal-adj-overlay').classList.add('oculto'); }
+document.getElementById('modal-adj-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModalAdj(); });
+
+async function abrirAdjuntos(rodeoId, clubNombre, puedeSubir) {
+    adjRodeoId = rodeoId;
+    adjPuedeSubir = puedeSubir;
+    document.getElementById('modal-adj-titulo').textContent = `Adjuntos — ${clubNombre}`;
+    document.getElementById('modal-adj-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-adj-overlay').classList.remove('oculto');
+    await renderAdjuntos();
+}
+
+async function renderAdjuntos() {
+    try {
+        const [adjRes, linksRes] = await Promise.all([
+            api.get(`/usuario/adjuntos?rodeo_id=${adjRodeoId}`),
+            api.get(`/usuario/links?rodeo_id=${adjRodeoId}`)
+        ]);
+        const adjuntos = adjRes || [];
+        const links = linksRes || [];
+
+        let html = '';
+
+        // ── Subir archivo (solo si puede) ──
+        if (adjPuedeSubir) {
+            html += `<div class="card" style="margin-bottom:16px; padding:14px;">
+                <div style="font-weight:600; margin-bottom:10px;">Subir archivo</div>
+                <form onsubmit="subirAdjunto(event)" enctype="multipart/form-data">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+                        <div>
+                            <label class="form-label">Tipo</label>
+                            <select id="adj-tipo" class="form-control">
+                                <option value="planilla">Planilla</option>
+                                <option value="contrato">Contrato</option>
+                                <option value="foto">Foto</option>
+                                <option value="otro" selected>Otro</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="form-label">Archivo (PDF, Word, imagen, máx 20 MB)</label>
+                            <input type="file" id="adj-file" class="form-control" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primario btn-pequeño">Subir archivo</button>
+                </form>
+            </div>
+            <div class="card" style="margin-bottom:16px; padding:14px;">
+                <div style="font-weight:600; margin-bottom:10px;">Agregar link de YouTube</div>
+                <form onsubmit="agregarLink(event)" style="display:flex; gap:8px; align-items:flex-end;">
+                    <div style="flex:1;">
+                        <label class="form-label">URL de YouTube</label>
+                        <input type="url" id="link-url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required>
+                    </div>
+                    <div style="flex:1;">
+                        <label class="form-label">Descripción (opcional)</label>
+                        <input type="text" id="link-desc" class="form-control" placeholder="Ej: Video rodada 1">
+                    </div>
+                    <button type="submit" class="btn btn-primario btn-pequeño">Agregar</button>
+                </form>
+            </div>`;
+        }
+
+        // ── Lista de adjuntos ──
+        html += `<div style="font-weight:600; margin-bottom:8px;">Archivos (${adjuntos.length})</div>`;
+        if (adjuntos.length === 0) {
+            html += '<p style="color:#888; font-size:13px; margin-bottom:16px;">Sin archivos adjuntos</p>';
+        } else {
+            html += '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">';
+            adjuntos.forEach(adj => {
+                const icono = adj.mime_type?.includes('pdf') ? '📄' : adj.mime_type?.startsWith('image') ? '🖼️' : '📝';
+                const kb = adj.tamano_bytes ? `${Math.round(adj.tamano_bytes / 1024)} KB` : '';
+                html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
+                    <span style="font-size:20px;">${icono}</span>
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${sanitizar(adj.nombre_archivo)}</div>
+                        <div style="font-size:12px; color:#888;">${sanitizar(adj.tipo_adjunto)} · ${kb}</div>
+                    </div>
+                    <button class="btn btn-pequeño btn-outline" onclick="descargarAdjunto('${adj.id}', '${sanitizar(adj.nombre_archivo)}')">Descargar</button>
+                    ${!adj.subido_por_admin ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarAdjunto('${adj.id}')">Eliminar</button>` : ''}
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        // ── Lista de links ──
+        html += `<div style="font-weight:600; margin-bottom:8px;">Links de YouTube (${links.length})</div>`;
+        if (links.length === 0) {
+            html += '<p style="color:#888; font-size:13px;">Sin links registrados</p>';
+        } else {
+            html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+            links.forEach(lnk => {
+                const videoId = extraerVideoId(lnk.url);
+                html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
+                    <span style="font-size:20px;">▶️</span>
+                    <div style="flex:1; min-width:0;">
+                        ${videoId ? `<img src="https://img.youtube.com/vi/${videoId}/default.jpg" style="width:60px; height:45px; object-fit:cover; border-radius:4px; float:left; margin-right:8px;" onerror="this.style.display='none'">` : ''}
+                        <div><a href="${lnk.url}" target="_blank" rel="noopener" style="color:#2980b9;">${sanitizar(lnk.descripcion || lnk.url)}</a></div>
+                        <div style="font-size:12px; color:#888; clear:both;">${sanitizar(lnk.url)}</div>
+                    </div>
+                    ${!lnk.subido_por_admin ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarLink('${lnk.id}')">Eliminar</button>` : ''}
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        document.getElementById('modal-adj-body').innerHTML = html;
+    } catch(err) {
+        document.getElementById('modal-adj-body').innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar adjuntos')}</div>`;
+    }
+}
+
+function extraerVideoId(url) {
+    try {
+        const m = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+        return m ? m[1] : null;
+    } catch { return null; }
+}
+
+async function subirAdjunto(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    btn.textContent = 'Subiendo...';
+    const file = document.getElementById('adj-file').files[0];
+    const tipo = document.getElementById('adj-tipo').value;
+    const form = new FormData();
+    form.append('rodeo_id', adjRodeoId);
+    form.append('tipo_adjunto', tipo);
+    form.append('archivo', file);
+    try {
+        await api.upload('/usuario/adjuntos', form);
+        mostrarToast('Archivo subido correctamente', 'success');
+        await renderAdjuntos();
+    } catch(err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Subir archivo';
+    }
+}
+
+async function descargarAdjunto(id, nombre) {
+    try {
+        const r = await api.get(`/usuario/adjuntos/${id}/url`);
+        const a = document.createElement('a');
+        a.href = r.url;
+        a.download = r.nombre || nombre;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    } catch(err) { mostrarError(err); }
+}
+
+async function eliminarAdjunto(id) {
+    if (!confirm('¿Eliminar este adjunto?')) return;
+    try {
+        await api.delete(`/usuario/adjuntos/${id}`);
+        mostrarToast('Adjunto eliminado', 'success');
+        await renderAdjuntos();
+    } catch(err) { mostrarError(err); }
+}
+
+async function agregarLink(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const url = document.getElementById('link-url').value.trim();
+    const desc = document.getElementById('link-desc').value.trim();
+    try {
+        await api.post('/usuario/links', { rodeo_id: adjRodeoId, url, descripcion: desc || undefined });
+        mostrarToast('Link agregado', 'success');
+        document.getElementById('link-url').value = '';
+        document.getElementById('link-desc').value = '';
+        await renderAdjuntos();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function eliminarLink(id) {
+    if (!confirm('¿Eliminar este link?')) return;
+    try {
+        await api.delete(`/usuario/links/${id}`);
+        mostrarToast('Link eliminado', 'success');
+        await renderAdjuntos();
+    } catch(err) { mostrarError(err); }
+}
 
 init().catch(mostrarError);
 </script>

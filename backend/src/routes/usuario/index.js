@@ -9,5 +9,7 @@ router.use('/perfil', require('./perfil'));
 router.use('/resumen', require('./resumen'));
 router.use('/bonos', require('./bonos'));
 router.use('/asignaciones', require('./asignaciones'));
+router.use('/adjuntos', require('./adjuntos'));
+router.use('/links', require('./links'));
 
 module.exports = router;

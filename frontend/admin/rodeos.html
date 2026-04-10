@@ -91,6 +91,17 @@
     </div>
 </div>
 
+<!-- Modal Adjuntos -->
+<div class="modal-overlay oculto" id="modal-adj-overlay">
+<div class="modal" style="max-width:720px;">
+    <div class="modal-header">
+        <h3 id="modal-adj-titulo">Adjuntos</h3>
+        <button class="modal-cerrar" onclick="cerrarModalAdj()">×</button>
+    </div>
+    <div class="modal-body" id="modal-adj-body"></div>
+</div>
+</div>
+
 <!-- Modal Rodeo -->
 <div class="modal-overlay oculto" id="modal-overlay">
 <div class="modal" style="max-width:700px;">
@@ -311,6 +322,7 @@ function htmlDetalle(r) {
     <div style="text-align:right; padding:8px 0; font-weight:600;">Total pagos base: ${formatCLP(totalBase)}</div>`}
     <div class="form-acciones">
         <button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>
+        <button class="btn btn-secundario" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎 Adjuntos</button>
         <button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${asigs.length})">Eliminar rodeo</button>
         <button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
     </div>`;
@@ -750,6 +762,182 @@ async function exportar() {
 }
 
 document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+// ── Adjuntos Admin ───────────────────────────────────────────────
+let adjAdminRodeoId = null;
+
+function cerrarModalAdj() { document.getElementById('modal-adj-overlay').classList.add('oculto'); }
+document.getElementById('modal-adj-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModalAdj(); });
+
+async function abrirAdjuntosAdmin(rodeoId, clubNombre) {
+    adjAdminRodeoId = rodeoId;
+    document.getElementById('modal-adj-titulo').textContent = `Adjuntos — ${clubNombre}`;
+    document.getElementById('modal-adj-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-adj-overlay').classList.remove('oculto');
+    await renderAdjuntosAdmin();
+}
+
+async function renderAdjuntosAdmin() {
+    try {
+        const res = await api.get(`/admin/adjuntos?rodeo_id=${adjAdminRodeoId}`);
+        const adjuntos = res.adjuntos || [];
+        const links = res.links || [];
+
+        let html = `<div class="card" style="margin-bottom:16px; padding:14px;">
+            <div style="font-weight:600; margin-bottom:10px;">Subir archivo (como administrador)</div>
+            <form onsubmit="subirAdjuntoAdmin(event)" enctype="multipart/form-data">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+                    <div>
+                        <label class="form-label">Tipo</label>
+                        <select id="adj-adm-tipo" class="form-control">
+                            <option value="planilla">Planilla</option>
+                            <option value="contrato">Contrato</option>
+                            <option value="foto">Foto</option>
+                            <option value="otro" selected>Otro</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Archivo (PDF, Word, imagen, máx 20 MB)</label>
+                        <input type="file" id="adj-adm-file" class="form-control" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primario btn-pequeño">Subir archivo</button>
+            </form>
+        </div>
+        <div class="card" style="margin-bottom:16px; padding:14px;">
+            <div style="font-weight:600; margin-bottom:10px;">Agregar link de YouTube</div>
+            <form onsubmit="agregarLinkAdmin(event)" style="display:flex; gap:8px; align-items:flex-end;">
+                <div style="flex:1;">
+                    <label class="form-label">URL de YouTube</label>
+                    <input type="url" id="link-adm-url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required>
+                </div>
+                <div style="flex:1;">
+                    <label class="form-label">Descripción (opcional)</label>
+                    <input type="text" id="link-adm-desc" class="form-control" placeholder="Ej: Video rodada 1">
+                </div>
+                <button type="submit" class="btn btn-primario btn-pequeño">Agregar</button>
+            </form>
+        </div>`;
+
+        // Adjuntos
+        html += `<div style="font-weight:600; margin-bottom:8px;">Archivos adjuntos (${adjuntos.length})</div>`;
+        if (adjuntos.length === 0) {
+            html += '<p style="color:#888; font-size:13px; margin-bottom:16px;">Sin archivos adjuntos</p>';
+        } else {
+            html += '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">';
+            adjuntos.forEach(adj => {
+                const icono = adj.mime_type?.includes('pdf') ? '📄' : adj.mime_type?.startsWith('image') ? '🖼️' : '📝';
+                const kb = adj.tamano_bytes ? `${Math.round(adj.tamano_bytes / 1024)} KB` : '';
+                const persona = adj.usuarios_pagados ? sanitizar(adj.usuarios_pagados.nombre_completo) : 'Admin';
+                const tipo = adj.subido_por_admin ? '<span class="badge badge-delegado">Admin</span>' : `<span class="badge">${sanitizar(adj.usuarios_pagados?.tipo_persona||'')}</span>`;
+                html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
+                    <span style="font-size:20px;">${icono}</span>
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${sanitizar(adj.nombre_archivo)}</div>
+                        <div style="font-size:12px; color:#888;">${sanitizar(adj.tipo_adjunto)} · ${kb} · ${persona} ${tipo}</div>
+                    </div>
+                    <button class="btn btn-pequeño btn-outline" onclick="descargarAdjuntoAdmin('${adj.id}', '${sanitizar(adj.nombre_archivo)}')">Descargar</button>
+                    <button class="btn btn-pequeño btn-peligro" onclick="eliminarAdjuntoAdmin('${adj.id}')">Eliminar</button>
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        // Links
+        html += `<div style="font-weight:600; margin-bottom:8px;">Links de YouTube (${links.length})</div>`;
+        if (links.length === 0) {
+            html += '<p style="color:#888; font-size:13px;">Sin links registrados</p>';
+        } else {
+            html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+            links.forEach(lnk => {
+                const videoId = extraerVideoIdAdmin(lnk.url);
+                const persona = lnk.usuarios_pagados ? sanitizar(lnk.usuarios_pagados.nombre_completo) : 'Admin';
+                const tipo = lnk.subido_por_admin ? '<span class="badge badge-delegado">Admin</span>' : `<span class="badge">${sanitizar(lnk.usuarios_pagados?.tipo_persona||'')}</span>`;
+                html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
+                    <span style="font-size:20px;">▶️</span>
+                    <div style="flex:1; min-width:0;">
+                        ${videoId ? `<img src="https://img.youtube.com/vi/${videoId}/default.jpg" style="width:60px; height:45px; object-fit:cover; border-radius:4px; float:left; margin-right:8px;" onerror="this.style.display='none'">` : ''}
+                        <div><a href="${lnk.url}" target="_blank" rel="noopener" style="color:#2980b9;">${sanitizar(lnk.descripcion || lnk.url)}</a></div>
+                        <div style="font-size:12px; color:#888; clear:both;">${sanitizar(lnk.url)} · ${persona} ${tipo}</div>
+                    </div>
+                    <button class="btn btn-pequeño btn-peligro" onclick="eliminarLinkAdmin('${lnk.id}')">Eliminar</button>
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        document.getElementById('modal-adj-body').innerHTML = html;
+    } catch(err) {
+        document.getElementById('modal-adj-body').innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar adjuntos')}</div>`;
+    }
+}
+
+function extraerVideoIdAdmin(url) {
+    try {
+        const m = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+        return m ? m[1] : null;
+    } catch { return null; }
+}
+
+async function subirAdjuntoAdmin(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Subiendo...';
+    const file = document.getElementById('adj-adm-file').files[0];
+    const tipo = document.getElementById('adj-adm-tipo').value;
+    const form = new FormData();
+    form.append('rodeo_id', adjAdminRodeoId);
+    form.append('tipo_adjunto', tipo);
+    form.append('archivo', file);
+    try {
+        await api.upload('/admin/adjuntos', form);
+        mostrarToast('Archivo subido correctamente', 'success');
+        await renderAdjuntosAdmin();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; btn.textContent = 'Subir archivo'; }
+}
+
+async function descargarAdjuntoAdmin(id, nombre) {
+    try {
+        const r = await api.get(`/admin/adjuntos/${id}/url`);
+        const a = document.createElement('a');
+        a.href = r.url; a.download = r.nombre || nombre; a.target = '_blank';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch(err) { mostrarError(err); }
+}
+
+async function eliminarAdjuntoAdmin(id) {
+    if (!confirm('¿Eliminar este adjunto?')) return;
+    try {
+        await api.delete(`/admin/adjuntos/${id}`);
+        mostrarToast('Adjunto eliminado', 'success');
+        await renderAdjuntosAdmin();
+    } catch(err) { mostrarError(err); }
+}
+
+async function agregarLinkAdmin(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const url = document.getElementById('link-adm-url').value.trim();
+    const desc = document.getElementById('link-adm-desc').value.trim();
+    try {
+        await api.post('/admin/adjuntos/link', { rodeo_id: adjAdminRodeoId, url, descripcion: desc || undefined });
+        mostrarToast('Link agregado', 'success');
+        document.getElementById('link-adm-url').value = '';
+        document.getElementById('link-adm-desc').value = '';
+        await renderAdjuntosAdmin();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function eliminarLinkAdmin(id) {
+    if (!confirm('¿Eliminar este link?')) return;
+    try {
+        await api.delete(`/admin/adjuntos/link/${id}`);
+        mostrarToast('Link eliminado', 'success');
+        await renderAdjuntosAdmin();
+    } catch(err) { mostrarError(err); }
+}
+
 init();
 </script>
 </body>
