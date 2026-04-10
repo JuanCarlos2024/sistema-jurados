@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
         .from('rodeo_adjuntos')
         .select('*')
         .eq('rodeo_id', rodeo_id)
-        .eq('usuario_pagado_id', req.usuario.id)
+        .or(`subido_por_admin.eq.true,usuario_pagado_id.eq.${req.usuario.id}`)
         .order('created_at', { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });

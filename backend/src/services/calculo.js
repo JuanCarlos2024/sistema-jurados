@@ -24,10 +24,10 @@ async function obtenerRetencion() {
         .from('configuracion_retencion')
         .select('porcentaje')
         .limit(1)
-        .single();
+        .maybeSingle();
 
     if (error) throw new Error('Error al obtener retención: ' + error.message);
-    return parseFloat(data.porcentaje);
+    return data ? parseFloat(data.porcentaje) : 0;
 }
 
 /**

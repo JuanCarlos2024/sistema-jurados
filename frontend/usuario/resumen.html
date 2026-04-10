@@ -32,62 +32,50 @@
 
         <div class="page-body">
 
-            <!-- Navegación mes -->
+            <!-- Navegación de mes -->
             <div class="resumen-header">
                 <div>
                     <div class="resumen-mes-titulo" id="titulo-mes">Cargando...</div>
                     <div style="font-size:13px; opacity:0.8;" id="subtitulo-rodeos"></div>
                 </div>
                 <div class="resumen-nav">
-                    <button class="btn btn-secundario btn-pequeño" id="btn-anterior" onclick="navegarMes(-1)">‹ Mes anterior</button>
+                    <button class="btn btn-secundario btn-pequeño" onclick="navegarMes(-1)">‹ Mes anterior</button>
                     <button class="btn btn-secundario btn-pequeño" id="btn-siguiente" onclick="navegarMes(1)">Mes siguiente ›</button>
                 </div>
             </div>
 
-            <!-- Totales -->
+            <!-- Totales financieros -->
             <div class="resumen-totales" id="totales">
                 <div class="spinner-wrap"><div class="spinner"></div></div>
             </div>
 
-            <!-- Alerta informativa -->
+            <!-- Info boleta -->
             <div class="alerta alerta-info" style="margin-bottom:20px;">
                 <div>
-                    <strong>Información:</strong> Los montos mostrados son de referencia para que emita su boleta de honorarios en el SII.
+                    <strong>Información:</strong> Los montos son de referencia para emitir su boleta de honorarios en el SII.
                     Solo los bonos <strong>aprobados</strong> se incluyen en el total líquido.
+                    Para aceptar/rechazar designaciones o ingresar kilómetros, use <a href="/usuario/dashboard.html" style="color:inherit; font-weight:600;">Mi Panel</a>.
                 </div>
             </div>
 
-            <!-- Tabla de asignaciones -->
+            <!-- Detalle de rodeos que generan pago -->
             <div class="card">
-                <div class="card-titulo">🏆 Detalle de rodeos</div>
-                <div id="tabla-asignaciones" class="tabla-wrap">
+                <div class="card-titulo">🏆 Rodeos que generan pago</div>
+                <div id="tabla-pagos" class="tabla-wrap">
                     <div class="spinner-wrap"><div class="spinner"></div></div>
                 </div>
             </div>
+
+            <!-- Historial mensual -->
+            <div class="card">
+                <div class="card-titulo">📅 Historial mensual</div>
+                <div id="tabla-historial" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+
         </div>
     </div>
-</div>
-
-<!-- Modal adjuntos -->
-<div class="modal-overlay oculto" id="modal-adj-overlay">
-<div class="modal" style="max-width:680px;">
-    <div class="modal-header">
-        <h3 id="modal-adj-titulo">Adjuntos del rodeo</h3>
-        <button class="modal-cerrar" onclick="cerrarModalAdj()">×</button>
-    </div>
-    <div class="modal-body" id="modal-adj-body"></div>
-</div>
-</div>
-
-<!-- Modal solicitar bono -->
-<div class="modal-overlay oculto" id="modal-overlay">
-<div class="modal" style="max-width:460px;">
-    <div class="modal-header">
-        <h3>Solicitar bono por distancia</h3>
-        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
-    </div>
-    <div class="modal-body" id="modal-body"></div>
-</div>
 </div>
 
 <script src="/js/api.js"></script>
@@ -100,44 +88,18 @@ const ahora = new Date();
 let añoActual = ahora.getFullYear();
 let mesActual = ahora.getMonth() + 1;
 
-let bonosConfig = [];
-
 async function init() {
-    try {
-        bonosConfig = await api.get('/usuario/bonos/config-activos') || [];
-    } catch(e) { bonosConfig = []; }
-
-    // Auto-navegar al mes más reciente con datos (evita mostrar mes vacío por defecto)
+    // Navegar al mes más reciente con datos
     try {
         const meses = await api.get('/usuario/resumen/meses-disponibles');
         if (meses && meses.length > 0) {
             añoActual = meses[0].año;
             mesActual = meses[0].mes;
         }
-    } catch(e) { /* usar mes actual si falla */ }
+    } catch(e) {}
 
     cargarResumen();
-}
-
-async function cargarResumen() {
-    document.getElementById('titulo-mes').textContent = `${nombreMes(mesActual)} ${añoActual}`;
-
-    // Deshabilitar "siguiente" si ya estamos en el mes actual
-    const hoy = new Date();
-    const esActual = añoActual === hoy.getFullYear() && mesActual === hoy.getMonth() + 1;
-    document.getElementById('btn-siguiente').disabled = esActual;
-
-    mostrarSpinner(document.getElementById('totales'));
-    mostrarSpinner(document.getElementById('tabla-asignaciones'));
-
-    try {
-        const r = await api.get(`/usuario/resumen?año=${añoActual}&mes=${mesActual}`);
-        renderTotales(r);
-        renderAsignaciones(r.asignaciones || []);
-        document.getElementById('subtitulo-rodeos').textContent = `${r.asignaciones?.length || 0} rodeo(s) registrado(s)`;
-    } catch(err) {
-        mostrarError(err);
-    }
+    cargarHistorial();
 }
 
 function navegarMes(delta) {
@@ -147,13 +109,43 @@ function navegarMes(delta) {
     cargarResumen();
 }
 
+async function cargarResumen() {
+    document.getElementById('titulo-mes').textContent = `${nombreMes(mesActual)} ${añoActual}`;
+    const hoy = new Date();
+    document.getElementById('btn-siguiente').disabled =
+        añoActual === hoy.getFullYear() && mesActual === hoy.getMonth() + 1;
+
+    mostrarSpinner(document.getElementById('totales'));
+    mostrarSpinner(document.getElementById('tabla-pagos'));
+
+    try {
+        const r = await api.get(`/usuario/resumen?año=${añoActual}&mes=${mesActual}`);
+        const asigs = r.asignaciones || [];
+        const aceptadas = asigs.filter(a => a.estado_designacion !== 'rechazado');
+        const rechazadas = asigs.filter(a => a.estado_designacion === 'rechazado');
+
+        document.getElementById('subtitulo-rodeos').textContent =
+            `${aceptadas.length} rodeo(s) suman al pago${rechazadas.length > 0 ? ` · ${rechazadas.length} rechazado(s)` : ''}`;
+
+        renderTotales(r);
+        renderPagos(aceptadas);
+    } catch(err) {
+        document.getElementById('totales').innerHTML =
+            `<div class="alerta alerta-error" style="width:100%;">${sanitizar(err.message || 'Error al cargar datos')}</div>`;
+        document.getElementById('tabla-pagos').innerHTML = '';
+        mostrarError(err);
+    }
+}
+
 function renderTotales(r) {
-    const pendientes = (r.asignaciones || []).filter(a => a.estado_designacion === 'pendiente').length;
-    const rechazadas = (r.asignaciones || []).filter(a => a.estado_designacion === 'rechazado').length;
+    const porcentaje = r.retencion_porcentaje || 0;
+    const retencion  = r.retencion_monto || 0;
+    const liquido    = r.liquido || 0;
+
     document.getElementById('totales').innerHTML = `
         <div class="total-card">
             <div class="valor">${formatCLP(r.total_pago_base)}</div>
-            <div class="etiqueta">Pago base total</div>
+            <div class="etiqueta">Pago base</div>
         </div>
         <div class="total-card">
             <div class="valor">${formatCLP(r.total_bono_aprobado)}</div>
@@ -163,393 +155,120 @@ function renderTotales(r) {
             <div class="valor">${formatCLP(r.bruto)}</div>
             <div class="etiqueta">Total bruto</div>
         </div>
-        ${pendientes > 0 ? `<div class="total-card" style="border-color:#f39c12;">
-            <div class="valor" style="color:#f39c12;">${pendientes}</div>
-            <div class="etiqueta">Designación(es) pendiente(s)</div>
-        </div>` : ''}
-        ${rechazadas > 0 ? `<div class="total-card" style="border-color:#e74c3c;">
-            <div class="valor" style="color:#e74c3c;">${rechazadas}</div>
-            <div class="etiqueta">Designación(es) rechazada(s)</div>
+        ${porcentaje > 0 ? `
+        <div class="total-card" style="border-color:#e67e22;">
+            <div class="valor" style="color:#e67e22;">−${formatCLP(retencion)}</div>
+            <div class="etiqueta">Retención ${porcentaje}%</div>
+        </div>
+        <div class="total-card" style="border-color:#27ae60;">
+            <div class="valor" style="color:#27ae60;">${formatCLP(liquido)}</div>
+            <div class="etiqueta">Total líquido</div>
         </div>` : ''}`;
 }
 
-function renderAsignaciones(asignaciones) {
-    const div = document.getElementById('tabla-asignaciones');
-    if (!asignaciones || asignaciones.length === 0) {
-        div.innerHTML = '<p class="tabla-vacia">Sin rodeos registrados en este período</p>';
+function renderPagos(aceptadas) {
+    const div = document.getElementById('tabla-pagos');
+    if (!aceptadas || aceptadas.length === 0) {
+        div.innerHTML = '<p class="tabla-vacia">Sin rodeos que generen pago en este período</p>';
         return;
     }
 
-    div.innerHTML = `<table>
+    div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Fecha</th>
             <th>Club</th>
-            <th>Asociación</th>
             <th>Tipo rodeo</th>
             <th>Días</th>
             <th>Categoría</th>
-            <th>Designación</th>
             <th>Pago base</th>
-            <th>Bono</th>
-            <th>Total aprobado</th>
-            <th>Adjuntos</th>
+            <th>Bono aprobado</th>
+            <th>Total</th>
         </tr></thead>
         <tbody>
-        ${asignaciones.map(a => {
-            const bono = a.bonos && a.bonos.length > 0 ? a.bonos[a.bonos.length-1] : null;
-            const esRechazada = a.estado_designacion === 'rechazado';
+        ${aceptadas.map(a => {
+            const esPendiente = a.estado_designacion === 'pendiente';
+            const bonoAprobado = (a.bonos || [])
+                .filter(b => ['aprobado','modificado'].includes(b.estado))
+                .reduce((s, b) => s + (b.monto_aprobado || b.monto_solicitado || 0), 0);
+            const bonoPendiente = (a.bonos || []).filter(b => b.estado === 'pendiente');
+            const total = (a.pago_base_calculado || 0) + bonoAprobado;
+
             let bonoHtml = '';
-            if (esRechazada) {
-                bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
-            } else if (bono) {
-                // Mostrar estado del bono con color
-                const colores = { aprobado: '#27ae60', pendiente: '#f39c12', rechazado: '#e74c3c', modificado: '#2980b9' };
-                const etiquetas = { aprobado: 'Aprobado', pendiente: 'Pendiente revisión', rechazado: 'Rechazado', modificado: 'Modificado' };
-                const monto = ['aprobado','modificado'].includes(bono.estado) ? (bono.monto_aprobado || bono.monto_solicitado) : bono.monto_solicitado;
-                bonoHtml = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${formatCLP(monto)}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
-            } else if (a.estado_designacion === 'aceptado' || a.estado_designacion === null) {
-                // Solo mostrar "Solicitar bono" si fue aceptada/legacy y no tiene bono aún
-                bonoHtml = `<button class="btn btn-pequeño btn-outline" onclick="abrirSolicitarBono('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Solicitar bono</button>`;
-            } else if (a.estado_designacion === 'pendiente') {
-                bonoHtml = '<span style="color:#aaa; font-size:12px;">Pendiente designación</span>';
-            }
-
-            let designacionHtml = '';
-            if (a.estado_designacion === 'pendiente') {
-                designacionHtml = `<div style="display:flex; gap:4px; flex-wrap:wrap;">
-                    <button class="btn btn-pequeño btn-primario" onclick="abrirAceptar('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Aceptar</button>
-                    <button class="btn btn-pequeño btn-peligro" onclick="abrirRechazar('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Rechazar</button>
-                </div>`;
-            } else if (a.estado_designacion === 'rechazado') {
-                designacionHtml = `<span class="badge" style="background:#e74c3c; color:#fff;">Rechazada</span>`;
+            if (bonoAprobado > 0) {
+                bonoHtml = `<span class="monto-positivo">${formatCLP(bonoAprobado)}</span>`;
+            } else if (bonoPendiente.length > 0) {
+                bonoHtml = `<span style="color:#f39c12; font-size:12px;">En revisión</span>`;
             } else {
-                designacionHtml = `<span class="badge badge-activo">Aceptada</span>`;
+                bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
             }
 
-            const bonoAprobado = (a.bonos||[]).filter(b => ['aprobado','modificado'].includes(b.estado)).reduce((s,b)=>s+(b.monto_aprobado||b.monto_solicitado||0),0);
-            const totalAprobado = esRechazada ? 0 : (a.pago_base_calculado||0) + bonoAprobado;
-            return `<tr style="${esRechazada ? 'opacity:0.6;' : ''}">
+            let designBadge = '';
+            if (esPendiente) {
+                designBadge = '<span class="badge" style="background:#f39c12; color:#fff; font-size:11px;">Pendiente</span> ';
+            }
+
+            return `<tr>
                 <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
-                <td>${sanitizar(a.rodeos?.asociacion||'—')}</td>
                 <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
                 <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
-                <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span class="badge badge-delegado">Delegado</span>'}</td>
-                <td>${designacionHtml}</td>
-                <td class="${esRechazada ? '' : 'monto-positivo'}">${esRechazada ? `<span style="text-decoration:line-through; color:#aaa;">${formatCLP(a.pago_base_calculado)}</span>` : formatCLP(a.pago_base_calculado)}</td>
+                <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span style="color:#888; font-size:12px;">Deleg.</span>'}</td>
+                <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
                 <td>${bonoHtml}</td>
-                <td class="${esRechazada ? '' : 'monto-positivo'}" style="font-weight:600;">${esRechazada ? '—' : formatCLP(totalAprobado)}</td>
-                <td>${esRechazada ? '<span style="color:#aaa; font-size:12px;">—</span>' : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntos('${a.rodeo_id}', '${sanitizar(a.rodeos?.club||'')}', true)">📎 Adjuntos</button>`}</td>
+                <td class="monto-positivo" style="font-weight:600;">${designBadge}${formatCLP(total)}</td>
             </tr>`;
         }).join('')}
         </tbody>
-    </table>`;
+    </table></div>`;
 }
 
-function abrirSolicitarBono(asignacionId, clubNombre) {
-    if (!bonosConfig || bonosConfig.length === 0) {
-        mostrarToast('No hay bonos de distancia configurados. Consulte con el administrador.', 'error');
+async function cargarHistorial() {
+    try {
+        const hist = await api.get('/usuario/resumen/historial');
+        renderHistorial(hist || []);
+    } catch(e) {
+        document.getElementById('tabla-historial').innerHTML =
+            '<p class="tabla-vacia">Sin historial disponible</p>';
+    }
+}
+
+function renderHistorial(hist) {
+    const div = document.getElementById('tabla-historial');
+    if (!hist || hist.length === 0) {
+        div.innerHTML = '<p class="tabla-vacia">Sin historial de pagos disponible</p>';
         return;
     }
 
-    document.getElementById('modal-body').innerHTML = `
-        <div class="alerta alerta-info" style="margin-bottom:16px;">
-            <div>Solicitar bono para: <strong>${sanitizar(clubNombre)}</strong><br>
-            El administrador revisará y aprobará su solicitud.</div>
-        </div>
-        <form onsubmit="enviarBono(event, '${asignacionId}')">
-            <div class="form-grupo">
-                <label class="form-label">Distancia recorrida (km) <span class="req">*</span></label>
-                <input type="number" id="km-input" class="form-control" min="1" required placeholder="Ej: 420">
-                <div class="form-hint">El bono se determinará automáticamente según la distancia</div>
-            </div>
-            <div id="bono-sugerido" class="alerta alerta-info oculto" style="margin-bottom:12px;"></div>
-            <div class="form-grupo">
-                <label class="form-label">Observación (opcional)</label>
-                <textarea id="obs-bono" class="form-control" rows="2" placeholder="Información adicional..."></textarea>
-            </div>
-            <div class="form-acciones">
-                <button type="submit" class="btn btn-primario">Solicitar bono</button>
-                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
-            </div>
-        </form>`;
-
-    // Mostrar bono sugerido en tiempo real
-    document.getElementById('km-input').addEventListener('input', function() {
-        const km = parseInt(this.value);
-        const div = document.getElementById('bono-sugerido');
-        if (!km || km <= 0) { div.classList.add('oculto'); return; }
-        const bono = bonosConfig.find(b => km >= b.distancia_minima && (b.distancia_maxima == null || km <= b.distancia_maxima));
-        if (bono) {
-            div.textContent = `✓ Bono correspondiente: ${bono.nombre} — ${formatCLP(bono.monto)}`;
-            div.classList.remove('oculto');
-        } else {
-            div.className = 'alerta alerta-error';
-            div.textContent = `No existe bono configurado para ${km} km. Consulte con el administrador.`;
-            div.classList.remove('oculto');
-        }
-    });
-
-    document.getElementById('modal-overlay').classList.remove('oculto');
+    div.innerHTML = `<div style="overflow-x:auto;"><table>
+        <thead><tr>
+            <th>Mes</th>
+            <th style="text-align:center;">Rodeos</th>
+            <th>Pago base</th>
+            <th>Bonos</th>
+            <th>Total bruto</th>
+            <th></th>
+        </tr></thead>
+        <tbody>
+        ${hist.map(h => {
+            const esMesActual = h.año === añoActual && h.mes === mesActual;
+            return `<tr style="${esMesActual ? 'font-weight:600; background:#f0f7ff;' : ''}">
+                <td>${nombreMes(h.mes)} ${h.año}</td>
+                <td style="text-align:center;">${h.rodeos}</td>
+                <td class="monto-positivo">${formatCLP(h.total_pago_base)}</td>
+                <td>${h.total_bono > 0 ? `<span class="monto-positivo">${formatCLP(h.total_bono)}</span>` : '<span style="color:#aaa;">—</span>'}</td>
+                <td class="monto-positivo" style="font-weight:600;">${formatCLP(h.bruto)}</td>
+                <td><button class="btn btn-pequeño btn-outline" onclick="irAMes(${h.año}, ${h.mes})">Ver →</button></td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table></div>`;
 }
 
-async function enviarBono(e, asignacionId) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true;
-    const km = parseInt(document.getElementById('km-input').value);
-    const obs = document.getElementById('obs-bono').value.trim();
-
-    try {
-        const result = await api.post('/usuario/bonos', {
-            asignacion_id: asignacionId,
-            distancia_km: km,
-            observacion: obs || undefined
-        });
-        mostrarToast(result.mensaje || 'Bono solicitado correctamente', 'success');
-        cerrarModal();
-        cargarResumen();
-    } catch(err) {
-        mostrarError(err);
-    } finally {
-        btn.disabled = false;
-    }
-}
-
-// ── Aceptar/Rechazar designación ────────────────────────────────
-function abrirAceptar(asigId, clubNombre) {
-    document.getElementById('modal-body').innerHTML = `
-        <div class="alerta alerta-info" style="margin-bottom:16px;">
-            <strong>Aceptar designación:</strong> ${sanitizar(clubNombre)}<br>
-            <small>Indique la distancia recorrida. Si corresponde a un tramo con bono, se generará automáticamente.</small>
-        </div>
-        <form onsubmit="enviarRespuesta(event, '${asigId}', 'aceptar')">
-            <div class="form-grupo">
-                <label class="form-label">Distancia recorrida (km) <span class="req">*</span></label>
-                <input type="number" id="resp-km" class="form-control" min="0" required placeholder="Ej: 420">
-                <div id="resp-bono-preview" class="alerta alerta-info oculto" style="margin-top:8px;"></div>
-            </div>
-            <div class="form-acciones">
-                <button type="submit" class="btn btn-primario">Aceptar designación</button>
-                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
-            </div>
-        </form>`;
-
-    document.getElementById('resp-km').addEventListener('input', async function() {
-        const km = parseInt(this.value);
-        const prev = document.getElementById('resp-bono-preview');
-        if (!km || km <= 0) { prev.classList.add('oculto'); return; }
-        const bono = (bonosConfig || []).find(b => km >= b.distancia_minima && (b.distancia_maxima == null || km <= b.distancia_maxima));
-        if (bono) {
-            prev.textContent = `Bono automático: ${bono.nombre} — ${formatCLP(bono.monto)}`;
-            prev.className = 'alerta alerta-info';
-            prev.classList.remove('oculto');
-        } else {
-            prev.textContent = `Sin bono configurado para ${km} km`;
-            prev.className = 'alerta alerta-error';
-            prev.classList.remove('oculto');
-        }
-    });
-
-    document.getElementById('modal-overlay').classList.remove('oculto');
-}
-
-function abrirRechazar(asigId, clubNombre) {
-    document.getElementById('modal-body').innerHTML = `
-        <div class="alerta alerta-error" style="margin-bottom:16px;">
-            <strong>¿Rechazar designación?</strong><br>
-            ${sanitizar(clubNombre)}<br>
-            <small>Esta acción quedará registrada. El administrador podrá reasignar a otra persona.</small>
-        </div>
-        <form onsubmit="enviarRespuesta(event, '${asigId}', 'rechazar')">
-            <div class="form-grupo">
-                <label class="form-label">Motivo (opcional)</label>
-                <textarea id="resp-obs" class="form-control" rows="2" placeholder="Explique brevemente por qué rechaza..."></textarea>
-            </div>
-            <div class="form-acciones">
-                <button type="submit" class="btn btn-peligro">Sí, rechazar</button>
-                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
-            </div>
-        </form>`;
-    document.getElementById('modal-overlay').classList.remove('oculto');
-}
-
-async function enviarRespuesta(e, asigId, accion) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true;
-    const body = { accion };
-    if (accion === 'aceptar') body.distancia_km = parseInt(document.getElementById('resp-km').value);
-    if (accion === 'rechazar') {
-        const obs = document.getElementById('resp-obs').value.trim();
-        if (obs) body.observacion_designacion = obs;
-    }
-    try {
-        const r = await api.post(`/usuario/asignaciones/${asigId}/responder`, body);
-        mostrarToast(r.mensaje || 'Respuesta registrada', 'success');
-        cerrarModal();
-        cargarResumen();
-    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
-}
-
-function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
-document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
-
-// ── Adjuntos y Links ─────────────────────────────────────────────
-let adjRodeoId = null;
-let adjPuedeSubir = false;
-
-function cerrarModalAdj() { document.getElementById('modal-adj-overlay').classList.add('oculto'); }
-document.getElementById('modal-adj-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModalAdj(); });
-
-async function abrirAdjuntos(rodeoId, clubNombre, puedeSubir) {
-    adjRodeoId = rodeoId;
-    adjPuedeSubir = puedeSubir;
-    document.getElementById('modal-adj-titulo').textContent = `Adjuntos — ${clubNombre}`;
-    document.getElementById('modal-adj-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
-    document.getElementById('modal-adj-overlay').classList.remove('oculto');
-    await renderAdjuntos();
-}
-
-async function renderAdjuntos() {
-    try {
-        const [adjRes, linksRes] = await Promise.all([
-            api.get(`/usuario/adjuntos?rodeo_id=${adjRodeoId}`),
-            api.get(`/usuario/links?rodeo_id=${adjRodeoId}`)
-        ]);
-        const adjuntos = adjRes || [];
-        const links = linksRes || [];
-
-        let html = '';
-
-        // ── Subir archivo (solo si puede) ──
-        if (adjPuedeSubir) {
-            html += `<div class="card" style="margin-bottom:16px; padding:14px;">
-                <div style="font-weight:600; margin-bottom:10px;">Subir archivo</div>
-                <form onsubmit="subirAdjunto(event)" enctype="multipart/form-data">
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
-                        <div>
-                            <label class="form-label">Tipo</label>
-                            <select id="adj-tipo" class="form-control">
-                                <option value="cartilla_jurado">Cartilla Jurado</option>
-                                <option value="cartilla_delegado">Cartilla Delegado</option>
-                                <option value="respaldo">Respaldo</option>
-                                <option value="foto">Foto</option>
-                                <option value="otro">Otro</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="form-label">Archivo (PDF, Word, imagen, máx 20 MB)</label>
-                            <input type="file" id="adj-file" class="form-control" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp" required>
-                        </div>
-                    </div>
-                    <button type="submit" class="btn btn-primario btn-pequeño">Subir archivo</button>
-                </form>
-            </div>
-            // Los links de YouTube son gestionados por el administrador
-
-        }
-
-        // ── Lista de adjuntos ──
-        html += `<div style="font-weight:600; margin-bottom:8px;">Archivos (${adjuntos.length})</div>`;
-        if (adjuntos.length === 0) {
-            html += '<p style="color:#888; font-size:13px; margin-bottom:16px;">Sin archivos adjuntos</p>';
-        } else {
-            html += '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">';
-            const tipoNombresUsr = { cartilla_jurado:'Cartilla Jurado', cartilla_delegado:'Cartilla Delegado', cartilla:'Cartilla Jurado', respaldo:'Respaldo', planilla:'Planilla', contrato:'Contrato', foto:'Foto', otro:'Otro' };
-            adjuntos.forEach(adj => {
-                const icono = adj.mime_type?.includes('pdf') ? '📄' : adj.mime_type?.startsWith('image') ? '🖼️' : '📝';
-                const kb = adj.tamano_bytes ? `${Math.round(adj.tamano_bytes / 1024)} KB` : '';
-                const tipoLabel = tipoNombresUsr[adj.tipo_adjunto] || sanitizar(adj.tipo_adjunto);
-                html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
-                    <span style="font-size:20px;">${icono}</span>
-                    <div style="flex:1; min-width:0;">
-                        <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${sanitizar(adj.nombre_archivo)}</div>
-                        <div style="font-size:12px; color:#888;">${tipoLabel} · ${kb}</div>
-                    </div>
-                    <button class="btn btn-pequeño btn-outline" onclick="descargarAdjunto('${adj.id}', '${sanitizar(adj.nombre_archivo)}')">Descargar</button>
-                    ${!adj.subido_por_admin ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarAdjunto('${adj.id}')">Eliminar</button>` : ''}
-                </div>`;
-            });
-            html += '</div>';
-        }
-
-        // ── Lista de links ──
-        html += `<div style="font-weight:600; margin-bottom:8px;">Links de YouTube (${links.length})</div>`;
-        if (links.length === 0) {
-            html += '<p style="color:#888; font-size:13px;">Sin links registrados</p>';
-        } else {
-            html += '<div style="display:flex; flex-direction:column; gap:8px;">';
-            links.forEach(lnk => {
-                const videoId = extraerVideoId(lnk.url);
-                html += `<div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:#f8f9fa; border-radius:6px;">
-                    <span style="font-size:20px;">▶️</span>
-                    <div style="flex:1; min-width:0;">
-                        ${videoId ? `<img src="https://img.youtube.com/vi/${videoId}/default.jpg" style="width:60px; height:45px; object-fit:cover; border-radius:4px; float:left; margin-right:8px;" onerror="this.style.display='none'">` : ''}
-                        <div><a href="${lnk.url}" target="_blank" rel="noopener" style="color:#2980b9;">${sanitizar(lnk.descripcion || lnk.url)}</a></div>
-                        <div style="font-size:12px; color:#888; clear:both;">${sanitizar(lnk.url)}</div>
-                    </div>
-                </div>`;
-            });
-            html += '</div>';
-        }
-
-        document.getElementById('modal-adj-body').innerHTML = html;
-    } catch(err) {
-        document.getElementById('modal-adj-body').innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar adjuntos')}</div>`;
-    }
-}
-
-function extraerVideoId(url) {
-    try {
-        const m = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
-        return m ? m[1] : null;
-    } catch { return null; }
-}
-
-async function subirAdjunto(e) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true;
-    btn.textContent = 'Subiendo...';
-    const file = document.getElementById('adj-file').files[0];
-    const tipo = document.getElementById('adj-tipo').value;
-    const form = new FormData();
-    form.append('rodeo_id', adjRodeoId);
-    form.append('tipo_adjunto', tipo);
-    form.append('archivo', file);
-    try {
-        await api.upload('/usuario/adjuntos', form);
-        mostrarToast('Archivo subido correctamente', 'success');
-        await renderAdjuntos();
-    } catch(err) {
-        mostrarError(err);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Subir archivo';
-    }
-}
-
-async function descargarAdjunto(id, nombre) {
-    try {
-        const r = await api.get(`/usuario/adjuntos/${id}/url`);
-        const a = document.createElement('a');
-        a.href = r.url;
-        a.download = r.nombre || nombre;
-        a.target = '_blank';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    } catch(err) { mostrarError(err); }
-}
-
-async function eliminarAdjunto(id) {
-    if (!confirm('¿Eliminar este adjunto?')) return;
-    try {
-        await api.delete(`/usuario/adjuntos/${id}`);
-        mostrarToast('Adjunto eliminado', 'success');
-        await renderAdjuntos();
-    } catch(err) { mostrarError(err); }
+function irAMes(año, mes) {
+    añoActual = año;
+    mesActual = mes;
+    cargarResumen();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 init().catch(mostrarError);
