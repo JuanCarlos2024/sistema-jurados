@@ -26,6 +26,13 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const frontendPath = path.join(__dirname, '../../frontend');
 app.use(express.static(frontendPath));
 
+// ─── Logger de requests API (diagnóstico) ────────────────────
+app.use('/api', (req, res, next) => {
+    const hasAuth = !!req.headers.authorization;
+    console.log(`[API] ${req.method} ${req.path} | auth:${hasAuth}`);
+    next();
+});
+
 // ─── Rutas API ───────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin/index'));
