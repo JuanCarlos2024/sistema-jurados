@@ -30,11 +30,7 @@
             border-bottom: 1px solid var(--gris-borde);
             padding-bottom: 6px;
         }
-        .fecha-personas {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-        }
+        .fecha-personas { display: flex; flex-wrap: wrap; gap: 6px; }
         .persona-chip {
             background: #f0fff4;
             border: 1px solid #b3e8c5;
@@ -58,6 +54,13 @@
             background: #fff; color: var(--texto);
         }
         .vista-tab.activo { background: var(--primario); color: #fff; border-color: var(--primario); }
+        .spinner-msg {
+            margin-top: 12px;
+            color: #888;
+            font-size: 13px;
+            text-align: center;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -101,7 +104,6 @@
 
         <div class="page-body">
 
-            <!-- Filtros -->
             <div class="card">
                 <div class="card-titulo">Filtros</div>
                 <div class="filtros-disp">
@@ -144,13 +146,11 @@
                 <div id="resumen-filtros" style="font-size:13px; color:#555;"></div>
             </div>
 
-            <!-- Tabs de vista -->
             <div class="vista-tabs">
                 <button class="vista-tab activo" id="tab-fecha" onclick="cambiarVista('fecha')">Por fecha</button>
                 <button class="vista-tab" id="tab-lista" onclick="cambiarVista('lista')">Lista completa</button>
             </div>
 
-            <!-- Resultados -->
             <div id="resultados"></div>
 
         </div>
@@ -168,9 +168,9 @@ const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes',
 const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
 
 let vistaActual = 'fecha';
-let abortController = null; // Para cancelar fetch anterior si se lanza uno nuevo
+let fetchActivo = null; // AbortController del fetch en vuelo
 
-// Precargar mes actual
+// ── Precargar mes actual ──────────────────────────────────────
 (function() {
     const hoy = new Date();
     const año = hoy.getFullYear();
@@ -180,10 +180,7 @@ let abortController = null; // Para cancelar fetch anterior si se lanza uno nuev
     document.getElementById('f-hasta').value = fin.toISOString().split('T')[0];
 })();
 
-function gv(id) {
-    const el = document.getElementById(id);
-    return el ? el.value.trim() : '';
-}
+function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 
 function toQS(p) {
     return Object.entries(p)
@@ -196,35 +193,66 @@ function setResultado(html) {
     document.getElementById('resultados').innerHTML = html;
 }
 
+function mostrarSpinnerConMensaje() {
+    setResultado(`
+        <div class="spinner-wrap" id="spinner-container">
+            <div class="spinner"></div>
+            <p class="spinner-msg" id="spinner-msg"></p>
+        </div>
+    `);
+}
+
 /**
- * GET con AbortController y timeout de 20 segundos.
- * Cancela el request anterior si se lanza uno nuevo antes de terminar.
+ * Hace GET al endpoint con AbortController.
+ * Timeout de 90s para tolerar Render free tier (spin-up ~50s).
+ * A los 10s muestra aviso de "servidor despertando".
  */
 async function fetchDisponibilidad(endpoint) {
     // Cancelar request anterior si existe
-    if (abortController) {
-        abortController.abort();
+    if (fetchActivo) {
+        fetchActivo.abort();
+        fetchActivo = null;
     }
-    abortController = new AbortController();
-    const signal = abortController.signal;
 
-    const timeoutId = setTimeout(() => abortController.abort(), 20000);
+    const ctrl = new AbortController();
+    fetchActivo = ctrl;
+
+    // Aviso de "servidor despertando" a los 10 segundos
+    const avisoTimer = setTimeout(() => {
+        const msg = document.getElementById('spinner-msg');
+        if (msg) {
+            msg.textContent = 'Conectando con el servidor... Esto puede tardar hasta 60 segundos si el servidor estuvo inactivo.';
+            msg.style.display = 'block';
+        }
+    }, 10000);
+
+    // Timeout duro a los 90 segundos
+    const abortTimer = setTimeout(() => ctrl.abort(), 90000);
 
     try {
         const token = api.getToken();
         const response = await fetch('/api' + endpoint, {
             method: 'GET',
             headers: { 'Authorization': `Bearer ${token}` },
-            signal
+            signal: ctrl.signal
         });
-        clearTimeout(timeoutId);
+
+        clearTimeout(avisoTimer);
+        clearTimeout(abortTimer);
+        fetchActivo = null;
 
         if (response.status === 401) {
             api.cerrarSesion();
             return null;
         }
 
-        const data = await response.json().catch(() => null);
+        // Intentar parsear como JSON
+        let data;
+        try {
+            data = await response.json();
+        } catch (_) {
+            throw new Error('El servidor devolvió una respuesta no válida (no es JSON).');
+        }
 
         if (!response.ok) {
             throw new Error(data?.error || `Error del servidor (${response.status})`);
@@ -232,9 +260,12 @@ async function fetchDisponibilidad(endpoint) {
 
         return data;
     } catch (err) {
-        clearTimeout(timeoutId);
+        clearTimeout(avisoTimer);
+        clearTimeout(abortTimer);
+        fetchActivo = null;
+
         if (err.name === 'AbortError') {
-            throw new Error('El servidor tardó demasiado en responder. Verifique que el backend esté corriendo y que Supabase esté accesible.');
+            throw new Error('El servidor no respondió en 90 segundos. Verifique que el backend esté corriendo y que Supabase sea accesible.');
         }
         throw err;
     }
@@ -242,13 +273,12 @@ async function fetchDisponibilidad(endpoint) {
 
 async function cargar() {
     const divRes = document.getElementById('resultados');
-    divRes.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    mostrarSpinnerConMensaje();
     document.getElementById('resumen-filtros').textContent = '';
 
-    // Deshabilitar botones durante carga
     const btnBuscar  = document.getElementById('btn-buscar');
     const btnLimpiar = document.getElementById('btn-limpiar');
-    if (btnBuscar)  btnBuscar.disabled  = true;
+    if (btnBuscar)  btnBuscar.disabled = true;
     if (btnLimpiar) btnLimpiar.disabled = true;
 
     const params = {
@@ -266,7 +296,7 @@ async function cargar() {
     try {
         const data = await fetchDisponibilidad(endpoint);
 
-        // null = redirigido por 401, no hacer nada más
+        // null = redirigido por 401
         if (data === null) return;
 
         if (vistaActual === 'fecha') {
@@ -276,19 +306,28 @@ async function cargar() {
         } else {
             renderLista(Array.isArray(data) ? data : []);
         }
+
     } catch (err) {
-        const msg = err?.message || 'Error desconocido al cargar disponibilidad';
-        setResultado(`<div class="alerta alerta-error" style="margin:0;">${sanitizar(msg)}</div>`);
+        const msg = err?.message || 'Error desconocido al cargar disponibilidad.';
+        setResultado(`
+            <div class="alerta alerta-error" style="margin:0;">
+                <strong>Error al cargar disponibilidad</strong><br>
+                ${sanitizar(msg)}<br>
+                <small style="color:#999; display:block; margin-top:6px;">
+                    Si el servidor está en Render (plan gratuito), puede tardar hasta 60 segundos
+                    en responder tras un período de inactividad. Intente nuevamente.
+                </small>
+            </div>
+        `);
         document.getElementById('resumen-filtros').textContent = '';
+
     } finally {
-        // Rehabilitar botones
-        if (btnBuscar)  btnBuscar.disabled  = false;
+        if (btnBuscar)  btnBuscar.disabled = false;
         if (btnLimpiar) btnLimpiar.disabled = false;
 
-        // Red de seguridad: si el spinner sigue ahí por algún motivo inesperado, reemplazarlo
-        const spinner = divRes.querySelector('.spinner-wrap');
-        if (spinner) {
-            setResultado('<div class="alerta alerta-error" style="margin:0;">No se recibió respuesta del servidor. Intente nuevamente.</div>');
+        // Red de seguridad: si el spinner persiste por algún error inesperado
+        if (divRes.querySelector('.spinner-wrap')) {
+            setResultado('<div class="alerta alerta-error" style="margin:0;">No se recibió respuesta. Intente nuevamente.</div>');
         }
     }
 }
@@ -304,7 +343,7 @@ function renderPorFecha(porFecha) {
 
     const totalPersonas = fechas.reduce((s, f) => s + porFecha[f].length, 0);
     document.getElementById('resumen-filtros').textContent =
-        `${fechas.length} fecha(s) · ${totalPersonas} disponibilidad(es) en total`;
+        `${fechas.length} fecha(s) · ${totalPersonas} disponibilidad(es)`;
 
     let html = '';
     fechas.forEach(fecha => {
@@ -348,11 +387,7 @@ function renderLista(datos) {
 
     setResultado(`<div class="card"><div class="tabla-wrap"><div style="overflow-x:auto;"><table>
         <thead><tr>
-            <th>Nombre</th>
-            <th>Tipo</th>
-            <th>Categoría</th>
-            <th>Fecha disponible</th>
-            <th>Día</th>
+            <th>Nombre</th><th>Tipo</th><th>Categoría</th><th>Fecha disponible</th><th>Día</th>
         </tr></thead>
         <tbody>
         ${datos.map(d => {

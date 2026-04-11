@@ -25,14 +25,11 @@ function ordenarPorNombre(rows) {
 }
 
 /**
- * Obtiene disponibilidad usando DOS queries separados (sin join de Supabase JS)
- * para evitar problemas de detección automática de FK en PostgREST.
- * 1. Lee disponibilidad_usuarios con filtros de fecha
- * 2. Lee usuarios_pagados para los IDs encontrados
- * 3. Une en memoria
+ * Dos queries separados — sin join de Supabase JS para evitar
+ * fallos silenciosos de PostgREST al resolver la FK usuario_pagado_id.
  */
 async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
-    // Paso 1: registros de disponibilidad (solo columnas propias)
+    // ── Paso 1: registros de disponibilidad ──────────────────
     let q = supabase
         .from('disponibilidad_usuarios')
         .select('id, fecha, usuario_pagado_id')
@@ -42,49 +39,69 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
     if (fecha_hasta) q = q.lte('fecha', fecha_hasta);
 
     const { data: dispRows, error: dispError } = await q;
-    if (dispError) throw new Error('Error consultando disponibilidad: ' + dispError.message);
-    if (!dispRows || dispRows.length === 0) return [];
 
-    // Paso 2: datos de usuarios involucrados
+    if (dispError) {
+        console.error('[DISP] Error en query disponibilidad_usuarios:', dispError.message);
+        throw new Error('Error consultando disponibilidad: ' + dispError.message);
+    }
+
+    const totalDisp = (dispRows || []).length;
+    console.log(`[DISP] Step 1 OK: ${totalDisp} registros (rango: ${fecha_desde || '*'} → ${fecha_hasta || '*'})`);
+
+    if (totalDisp === 0) return [];
+
+    // ── Paso 2: datos de los usuarios involucrados ───────────
     const userIds = [...new Set(dispRows.map(d => d.usuario_pagado_id))];
+    console.log(`[DISP] Step 2: buscando ${userIds.length} usuario(s)`);
+
     const { data: usuarios, error: userError } = await supabase
         .from('usuarios_pagados')
         .select('id, nombre_completo, tipo_persona, categoria, rut')
         .in('id', userIds);
 
-    if (userError) throw new Error('Error consultando usuarios: ' + userError.message);
+    if (userError) {
+        console.error('[DISP] Error en query usuarios_pagados:', userError.message);
+        throw new Error('Error consultando usuarios: ' + userError.message);
+    }
 
-    // Paso 3: unir en memoria
+    console.log(`[DISP] Step 2 OK: ${(usuarios || []).length} usuario(s) encontrado(s)`);
+
+    // ── Paso 3: unir en memoria ──────────────────────────────
     const userMap = {};
     (usuarios || []).forEach(u => { userMap[u.id] = u; });
 
-    return dispRows
+    const resultado = dispRows
         .map(d => ({ ...d, usuarios_pagados: userMap[d.usuario_pagado_id] || null }))
         .filter(d => d.usuarios_pagados !== null);
+
+    console.log(`[DISP] Step 3 OK: ${resultado.length} filas con usuario válido`);
+    return resultado;
 }
 
 // ─── GET /api/admin/disponibilidad ──────────────────────────
 router.get('/', async (req, res) => {
+    console.log('[DISP] GET / params:', JSON.stringify(req.query));
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre } = req.query;
         let rows = await obtenerDisponibilidad(fecha_desde, fecha_hasta);
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
         rows = ordenarPorNombre(rows);
+        console.log(`[DISP] GET / responde ${rows.length} filas`);
         res.json(rows);
     } catch (err) {
-        console.error('[admin/disponibilidad GET /]', err.message);
+        console.error('[DISP] GET / ERROR:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
 // ─── GET /api/admin/disponibilidad/por-fecha ─────────────────
 router.get('/por-fecha', async (req, res) => {
+    console.log('[DISP] GET /por-fecha params:', JSON.stringify(req.query));
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre } = req.query;
         let rows = await obtenerDisponibilidad(fecha_desde, fecha_hasta);
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
 
-        // Agrupar por fecha; ordenar personas dentro de cada fecha
         const porFecha = {};
         rows.forEach(d => {
             if (!porFecha[d.fecha]) porFecha[d.fecha] = [];
@@ -96,22 +113,24 @@ router.get('/por-fecha', async (req, res) => {
             );
         });
 
+        const nFechas = Object.keys(porFecha).length;
+        console.log(`[DISP] GET /por-fecha responde ${nFechas} fecha(s)`);
         res.json(porFecha);
     } catch (err) {
-        console.error('[admin/disponibilidad GET /por-fecha]', err.message);
+        console.error('[DISP] GET /por-fecha ERROR:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
 // ─── GET /api/admin/disponibilidad/exportar ──────────────────
 router.get('/exportar', async (req, res) => {
+    console.log('[DISP] GET /exportar params:', JSON.stringify(req.query));
     try {
         const { fecha_desde, fecha_hasta, tipo_persona, categoria, nombre, formato = 'xlsx' } = req.query;
         let rows = await obtenerDisponibilidad(fecha_desde, fecha_hasta);
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
         rows = ordenarPorNombre(rows);
 
-        // ── CSV ──
         if (formato === 'csv') {
             const lines = ['Nombre,Tipo,Categoría,Fecha'];
             rows.forEach(d => {
@@ -128,7 +147,6 @@ router.get('/exportar', async (req, res) => {
             return res.send('\uFEFF' + lines.join('\r\n'));
         }
 
-        // ── Excel ──
         const wb = new ExcelJS.Workbook();
         wb.creator = 'Sistema Jurados - Rodeo Chileno';
         const ws = wb.addWorksheet('Disponibilidad');
@@ -166,7 +184,7 @@ router.get('/exportar', async (req, res) => {
         await wb.xlsx.write(res);
         res.end();
     } catch (err) {
-        console.error('[admin/disponibilidad GET /exportar]', err.message);
+        console.error('[DISP] GET /exportar ERROR:', err.message);
         if (!res.headersSent) {
             res.status(500).json({ error: err.message });
         }
