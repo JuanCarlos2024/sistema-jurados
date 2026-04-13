@@ -164,9 +164,11 @@ function renderPagos(aceptadas) {
         <thead><tr>
             <th>Fecha</th>
             <th>Club</th>
+            <th>Asociación</th>
             <th>Tipo rodeo</th>
             <th>Días</th>
             <th>Categoría</th>
+            <th>Estado</th>
             <th>Pago base</th>
             <th>Bono aprobado</th>
             <th>Total</th>
@@ -189,20 +191,21 @@ function renderPagos(aceptadas) {
                 bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
             }
 
-            let designBadge = '';
-            if (esPendiente) {
-                designBadge = '<span class="badge" style="background:#f39c12; color:#fff; font-size:11px;">Pendiente</span> ';
-            }
+            const estadoBadge = esPendiente
+                ? '<span class="badge" style="background:#f39c12; color:#fff; font-size:11px;">Pendiente</span>'
+                : '<span class="badge badge-activo" style="font-size:11px;">Aceptada</span>';
 
             return `<tr>
                 <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
+                <td style="font-size:13px; color:#555;">${sanitizar(a.rodeos?.asociacion||'Sin asociación')}</td>
                 <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
                 <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
                 <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span style="color:#888; font-size:12px;">Deleg.</span>'}</td>
+                <td>${estadoBadge}</td>
                 <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
                 <td>${bonoHtml}</td>
-                <td class="monto-positivo" style="font-weight:600;">${designBadge}${formatCLP(total)}</td>
+                <td class="monto-positivo" style="font-weight:600;">${formatCLP(total)}</td>
             </tr>`;
         }).join('')}
         </tbody>

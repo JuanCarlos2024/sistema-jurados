@@ -16,7 +16,7 @@ router.post('/:id/responder', async (req, res) => {
     // Verificar que la asignación pertenece al usuario autenticado
     const { data: asig } = await supabase
         .from('asignaciones')
-        .select('id, rodeo_id, usuario_pagado_id, estado, estado_designacion, rodeos(club, fecha)')
+        .select('id, rodeo_id, usuario_pagado_id, estado, estado_designacion, rodeos(club, asociacion, fecha)')
         .eq('id', req.params.id)
         .eq('usuario_pagado_id', req.usuario.id)
         .single();
@@ -26,6 +26,18 @@ router.post('/:id/responder', async (req, res) => {
     if (asig.estado_designacion === 'aceptado') return res.status(400).json({ error: 'Esta designación ya fue aceptada' });
     if (asig.estado_designacion === 'rechazado') return res.status(400).json({ error: 'Esta designación ya fue rechazada' });
 
+    // Validar que el rodeo es futuro (fecha >= hoy en timezone Chile).
+    // "hoy" incluido: el usuario puede responder el mismo día del rodeo.
+    // Rodeos pasados son de solo lectura.
+    const fechaRodeo = asig.rodeos?.fecha; // 'YYYY-MM-DD'
+    const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    if (!fechaRodeo || fechaRodeo < hoyChile) {
+        console.warn(`[ASIG] 400 cambio_estado bloqueado — rodeo pasado: asig=${req.params.id} fecha=${fechaRodeo} hoy_cl=${hoyChile} usuario=${req.usuario.id}`);
+        return res.status(400).json({
+            error: 'No se puede cambiar el estado de designación de un rodeo pasado. Solo se permite en rodeos de hoy en adelante.'
+        });
+    }
+
     const ahora = new Date().toISOString();
 
     if (accion === 'aceptar') {
@@ -33,6 +45,8 @@ router.post('/:id/responder', async (req, res) => {
         if (!distancia_km || isNaN(km) || km < 0) {
             return res.status(400).json({ error: 'distancia_km es requerida al aceptar (número positivo)' });
         }
+
+        console.log(`[ASIG] cambio_estado: usuario=${req.usuario.id} asig=${req.params.id} rodeo=${asig.rodeo_id} fecha=${fechaRodeo} club="${asig.rodeos?.club}" estado_anterior=${asig.estado_designacion||'null'} nuevo=aceptado km=${km}`);
 
         await supabase
             .from('asignaciones')
@@ -81,6 +95,7 @@ router.post('/:id/responder', async (req, res) => {
     }
 
     // accion === 'rechazar'
+    console.log(`[ASIG] cambio_estado: usuario=${req.usuario.id} asig=${req.params.id} rodeo=${asig.rodeo_id} fecha=${fechaRodeo} club="${asig.rodeos?.club}" estado_anterior=${asig.estado_designacion||'null'} nuevo=rechazado`);
     const cambios = { estado_designacion: 'rechazado', updated_at: ahora };
     if (observacion_designacion) cambios.observacion_designacion = observacion_designacion.trim();
 

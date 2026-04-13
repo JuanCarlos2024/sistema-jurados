@@ -455,6 +455,8 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
             }
 
             // Crear asignación
+            // estado_designacion = 'pendiente': el jurado debe aceptar/rechazar explícitamente.
+            // NUNCA omitir este campo: omitirlo deja NULL, que el sistema trata como 'aceptado'.
             const { error: errA } = await supabase
                 .from('asignaciones')
                 .insert({
@@ -467,6 +469,7 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
                     duracion_dias_aplicada: tipoEncontrado.duracion_dias,
                     pago_base_calculado:    calculo.pago_base_calculado,
                     estado:                 'activo',
+                    estado_designacion:     'pendiente',
                     created_by:             adminId
                 });
 

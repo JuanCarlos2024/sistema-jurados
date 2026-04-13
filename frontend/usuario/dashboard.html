@@ -251,7 +251,7 @@ function renderRodeos(asignaciones) {
 
     div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
-            <th>Fecha</th><th>Club</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th>
             <th>Designación</th><th>Bono km</th><th>Adjuntos</th>
         </tr></thead>
         <tbody>
@@ -260,14 +260,20 @@ function renderRodeos(asignaciones) {
             const esRechazada = a.estado_designacion === 'rechazado';
             const esPendiente = a.estado_designacion === 'pendiente';
             const esAceptada  = !esPendiente && !esRechazada;
+            const esFuturo    = esFuturoChile(a.rodeos?.fecha);
 
             // Columna Designación
             let designHtml = '';
-            if (esPendiente) {
+            if (esPendiente && esFuturo) {
+                // Rodeo futuro con designación pendiente → mostrar botones de acción
                 designHtml = `<div style="display:flex; gap:4px; flex-wrap:wrap;">
                     <button class="btn btn-pequeño btn-primario" onclick="abrirAceptar('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Aceptar</button>
                     <button class="btn btn-pequeño btn-peligro" onclick="abrirRechazar('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Rechazar</button>
                 </div>`;
+            } else if (esPendiente && !esFuturo) {
+                // Rodeo pasado con designación aún pendiente → solo lectura
+                designHtml = `<span class="badge" style="background:#f39c12; color:#fff;">Pendiente</span>
+                    <div style="font-size:11px; color:#888; margin-top:2px;">Rodeo pasado</div>`;
             } else if (esRechazada) {
                 designHtml = `<span class="badge" style="background:#e74c3c; color:#fff;">Rechazada</span>`;
             } else {
@@ -275,7 +281,7 @@ function renderRodeos(asignaciones) {
                 designHtml = `<span class="badge badge-activo">Aceptada${km}</span>`;
             }
 
-            // Columna Bono km
+            // Columna Bono km (no disponible si rechazada, pendiente o rodeo pasado sin aceptar)
             let bonoHtml = '';
             if (esRechazada || esPendiente) {
                 bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
@@ -298,6 +304,7 @@ function renderRodeos(asignaciones) {
             return `<tr style="${esRechazada ? 'opacity:0.6;' : ''}">
                 <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
+                <td style="font-size:13px; color:#555;">${sanitizar(a.rodeos?.asociacion||'Sin asociación')}</td>
                 <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
                 <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
                 <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span style="color:#888; font-size:12px;">Deleg.</span>'}</td>
@@ -613,6 +620,14 @@ async function eliminarAdjunto(id) {
 // ── Calendario de disponibilidad ────────────────────────────────
 const DIAS_SEMANA = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 const MESES_CAL   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// Devuelve true si fechaStr (YYYY-MM-DD) es hoy o futuro en timezone Chile.
+// "hoy" se incluye como futuro: el jurado puede responder el mismo día del rodeo.
+function esFuturoChile(fechaStr) {
+    if (!fechaStr) return false;
+    const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    return fechaStr >= hoyChile;
+}
 
 let diasDisponibles = new Set(); // strings "YYYY-MM-DD"
 let calCargando = false;
