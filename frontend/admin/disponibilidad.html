@@ -160,15 +160,17 @@
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
+// ── Estado global (var: sin TDZ, disponible aunque el script falle parcialmente) ──
+var vistaActual = 'fecha';   // vista activa: 'fecha' | 'lista'
+var fetchActivo = null;      // AbortController del fetch en vuelo
+var cargaGen    = 0;         // generación de carga; respuestas de gens previas se descartan
+
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
-
-let vistaActual = 'fecha';
-let fetchActivo = null; // AbortController del fetch en vuelo
 
 // ── Precargar mes actual ──────────────────────────────────────
 (function() {
@@ -208,10 +210,10 @@ function mostrarSpinnerConMensaje() {
  * A los 10s muestra aviso de "servidor despertando".
  */
 async function fetchDisponibilidad(endpoint) {
-    // Cancelar request anterior si existe
+    // Cancelar request anterior si existe (no limpiar fetchActivo aquí:
+    // se asignará al nuevo ctrl en la línea siguiente)
     if (fetchActivo) {
         fetchActivo.abort();
-        fetchActivo = null;
     }
 
     const ctrl = new AbortController();
@@ -239,7 +241,7 @@ async function fetchDisponibilidad(endpoint) {
 
         clearTimeout(avisoTimer);
         clearTimeout(abortTimer);
-        fetchActivo = null;
+        if (fetchActivo === ctrl) fetchActivo = null; // solo limpiar si aún es el activo
 
         if (response.status === 401) {
             api.cerrarSesion();
@@ -262,43 +264,54 @@ async function fetchDisponibilidad(endpoint) {
     } catch (err) {
         clearTimeout(avisoTimer);
         clearTimeout(abortTimer);
-        fetchActivo = null;
+        if (fetchActivo === ctrl) fetchActivo = null; // solo limpiar si aún es el activo
 
         if (err.name === 'AbortError') {
-            throw new Error('El servidor no respondió en 90 segundos. Verifique que el backend esté corriendo y que Supabase sea accesible.');
+            throw new Error('El servidor no respondió en 75 segundos. Verifique que el backend esté corriendo y que Supabase sea accesible.');
         }
         throw err;
     }
 }
 
 async function cargar() {
-    const divRes = document.getElementById('resultados');
-    let respondio = false; // true si el fetch terminó (con éxito, error HTTP, o null por 401)
-    mostrarSpinnerConMensaje();
-    document.getElementById('resumen-filtros').textContent = '';
+    // ── Generación: si otra cargar() empieza antes de que esta termine,
+    //    los callbacks de esta instancia se ignoran (no sobreescriben UI).
+    const gen = ++cargaGen;
 
+    const divRes     = document.getElementById('resultados');
     const btnBuscar  = document.getElementById('btn-buscar');
     const btnLimpiar = document.getElementById('btn-limpiar');
+
+    // Feedback inmediato — antes de cualquier await o lógica que pueda fallar
+    mostrarSpinnerConMensaje();
+    document.getElementById('resumen-filtros').textContent = '';
     if (btnBuscar)  btnBuscar.disabled = true;
     if (btnLimpiar) btnLimpiar.disabled = true;
 
-    const params = {
-        fecha_desde:  gv('f-desde'),
-        fecha_hasta:  gv('f-hasta'),
-        tipo_persona: gv('f-tipo'),
-        categoria:    gv('f-cat'),
-        nombre:       gv('f-nombre'),
-    };
-
-    const endpoint = vistaActual === 'fecha'
-        ? `/admin/disponibilidad/por-fecha?${toQS(params)}`
-        : `/admin/disponibilidad?${toQS(params)}`;
+    let respondio = false;
 
     try {
+        // ── Construir parámetros y endpoint DENTRO del try ────────────────
+        // (evita ReferenceError silencioso si vistaActual/gv no estuvieran listos)
+        const params = {
+            fecha_desde:  gv('f-desde'),
+            fecha_hasta:  gv('f-hasta'),
+            tipo_persona: gv('f-tipo'),
+            categoria:    gv('f-cat'),
+            nombre:       gv('f-nombre'),
+        };
+        const endpoint = vistaActual === 'fecha'
+            ? `/admin/disponibilidad/por-fecha?${toQS(params)}`
+            : `/admin/disponibilidad?${toQS(params)}`;
+
         const data = await fetchDisponibilidad(endpoint);
+
+        // Si otra cargar() arrancó mientras esperábamos, descartar esta respuesta
+        if (gen !== cargaGen) return;
+
         respondio = true;
 
-        // null = redirigido por 401 (cerrarSesion ya fue llamado)
+        // null → 401, cerrarSesion() ya fue llamado
         if (data === null) return;
 
         if (vistaActual === 'fecha') {
@@ -310,27 +323,38 @@ async function cargar() {
         }
 
     } catch (err) {
+        // Respuesta de una cargar() ya supersedida — ignorar silenciosamente
+        if (gen !== cargaGen) return;
+
         respondio = true;
         const msg = err?.message || 'Error desconocido al cargar disponibilidad.';
-        setResultado(`
-            <div class="alerta alerta-error" style="margin:0;">
-                <strong>Error al cargar disponibilidad</strong><br>
-                ${sanitizar(msg)}<br>
-                <small style="color:#999; display:block; margin-top:6px;">
-                    Si el servidor está en Render (plan gratuito), puede tardar hasta 60 segundos
-                    en responder tras un período de inactividad. Intente nuevamente.
-                </small>
-            </div>
-        `);
+
+        // Doble try: si sanitizar o setResultado falla, caemos al DOM directo
+        try {
+            setResultado(`
+                <div class="alerta alerta-error" style="margin:0;">
+                    <strong>Error al cargar disponibilidad</strong><br>
+                    ${sanitizar(msg)}<br>
+                    <small style="color:#999; display:block; margin-top:6px;">
+                        Si el servidor está en Render (plan gratuito), puede tardar hasta 60 s
+                        en responder tras inactividad. Intente nuevamente.
+                    </small>
+                </div>
+            `);
+        } catch (_) {
+            if (divRes) divRes.textContent = 'Error: ' + msg;
+        }
         document.getElementById('resumen-filtros').textContent = '';
 
     } finally {
+        // Si otra cargar() ya tomó el control, no tocar botones ni spinner
+        if (gen !== cargaGen) return;
+
         if (btnBuscar)  btnBuscar.disabled = false;
         if (btnLimpiar) btnLimpiar.disabled = false;
 
-        // Safety net: solo si el fetch fue abortado externamente sin pasar por catch
-        // (no debería ocurrir, pero previene spinners eternos)
-        if (!respondio && divRes.querySelector('.spinner-wrap')) {
+        // Safety net: spinner persistente solo si nada lo reemplazó
+        if (!respondio && divRes && divRes.querySelector('.spinner-wrap')) {
             setResultado('<div class="alerta alerta-error" style="margin:0;">No se recibió respuesta. Intente nuevamente.</div>');
         }
     }
@@ -447,8 +471,13 @@ async function exportar(formato) {
     }
 }
 
-// Cargar al inicio
-cargar();
+// Cargar al inicio (catch explícito por si hay error de init no esperado)
+cargar().catch(function(err) {
+    var divRes = document.getElementById('resultados');
+    if (divRes) divRes.innerHTML =
+        '<div class="alerta alerta-error" style="margin:0;"><strong>Error al inicializar</strong><br>' +
+        (err && err.message ? err.message : String(err)) + '</div>';
+});
 </script>
 </body>
 </html>
