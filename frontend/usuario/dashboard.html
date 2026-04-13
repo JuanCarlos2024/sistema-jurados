@@ -281,7 +281,7 @@ function renderRodeos(asignaciones) {
                 designHtml = `<span class="badge badge-activo">Aceptada${km}</span>`;
             }
 
-            // Columna Bono km (no disponible si rechazada, pendiente o rodeo pasado sin aceptar)
+            // Columna Bono km
             let bonoHtml = '';
             if (esRechazada || esPendiente) {
                 bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
@@ -289,7 +289,19 @@ function renderRodeos(asignaciones) {
                 const colores   = { aprobado: '#27ae60', pendiente: '#f39c12', rechazado: '#e74c3c', modificado: '#2980b9' };
                 const etiquetas = { aprobado: 'Aprobado', pendiente: 'En revisión', rechazado: 'Rechazado', modificado: 'Modificado' };
                 const monto = ['aprobado','modificado'].includes(bono.estado) ? (bono.monto_aprobado || bono.monto_solicitado) : bono.monto_solicitado;
-                bonoHtml = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${formatCLP(monto)}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
+                const chip = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${formatCLP(monto)}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
+                // Para rodeos futuros aceptados: permitir actualizar/re-solicitar km
+                let accionBono = '';
+                if (esFuturo) {
+                    if (bono.estado === 'pendiente') {
+                        accionBono = `<button class="btn btn-pequeño btn-outline" style="margin-top:4px;" onclick="abrirActualizarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Actualizar km</button>`;
+                    } else if (bono.estado === 'rechazado') {
+                        accionBono = `<button class="btn btn-pequeño btn-outline" style="margin-top:4px;" onclick="abrirIngresarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Re-solicitar</button>`;
+                    } else if (['aprobado','modificado'].includes(bono.estado)) {
+                        accionBono = `<button class="btn btn-pequeño btn-outline" style="margin-top:4px;" onclick="abrirActualizarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Cambiar km</button>`;
+                    }
+                }
+                bonoHtml = `<div style="display:flex; flex-direction:column; align-items:flex-start; gap:2px;">${chip}${accionBono}</div>`;
             } else if (esAceptada && bonosConfig.length > 0) {
                 bonoHtml = `<button class="btn btn-pequeño btn-outline" onclick="abrirIngresarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Ingresar km</button>`;
             } else {
@@ -469,6 +481,56 @@ async function enviarBono(e, asignacionId) {
             observacion: obs || undefined
         });
         mostrarToast(result.mensaje || 'Bono solicitado correctamente', 'success');
+        cerrarModal();
+        cargarResumen();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+function abrirActualizarKm(asignacionId, clubNombre) {
+    document.getElementById('modal-titulo').textContent = 'Actualizar kilómetros';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
+            <strong>Rodeo: ${sanitizar(clubNombre)}</strong><br>
+            <small>Al cambiar los km, la solicitud de bono quedará nuevamente en revisión.</small>
+        </div>
+        <form onsubmit="enviarActualizarKm(event, '${asignacionId}')">
+            <div class="form-grupo">
+                <label class="form-label">Nueva distancia recorrida (km) <span class="req">*</span></label>
+                <input type="number" id="km-upd-input" class="form-control" min="1" required placeholder="Ej: 420">
+                <div id="km-upd-preview" class="alerta alerta-info oculto" style="margin-top:8px;"></div>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Actualizar km</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+
+    document.getElementById('km-upd-input').addEventListener('input', function() {
+        const km = parseInt(this.value);
+        const prev = document.getElementById('km-upd-preview');
+        if (!km || km <= 0) { prev.classList.add('oculto'); return; }
+        const bono = (bonosConfig || []).find(b => km >= b.distancia_minima && (b.distancia_maxima == null || km <= b.distancia_maxima));
+        if (bono) {
+            prev.textContent = `Bono: ${bono.nombre} — ${formatCLP(bono.monto)}`;
+            prev.className = 'alerta alerta-info';
+        } else {
+            prev.textContent = `Sin bono configurado para ${km} km`;
+            prev.className = 'alerta alerta-error';
+        }
+        prev.classList.remove('oculto');
+    });
+
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function enviarActualizarKm(e, asignacionId) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const km = parseInt(document.getElementById('km-upd-input').value);
+    try {
+        const result = await api.patch(`/usuario/asignaciones/${asignacionId}/km`, { distancia_km: km });
+        mostrarToast(result.mensaje || 'Kilómetros actualizados', 'success');
         cerrarModal();
         cargarResumen();
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
