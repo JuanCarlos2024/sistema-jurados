@@ -160,7 +160,12 @@
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
-// ── Estado global (var: sin TDZ, disponible aunque el script falle parcialmente) ──
+(function() {
+// ── Guard: evita doble ejecución si el script se carga más de una vez ──
+if (window.__DISP_ADMIN_INIT__) return;
+window.__DISP_ADMIN_INIT__ = true;
+
+// ── Estado local (confinado al IIFE, sin contaminar el scope global) ──
 var vistaActual = 'fecha';   // vista activa: 'fecha' | 'lista'
 var fetchActivo = null;      // AbortController del fetch en vuelo
 var cargaGen    = 0;         // generación de carga; respuestas de gens previas se descartan
@@ -168,18 +173,8 @@ var cargaGen    = 0;         // generación de carga; respuestas de gens previas
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
-//const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-//const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
-//const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
-
-var MESES = window.MESES || ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-window.MESES = MESES;
-
-var DIAS_NOMBRE = window.DIAS_NOMBRE || ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
-window.DIAS_NOMBRE = DIAS_NOMBRE;
-
-var TIPO_LABEL = window.TIPO_LABEL || { jurado: 'Jurado', delegado_rentado: 'Delegado' };
-window.TIPO_LABEL = TIPO_LABEL;
+// MESES, DIAS_NOMBRE, TIPO_LABEL vienen de utils.js (scope global compartido).
+// NO se redeclaran aquí: redeclarar un const global con var lanza SyntaxError.
 
 // ── Precargar mes actual ──────────────────────────────────────
 (function() {
@@ -480,6 +475,12 @@ async function exportar(formato) {
     }
 }
 
+// ── Exponer para onclick: botones HTML usan onclick="cargar()" etc. ──
+window.cargar       = cargar;
+window.limpiar      = limpiar;
+window.exportar     = exportar;
+window.cambiarVista = cambiarVista;
+
 // Cargar al inicio (catch explícito por si hay error de init no esperado)
 cargar().catch(function(err) {
     var divRes = document.getElementById('resultados');
@@ -487,6 +488,7 @@ cargar().catch(function(err) {
         '<div class="alerta alerta-error" style="margin:0;"><strong>Error al inicializar</strong><br>' +
         (err && err.message ? err.message : String(err)) + '</div>';
 });
+})();
 </script>
 </body>
 </html>
