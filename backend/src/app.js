@@ -66,7 +66,11 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`\n🚀 Servidor corriendo en http://localhost:${PORT}`);
     console.log(`📁 Frontend servido desde: ${frontendPath}`);
-    console.log(`🔑 Entorno: ${process.env.NODE_ENV || 'development'}\n`);
+    console.log(`🔑 Entorno: ${process.env.NODE_ENV || 'development'}`);
+    if (!process.env.JWT_SECRET) {
+        console.warn('[WARN] JWT_SECRET no configurado — usando fallback inseguro. Configúralo en Render > Environment.');
+    }
+    console.log('');
 });
 
 module.exports = app;

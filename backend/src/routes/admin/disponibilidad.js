@@ -4,6 +4,20 @@ const supabase = require('../../config/supabase');
 const ExcelJS  = require('exceljs');
 
 const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
+const SUPABASE_TIMEOUT_MS = 20000; // 20 s — falla rápido si Supabase no responde
+
+// ─── Helper: timeout para cualquier thenable de Supabase ──────
+function withTimeout(thenable, label) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+            () => reject(new Error(`Timeout: "${label}" no respondió en ${SUPABASE_TIMEOUT_MS / 1000}s`)),
+            SUPABASE_TIMEOUT_MS
+        );
+        Promise.resolve(thenable)
+            .then(v => { clearTimeout(timer); resolve(v); })
+            .catch(e => { clearTimeout(timer); reject(e); });
+    });
+}
 
 // ─── Filtros en memoria ────────────────────────────────────────
 function filtrarRows(rows, { tipo_persona, categoria, nombre }) {
@@ -38,33 +52,33 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
     if (fecha_desde) q = q.gte('fecha', fecha_desde);
     if (fecha_hasta) q = q.lte('fecha', fecha_hasta);
 
-    const { data: dispRows, error: dispError } = await q;
+    const { data: dispRows, error: dispError } = await withTimeout(q, 'disponibilidad_usuarios');
 
     if (dispError) {
-        console.error('[DISP] Error en query disponibilidad_usuarios:', dispError.message);
-        throw new Error('Error consultando disponibilidad: ' + dispError.message);
+        console.error('[DISP] Error Step1:', JSON.stringify(dispError));
+        throw new Error('Error consultando disponibilidad: ' + (dispError.message || dispError.code || JSON.stringify(dispError)));
     }
 
     const totalDisp = (dispRows || []).length;
-    console.log(`[DISP] Step 1 OK: ${totalDisp} registros (rango: ${fecha_desde || '*'} → ${fecha_hasta || '*'})`);
+    console.log(`[DISP] Step1 OK: ${totalDisp} registros (${fecha_desde || '*'} → ${fecha_hasta || '*'})`);
 
     if (totalDisp === 0) return [];
 
     // ── Paso 2: datos de los usuarios involucrados ───────────
     const userIds = [...new Set(dispRows.map(d => d.usuario_pagado_id))];
-    console.log(`[DISP] Step 2: buscando ${userIds.length} usuario(s)`);
 
-    const { data: usuarios, error: userError } = await supabase
-        .from('usuarios_pagados')
-        .select('id, nombre_completo, tipo_persona, categoria, rut')
-        .in('id', userIds);
+    const { data: usuarios, error: userError } = await withTimeout(
+        supabase
+            .from('usuarios_pagados')
+            .select('id, nombre_completo, tipo_persona, categoria, rut')
+            .in('id', userIds),
+        'usuarios_pagados'
+    );
 
     if (userError) {
-        console.error('[DISP] Error en query usuarios_pagados:', userError.message);
-        throw new Error('Error consultando usuarios: ' + userError.message);
+        console.error('[DISP] Error Step2:', JSON.stringify(userError));
+        throw new Error('Error consultando usuarios: ' + (userError.message || userError.code || JSON.stringify(userError)));
     }
-
-    console.log(`[DISP] Step 2 OK: ${(usuarios || []).length} usuario(s) encontrado(s)`);
 
     // ── Paso 3: unir en memoria ──────────────────────────────
     const userMap = {};
@@ -74,7 +88,7 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
         .map(d => ({ ...d, usuarios_pagados: userMap[d.usuario_pagado_id] || null }))
         .filter(d => d.usuarios_pagados !== null);
 
-    console.log(`[DISP] Step 3 OK: ${resultado.length} filas con usuario válido`);
+    console.log(`[DISP] OK: ${resultado.length} filas (${userIds.length} usuarios)`);
     return resultado;
 }
 

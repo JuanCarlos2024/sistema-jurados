@@ -217,17 +217,17 @@ async function fetchDisponibilidad(endpoint) {
     const ctrl = new AbortController();
     fetchActivo = ctrl;
 
-    // Aviso de "servidor despertando" a los 10 segundos
+    // Aviso de "servidor despertando" a los 8 segundos
     const avisoTimer = setTimeout(() => {
         const msg = document.getElementById('spinner-msg');
         if (msg) {
             msg.textContent = 'Conectando con el servidor... Esto puede tardar hasta 60 segundos si el servidor estuvo inactivo.';
             msg.style.display = 'block';
         }
-    }, 10000);
+    }, 8000);
 
-    // Timeout duro a los 90 segundos
-    const abortTimer = setTimeout(() => ctrl.abort(), 90000);
+    // Timeout duro a los 75 segundos (cold start Render ~50s + query ~20s = ~70s)
+    const abortTimer = setTimeout(() => ctrl.abort(), 75000);
 
     try {
         const token = api.getToken();
@@ -273,6 +273,7 @@ async function fetchDisponibilidad(endpoint) {
 
 async function cargar() {
     const divRes = document.getElementById('resultados');
+    let respondio = false; // true si el fetch terminó (con éxito, error HTTP, o null por 401)
     mostrarSpinnerConMensaje();
     document.getElementById('resumen-filtros').textContent = '';
 
@@ -295,8 +296,9 @@ async function cargar() {
 
     try {
         const data = await fetchDisponibilidad(endpoint);
+        respondio = true;
 
-        // null = redirigido por 401
+        // null = redirigido por 401 (cerrarSesion ya fue llamado)
         if (data === null) return;
 
         if (vistaActual === 'fecha') {
@@ -308,6 +310,7 @@ async function cargar() {
         }
 
     } catch (err) {
+        respondio = true;
         const msg = err?.message || 'Error desconocido al cargar disponibilidad.';
         setResultado(`
             <div class="alerta alerta-error" style="margin:0;">
@@ -325,8 +328,9 @@ async function cargar() {
         if (btnBuscar)  btnBuscar.disabled = false;
         if (btnLimpiar) btnLimpiar.disabled = false;
 
-        // Red de seguridad: si el spinner persiste por algún error inesperado
-        if (divRes.querySelector('.spinner-wrap')) {
+        // Safety net: solo si el fetch fue abortado externamente sin pasar por catch
+        // (no debería ocurrir, pero previene spinners eternos)
+        if (!respondio && divRes.querySelector('.spinner-wrap')) {
             setResultado('<div class="alerta alerta-error" style="margin:0;">No se recibió respuesta. Intente nuevamente.</div>');
         }
     }

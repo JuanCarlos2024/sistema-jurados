@@ -8,6 +8,7 @@ function verificarToken(req, res, next) {
     const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
 
     if (!token) {
+        console.warn(`[AUTH] 401 sin token: ${req.method} ${req.path}`);
         return res.status(401).json({ error: 'Token requerido' });
     }
 
@@ -16,6 +17,7 @@ function verificarToken(req, res, next) {
         req.usuario = payload;
         next();
     } catch (err) {
+        console.warn(`[AUTH] 401 token inválido: ${req.method} ${req.path} — ${err.message}`);
         return res.status(401).json({ error: 'Token inválido o expirado' });
     }
 }
@@ -24,6 +26,7 @@ function verificarToken(req, res, next) {
 function soloAdmin(req, res, next) {
     verificarToken(req, res, () => {
         if (req.usuario.tipo !== 'administrador') {
+            console.warn(`[AUTH] 403 tipo="${req.usuario.tipo}" id="${req.usuario.id}": ${req.method} ${req.path}`);
             return res.status(403).json({ error: 'Acceso restringido a administradores' });
         }
         next();
