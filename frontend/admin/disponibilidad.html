@@ -173,8 +173,10 @@ var cargaGen    = 0;         // generación de carga; respuestas de gens previas
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
-// MESES, DIAS_NOMBRE, TIPO_LABEL vienen de utils.js (scope global compartido).
-// NO se redeclaran aquí: redeclarar un const global con var lanza SyntaxError.
+// ── Constantes locales (prefijo DISP_ para no colisionar con nada global) ──
+const DISP_MESES       = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const DISP_DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const DISP_TIPO_LABEL  = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
 
 // ── Precargar mes actual ──────────────────────────────────────
 (function() {
@@ -382,8 +384,8 @@ function renderPorFecha(porFecha) {
         const personas = porFecha[fecha];
         const [año, mes, dia] = fecha.split('-');
         const d = new Date(parseInt(año), parseInt(mes) - 1, parseInt(dia));
-        const diaNombre = DIAS_NOMBRE[d.getDay()];
-        const mesNombre = MESES[d.getMonth()];
+        const diaNombre = DISP_DIAS_NOMBRE[d.getDay()];
+        const mesNombre = DISP_MESES[d.getMonth()];
 
         html += `<div class="fecha-bloque">
             <div class="fecha-bloque-header">
@@ -394,7 +396,7 @@ function renderPorFecha(porFecha) {
             <div class="fecha-personas">`;
 
         personas.forEach(p => {
-            const tipo = TIPO_LABEL[p.tipo_persona] || sanitizar(p.tipo_persona || '');
+            const tipo = DISP_TIPO_LABEL[p.tipo_persona] || sanitizar(p.tipo_persona || '');
             const cat  = p.categoria ? ` · Cat. ${p.categoria}` : '';
             html += `<div class="persona-chip">
                 <span>${sanitizar(p.nombre_completo || '—')}</span>
@@ -428,10 +430,10 @@ function renderLista(datos) {
             const fechaObj = new Date(parseInt(año), parseInt(mes) - 1, parseInt(dia));
             return `<tr>
                 <td><strong>${sanitizar(u.nombre_completo || '—')}</strong></td>
-                <td>${TIPO_LABEL[u.tipo_persona] || sanitizar(u.tipo_persona || '—')}</td>
+                <td>${DISP_TIPO_LABEL[u.tipo_persona] || sanitizar(u.tipo_persona || '—')}</td>
                 <td style="text-align:center;">${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}">${u.categoria}</span>` : '—'}</td>
                 <td style="white-space:nowrap;">${formatFecha(d.fecha)}</td>
-                <td style="color:#888; font-size:12px;">${DIAS_NOMBRE[fechaObj.getDay()]}</td>
+                <td style="color:#888; font-size:12px;">${DISP_DIAS_NOMBRE[fechaObj.getDay()]}</td>
             </tr>`;
         }).join('')}
         </tbody>
