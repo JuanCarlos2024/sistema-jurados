@@ -168,9 +168,18 @@ var cargaGen    = 0;         // generación de carga; respuestas de gens previas
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
-const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
-const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
+//const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+//const DIAS_NOMBRE = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+//const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
+
+var MESES = window.MESES || ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+window.MESES = MESES;
+
+var DIAS_NOMBRE = window.DIAS_NOMBRE || ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+window.DIAS_NOMBRE = DIAS_NOMBRE;
+
+var TIPO_LABEL = window.TIPO_LABEL || { jurado: 'Jurado', delegado_rentado: 'Delegado' };
+window.TIPO_LABEL = TIPO_LABEL;
 
 // ── Precargar mes actual ──────────────────────────────────────
 (function() {
