@@ -167,21 +167,44 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
 }
 
 /**
+ * Función PURA: dado km y lista de configs, retorna el config aplicable o null.
+ * No toca la BD — exportada para tests unitarios.
+ *
+ * Regla: km debe estar en [distancia_minima, distancia_maxima].
+ * Si distancia_maxima es null → sin límite superior (tramo abierto).
+ * Devuelve el config con distancia_minima más alta que aplique
+ * (más específico primero).
+ */
+function _matchBonoConfig(km, configs) {
+    if (!km || km <= 0) return null;
+    const candidatos = (configs || []).filter(c =>
+        c.activo !== false &&
+        c.distancia_minima <= km &&
+        (c.distancia_maxima === null || c.distancia_maxima === undefined || c.distancia_maxima >= km)
+    );
+    candidatos.sort((a, b) => b.distancia_minima - a.distancia_minima);
+    return candidatos[0] || null;
+}
+
+/**
  * Obtiene el bono_config correspondiente a una distancia dada.
  * Retorna null si no hay bono configurado para esa distancia.
+ *
+ * Usa _matchBonoConfig() internamente para que la lógica de matching sea
+ * testeable sin BD.
  */
 async function obtenerBonoParaDistancia(distancia_km) {
+    const km = parseInt(distancia_km);
+    if (!km || km <= 0) return null;
+
     const { data, error } = await supabase
         .from('bonos_config')
         .select('*')
         .eq('activo', true)
-        .lte('distancia_minima', distancia_km)
-        .or(`distancia_maxima.is.null,distancia_maxima.gte.${distancia_km}`)
-        .order('distancia_minima', { ascending: false })
-        .limit(1);
+        .order('distancia_minima', { ascending: false });
 
     if (error) throw new Error('Error al buscar bono: ' + error.message);
-    return data && data.length > 0 ? data[0] : null;
+    return _matchBonoConfig(km, data || []);
 }
 
 module.exports = {
@@ -189,5 +212,6 @@ module.exports = {
     obtenerRetencion,
     calcularPagoBase,
     calcularResumenMensual,
-    obtenerBonoParaDistancia
+    obtenerBonoParaDistancia,
+    _matchBonoConfig  // exportada solo para tests
 };

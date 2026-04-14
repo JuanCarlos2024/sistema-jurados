@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
+    "test": "jest --testPathPattern=\\.test\\.js$ --no-coverage",
     "setup": "node src/scripts/setup-inicial.js",
     "setup:admin": "node src/scripts/crear-admin.js",
     "setup:tipos": "node src/scripts/importar-maestro-tipos.js",
@@ -23,6 +24,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.0.2"
   }
 }
