@@ -133,6 +133,7 @@
                 <button class="tab" onclick="cambiarTab('club')">Por club</button>
                 <button class="tab" onclick="cambiarTab('tipo')">Por tipo de rodeo</button>
                 <button class="tab" onclick="cambiarTab('categoria')">Por categoría</button>
+                <button class="tab" onclick="cambiarTab('bonos')">Bonos por persona</button>
             </div>
 
             <!-- ════ PANEL: Resumen por jurado ═══════════════════════════ -->
@@ -240,6 +241,54 @@
                 </div>
             </div>
 
+            <!-- ════ PANEL: Bonos por persona ══════════════════════════════ -->
+            <div id="panel-bonos" class="panel">
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-titulo" style="margin-bottom:12px;">🎯 Filtros de bonos</div>
+                    <div class="filtros-grid">
+                        <div class="form-grupo">
+                            <label class="form-label">Tipo de persona</label>
+                            <select id="b-tipo" class="form-control">
+                                <option value="">Todos</option>
+                                <option value="jurado">Jurado</option>
+                                <option value="delegado_rentado">Delegado rentado</option>
+                            </select>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Persona</label>
+                            <select id="b-persona" class="form-control">
+                                <option value="">Todas</option>
+                                <!-- Poblado por JS -->
+                            </select>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Estado del bono</label>
+                            <select id="b-estado" class="form-control">
+                                <option value="">Todos</option>
+                                <option value="pendiente">Pendiente</option>
+                                <option value="aprobado">Aprobado</option>
+                                <option value="modificado">Modificado (aprobado)</option>
+                                <option value="rechazado">Rechazado</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p style="font-size:12px;color:var(--gris);margin-top:4px;">Los filtros de fecha y asociación de los Filtros globales también aplican aquí.</p>
+                </div>
+                <div class="card">
+                    <div class="card-titulo flex justify-between items-center">
+                        <span>Listado de bonos</span>
+                        <div class="export-bar">
+                            <strong>Exportar:</strong>
+                            <button class="btn btn-outline btn-pequeño" onclick="exportarBonos('csv')">CSV</button>
+                        </div>
+                    </div>
+                    <div id="stats-bonos" class="stat-grid" style="display:none;"></div>
+                    <div id="tabla-bonos" class="tabla-wrap">
+                        <p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte"</p>
+                    </div>
+                </div>
+            </div>
+
         </div><!-- /page-body -->
     </div><!-- /main-content -->
 </div>
@@ -327,13 +376,16 @@ function limpiarFiltros() {
     document.getElementById('g-asoc').value = '';
     document.getElementById('g-club').value = '';
     document.getElementById('g-cat-rodeo').value = '';
+    document.getElementById('b-tipo').value = '';
+    document.getElementById('b-persona').value = '';
+    document.getElementById('b-estado').value = '';
 }
 
 // ── Tabs ─────────────────────────────────────────────────────
 function cambiarTab(tab) {
     tabActiva = tab;
     document.querySelectorAll('.tab').forEach((el, i) => {
-        const tabs = ['resumen','detalle','asociacion','club','tipo','categoria'];
+        const tabs = ['resumen','detalle','asociacion','club','tipo','categoria','bonos'];
         el.classList.toggle('activo', tabs[i] === tab);
     });
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('activo'));
@@ -349,6 +401,7 @@ async function aplicarFiltros() {
     else if (tabActiva === 'club')       cargarAgregado('por-club', 'tabla-club', renderTablaClub);
     else if (tabActiva === 'tipo')       cargarAgregado('por-tipo-rodeo', 'tabla-tipo', renderTablaTipo);
     else if (tabActiva === 'categoria')  cargarAgregado('por-categoria-rodeo', 'tabla-categoria', renderTablaCategoria);
+    else if (tabActiva === 'bonos')       cargarBonos();
 }
 
 // ── Resumen por jurado ────────────────────────────────────────
@@ -653,10 +706,171 @@ function renderTablaCategoria(data, wrap) {
     </div>`;
 }
 
+// ── Bonos por persona ─────────────────────────────────────────
+let datosBonos = [];
+
+async function poblarPersonasParaBonos() {
+    try {
+        const [jurados, delegados] = await Promise.all([
+            api.get('/admin/usuarios?tipo=jurado&activo=true&limit=200'),
+            api.get('/admin/usuarios?tipo=delegado_rentado&activo=true&limit=200')
+        ]);
+        const sel = document.getElementById('b-persona');
+        if (jurados.data?.length) {
+            const og = document.createElement('optgroup');
+            og.label = 'Jurados';
+            (jurados.data || []).forEach(u => {
+                const o = document.createElement('option');
+                o.value = u.id;
+                o.textContent = `${u.nombre_completo} (Cat. ${u.categoria||'—'})`;
+                og.appendChild(o);
+            });
+            sel.appendChild(og);
+        }
+        if (delegados.data?.length) {
+            const og = document.createElement('optgroup');
+            og.label = 'Delegados rentados';
+            (delegados.data || []).forEach(u => {
+                const o = document.createElement('option');
+                o.value = u.id;
+                o.textContent = u.nombre_completo;
+                og.appendChild(o);
+            });
+            sel.appendChild(og);
+        }
+    } catch(e) {}
+}
+
+function getBonosFiltros() {
+    const g = ultimosFiltros;
+    const f = {
+        tipo_persona:      document.getElementById('b-tipo').value,
+        usuario_pagado_id: document.getElementById('b-persona').value,
+        estado_bono:       document.getElementById('b-estado').value,
+        asociacion:        g.asociacion || document.getElementById('g-asoc').value.trim(),
+        fecha_desde:       g.fechaDesde || document.getElementById('g-desde').value,
+        fecha_hasta:       g.fechaHasta || document.getElementById('g-hasta').value,
+    };
+    // Si hay mes/año pero no fechas explícitas, construir rango
+    if (!f.fecha_desde && !f.fecha_hasta) {
+        const año = g.año || document.getElementById('g-año').value;
+        const mes = g.mes || document.getElementById('g-mes').value;
+        if (año && mes) {
+            const m = String(mes).padStart(2,'0');
+            f.fecha_desde = `${año}-${m}-01`;
+            const fin = new Date(parseInt(año), parseInt(mes), 0);
+            f.fecha_hasta = fin.toISOString().split('T')[0];
+        } else if (año) {
+            f.fecha_desde = `${año}-01-01`;
+            f.fecha_hasta = `${año}-12-31`;
+        }
+    }
+    return f;
+}
+
+async function cargarBonos() {
+    const wrap  = document.getElementById('tabla-bonos');
+    const stats = document.getElementById('stats-bonos');
+    mostrarSpinner(wrap);
+    stats.style.display = 'none';
+    try {
+        const f = getBonosFiltros();
+        const data = await api.get('/admin/reportes/bonos-por-persona?' + toQueryString(f));
+        datosBonos = data.data || [];
+        renderBonos(data);
+    } catch(err) {
+        wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
+}
+
+const COLORES_EST = { aprobado:'badge-activo', modificado:'badge-activo', pendiente:'', rechazado:'badge-anulado' };
+const LABELS_EST  = { aprobado:'Aprobado', modificado:'Aprobado*', pendiente:'Pendiente', rechazado:'Rechazado' };
+
+function renderBonos(data) {
+    const wrap  = document.getElementById('tabla-bonos');
+    const stats = document.getElementById('stats-bonos');
+    const r = data.resumen || {};
+
+    if (!data.data || data.data.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Sin bonos para los filtros seleccionados</p>';
+        stats.style.display = 'none';
+        return;
+    }
+
+    stats.style.display = 'grid';
+    stats.innerHTML = `
+        <div class="stat-card"><div class="val">${r.total||0}</div><div class="lbl">Total bonos</div></div>
+        <div class="stat-card"><div class="val" style="color:#27ae60;">${r.aprobados||0}</div><div class="lbl">Aprobados</div></div>
+        <div class="stat-card"><div class="val" style="color:#e67e22;">${r.pendientes||0}</div><div class="lbl">Pendientes</div></div>
+        <div class="stat-card"><div class="val" style="color:#c0392b;">${r.rechazados||0}</div><div class="lbl">Rechazados</div></div>
+        <div class="stat-card"><div class="val" style="color:#27ae60;">${formatCLP(r.monto_aprobado_total||0)}</div><div class="lbl">Monto aprobado</div></div>
+        <div class="stat-card"><div class="val" style="color:#e67e22;">${formatCLP(r.monto_pendiente_total||0)}</div><div class="lbl">Monto pendiente</div></div>`;
+
+    wrap.innerHTML = `<table>
+        <thead><tr>
+            <th>Persona</th><th>RUT</th><th>Tipo</th><th>Club</th>
+            <th>Fecha rodeo</th><th style="text-align:center;">Km</th>
+            <th class="monto">Monto sol.</th><th class="monto">Monto aprobado</th>
+            <th>Estado</th><th>Fecha solicitud</th>
+        </tr></thead>
+        <tbody>
+        ${data.data.map(b => {
+            const u = b.usuarios_pagados || {};
+            const rodeo = b.asignaciones?.rodeos || {};
+            const esAprob = ['aprobado','modificado'].includes(b.estado);
+            return `<tr>
+                <td><strong>${sanitizar(u.nombre_completo||'—')}</strong></td>
+                <td style="font-size:12px;">${sanitizar(u.rut||'—')}</td>
+                <td style="font-size:12px;">${b.asignaciones?.tipo_persona === 'jurado'
+                    ? '<span class="badge badge-jurado">Jurado</span>'
+                    : '<span class="badge badge-delegado">Delegado</span>'}</td>
+                <td style="font-size:13px;">${sanitizar(rodeo.club||'—')}</td>
+                <td style="font-size:13px; white-space:nowrap;">${formatFecha(rodeo.fecha)}</td>
+                <td style="text-align:center;">${b.distancia_declarada ? b.distancia_declarada + ' km' : '—'}</td>
+                <td class="monto">${formatCLP(b.monto_solicitado||0)}</td>
+                <td class="monto ${esAprob ? 'monto-positivo' : ''}">${esAprob ? formatCLP(b.monto_aprobado||b.monto_solicitado||0) : '—'}</td>
+                <td><span class="badge ${COLORES_EST[b.estado]||''}">${LABELS_EST[b.estado]||b.estado}</span>${b.estado==='modificado' ? '<span style="font-size:11px;color:var(--gris);"> (admin mod.)</span>' : ''}</td>
+                <td style="font-size:12px;">${formatFecha(b.created_at)}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
+}
+
+function exportarBonos(formato) {
+    if (!datosBonos.length) return;
+    const cols = ['nombre','rut','tipo','club','fecha_rodeo','km','monto_solicitado','monto_aprobado','estado','fecha_solicitud'];
+    const filas = datosBonos.map(b => {
+        const u = b.usuarios_pagados || {};
+        const rodeo = b.asignaciones?.rodeos || {};
+        const esAprob = ['aprobado','modificado'].includes(b.estado);
+        return [
+            u.nombre_completo||'',
+            u.rut||'',
+            b.asignaciones?.tipo_persona||'',
+            rodeo.club||'',
+            rodeo.fecha||'',
+            b.distancia_declarada||'',
+            b.monto_solicitado||0,
+            esAprob ? (b.monto_aprobado||b.monto_solicitado||0) : '',
+            b.estado||'',
+            (b.created_at||'').slice(0,10)
+        ];
+    });
+    let csv = cols.join(';') + '\n';
+    csv += filas.map(f => f.map(v => `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `bonos_por_persona.csv`; a.click();
+    URL.revokeObjectURL(url);
+}
+
 // ── Init ──────────────────────────────────────────────────────
 poblarAnios();
 poblarJurados();
 poblarCategoriasRodeo();
+poblarPersonasParaBonos();
 // Aplicar automáticamente con año actual al cargar
 setTimeout(() => {
     ultimosFiltros = getFiltros();

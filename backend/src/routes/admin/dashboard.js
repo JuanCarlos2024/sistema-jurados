@@ -163,6 +163,40 @@ router.get('/', async (req, res) => {
             pendientes_reales: pendientesPorImportacion[i.id] || 0
         }));
 
+        // ── Cartillas y videos del mes ──────────────────────────────────
+        // Rodeos activos del mes
+        const { data: rodeosDelMes } = await supabase
+            .from('rodeos')
+            .select('id')
+            .eq('estado', 'activo')
+            .gte('fecha', inicioMes)
+            .lte('fecha', finMes);
+
+        const rodeoIdsDelMes = (rodeosDelMes || []).map(r => r.id);
+        let cartillasJurado = 0, cartillasDelegado = 0, videosCount = 0;
+
+        if (rodeoIdsDelMes.length > 0) {
+            const [
+                { data: adjuntosJurado },
+                { data: adjuntosDelegado },
+                { data: links }
+            ] = await Promise.all([
+                supabase.from('rodeo_adjuntos').select('rodeo_id')
+                    .in('rodeo_id', rodeoIdsDelMes)
+                    .in('tipo_adjunto', ['cartilla_jurado', 'cartilla']),
+                supabase.from('rodeo_adjuntos').select('rodeo_id')
+                    .in('rodeo_id', rodeoIdsDelMes)
+                    .eq('tipo_adjunto', 'cartilla_delegado'),
+                supabase.from('rodeo_links').select('rodeo_id')
+                    .in('rodeo_id', rodeoIdsDelMes)
+            ]);
+            cartillasJurado  = new Set((adjuntosJurado  || []).map(a => a.rodeo_id)).size;
+            cartillasDelegado = new Set((adjuntosDelegado || []).map(a => a.rodeo_id)).size;
+            videosCount      = new Set((links            || []).map(a => a.rodeo_id)).size;
+        }
+
+        const rodeosTotalesMes = rodeoIdsDelMes.length;
+
         // ── Bonos pendientes recientes (global) ─────────────────────────
         const { data: ultBonosPend } = await supabase
             .from('bonos_solicitados')
@@ -219,6 +253,17 @@ router.get('/', async (req, res) => {
                 perfiles_incompletos: perfilesIncompletos,
                 pendientes_revision: pendientesRevision,
                 duplicados_detectados: duplicados
+            },
+
+            // Cartillas y videos del mes (rodeos con al menos 1 adjunto/link)
+            cartillas_videos: {
+                rodeos_del_mes:         rodeosTotalesMes,
+                con_cartilla_jurado:    cartillasJurado,
+                sin_cartilla_jurado:    rodeosTotalesMes - cartillasJurado,
+                con_cartilla_delegado:  cartillasDelegado,
+                sin_cartilla_delegado:  rodeosTotalesMes - cartillasDelegado,
+                con_video:              videosCount,
+                sin_video:              rodeosTotalesMes - videosCount
             },
 
             ultimas_importaciones: ultimasImportaciones,

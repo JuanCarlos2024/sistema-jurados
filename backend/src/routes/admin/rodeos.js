@@ -109,7 +109,21 @@ router.get('/', async (req, res) => {
     if (estado) query = query.eq('estado', estado);
     else        query = query.eq('estado', 'activo');
 
-    if (categoria_rodeo_id) query = query.eq('categoria_rodeo_id', categoria_rodeo_id);
+    if (categoria_rodeo_id) {
+        // Categoría directa en el rodeo OR heredada desde tipos_rodeo
+        const { data: tiposConCat } = await supabase
+            .from('tipos_rodeo')
+            .select('id')
+            .eq('categoria_rodeo_id', categoria_rodeo_id);
+        const tipoIds = (tiposConCat || []).map(t => t.id);
+        if (tipoIds.length > 0) {
+            query = query.or(
+                `categoria_rodeo_id.eq.${categoria_rodeo_id},and(categoria_rodeo_id.is.null,tipo_rodeo_id.in.(${tipoIds.join(',')}))`
+            );
+        } else {
+            query = query.eq('categoria_rodeo_id', categoria_rodeo_id);
+        }
+    }
     if (tipo_rodeo_id || tipo) query = query.eq('tipo_rodeo_id', tipo_rodeo_id || tipo);
     if (origen) query = query.eq('origen', origen);
     if (buscar) query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);

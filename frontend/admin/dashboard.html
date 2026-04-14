@@ -392,7 +392,54 @@ async function cargarDashboard() {
                 </div>
             </div>
 
-            <!-- 5. IMPORTACIONES + BONOS PENDIENTES -->
+            <!-- 5. CARTILLAS Y VIDEOS DEL MES -->
+            ${(() => {
+                const cv = d.cartillas_videos || {};
+                const total = cv.rodeos_del_mes || 0;
+                if (total === 0) return `
+                <div class="dash-seccion">
+                    <div class="dash-seccion-titulo">Cartillas y videos del mes</div>
+                    <p class="texto-gris" style="font-size:13px;">Sin rodeos en este mes</p>
+                </div>`;
+                return `
+                <div class="dash-seccion">
+                    <div class="dash-seccion-titulo">Cartillas y videos del mes <span style="font-weight:400;font-size:11px;">(${total} rodeo${total !== 1 ? 's' : ''})</span></div>
+                    <div class="kpi-grid" style="grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));">
+                        <div class="kpi-card">
+                            <div class="val verde">${cv.con_cartilla_jurado ?? 0}</div>
+                            <div class="lbl">Con cartilla jurado</div>
+                            <div class="sub">de ${total} rodeo${total !== 1 ? 's' : ''}</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="val ${(cv.sin_cartilla_jurado ?? 0) > 0 ? 'naranja' : ''}">${cv.sin_cartilla_jurado ?? 0}</div>
+                            <div class="lbl">Sin cartilla jurado</div>
+                            <div class="sub">pendiente de carga</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="val verde">${cv.con_cartilla_delegado ?? 0}</div>
+                            <div class="lbl">Con cartilla delegado</div>
+                            <div class="sub">de ${total} rodeo${total !== 1 ? 's' : ''}</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="val ${(cv.sin_cartilla_delegado ?? 0) > 0 ? 'naranja' : ''}">${cv.sin_cartilla_delegado ?? 0}</div>
+                            <div class="lbl">Sin cartilla delegado</div>
+                            <div class="sub">pendiente de carga</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="val azul">${cv.con_video ?? 0}</div>
+                            <div class="lbl">Con video cargado</div>
+                            <div class="sub">de ${total} rodeo${total !== 1 ? 's' : ''}</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="val ${(cv.sin_video ?? 0) > 0 ? 'naranja' : ''}">${cv.sin_video ?? 0}</div>
+                            <div class="lbl">Sin video</div>
+                            <div class="sub">pendiente de carga</div>
+                        </div>
+                    </div>
+                </div>`;
+            })()}
+
+            <!-- 6. IMPORTACIONES + BONOS PENDIENTES -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
 
                 <div class="card">

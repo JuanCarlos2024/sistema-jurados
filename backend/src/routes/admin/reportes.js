@@ -419,6 +419,83 @@ router.get('/categorias-rodeo/lista', async (req, res) => {
     res.json(data || []);
 });
 
+// ══════════════════════════════════════════════════════════════
+// GET /api/admin/reportes/bonos-por-persona
+// Listado de bonos filtrable por persona, tipo, asociación, fecha, estado
+// ══════════════════════════════════════════════════════════════
+router.get('/bonos-por-persona', async (req, res) => {
+    try {
+        const { tipo_persona, usuario_pagado_id, asociacion, fecha_desde, fecha_hasta, estado_bono } = req.query;
+
+        // Pre-query asignaciones si se necesita filtrar por tipo/asociación/fecha
+        const needsAsigFilter = tipo_persona || asociacion || fecha_desde || fecha_hasta;
+        let asigIds = null;
+
+        if (needsAsigFilter) {
+            let sq = supabase
+                .from('asignaciones')
+                .select('id, rodeos!inner(asociacion, fecha)')
+                .eq('estado', 'activo');
+            if (tipo_persona) sq = sq.eq('tipo_persona', tipo_persona);
+            if (asociacion)   sq = sq.ilike('rodeos.asociacion', `%${asociacion}%`);
+            if (fecha_desde)  sq = sq.gte('rodeos.fecha', fecha_desde);
+            if (fecha_hasta)  sq = sq.lte('rodeos.fecha', fecha_hasta);
+            const { data: asigs, error: errAsig } = await sq;
+            if (errAsig) throw new Error('Error filtrando asignaciones: ' + errAsig.message);
+            asigIds = (asigs || []).map(a => a.id);
+        }
+
+        // Sin resultados en pre-query → respuesta vacía
+        if (asigIds !== null && asigIds.length === 0) {
+            return res.json({
+                data: [],
+                resumen: { total: 0, aprobados: 0, pendientes: 0, rechazados: 0,
+                           monto_aprobado_total: 0, monto_pendiente_total: 0 }
+            });
+        }
+
+        let q = supabase
+            .from('bonos_solicitados')
+            .select(`
+                id, estado, monto_solicitado, monto_aprobado, distancia_declarada,
+                created_at, observacion_admin,
+                usuarios_pagados(id, codigo_interno, nombre_completo, rut, tipo_persona, categoria),
+                asignaciones!inner(
+                    id, tipo_persona,
+                    rodeos!inner(id, club, asociacion, fecha, tipo_rodeo_nombre)
+                )
+            `);
+
+        if (estado_bono)        q = q.eq('estado', estado_bono);
+        if (usuario_pagado_id)  q = q.eq('usuario_pagado_id', usuario_pagado_id);
+        if (asigIds !== null)   q = q.in('asignacion_id', asigIds);
+
+        q = q.order('created_at', { ascending: false });
+
+        const { data, error } = await q;
+        if (error) throw new Error(error.message);
+
+        const bonos = data || [];
+        const aprobados = bonos.filter(b => ['aprobado', 'modificado'].includes(b.estado));
+        const pendientes = bonos.filter(b => b.estado === 'pendiente');
+        const rechazados = bonos.filter(b => b.estado === 'rechazado');
+
+        res.json({
+            data: bonos,
+            resumen: {
+                total:                bonos.length,
+                aprobados:            aprobados.length,
+                pendientes:           pendientes.length,
+                rechazados:           rechazados.length,
+                monto_aprobado_total: aprobados.reduce((s, b) => s + (b.monto_aprobado || b.monto_solicitado || 0), 0),
+                monto_pendiente_total: pendientes.reduce((s, b) => s + (b.monto_solicitado || 0), 0)
+            }
+        });
+    } catch(err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // POST /api/admin/reportes/categorias-rodeo
 router.post('/categorias-rodeo', async (req, res) => {
     const { nombre } = req.body;
