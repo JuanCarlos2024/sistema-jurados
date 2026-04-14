@@ -64,23 +64,18 @@ router.post('/', async (req, res) => {
         });
     }
 
-    // Buscar bono correspondiente a la distancia
+    // Buscar bono correspondiente a la distancia (puede ser null si no hay tramo configurado)
+    // En ese caso se crea igual con monto=0 para que el admin lo revise y fije el monto
     const bonoConfig = await obtenerBonoParaDistancia(km);
-
-    if (!bonoConfig) {
-        return res.status(400).json({
-            error: `No existe un bono configurado para ${km} km. Consulte con el administrador.`
-        });
-    }
 
     const { data, error } = await supabase
         .from('bonos_solicitados')
         .insert({
             asignacion_id,
             usuario_pagado_id: req.usuario.id,
-            bono_config_id: bonoConfig.id,
+            bono_config_id:      bonoConfig ? bonoConfig.id : null,
             distancia_declarada: km,
-            monto_solicitado: bonoConfig.monto,
+            monto_solicitado:    bonoConfig ? bonoConfig.monto : 0,
             estado: 'pendiente',
             observacion_usuario: observacion || null
         })
@@ -92,10 +87,11 @@ router.post('/', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    res.status(201).json({
-        ...data,
-        mensaje: `Bono solicitado: ${bonoConfig.nombre} ($${bonoConfig.monto.toLocaleString('es-CL')}). Queda pendiente de aprobación.`
-    });
+    const mensaje = bonoConfig
+        ? `Bono solicitado: ${bonoConfig.nombre} ($${bonoConfig.monto.toLocaleString('es-CL')}). Queda pendiente de aprobación.`
+        : `Declaración de ${km} km enviada. El administrador fijará el monto y aprobará.`;
+
+    res.status(201).json({ ...data, mensaje });
 });
 
 // GET /api/usuario/bonos/config-activos — ver bonos disponibles

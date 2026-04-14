@@ -53,33 +53,33 @@ router.post('/:id/responder', async (req, res) => {
             .update({ estado_designacion: 'aceptado', distancia_km: km, aceptado_en: ahora, updated_at: ahora })
             .eq('id', req.params.id);
 
-        // Auto-crear bono pendiente si hay configuración para esa distancia
+        // Auto-crear bono pendiente SIEMPRE que hay km (con o sin tramo configurado).
+        // Si no hay bonos_config para esa distancia → monto_solicitado=0, admin lo revisa y aprueba con monto manual.
         let bonoCreado = null;
         let bonoError  = null;
         try {
             const config = await obtenerBonoParaDistancia(km);
-            console.log(`[BONO-AUTO] asig=${req.params.id} km=${km} config=${config ? config.nombre + ' $' + config.monto : 'null (sin config para esta distancia)'}`);
-            if (config) {
-                const { data: bono, error: errBono } = await supabase
-                    .from('bonos_solicitados')
-                    .insert({
-                        asignacion_id:       req.params.id,
-                        usuario_pagado_id:   req.usuario.id,
-                        distancia_declarada: km,
-                        monto_solicitado:    config.monto,
-                        bono_config_id:      config.id,
-                        estado:              'pendiente',
-                        created_by:          req.usuario.id
-                    })
-                    .select()
-                    .single();
-                if (errBono) {
-                    console.error(`[BONO-AUTO] Error al insertar bono: asig=${req.params.id} km=${km} code=${errBono.code} msg=${errBono.message}`);
-                    bonoError = errBono.message;
-                } else {
-                    bonoCreado = bono;
-                    console.log(`[BONO-AUTO] Bono creado: id=${bono.id} monto=${bono.monto_solicitado}`);
-                }
+            console.log(`[BONO-AUTO] asig=${req.params.id} km=${km} config=${config ? config.nombre + ' $' + config.monto : 'null (sin tramo — bono con $0 para revisión admin)'}`);
+
+            const { data: bono, error: errBono } = await supabase
+                .from('bonos_solicitados')
+                .insert({
+                    asignacion_id:       req.params.id,
+                    usuario_pagado_id:   req.usuario.id,
+                    distancia_declarada: km,
+                    monto_solicitado:    config ? config.monto : 0,
+                    bono_config_id:      config ? config.id : null,
+                    estado:              'pendiente',
+                    created_by:          req.usuario.id
+                })
+                .select()
+                .single();
+            if (errBono) {
+                console.error(`[BONO-AUTO] Error al insertar bono: asig=${req.params.id} km=${km} code=${errBono.code} msg=${errBono.message}`);
+                bonoError = errBono.message;
+            } else {
+                bonoCreado = bono;
+                console.log(`[BONO-AUTO] Bono creado: id=${bono.id} monto=${bono.monto_solicitado}`);
             }
         } catch(e) {
             console.error(`[BONO-AUTO] Excepción inesperada: asig=${req.params.id} km=${km} err=${e.message}`);
@@ -99,11 +99,15 @@ router.post('/:id/responder', async (req, res) => {
 
         let mensajeRespuesta;
         if (bonoCreado) {
-            mensajeRespuesta = `Designación aceptada. Bono de $${bonoCreado.monto_solicitado?.toLocaleString('es-CL')} solicitado (pendiente de aprobación).`;
+            if (bonoCreado.monto_solicitado > 0) {
+                mensajeRespuesta = `Designación aceptada. Bono de $${bonoCreado.monto_solicitado?.toLocaleString('es-CL')} solicitado (pendiente de aprobación).`;
+            } else {
+                mensajeRespuesta = `Designación aceptada. Declaración de ${km} km enviada al administrador para fijar monto.`;
+            }
         } else if (bonoError) {
             mensajeRespuesta = `Designación aceptada. Error al crear solicitud de bono — contacte al administrador.`;
         } else {
-            mensajeRespuesta = 'Designación aceptada. Sin bono configurado para esta distancia.';
+            mensajeRespuesta = 'Designación aceptada.';
         }
 
         return res.json({
@@ -230,30 +234,28 @@ router.patch('/:id/km', async (req, res) => {
         }
 
     } else {
-        // Sin bono activo o rechazado → crear nuevo
-        if (config) {
-            const { data: nuevo, error: errNew } = await supabase
-                .from('bonos_solicitados')
-                .insert({
-                    asignacion_id:       req.params.id,
-                    usuario_pagado_id:   req.usuario.id,
-                    distancia_declarada: km,
-                    monto_solicitado:    config.monto,
-                    bono_config_id:      config.id,
-                    estado:              'pendiente',
-                    created_by:          req.usuario.id
-                })
-                .select().single();
-            if (errNew) {
-                console.error(`[BONO-KM] Error creando bono: code=${errNew.code} msg=${errNew.message}`);
-                mensajeBono = 'No se pudo crear solicitud de bono. Contacte al administrador.';
-            } else {
-                bonoResultado = nuevo;
-                mensajeBono = 'Nueva solicitud de bono creada.';
-                console.log(`[BONO-KM] Nuevo bono creado: id=${nuevo.id}`);
-            }
+        // Sin bono activo o rechazado → crear nuevo (siempre, con o sin tramo configurado)
+        const { data: nuevo, error: errNew } = await supabase
+            .from('bonos_solicitados')
+            .insert({
+                asignacion_id:       req.params.id,
+                usuario_pagado_id:   req.usuario.id,
+                distancia_declarada: km,
+                monto_solicitado:    config ? config.monto : 0,
+                bono_config_id:      config ? config.id : null,
+                estado:              'pendiente',
+                created_by:          req.usuario.id
+            })
+            .select().single();
+        if (errNew) {
+            console.error(`[BONO-KM] Error creando bono: code=${errNew.code} msg=${errNew.message}`);
+            mensajeBono = 'No se pudo crear solicitud de bono. Contacte al administrador.';
         } else {
-            mensajeBono = 'Sin bono configurado para esta distancia.';
+            bonoResultado = nuevo;
+            mensajeBono = config
+                ? 'Nueva solicitud de bono creada.'
+                : `Declaración de ${km} km enviada al administrador para fijar monto.`;
+            console.log(`[BONO-KM] Nuevo bono creado: id=${nuevo.id} monto=${nuevo.monto_solicitado}`);
         }
     }
 

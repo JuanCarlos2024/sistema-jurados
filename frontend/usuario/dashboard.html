@@ -289,7 +289,8 @@ function renderRodeos(asignaciones) {
                 const colores   = { aprobado: '#27ae60', pendiente: '#f39c12', rechazado: '#e74c3c', modificado: '#2980b9' };
                 const etiquetas = { aprobado: 'Aprobado', pendiente: 'En revisión', rechazado: 'Rechazado', modificado: 'Modificado' };
                 const monto = ['aprobado','modificado'].includes(bono.estado) ? (bono.monto_aprobado || bono.monto_solicitado) : bono.monto_solicitado;
-                const chip = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${formatCLP(monto)}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
+                const montoStr = (monto === 0 && bono.estado === 'pendiente') ? 'Pendiente fijación' : formatCLP(monto);
+                const chip = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${montoStr}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
                 // Para rodeos futuros aceptados: permitir actualizar/re-solicitar km
                 let accionBono = '';
                 if (esFuturo) {
@@ -302,10 +303,11 @@ function renderRodeos(asignaciones) {
                     }
                 }
                 bonoHtml = `<div style="display:flex; flex-direction:column; align-items:flex-start; gap:2px;">${chip}${accionBono}</div>`;
-            } else if (esAceptada && bonosConfig.length > 0) {
+            } else if (esAceptada) {
+                // Siempre disponible: el admin fijará el monto si no hay tramo configurado
                 bonoHtml = `<button class="btn btn-pequeño btn-outline" onclick="abrirIngresarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Ingresar km</button>`;
             } else {
-                bonoHtml = '<span style="color:#aaa; font-size:12px;">Sin bono</span>';
+                bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
             }
 
             // Columna Adjuntos
@@ -355,7 +357,7 @@ function abrirAceptar(asigId, clubNombre) {
     document.getElementById('modal-body').innerHTML = `
         <div class="alerta alerta-info" style="margin-bottom:16px;">
             <strong>${sanitizar(clubNombre)}</strong><br>
-            <small>Ingrese los kilómetros recorridos. Si corresponde a un tramo con bono, se generará automáticamente.</small>
+            <small>Ingrese los kilómetros recorridos. Se generará una solicitud que el administrador revisará y aprobará.</small>
         </div>
         <form onsubmit="enviarRespuesta(event, '${asigId}', 'aceptar')">
             <div class="form-grupo">
@@ -379,8 +381,8 @@ function abrirAceptar(asigId, clubNombre) {
             prev.className = 'alerta alerta-info';
             prev.classList.remove('oculto');
         } else {
-            prev.textContent = `Sin bono configurado para ${km} km`;
-            prev.className = 'alerta alerta-error';
+            prev.textContent = `${km} km — sin tramo configurado. Se enviará para revisión del administrador.`;
+            prev.className = 'alerta alerta-advertencia';
             prev.classList.remove('oculto');
         }
     });
@@ -459,8 +461,8 @@ function abrirIngresarKm(asignacionId, clubNombre) {
             div.className = 'alerta alerta-info';
             div.classList.remove('oculto');
         } else {
-            div.className = 'alerta alerta-error';
-            div.textContent = `No existe bono para ${km} km.`;
+            div.className = 'alerta alerta-advertencia';
+            div.textContent = `${km} km — sin tramo configurado. El administrador fijará el monto al revisar.`;
             div.classList.remove('oculto');
         }
     });
@@ -514,8 +516,8 @@ function abrirActualizarKm(asignacionId, clubNombre) {
             prev.textContent = `Bono: ${bono.nombre} — ${formatCLP(bono.monto)}`;
             prev.className = 'alerta alerta-info';
         } else {
-            prev.textContent = `Sin bono configurado para ${km} km`;
-            prev.className = 'alerta alerta-error';
+            prev.textContent = `${km} km — sin tramo configurado. El administrador fijará el monto al revisar.`;
+            prev.className = 'alerta alerta-advertencia';
         }
         prev.classList.remove('oculto');
     });
