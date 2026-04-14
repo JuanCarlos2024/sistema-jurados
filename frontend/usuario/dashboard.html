@@ -680,7 +680,7 @@ async function eliminarAdjunto(id) {
 }
 
 // ── Calendario de disponibilidad ────────────────────────────────
-const DIAS_SEMANA = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MESES_CAL   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
 // Devuelve true si fechaStr (YYYY-MM-DD) es hoy o futuro en timezone Chile.
@@ -713,8 +713,10 @@ async function cargarCalendario() {
 
 function renderCalendario(año, mes) {
     const hoy = new Date();
-    const hoyStr = hoy.toISOString().split('T')[0];
-    const primerDia = new Date(año, mes - 1, 1).getDay(); // 0=Dom
+    // Usar timezone Chile para "hoy" y "pasado" (evita desfase UTC vs Santiago)
+    const hoyStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(hoy);
+    // Convertir getDay() (0=Dom) a lunes-first (0=Lun): (jsDay + 6) % 7
+    const primerDia = (new Date(año, mes - 1, 1).getDay() + 6) % 7;
     const totalDias = new Date(año, mes, 0).getDate();
     const disponiblesCount = diasDisponibles.size;
 
