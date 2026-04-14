@@ -486,8 +486,9 @@ function htmlDetalle(r) {
             <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
             <td>${designBadge}</td>
             <td>
-                ${a.estado === 'activo' ? `<div class="flex gap-8">
+                ${a.estado === 'activo' ? `<div class="flex gap-8" style="flex-wrap:wrap;">
                     <button class="btn btn-pequeño btn-outline" onclick="abrirEditarAsignacion('${a.id}', '${r.id}')">Editar</button>
+                    <button class="btn btn-pequeño" style="background:#e8f4fd;color:#2980b9;border:1px solid #aed6f1;" onclick="abrirGestionarDesignacion('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${a.estado_designacion || 'null'}', '${r.id}')">Designación</button>
                     <button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminarAsignacion('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${r.id}')">Eliminar</button>
                 </div>` : '<span style="color:#aaa;font-size:12px;">—</span>'}
             </td>
@@ -855,6 +856,73 @@ async function guardarEdicionAsignacion(e, asigId, rodeoId) {
     try {
         await api.patch('/admin/asignaciones/' + asigId, body);
         mostrarToast('Asignación actualizada', 'success');
+        verDetalle(rodeoId);
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+// ── GESTIONAR DESIGNACIÓN (admin sin restricción de fecha) ───────
+function abrirGestionarDesignacion(asigId, nombre, estadoActual, rodeoId) {
+    const LABELS = { aceptado:'Aceptado', rechazado:'Rechazado', pendiente:'Pendiente', null:'Sin respuesta' };
+    const label  = LABELS[estadoActual] || estadoActual;
+    document.getElementById('modal-titulo').textContent = 'Gestionar designación';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-info" style="margin-bottom:14px;">
+            <strong>${sanitizar(nombre)}</strong> — Estado actual: <strong>${label}</strong>
+        </div>
+        <p style="font-size:13px; color:var(--gris); margin-bottom:16px;">
+            Como administrador puede cambiar la designación en cualquier fecha (pasada, actual o futura).
+            El cambio queda registrado en auditoría.
+        </p>
+
+        <form onsubmit="ejecutarCambioDesignacion(event,'${asigId}','${rodeoId}')">
+            <div class="form-grupo">
+                <label class="form-label">Acción</label>
+                <select id="gd-accion" class="form-control" onchange="onCambioAccionDesignacion(this.value)">
+                    <option value="aceptar">Aceptar designación</option>
+                    <option value="rechazar">Rechazar designación</option>
+                    <option value="pendiente">Reabrir (volver a pendiente)</option>
+                </select>
+            </div>
+
+            <div id="gd-km-wrap" class="form-grupo">
+                <label class="form-label">Distancia (km) <span style="color:var(--gris); font-weight:400;">(opcional — si corresponde bono)</span></label>
+                <input type="number" id="gd-km" class="form-control" min="1" placeholder="Ej: 150">
+                <div class="form-hint">Si ingresa km y hay configuración de bono, se creará o actualizará la solicitud de bono.</div>
+            </div>
+
+            <div id="gd-motivo-wrap" class="form-grupo oculto">
+                <label class="form-label">Motivo del rechazo <span style="color:var(--gris); font-weight:400;">(opcional)</span></label>
+                <textarea id="gd-motivo" class="form-control" rows="2" placeholder="Ej: No asistió, fue reemplazado, etc."></textarea>
+                <div class="form-hint">Los bonos pendientes de esta asignación quedarán rechazados automáticamente.</div>
+            </div>
+
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Confirmar cambio</button>
+                <button type="button" class="btn btn-secundario" onclick="verDetalle('${rodeoId}')">Cancelar</button>
+            </div>
+        </form>`;
+}
+
+function onCambioAccionDesignacion(accion) {
+    document.getElementById('gd-km-wrap').classList.toggle('oculto', accion !== 'aceptar');
+    document.getElementById('gd-motivo-wrap').classList.toggle('oculto', accion !== 'rechazar');
+}
+
+async function ejecutarCambioDesignacion(e, asigId, rodeoId) {
+    e.preventDefault();
+    const btn    = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const accion = document.getElementById('gd-accion').value;
+    const km     = document.getElementById('gd-km').value.trim();
+    const motivo = document.getElementById('gd-motivo').value.trim();
+
+    const body = { accion };
+    if (accion === 'aceptar' && km) body.distancia_km = parseInt(km);
+    if (accion === 'rechazar' && motivo) body.motivo = motivo;
+
+    try {
+        const r = await api.post('/admin/asignaciones/' + asigId + '/estado', body);
+        mostrarToast(r.mensaje || 'Designación actualizada', 'success');
         verDetalle(rodeoId);
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }

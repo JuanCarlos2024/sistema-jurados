@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
-const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
+const { obtenerTarifas, calcularPagoBase, obtenerBonoParaDistancia } = require('../../services/calculo');
 
 // POST /api/admin/asignaciones — crear una o varias asignaciones para un rodeo
 router.post('/', async (req, res) => {
@@ -181,6 +181,160 @@ router.patch('/:id', async (req, res) => {
     });
 
     res.json(data);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/asignaciones/:id/estado
+// Cambia estado_designacion sin restricción de fecha (solo admin).
+// body: { accion: 'aceptar'|'rechazar'|'pendiente', distancia_km?: number, motivo?: string }
+//
+// Política de bonos al cambiar estado:
+//   aceptar  → upsert bono si hay km + config (igual que usuario, pero sin fecha check)
+//   rechazar → rechaza bonos pendientes de esa asignación (no puede cobrar si no asistió)
+//   pendiente→ sin cambios en bonos (reabre la designación para que el usuario responda)
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/:id/estado', async (req, res) => {
+    const { accion, distancia_km, motivo } = req.body;
+
+    if (!['aceptar', 'rechazar', 'pendiente'].includes(accion)) {
+        return res.status(400).json({ error: 'accion debe ser aceptar, rechazar o pendiente' });
+    }
+
+    const { data: asig } = await supabase
+        .from('asignaciones')
+        .select('id, rodeo_id, usuario_pagado_id, tipo_persona, estado, estado_designacion, distancia_km, rodeos(club, asociacion, fecha)')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
+    if (asig.estado === 'anulado') return res.status(400).json({ error: 'No se puede cambiar el estado de una asignación anulada' });
+
+    const ahora        = new Date().toISOString();
+    const estadoAntes  = asig.estado_designacion;
+    const campos       = { updated_at: ahora };
+    let mensajeBono    = '';
+    let bonoCreado     = null;
+
+    if (accion === 'aceptar') {
+        campos.estado_designacion      = 'aceptado';
+        campos.aceptado_en             = ahora;
+        campos.observacion_designacion = null;
+
+        // Km (opcional al aceptar desde admin; puede no tener km en rodeos pasados)
+        const km = distancia_km ? parseInt(distancia_km) : null;
+        if (km && km > 0) {
+            campos.distancia_km = km;
+
+            // Obtener config de bono para esa distancia
+            const config = await obtenerBonoParaDistancia(km);
+
+            // Buscar bono más reciente para esta asignación
+            const { data: bonosExist } = await supabase
+                .from('bonos_solicitados')
+                .select('id, estado, monto_solicitado, monto_aprobado')
+                .eq('asignacion_id', req.params.id)
+                .order('created_at', { ascending: false })
+                .limit(1);
+
+            const existing = bonosExist?.[0];
+
+            if (existing && existing.estado === 'pendiente') {
+                // Actualizar bono pendiente
+                const upd = { distancia_declarada: km, updated_at: ahora };
+                if (config) { upd.monto_solicitado = config.monto; upd.bono_config_id = config.id; }
+                const { data: b } = await supabase.from('bonos_solicitados').update(upd).eq('id', existing.id).select().single();
+                bonoCreado  = b;
+                mensajeBono = 'Solicitud de bono actualizada.';
+            } else if (existing && ['aprobado','modificado'].includes(existing.estado)) {
+                // Reabrir bono aprobado
+                const upd = { estado: 'pendiente', distancia_declarada: km, monto_aprobado: null, observacion_admin: null, revisado_por: null, revisado_at: null, updated_at: ahora };
+                if (config) { upd.monto_solicitado = config.monto; upd.bono_config_id = config.id; }
+                const { data: b } = await supabase.from('bonos_solicitados').update(upd).eq('id', existing.id).select().single();
+                bonoCreado  = b;
+                mensajeBono = 'Bono reabierto a revisión (km cambió).';
+            } else if (config) {
+                // Crear nuevo bono
+                const { data: b, error: errB } = await supabase
+                    .from('bonos_solicitados')
+                    .insert({
+                        asignacion_id:       req.params.id,
+                        usuario_pagado_id:   asig.usuario_pagado_id,
+                        distancia_declarada: km,
+                        monto_solicitado:    config.monto,
+                        bono_config_id:      config.id,
+                        estado:              'pendiente',
+                        created_by:          req.usuario.id
+                    })
+                    .select()
+                    .single();
+                if (errB) {
+                    console.error(`[ADMIN-ESTADO] Error creando bono: ${errB.message}`);
+                    mensajeBono = 'No se pudo crear solicitud de bono.';
+                } else {
+                    bonoCreado  = b;
+                    mensajeBono = `Bono de $${b.monto_solicitado?.toLocaleString('es-CL')} solicitado.`;
+                }
+            } else {
+                mensajeBono = 'Sin configuración de bono para esta distancia.';
+            }
+        }
+
+    } else if (accion === 'rechazar') {
+        campos.estado_designacion = 'rechazado';
+        if (motivo) campos.observacion_designacion = motivo.trim();
+
+        // Rechazar bonos pendientes de esta asignación (no puede cobrar si no asistió)
+        const { data: bonosRechazados } = await supabase
+            .from('bonos_solicitados')
+            .update({ estado: 'rechazado', observacion_admin: 'Designación rechazada por admin', updated_at: ahora })
+            .eq('asignacion_id', req.params.id)
+            .eq('estado', 'pendiente')
+            .select('id');
+        if (bonosRechazados?.length > 0) {
+            mensajeBono = `${bonosRechazados.length} bono(s) pendiente(s) rechazado(s).`;
+        }
+
+    } else {
+        // pendiente → reabre designación
+        campos.estado_designacion       = 'pendiente';
+        campos.aceptado_en              = null;
+        campos.observacion_designacion  = null;
+    }
+
+    const { data: actualizado, error: errUpd } = await supabase
+        .from('asignaciones')
+        .update(campos)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (errUpd) return res.status(500).json({ error: errUpd.message });
+
+    const descripcionMap = {
+        aceptar:   `Designación aceptada por admin: ${asig.rodeos?.club} (${asig.rodeos?.fecha})${distancia_km ? ` — ${distancia_km} km` : ''}`,
+        rechazar:  `Designación rechazada por admin: ${asig.rodeos?.club} (${asig.rodeos?.fecha})${motivo ? ` — motivo: ${motivo}` : ''}`,
+        pendiente: `Designación reabierta a pendiente por admin: ${asig.rodeos?.club} (${asig.rodeos?.fecha})`
+    };
+
+    await auditoria.registrar({
+        tabla:            'asignaciones',
+        registro_id:      req.params.id,
+        accion:           'editar',
+        datos_anteriores: { estado_designacion: estadoAntes },
+        datos_nuevos:     { estado_designacion: campos.estado_designacion, distancia_km: distancia_km || undefined },
+        actor_id:         req.usuario.id,
+        actor_tipo:       'administrador',
+        descripcion:      descripcionMap[accion],
+        ip_address:       req.ip
+    });
+
+    console.log(`[ADMIN-ESTADO] asig=${req.params.id} accion=${accion} antes=${estadoAntes} ahora=${campos.estado_designacion} admin=${req.usuario.id} rodeo=${asig.rodeos?.fecha} club="${asig.rodeos?.club}"`);
+
+    return res.json({
+        mensaje:      `Designación ${accion === 'aceptar' ? 'aceptada' : accion === 'rechazar' ? 'rechazada' : 'reabierta'} correctamente. ${mensajeBono}`.trim(),
+        estado_nuevo: campos.estado_designacion,
+        bono_creado:  !!bonoCreado
+    });
 });
 
 // POST /api/admin/asignaciones/:id/recalcular
