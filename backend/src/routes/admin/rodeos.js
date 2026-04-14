@@ -170,13 +170,15 @@ router.get('/', async (req, res) => {
         const ids = rodeos.map(r => r.id);
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('rodeo_id, tipo_persona, pago_base_calculado, estado_designacion')
+            .select('rodeo_id, tipo_persona, pago_base_calculado, estado_designacion, nombre_importado, usuarios_pagados(nombre_completo)')
             .in('rodeo_id', ids).eq('estado', 'activo');
 
         const emptyStats = () => ({
             total_asignaciones: 0, jurados: 0, delegados: 0, total_pago_base: 0,
             j_acept: 0, j_rech: 0, j_pend: 0,
-            d_acept: 0, d_rech: 0, d_pend: 0
+            d_acept: 0, d_rech: 0, d_pend: 0,
+            jurados_nombres: [],
+            delegado_nombre: null
         });
         const sp = {};
         (asigs || []).forEach(a => {
@@ -187,12 +189,15 @@ router.get('/', async (req, res) => {
             const ed = a.estado_designacion;
             const acept = ed === 'aceptado' || ed === null; // null = legacy = aceptado
             const rech  = ed === 'rechazado';
+            const nombre = a.usuarios_pagados?.nombre_completo || a.nombre_importado || null;
             if (a.tipo_persona === 'jurado') {
                 s.jurados++;
                 if (rech) s.j_rech++; else if (acept) s.j_acept++; else s.j_pend++;
+                if (nombre) s.jurados_nombres.push(nombre);
             } else {
                 s.delegados++;
                 if (rech) s.d_rech++; else if (acept) s.d_acept++; else s.d_pend++;
+                if (nombre && !s.delegado_nombre) s.delegado_nombre = nombre;
             }
         });
         rodeos.forEach(r => Object.assign(r, sp[r.id] || emptyStats()));

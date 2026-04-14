@@ -347,7 +347,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
     }
     wrap.innerHTML = `<table>
         <thead><tr>
-            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Categoría</th>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Delegado</th><th>Jurados</th>
             <th>Días</th><th>Asistencia J/D</th><th>Total pagos</th><th>Origen</th>
             <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube">CJ/CD/VY</th>
             <th>Acciones</th>
@@ -376,10 +376,17 @@ function renderTabla(rodeos, total, indicadores = {}) {
             const indicHtml = `<span style="font-size:12px; white-space:nowrap;">CJ ${ind.cj?si:no} CD ${ind.cd?si:no} VY ${ind.vy?si:no}</span>`;
             return `<tr>
             <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
-            <td><strong>${sanitizar(r.club)}</strong></td>
+            <td>${sanitizar(r.club)}</td>
             <td>${sanitizar(r.asociacion)}</td>
             <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
-            <td>${r.categoria_rodeo_nombre ? `<span class="badge">${sanitizar(r.categoria_rodeo_nombre)}</span>` : '<span style="color:#aaa; font-size:12px;">—</span>'}</td>
+            <td style="font-size:13px;">${r.delegado_nombre ? sanitizar(r.delegado_nombre) : '<span style="color:#aaa;">—</span>'}</td>
+            <td style="font-size:13px;">${(() => {
+                const nombres = r.jurados_nombres || [];
+                if (nombres.length === 0) return '<span style="color:#aaa;">—</span>';
+                const visibles = nombres.slice(0, 2).map(n => `<strong>${sanitizar(n)}</strong>`).join('<br>');
+                const resto = nombres.length > 2 ? `<br><span style="color:#888; font-size:11px;">+${nombres.length - 2} más</span>` : '';
+                return visibles + resto;
+            })()}</td>
             <td style="text-align:center;">${r.duracion_dias}</td>
             <td style="text-align:center; font-size:13px;">${estadoHtml}</td>
             <td class="monto-positivo">${formatCLP(r.total_pago_base || 0)}</td>
