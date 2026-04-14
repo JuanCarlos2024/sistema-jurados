@@ -61,9 +61,10 @@ router.get('/', async (req, res) => {
 
         // ── Asignaciones del mes (por fecha del rodeo, no created_at) ───
         // Inner join garantiza que solo trae asignaciones cuyo rodeo está en el rango
+        // estado_designacion: null = aceptado (compat. migración 002), 'pendiente', 'aceptado', 'rechazado'
         const { data: asigsMes } = await supabase
             .from('asignaciones')
-            .select('id, tipo_persona, pago_base_calculado, rodeos!inner(fecha)')
+            .select('id, tipo_persona, pago_base_calculado, estado_designacion, rodeos!inner(fecha)')
             .eq('estado', 'activo')
             .gte('rodeos.fecha', inicioMes)
             .lte('rodeos.fecha', finMes);
@@ -74,6 +75,19 @@ router.get('/', async (req, res) => {
 
         const baseJurados   = asigJurados.reduce((s, a) => s + (a.pago_base_calculado || 0), 0);
         const baseDelegados = asigDelegados.reduce((s, a) => s + (a.pago_base_calculado || 0), 0);
+
+        // ── Contadores de estado de designación por tipo ─────────────────
+        // Confirmado = aceptado explícito O null (retrocompat. pre-migración 009)
+        // Rechazado  = excluido de ambos conteos
+        const esConfirmado = (a) => a.estado_designacion === 'aceptado' || a.estado_designacion === null;
+        const esPendiente  = (a) => a.estado_designacion === 'pendiente';
+
+        const juradosPendientes    = asigJurados.filter(esPendiente).length;
+        const juradosConfirmados   = asigJurados.filter(esConfirmado).length;
+        const delegadosPendientes  = asigDelegados.filter(esPendiente).length;
+        const delegadosConfirmados = asigDelegados.filter(esConfirmado).length;
+
+        console.log(`[DASHBOARD] ${año}-${String(mes).padStart(2,'0')} designaciones: jurados_pend=${juradosPendientes} jurados_conf=${juradosConfirmados} deleg_pend=${delegadosPendientes} deleg_conf=${delegadosConfirmados}`);
 
         // ── Bonos aprobados del mes ─────────────────────────────────────
         let bonosJurados = 0;
@@ -176,7 +190,12 @@ router.get('/', async (req, res) => {
                 rodeos: rodeosMes || 0,
                 asignaciones_total: asigs.length,
                 asignaciones_jurados: asigJurados.length,
-                asignaciones_delegados: asigDelegados.length
+                asignaciones_delegados: asigDelegados.length,
+                // Desglose por estado de designación (rechazados excluidos de ambos conteos)
+                jurados_pendientes:    juradosPendientes,
+                jurados_confirmados:   juradosConfirmados,
+                delegados_pendientes:  delegadosPendientes,
+                delegados_confirmados: delegadosConfirmados
             },
 
             // Montos brutos del mes

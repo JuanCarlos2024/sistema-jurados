@@ -291,7 +291,34 @@ async function cargarDashboard() {
                 </div>
             </div>
 
-            <!-- 2. MONTOS BRUTOS -->
+            <!-- 2. ESTADO DE DESIGNACIONES DEL MES -->
+            <div class="dash-seccion">
+                <div class="dash-seccion-titulo">Estado de designaciones del mes</div>
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="val naranja">${d.actividad.jurados_pendientes ?? 0}</div>
+                        <div class="lbl">Jurados pendientes</div>
+                        <div class="sub">sin confirmar designación</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="val azul">${d.actividad.jurados_confirmados ?? 0}</div>
+                        <div class="lbl">Jurados confirmados</div>
+                        <div class="sub">designación aceptada</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="val naranja">${d.actividad.delegados_pendientes ?? 0}</div>
+                        <div class="lbl">Delegados pendientes</div>
+                        <div class="sub">sin confirmar designación</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="val verde">${d.actividad.delegados_confirmados ?? 0}</div>
+                        <div class="lbl">Delegados confirmados</div>
+                        <div class="sub">designación aceptada</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. MONTOS BRUTOS (renumerado — antes era 2) -->
             <div class="dash-seccion">
                 <div class="dash-seccion-titulo">Montos brutos del mes</div>
                 <div class="monto-bloque">
@@ -343,7 +370,7 @@ async function cargarDashboard() {
                 </div>
             </div>
 
-            <!-- 3. MONTOS LÍQUIDOS -->
+            <!-- 4. MONTOS LÍQUIDOS -->
             <div class="dash-seccion">
                 <div class="dash-seccion-titulo">Montos líquidos del mes <span style="font-weight:400; font-size:11px;">(retención ${d.liquidos.retencion_pct}%)</span></div>
                 <div class="kpi-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
@@ -365,7 +392,7 @@ async function cargarDashboard() {
                 </div>
             </div>
 
-            <!-- 4. IMPORTACIONES + BONOS PENDIENTES -->
+            <!-- 5. IMPORTACIONES + BONOS PENDIENTES -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
 
                 <div class="card">
