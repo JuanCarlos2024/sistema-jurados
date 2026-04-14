@@ -500,7 +500,9 @@ function renderDetalle(data) {
         </div>` : ''}
         <div class="stat-card"><div class="val">${data.data.length}</div><div class="lbl">Rodeos</div></div>
         <div class="stat-card"><div class="val">${formatCLP(t.pago_base||0)}</div><div class="lbl">Pago base</div></div>
-        <div class="stat-card"><div class="val">${formatCLP(t.bono_aprobado||0)}</div><div class="lbl">Bonos</div></div>
+        <div class="stat-card"><div class="val">${formatCLP(t.bono_aprobado||0)}</div><div class="lbl">Total bonos</div></div>
+        <div class="stat-card"><div class="val">${t.bonos_35k||0}</div><div class="lbl">Bonos $35.000</div></div>
+        <div class="stat-card"><div class="val">${t.bonos_50k||0}</div><div class="lbl">Bonos $50.000</div></div>
         <div class="stat-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Bruto</div></div>
         <div class="stat-card"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Líquido</div></div>`;
 

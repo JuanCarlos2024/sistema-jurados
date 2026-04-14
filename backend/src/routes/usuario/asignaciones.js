@@ -69,13 +69,12 @@ router.post('/:id/responder', async (req, res) => {
                     distancia_declarada: km,
                     monto_solicitado:    config ? config.monto : 0,
                     bono_config_id:      config ? config.id : null,
-                    estado:              'pendiente',
-                    created_by:          req.usuario.id
+                    estado:              'pendiente'
                 })
                 .select()
                 .single();
             if (errBono) {
-                console.error(`[BONO-AUTO] Error al insertar bono: asig=${req.params.id} km=${km} code=${errBono.code} msg=${errBono.message}`);
+                console.error(`[BONO-AUTO] Error al insertar bono: asig=${req.params.id} km=${km} code=${errBono.code} details=${errBono.details} hint=${errBono.hint} msg=${errBono.message}`);
                 bonoError = errBono.message;
             } else {
                 bonoCreado = bono;
@@ -243,12 +242,11 @@ router.patch('/:id/km', async (req, res) => {
                 distancia_declarada: km,
                 monto_solicitado:    config ? config.monto : 0,
                 bono_config_id:      config ? config.id : null,
-                estado:              'pendiente',
-                created_by:          req.usuario.id
+                estado:              'pendiente'
             })
             .select().single();
         if (errNew) {
-            console.error(`[BONO-KM] Error creando bono: code=${errNew.code} msg=${errNew.message}`);
+            console.error(`[BONO-KM] Error creando bono: code=${errNew.code} details=${errNew.details} hint=${errNew.hint} msg=${errNew.message}`);
             mensajeBono = 'No se pudo crear solicitud de bono. Contacte al administrador.';
         } else {
             bonoResultado = nuevo;

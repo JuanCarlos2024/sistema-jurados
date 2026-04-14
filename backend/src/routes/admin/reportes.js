@@ -200,6 +200,20 @@ router.get('/detalle-jurado', async (req, res) => {
             liquido:       acc.liquido       + f.liquido,
         }), { pago_base:0, bono_aprobado:0, bruto:0, retencion:0, liquido:0 });
 
+        // Contar bonos aprobados/modificados por tramo de monto
+        let bonos_35k = 0, bonos_50k = 0;
+        for (const a of conBonos) {
+            for (const b of (a.bonos || [])) {
+                if (['aprobado', 'modificado'].includes(b.estado)) {
+                    const m = b.monto_aprobado || b.monto_solicitado || 0;
+                    if (m === 35000) bonos_35k++;
+                    else if (m === 50000) bonos_50k++;
+                }
+            }
+        }
+        totales.bonos_35k = bonos_35k;
+        totales.bonos_50k = bonos_50k;
+
         const { data: usr } = await supabase
             .from('usuarios_pagados')
             .select('codigo_interno, nombre_completo, rut, categoria, tipo_persona')
