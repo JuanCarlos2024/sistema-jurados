@@ -24,10 +24,11 @@ function nombreMes(num) {
 // Estado del bono → clase CSS y texto
 function estadoBono(estado) {
     const mapa = {
-        pendiente:  { clase: 'bono-pendiente',  texto: 'Pendiente' },
-        aprobado:   { clase: 'bono-aprobado',   texto: 'Aprobado' },
-        rechazado:  { clase: 'bono-rechazado',  texto: 'Rechazado' },
-        modificado: { clase: 'bono-modificado', texto: 'Modificado' }
+        pendiente:     { clase: 'bono-pendiente',    texto: 'Pendiente' },
+        aprobado:      { clase: 'bono-aprobado',     texto: 'Aprobado' },
+        rechazado:     { clase: 'bono-rechazado',    texto: 'Rechazado' },
+        modificado:    { clase: 'bono-modificado',   texto: 'Modificado' },
+        aprobado_auto: { clase: 'bono-aprobado-auto', texto: 'Sin bono ($0)' }
     };
     return mapa[estado] || { clase: '', texto: estado };
 }

@@ -286,10 +286,12 @@ function renderRodeos(asignaciones) {
             if (esRechazada || esPendiente) {
                 bonoHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
             } else if (bono) {
-                const colores   = { aprobado: '#27ae60', pendiente: '#f39c12', rechazado: '#e74c3c', modificado: '#2980b9' };
-                const etiquetas = { aprobado: 'Aprobado', pendiente: 'En revisión', rechazado: 'Rechazado', modificado: 'Modificado' };
-                const monto = ['aprobado','modificado'].includes(bono.estado) ? (bono.monto_aprobado || bono.monto_solicitado) : bono.monto_solicitado;
-                const montoStr = (monto === 0 && bono.estado === 'pendiente') ? 'Pendiente fijación' : formatCLP(monto);
+                const colores   = { aprobado: '#27ae60', pendiente: '#f39c12', rechazado: '#e74c3c', modificado: '#2980b9', aprobado_auto: '#95a5a6' };
+                const etiquetas = { aprobado: 'Aprobado', pendiente: 'En revisión', rechazado: 'Rechazado', modificado: 'Modificado', aprobado_auto: 'Sin bono' };
+                const monto = ['aprobado','modificado','aprobado_auto'].includes(bono.estado) ? (bono.monto_aprobado ?? bono.monto_solicitado) : bono.monto_solicitado;
+                const montoStr = bono.estado === 'aprobado_auto' ? '$0 (auto)' :
+                                 (monto === 0 && bono.estado === 'pendiente') ? 'Pendiente fijación' :
+                                 formatCLP(monto);
                 const chip = `<span class="bono-chip" style="background:${colores[bono.estado]||'#666'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${montoStr}<br><small>${etiquetas[bono.estado]||bono.estado}</small></span>`;
                 // Para rodeos futuros aceptados: permitir actualizar/re-solicitar km
                 let accionBono = '';
@@ -300,6 +302,8 @@ function renderRodeos(asignaciones) {
                         accionBono = `<button class="btn btn-pequeño btn-outline" style="margin-top:4px;" onclick="abrirIngresarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Re-solicitar</button>`;
                     } else if (['aprobado','modificado'].includes(bono.estado)) {
                         accionBono = `<button class="btn btn-pequeño btn-outline" style="margin-top:4px;" onclick="abrirActualizarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Cambiar km</button>`;
+                    } else if (bono.estado === 'aprobado_auto') {
+                        accionBono = `<button class="btn btn-pequeño btn-outline" style="margin-top:4px;" onclick="abrirActualizarKm('${a.id}', '${sanitizar(a.rodeos?.club||'')}')">Actualizar km</button>`;
                     }
                 }
                 bonoHtml = `<div style="display:flex; flex-direction:column; align-items:flex-start; gap:2px;">${chip}${accionBono}</div>`;

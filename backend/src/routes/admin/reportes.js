@@ -80,8 +80,9 @@ async function agregarBonos(asignaciones) {
     return asignaciones.map(a => {
         const bs = bonoMap[a.id] || [];
         const ultimo = bs[bs.length - 1] || null;
+        // aprobado_auto tiene monto_aprobado=0, lo incluimos para consistencia (no suma al total)
         const bono_aprobado = bs
-            .filter(b => ['aprobado', 'modificado'].includes(b.estado))
+            .filter(b => ['aprobado', 'modificado', 'aprobado_auto'].includes(b.estado))
             .reduce((s, b) => s + (b.monto_aprobado || b.monto_solicitado || 0), 0);
         return { ...a, bonos: bs, ultimo_bono: ultimo, bono_aprobado };
     });

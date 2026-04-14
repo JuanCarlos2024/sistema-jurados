@@ -130,7 +130,8 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
 
         const bono_pendiente = bonosDeEsta.filter(b => b.estado === 'pendiente')
             .reduce((s, b) => s + b.monto_solicitado, 0);
-        const bono_aprobado = bonosDeEsta.filter(b => ['aprobado', 'modificado'].includes(b.estado))
+        // aprobado_auto tiene monto_aprobado=0, lo incluimos para consistencia (no suma)
+        const bono_aprobado = bonosDeEsta.filter(b => ['aprobado', 'modificado', 'aprobado_auto'].includes(b.estado))
             .reduce((s, b) => s + (b.monto_aprobado || b.monto_solicitado), 0);
         const bono_rechazado = bonosDeEsta.filter(b => b.estado === 'rechazado')
             .reduce((s, b) => s + b.monto_solicitado, 0);

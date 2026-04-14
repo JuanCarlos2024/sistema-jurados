@@ -68,15 +68,19 @@ router.post('/', async (req, res) => {
     // En ese caso se crea igual con monto=0 para que el admin lo revise y fije el monto
     const bonoConfig = await obtenerBonoParaDistancia(km);
 
+    // km < 350 → aprobado_auto ($0, sin revisión admin)
+    // km >= 350 → pendiente (requiere revisión admin)
+    const esAuto = bonoConfig === null;
     const { data, error } = await supabase
         .from('bonos_solicitados')
         .insert({
             asignacion_id,
-            usuario_pagado_id: req.usuario.id,
+            usuario_pagado_id:   req.usuario.id,
             bono_config_id:      bonoConfig ? bonoConfig.id : null,
             distancia_declarada: km,
             monto_solicitado:    bonoConfig ? bonoConfig.monto : 0,
-            estado: 'pendiente',
+            monto_aprobado:      esAuto ? 0 : null,
+            estado:              esAuto ? 'aprobado_auto' : 'pendiente',
             observacion_usuario: observacion || null
         })
         .select(`
@@ -87,9 +91,9 @@ router.post('/', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    const mensaje = bonoConfig
-        ? `Bono solicitado: ${bonoConfig.nombre} ($${bonoConfig.monto.toLocaleString('es-CL')}). Queda pendiente de aprobación.`
-        : `Declaración de ${km} km enviada. El administrador fijará el monto y aprobará.`;
+    const mensaje = esAuto
+        ? `Distancia de ${km} km registrada — sin bono aplicable (< 350 km). No requiere revisión del administrador.`
+        : `Bono solicitado: ${bonoConfig.nombre} ($${bonoConfig.monto.toLocaleString('es-CL')}). Queda pendiente de aprobación.`;
 
     res.status(201).json({ ...data, mensaje });
 });

@@ -61,6 +61,9 @@ router.post('/:id/responder', async (req, res) => {
             const config = await obtenerBonoParaDistancia(km);
             console.log(`[BONO-AUTO] asig=${req.params.id} km=${km} config=${config ? config.nombre + ' $' + config.monto : 'null (sin tramo — bono con $0 para revisión admin)'}`);
 
+            // km < 350 → sin bono, se auto-aprueba en $0 sin revisión admin
+            // km >= 350 → bono con monto del tramo, queda pendiente de revisión admin
+            const esAuto = config === null;
             const { data: bono, error: errBono } = await supabase
                 .from('bonos_solicitados')
                 .insert({
@@ -68,8 +71,9 @@ router.post('/:id/responder', async (req, res) => {
                     usuario_pagado_id:   req.usuario.id,
                     distancia_declarada: km,
                     monto_solicitado:    config ? config.monto : 0,
+                    monto_aprobado:      esAuto ? 0 : null,
                     bono_config_id:      config ? config.id : null,
-                    estado:              'pendiente'
+                    estado:              esAuto ? 'aprobado_auto' : 'pendiente'
                 })
                 .select()
                 .single();
@@ -78,7 +82,7 @@ router.post('/:id/responder', async (req, res) => {
                 bonoError = errBono.message;
             } else {
                 bonoCreado = bono;
-                console.log(`[BONO-AUTO] Bono creado: id=${bono.id} monto=${bono.monto_solicitado}`);
+                console.log(`[BONO-AUTO] Bono creado: id=${bono.id} estado=${bono.estado} monto=${bono.monto_solicitado}`);
             }
         } catch(e) {
             console.error(`[BONO-AUTO] Excepción inesperada: asig=${req.params.id} km=${km} err=${e.message}`);
@@ -98,10 +102,10 @@ router.post('/:id/responder', async (req, res) => {
 
         let mensajeRespuesta;
         if (bonoCreado) {
-            if (bonoCreado.monto_solicitado > 0) {
-                mensajeRespuesta = `Designación aceptada. Bono de $${bonoCreado.monto_solicitado?.toLocaleString('es-CL')} solicitado (pendiente de aprobación).`;
+            if (bonoCreado.estado === 'aprobado_auto') {
+                mensajeRespuesta = `Designación aceptada. Distancia de ${km} km registrada — sin bono aplicable (< 350 km).`;
             } else {
-                mensajeRespuesta = `Designación aceptada. Declaración de ${km} km enviada al administrador para fijar monto.`;
+                mensajeRespuesta = `Designación aceptada. Bono de $${bonoCreado.monto_solicitado?.toLocaleString('es-CL')} solicitado (pendiente de aprobación).`;
             }
         } else if (bonoError) {
             mensajeRespuesta = `Designación aceptada. Error al crear solicitud de bono — contacte al administrador.`;
@@ -201,59 +205,52 @@ router.patch('/:id/km', async (req, res) => {
     let bonoResultado = null;
     let mensajeBono   = '';
 
-    if (existing && existing.estado === 'pendiente') {
-        // Actualizar bono pendiente con nuevos km y monto
-        const campos = { distancia_declarada: km, updated_at: ahora };
-        if (config) { campos.monto_solicitado = config.monto; campos.bono_config_id = config.id; }
+    // km < 350 → aprobado_auto ($0, sin revisión admin)
+    // km >= 350 → pendiente (requiere revisión admin)
+    const esAuto = config === null;
+    const nuevoEstado = esAuto ? 'aprobado_auto' : 'pendiente';
+    const bonoPayload = {
+        distancia_declarada: km,
+        bono_config_id:      config ? config.id : null,
+        monto_solicitado:    config ? config.monto : 0,
+        monto_aprobado:      esAuto ? 0 : null,
+        estado:              nuevoEstado,
+        observacion_admin:   null,
+        revisado_por:        null,
+        revisado_at:         null,
+        updated_at:          ahora
+    };
+
+    if (existing) {
+        console.log(`[BONO-KM] Actualizando bono: id=${existing.id} estado_ant=${existing.estado} km_nuevo=${km} estado_nuevo=${nuevoEstado}`);
         const { data: upd, error: errUpd2 } = await supabase
-            .from('bonos_solicitados').update(campos).eq('id', existing.id).select().single();
-        if (!errUpd2) { bonoResultado = upd; mensajeBono = 'Solicitud de bono actualizada.'; }
-        else console.error(`[BONO-KM] Error actualizando bono pendiente: ${errUpd2.message}`);
-
-    } else if (existing && ['aprobado', 'modificado'].includes(existing.estado)) {
-        // Reabrir a pendiente — el admin debe re-aprobar
-        const campos = {
-            estado:          'pendiente',
-            distancia_declarada: km,
-            monto_aprobado:  null,
-            observacion_admin: null,
-            revisado_por:    null,
-            revisado_at:     null,
-            updated_at:      ahora
-        };
-        if (config) { campos.monto_solicitado = config.monto; campos.bono_config_id = config.id; }
-        const { data: upd, error: errUpd3 } = await supabase
-            .from('bonos_solicitados').update(campos).eq('id', existing.id).select().single();
-        if (!errUpd3) {
-            bonoResultado = upd;
-            mensajeBono = 'Bono reabierto a revisión (km cambió después de aprobación).';
-            console.log(`[BONO-KM] Bono reabierto: id=${existing.id} estado_ant=${existing.estado} km_nuevo=${km}`);
+            .from('bonos_solicitados').update(bonoPayload).eq('id', existing.id).select().single();
+        if (errUpd2) {
+            console.error(`[BONO-KM] Error actualizando bono: code=${errUpd2.code} msg=${errUpd2.message}`);
+            mensajeBono = 'No se pudo actualizar solicitud de bono.';
         } else {
-            console.error(`[BONO-KM] Error reabriendo bono: ${errUpd3.message}`);
+            bonoResultado = upd;
+            mensajeBono = esAuto
+                ? `Sin bono para ${km} km (< 350 km) — registrado automáticamente en $0.`
+                : existing.estado === nuevoEstado
+                    ? 'Solicitud de bono actualizada.'
+                    : 'Bono reabierto a revisión (km cambió después de aprobación).';
         }
-
     } else {
-        // Sin bono activo o rechazado → crear nuevo (siempre, con o sin tramo configurado)
+        // Sin bono previo → crear nuevo
         const { data: nuevo, error: errNew } = await supabase
             .from('bonos_solicitados')
-            .insert({
-                asignacion_id:       req.params.id,
-                usuario_pagado_id:   req.usuario.id,
-                distancia_declarada: km,
-                monto_solicitado:    config ? config.monto : 0,
-                bono_config_id:      config ? config.id : null,
-                estado:              'pendiente'
-            })
+            .insert({ asignacion_id: req.params.id, usuario_pagado_id: req.usuario.id, ...bonoPayload })
             .select().single();
         if (errNew) {
             console.error(`[BONO-KM] Error creando bono: code=${errNew.code} details=${errNew.details} hint=${errNew.hint} msg=${errNew.message}`);
             mensajeBono = 'No se pudo crear solicitud de bono. Contacte al administrador.';
         } else {
             bonoResultado = nuevo;
-            mensajeBono = config
-                ? 'Nueva solicitud de bono creada.'
-                : `Declaración de ${km} km enviada al administrador para fijar monto.`;
-            console.log(`[BONO-KM] Nuevo bono creado: id=${nuevo.id} monto=${nuevo.monto_solicitado}`);
+            mensajeBono = esAuto
+                ? `Sin bono para ${km} km (< 350 km) — registrado automáticamente en $0.`
+                : 'Nueva solicitud de bono creada.';
+            console.log(`[BONO-KM] Bono creado: id=${nuevo.id} estado=${nuevo.estado} monto=${nuevo.monto_solicitado}`);
         }
     }
 

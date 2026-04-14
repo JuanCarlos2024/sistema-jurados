@@ -369,10 +369,11 @@ tr:hover td { background: #f8fafd; }
     font-weight: 600;
 }
 
-.bono-chip.pendiente  { background: var(--amarillo-claro); color: #a04000; }
-.bono-chip.aprobado   { background: var(--verde-claro);    color: var(--verde); }
-.bono-chip.rechazado  { background: var(--rojo-claro);     color: var(--rojo); }
-.bono-chip.modificado { background: #eaf4fb;               color: #1a5276; }
+.bono-chip.pendiente      { background: var(--amarillo-claro); color: #a04000; }
+.bono-chip.aprobado       { background: var(--verde-claro);    color: var(--verde); }
+.bono-chip.rechazado      { background: var(--rojo-claro);     color: var(--rojo); }
+.bono-chip.modificado     { background: #eaf4fb;               color: #1a5276; }
+.bono-chip.aprobado_auto  { background: #f2f3f4;               color: #707b7c; }
 
 /* ── ALERTAS ── */
 .alerta {

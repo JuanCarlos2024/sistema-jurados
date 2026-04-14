@@ -85,6 +85,29 @@ describe('Tramo $50.000 (500+ km)', () => {
     });
 });
 
+// ─── Regla de negocio: estado inicial del bono ────────────────────────────────
+// (lógica vive en los route handlers; aquí documentamos el comportamiento
+//  esperado en función del resultado de _matchBonoConfig)
+describe('Regla de estado del bono según km', () => {
+    test('349 km → _matchBonoConfig=null → estado esperado: aprobado_auto ($0)', () => {
+        const config = _matchBonoConfig(349, CONFIGS_PROD);
+        expect(config).toBeNull();
+        // → estado='aprobado_auto', monto_solicitado=0, monto_aprobado=0, sin revisión admin
+    });
+    test('350 km → _matchBonoConfig≠null → estado esperado: pendiente ($35.000)', () => {
+        const config = _matchBonoConfig(350, CONFIGS_PROD);
+        expect(config).not.toBeNull();
+        expect(config.monto).toBe(35000);
+        // → estado='pendiente', monto_solicitado=35000, requiere revisión admin
+    });
+    test('500 km → _matchBonoConfig≠null → estado esperado: pendiente ($50.000)', () => {
+        const config = _matchBonoConfig(500, CONFIGS_PROD);
+        expect(config).not.toBeNull();
+        expect(config.monto).toBe(50000);
+        // → estado='pendiente', monto_solicitado=50000, requiere revisión admin
+    });
+});
+
 // ─── Casos defensivos ──────────────────────────────────────────────────────────
 describe('Casos defensivos', () => {
     test('km negativo → null', () => {

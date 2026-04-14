@@ -20,7 +20,15 @@ router.get('/', async (req, res) => {
         .order('created_at', { ascending: false })
         .range(offset, offset + parseInt(limit) - 1);
 
-    if (estado) query = query.eq('estado', estado);
+    if (estado === 'aprobado_auto') {
+        // Filtro explícito para bonos auto-aprobados (km < 350, $0)
+        query = query.eq('estado', 'aprobado_auto');
+    } else if (estado) {
+        query = query.eq('estado', estado);
+    } else {
+        // "Todos" excluye aprobado_auto: no requieren revisión y no suman monto
+        query = query.neq('estado', 'aprobado_auto');
+    }
 
     const { data, error, count } = await query;
     if (error) return res.status(500).json({ error: error.message });
