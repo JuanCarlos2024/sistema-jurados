@@ -129,7 +129,16 @@
             <div class="card">
                 <div class="card-titulo flex justify-between items-center">
                     <span>📅 Mi disponibilidad — <span id="cal-titulo-mes"></span></span>
-                    <div style="font-size:12px; color:#888;">Solo mes actual · Haga clic en un día para marcar/desmarcar</div>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <button id="cal-tab-actual" onclick="cambiarMesCal(0)"
+                            style="padding:4px 12px; border-radius:20px; font-size:12px; cursor:pointer; border:1px solid var(--primario); background:var(--primario); color:#fff;">
+                            Mes actual
+                        </button>
+                        <button id="cal-tab-siguiente" onclick="cambiarMesCal(1)"
+                            style="padding:4px 12px; border-radius:20px; font-size:12px; cursor:pointer; border:1px solid var(--gris-borde); background:#fff; color:var(--texto);">
+                            Mes siguiente
+                        </button>
+                    </div>
                 </div>
                 <div id="cal-info" class="alerta alerta-info" style="margin-bottom:12px; font-size:13px;">
                     Indique los días en que está disponible para ser asignado a un rodeo.
@@ -689,22 +698,39 @@ async function eliminarAdjunto(id) {
 const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MESES_CAL   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-// Devuelve true si fechaStr (YYYY-MM-DD) es hoy o futuro en timezone Chile.
-// "hoy" se incluye como futuro: el jurado puede responder el mismo día del rodeo.
-function esFuturoChile(fechaStr) {
-    if (!fechaStr) return false;
-    const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
-    return fechaStr >= hoyChile;
-}
-
 let diasDisponibles = new Set(); // strings "YYYY-MM-DD"
 let calCargando = false;
+let calOffset = 0; // 0 = mes actual, 1 = mes siguiente
+
+// Devuelve { año, mes } para el offset dado, usando timezone Chile.
+function calcularMesCal(offset) {
+    const hoyStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    const [añoHoy, mesHoy] = hoyStr.split('-').map(Number);
+    let mes = mesHoy + offset;
+    let año = añoHoy;
+    if (mes > 12) { mes = 1; año++; }
+    return { año, mes };
+}
+
+function actualizarTabsCal() {
+    const esActual = calOffset === 0;
+    document.getElementById('cal-tab-actual').style.background    = esActual ? 'var(--primario)' : '#fff';
+    document.getElementById('cal-tab-actual').style.color         = esActual ? '#fff' : 'var(--texto)';
+    document.getElementById('cal-tab-actual').style.borderColor   = esActual ? 'var(--primario)' : 'var(--gris-borde)';
+    document.getElementById('cal-tab-siguiente').style.background = esActual ? '#fff' : 'var(--primario)';
+    document.getElementById('cal-tab-siguiente').style.color      = esActual ? 'var(--texto)' : '#fff';
+    document.getElementById('cal-tab-siguiente').style.borderColor= esActual ? 'var(--gris-borde)' : 'var(--primario)';
+}
+
+async function cambiarMesCal(offset) {
+    if (calCargando) return;
+    calOffset = offset;
+    actualizarTabsCal();
+    await cargarCalendario();
+}
 
 async function cargarCalendario() {
-    const hoy = new Date();
-    const año = hoy.getFullYear();
-    const mes = hoy.getMonth() + 1;
-
+    const { año, mes } = calcularMesCal(calOffset);
     document.getElementById('cal-titulo-mes').textContent = `${MESES_CAL[mes-1]} ${año}`;
 
     try {
@@ -718,31 +744,30 @@ async function cargarCalendario() {
 }
 
 function renderCalendario(año, mes) {
-    const hoy = new Date();
-    // Usar timezone Chile para "hoy" y "pasado" (evita desfase UTC vs Santiago)
-    const hoyStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(hoy);
-    // Convertir getDay() (0=Dom) a lunes-first (0=Lun): (jsDay + 6) % 7
-    const primerDia = (new Date(año, mes - 1, 1).getDay() + 6) % 7;
+    // "Hoy" en timezone Chile
+    const hoyStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    // El mes siguiente no tiene días pasados todavía
+    const esMesSiguiente = calOffset === 1;
+
+    const primerDia = (new Date(año, mes - 1, 1).getDay() + 6) % 7; // Lun=0
     const totalDias = new Date(año, mes, 0).getDate();
     const disponiblesCount = diasDisponibles.size;
 
     let html = '<div class="cal-grid">';
 
-    // Encabezados días de semana
     DIAS_SEMANA.forEach(d => {
         html += `<div class="cal-dia-label">${d}</div>`;
     });
 
-    // Celdas vacías al inicio
     for (let i = 0; i < primerDia; i++) {
         html += '<div class="cal-dia cal-vacio"></div>';
     }
 
-    // Días del mes
     for (let d = 1; d <= totalDias; d++) {
         const fechaStr = `${año}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        const esHoy = fechaStr === hoyStr;
-        const esPasado = fechaStr < hoyStr;
+        const esHoy      = fechaStr === hoyStr;
+        // En mes siguiente ningún día es pasado; en mes actual sí
+        const esPasado   = !esMesSiguiente && fechaStr < hoyStr;
         const esDisponible = diasDisponibles.has(fechaStr);
 
         let clases = 'cal-dia';
@@ -751,11 +776,14 @@ function renderCalendario(año, mes) {
         if (esPasado)     clases += ' cal-pasado';
 
         const onclick = esPasado ? '' : `onclick="toggleDia('${fechaStr}')"`;
-        html += `<div class="${clases}" ${onclick} title="${esPasado ? 'Día pasado' : (esDisponible ? 'Disponible — clic para quitar' : 'No disponible — clic para marcar')}">${d}</div>`;
+        const title   = esPasado
+            ? 'Día pasado'
+            : (esDisponible ? 'Disponible — clic para quitar' : 'No disponible — clic para marcar');
+        html += `<div class="${clases}" ${onclick} title="${title}">${d}</div>`;
     }
 
     html += '</div>';
-    html += `<div class="cal-resumen">Días disponibles este mes: <strong>${disponiblesCount}</strong></div>`;
+    html += `<div class="cal-resumen">Días disponibles: <strong>${disponiblesCount}</strong></div>`;
 
     document.getElementById('calendario-wrap').innerHTML = html;
 }
@@ -765,14 +793,15 @@ async function toggleDia(fechaStr) {
     calCargando = true;
 
     const esDisponible = diasDisponibles.has(fechaStr);
-    // Actualizar UI inmediatamente (optimistic update)
     if (esDisponible) {
         diasDisponibles.delete(fechaStr);
     } else {
         diasDisponibles.add(fechaStr);
     }
-    const hoy = new Date();
-    renderCalendario(hoy.getFullYear(), hoy.getMonth() + 1);
+
+    // Re-render con el mes del offset activo
+    const { año, mes } = calcularMesCal(calOffset);
+    renderCalendario(año, mes);
 
     try {
         if (esDisponible) {
@@ -787,7 +816,7 @@ async function toggleDia(fechaStr) {
         } else {
             diasDisponibles.delete(fechaStr);
         }
-        renderCalendario(hoy.getFullYear(), hoy.getMonth() + 1);
+        renderCalendario(año, mes);
         mostrarError(err);
     } finally {
         calCargando = false;
