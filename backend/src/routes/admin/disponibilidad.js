@@ -99,19 +99,31 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
     (asigRows || []).forEach(a => {
         const rodeo = a.rodeos;
         if (!rodeo || !rodeo.fecha) return;
+        // Filtrar al período consultado en disponibilidad
+        if (fecha_desde && rodeo.fecha < fecha_desde) return;
+        if (fecha_hasta && rodeo.fecha > fecha_hasta) return;
         if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
         historialMap[a.usuario_pagado_id].push(rodeo);
     });
     Object.keys(historialMap).forEach(uid => {
+        // Deduplicar por club + asociacion + fecha
+        const seen = new Set();
+        historialMap[uid] = historialMap[uid].filter(r => {
+            const key = `${r.club}|${r.asociacion}|${r.fecha}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        // Ordenar fecha desc, tomar top N, formatear
         historialMap[uid].sort((a, b) => b.fecha.localeCompare(a.fecha));
         historialMap[uid] = historialMap[uid]
             .slice(0, N_HISTORIAL)
             .map(r => {
                 const [, mes, dia] = r.fecha.split('-');
-                return `${(r.club || '—')}-${(r.asociacion || '—')}-${dia}/${mes}`;
+                return `${(r.club || '—')} - ${(r.asociacion || '—')} - ${dia}/${mes}`;
             });
     });
-    console.log(`[DISP] Step3 OK: historial para ${Object.keys(historialMap).length} usuario(s) (N=${N_HISTORIAL})`);
+    console.log(`[DISP] Step3 OK: historial para ${Object.keys(historialMap).length} usuario(s) (N=${N_HISTORIAL}, período: ${fecha_desde || '*'} → ${fecha_hasta || '*'})`);
 
     // ── Paso 4: unir en memoria ──────────────────────────────
     const userMap = {};
@@ -180,18 +192,32 @@ router.get('/exportar', async (req, res) => {
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
         rows = ordenarPorNombre(rows);
 
+        // Helper: extrae las 5 columnas de rodeos de un usuario
+        function rodeosCols(u) {
+            const h = u.historial_rodeos || [];
+            return [
+                h[0] || '', h[1] || '', h[2] || '', h[3] || '', h[4] || ''
+            ];
+        }
+
         if (formato === 'csv') {
-            const lines = ['Nombre,Tipo,Categoría,Ciudad,Fecha,Últimos rodeos'];
+            const lines = [
+                'Nombre,Tipo,Categoría,Ciudad,Fecha disponible,Último rodeo 1,Último rodeo 2,Último rodeo 3,Último rodeo 4,Último rodeo 5'
+            ];
             rows.forEach(d => {
                 const u = d.usuarios_pagados;
-                const historial = (u.historial_rodeos || []).join(' | ');
+                const [r1, r2, r3, r4, r5] = rodeosCols(u);
                 lines.push([
                     `"${(u.nombre_completo || '').replace(/"/g, '""')}"`,
                     `"${TIPO_LABEL[u.tipo_persona] || u.tipo_persona || ''}"`,
                     `"${u.categoria || ''}"`,
                     `"${u.ciudad || ''}"`,
                     `"${d.fecha}"`,
-                    `"${historial.replace(/"/g, '""')}"`
+                    `"${r1.replace(/"/g, '""')}"`,
+                    `"${r2.replace(/"/g, '""')}"`,
+                    `"${r3.replace(/"/g, '""')}"`,
+                    `"${r4.replace(/"/g, '""')}"`,
+                    `"${r5.replace(/"/g, '""')}"`
                 ].join(','));
             });
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -214,24 +240,29 @@ router.get('/exportar', async (req, res) => {
         };
 
         ws.columns = [
-            { header: 'Nombre',         key: 'nombre',    width: 30 },
-            { header: 'Tipo',           key: 'tipo',      width: 20 },
-            { header: 'Categoría',      key: 'categoria', width: 12 },
-            { header: 'Ciudad',         key: 'ciudad',    width: 18 },
-            { header: 'Fecha',          key: 'fecha',     width: 14 },
-            { header: 'Últimos rodeos', key: 'historial', width: 55 },
+            { header: 'Nombre',           key: 'nombre',  width: 30 },
+            { header: 'Tipo',             key: 'tipo',    width: 20 },
+            { header: 'Categoría',        key: 'cat',     width: 12 },
+            { header: 'Ciudad',           key: 'ciudad',  width: 18 },
+            { header: 'Fecha disponible', key: 'fecha',   width: 16 },
+            { header: 'Último rodeo 1',   key: 'r1',      width: 32 },
+            { header: 'Último rodeo 2',   key: 'r2',      width: 32 },
+            { header: 'Último rodeo 3',   key: 'r3',      width: 32 },
+            { header: 'Último rodeo 4',   key: 'r4',      width: 32 },
+            { header: 'Último rodeo 5',   key: 'r5',      width: 32 },
         ];
         ws.getRow(1).eachCell(cell => { Object.assign(cell, HEADER_STYLE); });
 
         rows.forEach(d => {
             const u = d.usuarios_pagados;
+            const [r1, r2, r3, r4, r5] = rodeosCols(u);
             ws.addRow({
-                nombre:    u.nombre_completo || '',
-                tipo:      TIPO_LABEL[u.tipo_persona] || u.tipo_persona || '',
-                categoria: u.categoria || '',
-                ciudad:    u.ciudad || '',
-                fecha:     d.fecha,
-                historial: (u.historial_rodeos || []).join(' | '),
+                nombre: u.nombre_completo || '',
+                tipo:   TIPO_LABEL[u.tipo_persona] || u.tipo_persona || '',
+                cat:    u.categoria || '',
+                ciudad: u.ciudad || '',
+                fecha:  d.fecha,
+                r1, r2, r3, r4, r5,
             });
         });
 
