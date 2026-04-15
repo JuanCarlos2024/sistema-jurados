@@ -398,9 +398,15 @@ function renderPorFecha(porFecha) {
         personas.forEach(p => {
             const tipo = DISP_TIPO_LABEL[p.tipo_persona] || sanitizar(p.tipo_persona || '');
             const cat  = p.categoria ? ` · Cat. ${p.categoria}` : '';
-            html += `<div class="persona-chip">
-                <span>${sanitizar(p.nombre_completo || '—')}</span>
-                <span class="tipo-badge">${tipo}${cat}</span>
+            const ciudad = p.ciudad ? ` · ${sanitizar(p.ciudad)}` : '';
+            const historial = (p.historial_rodeos || []);
+            const histHtml = historial.length > 0
+                ? `<span style="display:block; font-size:10px; color:#666; margin-top:2px; max-width:220px; white-space:normal;">${historial.map(h => sanitizar(h)).join(' | ')}</span>`
+                : '';
+            html += `<div class="persona-chip" style="flex-direction:column; align-items:flex-start;">
+                <div><span>${sanitizar(p.nombre_completo || '—')}</span>
+                <span class="tipo-badge" style="margin-left:5px;">${tipo}${cat}${ciudad}</span></div>
+                ${histHtml}
             </div>`;
         });
 
@@ -421,19 +427,25 @@ function renderLista(datos) {
 
     setResultado(`<div class="card"><div class="tabla-wrap"><div style="overflow-x:auto;"><table>
         <thead><tr>
-            <th>Nombre</th><th>Tipo</th><th>Categoría</th><th>Fecha disponible</th><th>Día</th>
+            <th>Nombre</th><th>Tipo</th><th>Categoría</th><th>Ciudad</th><th>Fecha disponible</th><th>Día</th><th>Últimos rodeos (máx. 5)</th>
         </tr></thead>
         <tbody>
         ${datos.map(d => {
             const u = d.usuarios_pagados;
             const [año, mes, dia] = d.fecha.split('-');
             const fechaObj = new Date(parseInt(año), parseInt(mes) - 1, parseInt(dia));
+            const historial = u.historial_rodeos || [];
+            const histHtml = historial.length === 0
+                ? '<span style="color:#aaa;">—</span>'
+                : historial.map(h => `<div style="font-size:11px; white-space:nowrap; color:#555;">${sanitizar(h)}</div>`).join('');
             return `<tr>
                 <td><strong>${sanitizar(u.nombre_completo || '—')}</strong></td>
                 <td>${DISP_TIPO_LABEL[u.tipo_persona] || sanitizar(u.tipo_persona || '—')}</td>
                 <td style="text-align:center;">${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}">${u.categoria}</span>` : '—'}</td>
+                <td style="font-size:13px;">${sanitizar(u.ciudad || '—')}</td>
                 <td style="white-space:nowrap;">${formatFecha(d.fecha)}</td>
                 <td style="color:#888; font-size:12px;">${DISP_DIAS_NOMBRE[fechaObj.getDay()]}</td>
+                <td>${histHtml}</td>
             </tr>`;
         }).join('')}
         </tbody>

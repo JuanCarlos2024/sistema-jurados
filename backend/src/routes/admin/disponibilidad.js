@@ -70,7 +70,7 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
     const { data: usuarios, error: userError } = await withTimeout(
         supabase
             .from('usuarios_pagados')
-            .select('id, nombre_completo, tipo_persona, categoria, rut')
+            .select('id, nombre_completo, tipo_persona, categoria, rut, ciudad')
             .in('id', userIds),
         'usuarios_pagados'
     );
@@ -80,9 +80,44 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
         throw new Error('Error consultando usuarios: ' + (userError.message || userError.code || JSON.stringify(userError)));
     }
 
-    // ── Paso 3: unir en memoria ──────────────────────────────
+    // ── Paso 3: historial de rodeos por usuario (batch) ──────
+    const N_HISTORIAL = 5;
+    const { data: asigRows, error: asigError } = await withTimeout(
+        supabase
+            .from('asignaciones')
+            .select('usuario_pagado_id, rodeos(club, asociacion, fecha)')
+            .in('usuario_pagado_id', userIds)
+            .eq('estado_designacion', 'aceptado'),
+        'asignaciones_historial'
+    );
+
+    if (asigError) {
+        console.warn('[DISP] Step3 warn (historial, no-fatal):', JSON.stringify(asigError));
+    }
+
+    const historialMap = {};
+    (asigRows || []).forEach(a => {
+        const rodeo = a.rodeos;
+        if (!rodeo || !rodeo.fecha) return;
+        if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
+        historialMap[a.usuario_pagado_id].push(rodeo);
+    });
+    Object.keys(historialMap).forEach(uid => {
+        historialMap[uid].sort((a, b) => b.fecha.localeCompare(a.fecha));
+        historialMap[uid] = historialMap[uid]
+            .slice(0, N_HISTORIAL)
+            .map(r => {
+                const [, mes, dia] = r.fecha.split('-');
+                return `${(r.club || '—')}-${(r.asociacion || '—')}-${dia}/${mes}`;
+            });
+    });
+    console.log(`[DISP] Step3 OK: historial para ${Object.keys(historialMap).length} usuario(s) (N=${N_HISTORIAL})`);
+
+    // ── Paso 4: unir en memoria ──────────────────────────────
     const userMap = {};
-    (usuarios || []).forEach(u => { userMap[u.id] = u; });
+    (usuarios || []).forEach(u => {
+        userMap[u.id] = { ...u, historial_rodeos: historialMap[u.id] || [] };
+    });
 
     const resultado = dispRows
         .map(d => ({ ...d, usuarios_pagados: userMap[d.usuario_pagado_id] || null }))
@@ -146,14 +181,17 @@ router.get('/exportar', async (req, res) => {
         rows = ordenarPorNombre(rows);
 
         if (formato === 'csv') {
-            const lines = ['Nombre,Tipo,Categoría,Fecha'];
+            const lines = ['Nombre,Tipo,Categoría,Ciudad,Fecha,Últimos rodeos'];
             rows.forEach(d => {
                 const u = d.usuarios_pagados;
+                const historial = (u.historial_rodeos || []).join(' | ');
                 lines.push([
                     `"${(u.nombre_completo || '').replace(/"/g, '""')}"`,
                     `"${TIPO_LABEL[u.tipo_persona] || u.tipo_persona || ''}"`,
                     `"${u.categoria || ''}"`,
-                    `"${d.fecha}"`
+                    `"${u.ciudad || ''}"`,
+                    `"${d.fecha}"`,
+                    `"${historial.replace(/"/g, '""')}"`
                 ].join(','));
             });
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -176,10 +214,12 @@ router.get('/exportar', async (req, res) => {
         };
 
         ws.columns = [
-            { header: 'Nombre',    key: 'nombre',    width: 30 },
-            { header: 'Tipo',      key: 'tipo',       width: 20 },
-            { header: 'Categoría', key: 'categoria',  width: 12 },
-            { header: 'Fecha',     key: 'fecha',      width: 14 },
+            { header: 'Nombre',         key: 'nombre',    width: 30 },
+            { header: 'Tipo',           key: 'tipo',      width: 20 },
+            { header: 'Categoría',      key: 'categoria', width: 12 },
+            { header: 'Ciudad',         key: 'ciudad',    width: 18 },
+            { header: 'Fecha',          key: 'fecha',     width: 14 },
+            { header: 'Últimos rodeos', key: 'historial', width: 55 },
         ];
         ws.getRow(1).eachCell(cell => { Object.assign(cell, HEADER_STYLE); });
 
@@ -189,7 +229,9 @@ router.get('/exportar', async (req, res) => {
                 nombre:    u.nombre_completo || '',
                 tipo:      TIPO_LABEL[u.tipo_persona] || u.tipo_persona || '',
                 categoria: u.categoria || '',
+                ciudad:    u.ciudad || '',
                 fecha:     d.fecha,
+                historial: (u.historial_rodeos || []).join(' | '),
             });
         });
 
