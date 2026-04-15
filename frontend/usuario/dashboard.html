@@ -698,6 +698,13 @@ async function eliminarAdjunto(id) {
 const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MESES_CAL   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
+// Devuelve true si fechaStr (YYYY-MM-DD) es hoy o futuro en timezone Chile.
+function esFuturoChile(fechaStr) {
+    if (!fechaStr) return false;
+    const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    return fechaStr >= hoyChile;
+}
+
 let diasDisponibles = new Set(); // strings "YYYY-MM-DD"
 let calCargando = false;
 let calOffset = 0; // 0 = mes actual, 1 = mes siguiente
