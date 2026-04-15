@@ -8,7 +8,7 @@ const { procesarRutInput } = require('../../services/rut');
 router.get('/', async (req, res) => {
     const { data, error } = await supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, direccion, comuna, ciudad, telefono, email, perfil_completo, primer_login, activo, created_at')
+        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, asociacion, direccion, comuna, ciudad, telefono, email, perfil_completo, primer_login, activo, created_at')
         .eq('id', req.usuario.id)
         .single();
 
@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
 
 // PATCH /api/usuario/perfil — completar o actualizar perfil
 router.patch('/', async (req, res) => {
-    const { nombre_completo, rut, direccion, comuna, ciudad, telefono, email, nueva_password } = req.body;
+    const { nombre_completo, rut, asociacion, direccion, comuna, ciudad, telefono, email, nueva_password } = req.body;
 
     const { data: actual } = await supabase
         .from('usuarios_pagados')
@@ -32,6 +32,7 @@ router.patch('/', async (req, res) => {
 
     if (nombre_completo) cambios.nombre_completo = nombre_completo.trim();
     if (telefono) cambios.telefono = telefono.trim();
+    if (asociacion !== undefined) cambios.asociacion = asociacion.trim();
     if (direccion !== undefined) cambios.direccion = direccion;
     if (comuna !== undefined) cambios.comuna = comuna;
     if (ciudad !== undefined) cambios.ciudad = ciudad;
@@ -102,7 +103,7 @@ router.patch('/', async (req, res) => {
         .from('usuarios_pagados')
         .update(cambios)
         .eq('id', req.usuario.id)
-        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, direccion, comuna, ciudad, telefono, email, perfil_completo, primer_login')
+        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, asociacion, direccion, comuna, ciudad, telefono, email, perfil_completo, primer_login')
         .single();
 
     if (error) return res.status(500).json({ error: error.message });

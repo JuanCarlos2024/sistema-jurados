@@ -73,6 +73,11 @@
                     </div>
 
                     <div class="form-grupo">
+                        <label class="form-label">Asociación</label>
+                        <input type="text" name="asociacion" id="inp-asociacion" class="form-control" placeholder="Ej: Asociación Colchagua">
+                    </div>
+
+                    <div class="form-grupo">
                         <label class="form-label">Dirección</label>
                         <input type="text" name="direccion" id="inp-direccion" class="form-control" placeholder="Av. Las Flores 123">
                     </div>
@@ -159,6 +164,7 @@ async function init() {
         document.getElementById('inp-nombre').value = perfil.nombre_completo || '';
         document.getElementById('inp-email').value = perfil.email || '';
         document.getElementById('inp-telefono').value = perfil.telefono || '';
+        document.getElementById('inp-asociacion').value = perfil.asociacion || '';
         document.getElementById('inp-direccion').value = perfil.direccion || '';
         document.getElementById('inp-comuna').value = perfil.comuna || '';
         document.getElementById('inp-ciudad').value = perfil.ciudad || '';
@@ -250,6 +256,7 @@ async function guardarPerfil(e) {
     const email  = document.getElementById('inp-email').value.trim();
     const tel    = document.getElementById('inp-telefono').value.trim();
     const dir    = document.getElementById('inp-direccion').value.trim();
+    const asoc   = document.getElementById('inp-asociacion').value.trim();
     const com    = document.getElementById('inp-comuna').value.trim();
     const ciu    = document.getElementById('inp-ciudad').value.trim();
 
@@ -257,6 +264,7 @@ async function guardarPerfil(e) {
     if (rut)     datos.rut = rut;
     if (email)   datos.email = email;
     if (tel)     datos.telefono = tel;
+    datos.asociacion = asoc; // permite borrar/vaciar
     if (dir)     datos.direccion = dir;
     if (com)     datos.comuna = com;
     if (ciu)     datos.ciudad = ciu;
