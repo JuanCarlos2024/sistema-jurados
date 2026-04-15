@@ -35,11 +35,19 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: 'Formato de fecha inválido. Use YYYY-MM-DD' });
     }
 
-    // Solo permitir fechas del mes actual
-    const hoy  = new Date();
+    // Permitir solo mes actual y mes siguiente (timezone Chile)
+    const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    const [añoHoy, mesHoy] = hoyChile.split('-').map(Number);
     const [añoF, mesF] = fecha.split('-').map(Number);
-    if (añoF !== hoy.getFullYear() || mesF !== hoy.getMonth() + 1) {
-        return res.status(400).json({ error: 'Solo puede marcar disponibilidad en el mes actual' });
+
+    let mesSig = mesHoy + 1, añoSig = añoHoy;
+    if (mesSig > 12) { mesSig = 1; añoSig++; }
+
+    const esMesActual    = añoF === añoHoy && mesF === mesHoy;
+    const esMesSiguiente = añoF === añoSig  && mesF === mesSig;
+
+    if (!esMesActual && !esMesSiguiente) {
+        return res.status(400).json({ error: 'Solo puede marcar disponibilidad en el mes actual o el siguiente' });
     }
 
     const { data, error } = await supabase
