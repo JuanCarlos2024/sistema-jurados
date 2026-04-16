@@ -96,6 +96,37 @@ router.get('/', async (req, res) => {
     if (Array.isArray(incluir) && incluir.length === 0)
         return res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
 
+    // Pre-query para búsqueda por nombre de jurado/delegado
+    let buscarRodeoIds = [];
+    if (buscar) {
+        // 1. Por nombre_importado en asignaciones
+        const { data: byImp } = await supabase
+            .from('asignaciones')
+            .select('rodeo_id')
+            .eq('estado', 'activo')
+            .ilike('nombre_importado', `%${buscar}%`);
+
+        // 2. Por nombre_completo en usuarios_pagados → asignaciones
+        const { data: usuariosMatch } = await supabase
+            .from('usuarios_pagados')
+            .select('id')
+            .ilike('nombre_completo', `%${buscar}%`);
+
+        const idSet = new Set((byImp || []).map(a => a.rodeo_id));
+
+        if (usuariosMatch && usuariosMatch.length > 0) {
+            const uids = usuariosMatch.map(u => u.id);
+            const { data: byUser } = await supabase
+                .from('asignaciones')
+                .select('rodeo_id')
+                .eq('estado', 'activo')
+                .in('usuario_pagado_id', uids);
+            (byUser || []).forEach(a => idSet.add(a.rodeo_id));
+        }
+
+        buscarRodeoIds = [...idSet];
+    }
+
     let query = supabase
         .from('rodeos')
         .select(`
@@ -126,7 +157,14 @@ router.get('/', async (req, res) => {
     }
     if (tipo_rodeo_id || tipo) query = query.eq('tipo_rodeo_id', tipo_rodeo_id || tipo);
     if (origen) query = query.eq('origen', origen);
-    if (buscar) query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
+    if (buscar) {
+        const orBase = `club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`;
+        if (buscarRodeoIds.length > 0) {
+            query = query.or(`${orBase},id.in.(${buscarRodeoIds.join(',')})`);
+        } else {
+            query = query.or(orBase);
+        }
+    }
     if (club && !buscar)       query = query.ilike('club', `%${club}%`);
     if (asociacion && !buscar) query = query.ilike('asociacion', `%${asociacion}%`);
 
