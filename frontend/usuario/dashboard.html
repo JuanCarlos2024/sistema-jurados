@@ -39,6 +39,7 @@
             min-width: 38px;
         }
         .cal-dia:hover:not(.cal-vacio):not(.cal-pasado) { border-color: #27ae60; background: #f0fff4; }
+        .cal-dia.cal-dia-especial { color: #e74c3c; }
         .cal-dia.disponible { background: #27ae60; color: #fff; border-color: #27ae60; }
         .cal-dia.disponible:hover { background: #219a52; border-color: #219a52; }
         .cal-dia.cal-hoy { border-color: #2980b9; box-shadow: 0 0 0 2px #d5eaff; }
@@ -698,6 +699,41 @@ async function eliminarAdjunto(id) {
 const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MESES_CAL   = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
+// ── Feriados de Chile ────────────────────────────────────────────
+// Retorna un Set de strings 'YYYY-MM-DD' con los feriados del año dado.
+function calcularFeriadosChile(año) {
+    const f = new Set();
+    const pad = n => String(n).padStart(2, '0');
+    const add = (m, d) => f.add(`${año}-${pad(m)}-${pad(d)}`);
+
+    // Feriados fijos
+    add(1,1);  add(5,1);  add(5,21); add(6,29); add(7,16);
+    add(8,15); add(9,18); add(9,19); add(10,12); add(10,31);
+    add(11,1); add(12,8); add(12,25);
+
+    // Día Nacional de los Pueblos Indígenas — 21 junio (solsticio de invierno)
+    add(6, 21);
+
+    // Semana Santa — algoritmo Meeus/Jones/Butcher para calcular Domingo de Pascua
+    const a = año % 19;
+    const b = Math.floor(año / 100), c = año % 100;
+    const d2 = Math.floor(b / 4), e = b % 4;
+    const ff = Math.floor((b + 8) / 25);
+    const g  = Math.floor((b - ff + 1) / 3);
+    const h  = (19 * a + b - d2 - g + 15) % 30;
+    const i  = Math.floor(c / 4), k = c % 4;
+    const l  = (32 + 2 * e + 2 * i - h - k) % 7;
+    const mm = Math.floor((a + 11 * h + 22 * l) / 451);
+    const mesPascua = Math.floor((h + l - 7 * mm + 114) / 31);
+    const diaPascua = ((h + l - 7 * mm + 114) % 31) + 1;
+    const pascua = new Date(año, mesPascua - 1, diaPascua);
+    const toStr = dt => `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+    const vs = new Date(pascua); vs.setDate(pascua.getDate() - 2); f.add(toStr(vs)); // Viernes Santo
+    const ss = new Date(pascua); ss.setDate(pascua.getDate() - 1); f.add(toStr(ss)); // Sábado Santo
+
+    return f;
+}
+
 // Devuelve true si fechaStr (YYYY-MM-DD) es hoy o futuro en timezone Chile.
 function esFuturoChile(fechaStr) {
     if (!fechaStr) return false;
@@ -759,6 +795,7 @@ function renderCalendario(año, mes) {
     const primerDia = (new Date(año, mes - 1, 1).getDay() + 6) % 7; // Lun=0
     const totalDias = new Date(año, mes, 0).getDate();
     const disponiblesCount = diasDisponibles.size;
+    const feriadosChile = calcularFeriadosChile(año);
 
     let html = '<div class="cal-grid">';
 
@@ -776,11 +813,15 @@ function renderCalendario(año, mes) {
         // En mes siguiente ningún día es pasado; en mes actual sí
         const esPasado   = !esMesSiguiente && fechaStr < hoyStr;
         const esDisponible = diasDisponibles.has(fechaStr);
+        // Sábado (6), domingo (0) o feriado Chile → número rojo
+        const diaSemana  = new Date(año, mes - 1, d).getDay();
+        const esEspecial = diaSemana === 0 || diaSemana === 6 || feriadosChile.has(fechaStr);
 
         let clases = 'cal-dia';
         if (esDisponible) clases += ' disponible';
         if (esHoy)        clases += ' cal-hoy';
         if (esPasado)     clases += ' cal-pasado';
+        if (esEspecial)   clases += ' cal-dia-especial';
 
         const onclick = esPasado ? '' : `onclick="toggleDia('${fechaStr}')"`;
         const title   = esPasado
