@@ -800,6 +800,14 @@ async function abrirEditarAsignacion(asigId, rodeoId) {
             </div>
 
             <div class="form-grupo">
+                <label class="form-label">Distancia (km)</label>
+                <input type="number" id="ea-km" class="form-control" min="1"
+                    value="${asig.distancia_km || ''}"
+                    placeholder="Ej: 350 — dejar vacío para no modificar">
+                <div class="form-hint">Si ingresa km, se creará o actualizará la solicitud de bono (queda pendiente de aprobación).</div>
+            </div>
+
+            <div class="form-grupo">
                 <label class="form-label">Observación</label>
                 <textarea id="ea-obs" class="form-control" rows="2">${sanitizar(asig.observacion || '')}</textarea>
             </div>
@@ -847,22 +855,26 @@ async function guardarEdicionAsignacion(e, asigId, rodeoId) {
 
     const usrId = document.getElementById('ea-usr-id').value.trim();
     const valorDiario = document.getElementById('ea-valor-diario').value.trim();
+    const kmVal = document.getElementById('ea-km').value.trim();
     const obs = document.getElementById('ea-obs').value.trim();
 
+    const asigActual = rodeoActual?.asignaciones?.find(a => a.id === asigId);
     const body = {};
     if (usrId) body.usuario_pagado_id = usrId;
     if (!usrId && valorDiario) body.valor_diario_aplicado = parseFloat(valorDiario);
+    if (kmVal && parseInt(kmVal) !== (asigActual?.distancia_km || null)) body.distancia_km = parseInt(kmVal);
     if (obs !== undefined) body.observacion = obs;
 
-    if (!usrId && !valorDiario && obs === (rodeoActual?.asignaciones?.find(a=>a.id===asigId)?.observacion || '')) {
+    if (!usrId && !valorDiario && !body.distancia_km && obs === (asigActual?.observacion || '')) {
         mostrarToast('No hay cambios para guardar', 'error');
         btn.disabled = false;
         return;
     }
 
     try {
-        await api.patch('/admin/asignaciones/' + asigId, body);
-        mostrarToast('Asignación actualizada', 'success');
+        const r = await api.patch('/admin/asignaciones/' + asigId, body);
+        const msg = r?.mensaje_bono ? `Asignación actualizada. ${r.mensaje_bono}` : 'Asignación actualizada';
+        mostrarToast(msg, 'success');
         verDetalle(rodeoId);
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }
