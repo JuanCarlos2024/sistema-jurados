@@ -70,7 +70,7 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
     const { data: usuarios, error: userError } = await withTimeout(
         supabase
             .from('usuarios_pagados')
-            .select('id, nombre_completo, tipo_persona, categoria, rut, ciudad')
+            .select('id, nombre_completo, tipo_persona, categoria, rut, ciudad, asociacion')
             .in('id', userIds),
         'usuarios_pagados'
     );
@@ -80,8 +80,8 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
         throw new Error('Error consultando usuarios: ' + (userError.message || userError.code || JSON.stringify(userError)));
     }
 
-    // ── Paso 3: historial de rodeos por usuario (batch) ──────
-    const N_HISTORIAL = 5;
+    // ── Paso 3: historial de rodeos por usuario (batch, histórico global) ───
+    const N_HISTORIAL = 8;
     const { data: asigRows, error: asigError } = await withTimeout(
         supabase
             .from('asignaciones')
@@ -99,9 +99,7 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
     (asigRows || []).forEach(a => {
         const rodeo = a.rodeos;
         if (!rodeo || !rodeo.fecha) return;
-        // Filtrar al período consultado en disponibilidad
-        if (fecha_desde && rodeo.fecha < fecha_desde) return;
-        if (fecha_hasta && rodeo.fecha > fecha_hasta) return;
+        // Sin filtro de período — histórico general
         if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
         historialMap[a.usuario_pagado_id].push(rodeo);
     });
@@ -114,7 +112,7 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
             seen.add(key);
             return true;
         });
-        // Ordenar fecha desc, tomar top N, formatear
+        // Ordenar fecha desc, tomar los últimos N históricos, formatear
         historialMap[uid].sort((a, b) => b.fecha.localeCompare(a.fecha));
         historialMap[uid] = historialMap[uid]
             .slice(0, N_HISTORIAL)
@@ -123,7 +121,7 @@ async function obtenerDisponibilidad(fecha_desde, fecha_hasta) {
                 return `${(r.club || '—')} - ${(r.asociacion || '—')} - ${dia}/${mes}`;
             });
     });
-    console.log(`[DISP] Step3 OK: historial para ${Object.keys(historialMap).length} usuario(s) (N=${N_HISTORIAL}, período: ${fecha_desde || '*'} → ${fecha_hasta || '*'})`);
+    console.log(`[DISP] Step3 OK: historial histórico para ${Object.keys(historialMap).length} usuario(s) (N=${N_HISTORIAL})`);
 
     // ── Paso 4: unir en memoria ──────────────────────────────
     const userMap = {};
@@ -192,32 +190,33 @@ router.get('/exportar', async (req, res) => {
         rows = filtrarRows(rows, { tipo_persona, categoria, nombre });
         rows = ordenarPorNombre(rows);
 
-        // Helper: extrae las 5 columnas de rodeos de un usuario
+        // Helper: extrae las 8 columnas de rodeos de un usuario
         function rodeosCols(u) {
             const h = u.historial_rodeos || [];
             return [
-                h[0] || '', h[1] || '', h[2] || '', h[3] || '', h[4] || ''
+                h[0]||'', h[1]||'', h[2]||'', h[3]||'',
+                h[4]||'', h[5]||'', h[6]||'', h[7]||''
             ];
         }
 
         if (formato === 'csv') {
             const lines = [
-                'Nombre,Tipo,Categoría,Ciudad,Fecha disponible,Último rodeo 1,Último rodeo 2,Último rodeo 3,Último rodeo 4,Último rodeo 5'
+                'Nombre,Tipo,Categoría,Asociación,Ciudad,Fecha disponible,Último rodeo 1,Último rodeo 2,Último rodeo 3,Último rodeo 4,Último rodeo 5,Último rodeo 6,Último rodeo 7,Último rodeo 8'
             ];
             rows.forEach(d => {
                 const u = d.usuarios_pagados;
-                const [r1, r2, r3, r4, r5] = rodeosCols(u);
+                const [r1,r2,r3,r4,r5,r6,r7,r8] = rodeosCols(u);
                 lines.push([
                     `"${(u.nombre_completo || '').replace(/"/g, '""')}"`,
                     `"${TIPO_LABEL[u.tipo_persona] || u.tipo_persona || ''}"`,
                     `"${u.categoria || ''}"`,
+                    `"${(u.asociacion || '').replace(/"/g, '""')}"`,
                     `"${u.ciudad || ''}"`,
                     `"${d.fecha}"`,
-                    `"${r1.replace(/"/g, '""')}"`,
-                    `"${r2.replace(/"/g, '""')}"`,
-                    `"${r3.replace(/"/g, '""')}"`,
-                    `"${r4.replace(/"/g, '""')}"`,
-                    `"${r5.replace(/"/g, '""')}"`
+                    `"${r1.replace(/"/g,'""')}"`,`"${r2.replace(/"/g,'""')}"`,
+                    `"${r3.replace(/"/g,'""')}"`,`"${r4.replace(/"/g,'""')}"`,
+                    `"${r5.replace(/"/g,'""')}"`,`"${r6.replace(/"/g,'""')}"`,
+                    `"${r7.replace(/"/g,'""')}"`,`"${r8.replace(/"/g,'""')}"`
                 ].join(','));
             });
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -243,6 +242,7 @@ router.get('/exportar', async (req, res) => {
             { header: 'Nombre',           key: 'nombre',  width: 30 },
             { header: 'Tipo',             key: 'tipo',    width: 20 },
             { header: 'Categoría',        key: 'cat',     width: 12 },
+            { header: 'Asociación',       key: 'asoc',    width: 22 },
             { header: 'Ciudad',           key: 'ciudad',  width: 18 },
             { header: 'Fecha disponible', key: 'fecha',   width: 16 },
             { header: 'Último rodeo 1',   key: 'r1',      width: 32 },
@@ -250,19 +250,23 @@ router.get('/exportar', async (req, res) => {
             { header: 'Último rodeo 3',   key: 'r3',      width: 32 },
             { header: 'Último rodeo 4',   key: 'r4',      width: 32 },
             { header: 'Último rodeo 5',   key: 'r5',      width: 32 },
+            { header: 'Último rodeo 6',   key: 'r6',      width: 32 },
+            { header: 'Último rodeo 7',   key: 'r7',      width: 32 },
+            { header: 'Último rodeo 8',   key: 'r8',      width: 32 },
         ];
         ws.getRow(1).eachCell(cell => { Object.assign(cell, HEADER_STYLE); });
 
         rows.forEach(d => {
             const u = d.usuarios_pagados;
-            const [r1, r2, r3, r4, r5] = rodeosCols(u);
+            const [r1,r2,r3,r4,r5,r6,r7,r8] = rodeosCols(u);
             ws.addRow({
                 nombre: u.nombre_completo || '',
                 tipo:   TIPO_LABEL[u.tipo_persona] || u.tipo_persona || '',
                 cat:    u.categoria || '',
+                asoc:   u.asociacion || '',
                 ciudad: u.ciudad || '',
                 fecha:  d.fecha,
-                r1, r2, r3, r4, r5,
+                r1, r2, r3, r4, r5, r6, r7, r8,
             });
         });
 
