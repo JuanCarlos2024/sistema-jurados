@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
+const { _matchBonoConfig } = require('../../services/calculo');
 
 // GET /api/admin/bonos?estado=&page=&limit=
 router.get('/', async (req, res) => {
@@ -224,6 +225,133 @@ router.post('/manual', async (req, res) => {
     });
 
     res.status(201).json(data);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/bonos/regularizar-distancia
+// Barrido de TODAS las asignaciones activas con km para crear/corregir bonos.
+// IDEMPOTENTE: seguro para ejecutar múltiples veces.
+//   - Sin bono activo          → crear bono nuevo
+//   - Bono en estado incorrecto → corregir estado y monto
+//   - Bono aprobado/modificado con km sin cambio → omitir (no tocar)
+//   - Bono rechazado           → crear bono nuevo (el rechazo fue intencional)
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/regularizar-distancia', async (req, res) => {
+    // 1. Cargar configuración de bonos
+    const { data: configs, error: errC } = await supabase
+        .from('bonos_config')
+        .select('*')
+        .eq('activo', true)
+        .order('distancia_minima', { ascending: false });
+    if (errC) return res.status(500).json({ error: 'Error leyendo bonos_config: ' + errC.message });
+
+    // 2. Cargar todas las asignaciones activas con km
+    const { data: asigs, error: errA } = await supabase
+        .from('asignaciones')
+        .select('id, usuario_pagado_id, distancia_km')
+        .eq('estado', 'activo')
+        .gt('distancia_km', 0);
+    if (errA) return res.status(500).json({ error: 'Error leyendo asignaciones: ' + errA.message });
+
+    if (!asigs || asigs.length === 0) {
+        return res.json({ mensaje: 'No hay asignaciones activas con km. Nada que regularizar.', creados: 0, corregidos: 0, omitidos: 0 });
+    }
+
+    // 3. Cargar bonos activos (no rechazados) de esas asignaciones
+    const ids = asigs.map(a => a.id);
+    const { data: bonos, error: errB } = await supabase
+        .from('bonos_solicitados')
+        .select('id, asignacion_id, estado, distancia_declarada, monto_solicitado')
+        .in('asignacion_id', ids)
+        .neq('estado', 'rechazado')
+        .order('created_at', { ascending: false });
+    if (errB) return res.status(500).json({ error: 'Error leyendo bonos_solicitados: ' + errB.message });
+
+    // Mapa asigId → bono más reciente activo
+    const bonoMap = {};
+    (bonos || []).forEach(b => {
+        if (!bonoMap[b.asignacion_id]) bonoMap[b.asignacion_id] = b;
+    });
+
+    const ahora = new Date().toISOString();
+    let creados = 0, corregidos = 0, omitidos = 0;
+    const errores = [];
+
+    for (const asig of asigs) {
+        const km = asig.distancia_km;
+        const config = _matchBonoConfig(km, configs || []);
+        const esAuto = config === null;           // km < 350 → auto-aprobar
+        const monto  = config ? config.monto : 0;
+        const estadoEsperado = esAuto ? 'aprobado_auto' : 'pendiente';
+        const existing = bonoMap[asig.id];
+
+        // Bono aprobado/modificado con km correcto → no tocar (revisión manual previa)
+        if (existing && ['aprobado', 'modificado'].includes(existing.estado) && existing.distancia_declarada === km) {
+            omitidos++;
+            continue;
+        }
+
+        // Bono con estado ya correcto y mismo km → no tocar
+        if (existing && existing.estado === estadoEsperado && existing.distancia_declarada === km) {
+            omitidos++;
+            continue;
+        }
+
+        const payload = {
+            distancia_declarada: km,
+            monto_solicitado:    monto,
+            bono_config_id:      config ? config.id : null,
+            estado:              estadoEsperado,
+            monto_aprobado:      esAuto ? 0 : null,
+            observacion_admin:   null,
+            revisado_por:        null,
+            revisado_at:         null,
+            updated_at:          ahora
+        };
+
+        if (existing) {
+            const { error } = await supabase
+                .from('bonos_solicitados').update(payload).eq('id', existing.id);
+            if (error) {
+                console.error(`[REGULARIZAR] Error corrigiendo bono ${existing.id}: ${error.message}`);
+                errores.push({ asig_id: asig.id, error: error.message });
+            } else {
+                console.log(`[REGULARIZAR] Corregido: asig=${asig.id} km=${km} ${existing.estado}→${estadoEsperado}`);
+                corregidos++;
+            }
+        } else {
+            const { error } = await supabase
+                .from('bonos_solicitados')
+                .insert({ asignacion_id: asig.id, usuario_pagado_id: asig.usuario_pagado_id, ...payload });
+            if (error) {
+                console.error(`[REGULARIZAR] Error creando bono para asig=${asig.id}: ${error.message}`);
+                errores.push({ asig_id: asig.id, error: error.message });
+            } else {
+                console.log(`[REGULARIZAR] Creado: asig=${asig.id} km=${km} estado=${estadoEsperado} monto=${monto}`);
+                creados++;
+            }
+        }
+    }
+
+    await auditoria.registrar({
+        tabla: 'bonos_solicitados',
+        registro_id: null,
+        accion: 'regularizar_distancia',
+        datos_nuevos: { total_con_km: asigs.length, creados, corregidos, omitidos, errores: errores.length },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Regularización bonos de distancia: ${creados} creados, ${corregidos} corregidos, ${omitidos} sin cambios`,
+        ip_address: req.ip
+    });
+
+    return res.json({
+        mensaje: `Regularización completada: ${creados} creados, ${corregidos} corregidos, ${omitidos} sin cambios.`,
+        total_asignaciones_con_km: asigs.length,
+        creados,
+        corregidos,
+        omitidos,
+        errores: errores.length > 0 ? errores : undefined
+    });
 });
 
 module.exports = router;

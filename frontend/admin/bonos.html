@@ -42,6 +42,7 @@
                 <h1>Gestión de Bonos</h1>
             </div>
             <div class="topbar-acciones">
+                <button class="btn btn-outline" onclick="regularizar()" title="Genera bonos faltantes para asignaciones con km ingresado por admin">↻ Regularizar km</button>
                 <button class="btn btn-outline" onclick="exportar()">↓ Exportar</button>
             </div>
         </div>
@@ -263,6 +264,16 @@ async function exportar() {
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
 document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+async function regularizar() {
+    const ok = await confirmar('¿Regularizar bonos de distancia?\n\nEsto generará o corregirá bonos para todas las asignaciones con km ingresado por admin.\nLos bonos ya aprobados no serán modificados.');
+    if (!ok) return;
+    try {
+        const r = await api.post('/admin/bonos/regularizar-distancia', {});
+        mostrarToast(r.mensaje, 'success');
+        cargar();
+    } catch(err) { mostrarError(err); }
+}
 
 cargar();
 </script>

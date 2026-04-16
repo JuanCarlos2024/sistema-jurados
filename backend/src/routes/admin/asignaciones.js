@@ -5,9 +5,10 @@ const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase, obtenerBonoParaDistancia } = require('../../services/calculo');
 
 // ─── Helper: crea o actualiza bono de distancia (flujo admin) ──────────────────
-// Siempre deja el bono en estado 'pendiente' (el admin debe aprobarlo manualmente).
-// Si no hay tramo configurado, crea bono con $0 para que el admin revise el monto.
-// Maneja 4 casos: sin bono previo | bono pendiente | bono aprobado/modificado | bono rechazado.
+// Lógica idéntica al flujo usuario:
+//   - sin tramo (km < 350)  → aprobado_auto, $0  (sin revisión manual)
+//   - con tramo (km >= 350) → pendiente, monto del tramo (requiere aprobación admin)
+// No modifica bonos ya aprobados/modificados cuyo km no cambió.
 async function upsertBonoDistanciaAdmin(asigId, usuarioPagadoId, km, ahora) {
     if (!km || km <= 0) return { mensajeBono: '', bonoCreado: null };
 
@@ -18,23 +19,32 @@ async function upsertBonoDistanciaAdmin(asigId, usuarioPagadoId, km, ahora) {
         return { mensajeBono: 'No se pudo calcular bono (error interno).', bonoCreado: null };
     }
 
+    // sin tramo → km < 350 → auto-aprobar en $0
+    const esAuto  = config === null;
+    const monto   = config ? config.monto : 0;
+    const nuevoEstado = esAuto ? 'aprobado_auto' : 'pendiente';
+
     // Buscar bono activo (no rechazado) más reciente para esta asignación
     const { data: bonosExist } = await supabase
         .from('bonos_solicitados')
-        .select('id, estado, monto_solicitado')
+        .select('id, estado, distancia_declarada')
         .eq('asignacion_id', asigId)
         .neq('estado', 'rechazado')
         .order('created_at', { ascending: false })
         .limit(1);
     const existing = bonosExist?.[0];
 
-    const monto = config ? config.monto : 0;
+    // Si el bono ya está aprobado/modificado y el km no cambió → dejarlo intacto
+    if (existing && ['aprobado', 'modificado'].includes(existing.estado) && existing.distancia_declarada === km) {
+        return { mensajeBono: `${km} km ya registrado — bono aprobado sin cambios.`, bonoCreado: existing };
+    }
+
     const payload = {
         distancia_declarada: km,
         monto_solicitado:    monto,
         bono_config_id:      config ? config.id : null,
-        estado:              'pendiente',
-        monto_aprobado:      null,
+        estado:              nuevoEstado,
+        monto_aprobado:      esAuto ? 0 : null,
         observacion_admin:   null,
         revisado_por:        null,
         revisado_at:         null,
@@ -53,9 +63,13 @@ async function upsertBonoDistanciaAdmin(asigId, usuarioPagadoId, km, ahora) {
             return { mensajeBono: 'No se pudo actualizar solicitud de bono.', bonoCreado: null };
         }
         bonoCreado = b;
-        mensajeBono = prevEstado === 'pendiente'
-            ? `Solicitud de bono actualizada ($${monto.toLocaleString('es-CL')}).`
-            : `Bono reabierto a revisión — $${monto.toLocaleString('es-CL')}.`;
+        if (esAuto) {
+            mensajeBono = `${km} km registrado — sin bono aplicable (< 350 km).`;
+        } else if (prevEstado === 'pendiente') {
+            mensajeBono = `Solicitud de bono actualizada: $${monto.toLocaleString('es-CL')}.`;
+        } else {
+            mensajeBono = `Bono reabierto a revisión — nuevo monto: $${monto.toLocaleString('es-CL')}.`;
+        }
     } else {
         const { data: b, error } = await supabase
             .from('bonos_solicitados')
@@ -66,14 +80,12 @@ async function upsertBonoDistanciaAdmin(asigId, usuarioPagadoId, km, ahora) {
             return { mensajeBono: 'No se pudo crear solicitud de bono.', bonoCreado: null };
         }
         bonoCreado = b;
-        mensajeBono = `Bono de $${monto.toLocaleString('es-CL')} creado (pendiente de aprobación).`;
+        mensajeBono = esAuto
+            ? `${km} km registrado — sin bono aplicable (< 350 km).`
+            : `Bono de $${monto.toLocaleString('es-CL')} creado (pendiente de aprobación).`;
     }
 
-    if (config === null && bonoCreado) {
-        mensajeBono = `${km} km registrado. Sin tramo configurado — bono en $0 para revisión manual del monto.`;
-    }
-
-    console.log(`[BONO-ADMIN] asig=${asigId} km=${km} config=${config ? config.nombre + ' $' + config.monto : 'null'} bono=${bonoCreado?.id} estado=pendiente`);
+    console.log(`[BONO-ADMIN] asig=${asigId} km=${km} estado=${nuevoEstado} bono=${bonoCreado?.id} config=${config ? config.nombre + ' $' + monto : 'null'}`);
     return { mensajeBono, bonoCreado };
 }
 
