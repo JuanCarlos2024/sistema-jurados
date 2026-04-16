@@ -14,7 +14,7 @@ router.get('/', async (req, res) => {
         .select(`
             id, distancia_declarada, monto_solicitado, monto_aprobado, estado,
             observacion_usuario, observacion_admin, created_at, revisado_at,
-            usuarios_pagados(id, nombre_completo, codigo_interno, tipo_persona),
+            usuarios_pagados(id, nombre_completo, codigo_interno, tipo_persona, ciudad),
             asignaciones(id, tipo_persona, categoria_aplicada,
                 rodeos(club, asociacion, fecha, tipo_rodeo_nombre))
         `, { count: 'exact' })

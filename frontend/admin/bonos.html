@@ -113,17 +113,19 @@ function renderTabla(bonos, total) {
     }
     wrap.innerHTML = `<table>
         <thead><tr>
-            <th>Persona</th><th>Tipo</th><th>Club / Fecha</th><th>Km</th>
+            <th>Persona</th><th>Tipo</th><th>Comuna residencia</th><th>Rodeo</th><th>Km</th>
             <th>Monto solicitado</th><th>Monto aprobado</th><th>Estado</th><th>Acciones</th>
         </tr></thead>
         <tbody>
         ${bonos.map(b => {
             const est = estadoBono(b.estado);
             const rodeo = b.asignaciones?.rodeos;
+            const ciudad = b.usuarios_pagados?.ciudad;
             return `<tr>
                 <td><strong>${sanitizar(b.usuarios_pagados?.nombre_completo||'—')}</strong></td>
                 <td>${b.usuarios_pagados?.tipo_persona==='jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
-                <td style="font-size:13px;">${sanitizar(rodeo?.club||'—')}<br><span class="texto-gris">${formatFecha(rodeo?.fecha)}</span></td>
+                <td style="font-size:13px;">${ciudad ? sanitizar(ciudad) : '<span class="texto-gris">—</span>'}</td>
+                <td style="font-size:13px;">${sanitizar(rodeo?.club||'—')}<br><span class="texto-gris">${sanitizar(rodeo?.asociacion||'—')}</span><br><span class="texto-gris" style="font-size:12px;">${formatFecha(rodeo?.fecha)}</span></td>
                 <td style="text-align:center;">${b.distancia_declarada} km</td>
                 <td>${formatCLP(b.monto_solicitado)}</td>
                 <td class="${b.monto_aprobado ? 'monto-positivo' : 'texto-gris'}">${b.monto_aprobado ? formatCLP(b.monto_aprobado) : '—'}</td>
@@ -239,6 +241,7 @@ function verDetalle(b) {
             <div><strong>Persona:</strong> ${sanitizar(b.usuarios_pagados?.nombre_completo||'—')}</div>
             <div><strong>Estado:</strong> <span class="bono-chip ${b.estado}">${est.texto}</span></div>
         </div>
+        ${b.usuarios_pagados?.ciudad ? `<div><strong>Comuna residencia:</strong> ${sanitizar(b.usuarios_pagados.ciudad)}</div>` : ''}
         <div class="divider"></div>
         <div class="form-fila">
             <div><strong>Distancia declarada:</strong> ${b.distancia_declarada} km</div>
