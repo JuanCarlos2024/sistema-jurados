@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { procesarRutInput } = require('../../services/rut');
+const ExcelJS = require('exceljs');
 
 const PASS_INICIAL = 'jurados';
 
@@ -29,7 +30,7 @@ router.get('/', async (req, res) => {
 
     let query = supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, perfil_completo, activo, created_at, updated_at', { count: 'exact' })
+        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, created_at, updated_at', { count: 'exact' })
         .order('nombre_completo', { ascending: true })
         .range(offset, offset + parseInt(limit) - 1);
 
@@ -42,6 +43,74 @@ router.get('/', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     res.json({ data, total: count, page: parseInt(page), limit: parseInt(limit) });
+});
+
+// GET /api/admin/usuarios/exportar?tipo=&activo=&buscar=&categoria=
+// Exporta los registros filtrados como Excel (igual que el listado, sin paginación)
+router.get('/exportar', async (req, res) => {
+    const { tipo, activo, buscar, categoria } = req.query;
+
+    let query = supabase
+        .from('usuarios_pagados')
+        .select('codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, activo')
+        .order('nombre_completo', { ascending: true });
+
+    if (tipo)                        query = query.eq('tipo_persona', tipo);
+    if (activo !== undefined && activo !== '') query = query.eq('activo', activo === 'true');
+    if (buscar)                      query = query.or(`nombre_completo.ilike.%${buscar}%,codigo_interno.ilike.%${buscar}%,rut.ilike.%${buscar}%`);
+    if (categoria)                   query = query.eq('categoria', categoria);
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const TIPO_LABEL = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
+    const HEADER_STYLE = {
+        font: { bold: true, color: { argb: 'FFFFFFFF' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e3a5f' } },
+        alignment: { horizontal: 'center' },
+        border: {
+            top: { style: 'thin' }, bottom: { style: 'thin' },
+            left: { style: 'thin' }, right: { style: 'thin' }
+        }
+    };
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Sistema Jurados - Rodeo Chileno';
+    const ws = wb.addWorksheet('Jurados y Delegados');
+
+    ws.columns = [
+        { header: 'Código',     key: 'codigo',    width: 12 },
+        { header: 'Nombre',     key: 'nombre',    width: 35 },
+        { header: 'Tipo',       key: 'tipo',      width: 20 },
+        { header: 'Categoría',  key: 'cat',       width: 10 },
+        { header: 'RUT',        key: 'rut',       width: 14 },
+        { header: 'Ciudad',     key: 'ciudad',    width: 18 },
+        { header: 'Asociación', key: 'asoc',      width: 24 },
+        { header: 'Teléfono',   key: 'telefono',  width: 16 },
+        { header: 'Correo',     key: 'email',     width: 32 },
+        { header: 'Estado',     key: 'estado',    width: 10 },
+    ];
+    ws.getRow(1).eachCell(cell => { Object.assign(cell, HEADER_STYLE); });
+
+    (data || []).forEach(u => {
+        ws.addRow({
+            codigo:   u.codigo_interno || '',
+            nombre:   u.nombre_completo || '',
+            tipo:     TIPO_LABEL[u.tipo_persona] || u.tipo_persona || '',
+            cat:      u.categoria || '',
+            rut:      u.rut || '',
+            ciudad:   u.ciudad || '',
+            asoc:     u.asociacion || '',
+            telefono: u.telefono || '',
+            email:    u.email || '',
+            estado:   u.activo ? 'Activo' : 'Inactivo',
+        });
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="jurados_delegados.xlsx"');
+    await wb.xlsx.write(res);
+    res.end();
 });
 
 // GET /api/admin/usuarios/:id

@@ -45,6 +45,7 @@
                 <h1>Jurados y Delegados Rentados</h1>
             </div>
             <div class="topbar-acciones">
+                <button class="btn btn-outline" onclick="exportar()">↓ Exportar Excel</button>
                 <button class="btn btn-primario" onclick="abrirModal()">+ Nuevo usuario</button>
             </div>
         </div>
@@ -166,7 +167,7 @@ function renderTabla(usuarios, total) {
     }
 
     wrap.innerHTML = `
-    <table>
+    <table style="font-size:13px;">
         <thead><tr>
             <th>Código</th>
             <th>Nombre</th>
@@ -174,6 +175,8 @@ function renderTabla(usuarios, total) {
             <th>Cat.</th>
             <th>RUT</th>
             <th>Ciudad</th>
+            <th>Teléfono</th>
+            <th>Correo</th>
             <th>Estado</th>
             <th>Acciones</th>
         </tr></thead>
@@ -184,8 +187,10 @@ function renderTabla(usuarios, total) {
                 <td><strong>${sanitizar(u.nombre_completo)}</strong>${!u.perfil_completo ? ' <span title="Perfil incompleto" style="color:orange;">⚠</span>' : ''}</td>
                 <td>${u.tipo_persona === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
                 <td>${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}">${u.categoria}</span>` : '<span class="texto-gris">—</span>'}</td>
-                <td style="font-size:13px;">${sanitizar(u.rut || '—')}</td>
-                <td style="font-size:13px;">${sanitizar(u.ciudad || '—')}</td>
+                <td>${sanitizar(u.rut || '—')}</td>
+                <td>${sanitizar(u.ciudad || '—')}</td>
+                <td>${u.telefono ? sanitizar(u.telefono) : '<span class="texto-gris">—</span>'}</td>
+                <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${sanitizar(u.email || '')}">${u.email ? sanitizar(u.email) : '<span class="texto-gris">—</span>'}</td>
                 <td>${u.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
                 <td>
                     <div class="flex gap-8">
@@ -392,6 +397,18 @@ async function toggleActivo(id, nuevoEstado, nombre) {
         cerrarModal();
         cargar(paginaActual);
     } catch (err) { mostrarError(err); }
+}
+
+async function exportar() {
+    const params = toQueryString({
+        tipo:      document.getElementById('f-tipo').value,
+        activo:    document.getElementById('f-activo').value,
+        categoria: document.getElementById('f-categoria').value,
+        buscar:    document.getElementById('f-buscar').value.trim()
+    });
+    try {
+        await api.descargar('/admin/usuarios/exportar?' + params, 'jurados_delegados.xlsx');
+    } catch(err) { mostrarError(err); }
 }
 
 // Cerrar modal al hacer clic fuera
