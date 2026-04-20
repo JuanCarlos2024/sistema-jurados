@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hoja de Vida — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <style>
+        .hv-perfil { display:flex; align-items:center; gap:20px; flex-wrap:wrap; margin-bottom:24px; padding:18px 22px; background:var(--fondo); border:1px solid var(--gris-borde); border-radius:10px; }
+        .hv-avatar { width:64px; height:64px; border-radius:50%; background:var(--primario); color:#fff; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; flex-shrink:0; }
+        .hv-perfil-info h2 { margin:0 0 4px; font-size:20px; }
+        .hv-perfil-info p  { margin:0; font-size:13px; color:var(--gris); }
+        .stat-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(145px,1fr)); gap:12px; margin-bottom:24px; }
+        .stat-card { background:var(--fondo); border:1px solid var(--gris-borde); border-radius:8px; padding:14px 16px; text-align:center; }
+        .stat-card .val { font-size:22px; font-weight:700; color:var(--primario); }
+        .stat-card .lbl { font-size:11px; color:var(--gris); margin-top:4px; line-height:1.3; }
+        .nota-chip { display:inline-block; border-radius:12px; padding:2px 8px; font-size:12px; font-weight:700; }
+        .nota-alta   { background:#d5f5e3; color:#1e8449; }
+        .nota-media  { background:#fef9e7; color:#b7950b; }
+        .nota-baja   { background:#fdecea; color:#c0392b; }
+        .nota-na     { background:#f2f3f4; color:#888; }
+        .seccion-titulo { font-size:15px; font-weight:700; color:var(--oscuro); margin:0 0 12px; padding-bottom:6px; border-bottom:2px solid var(--gris-borde); display:flex; align-items:center; justify-content:space-between; }
+        .seccion-bloque { background:var(--fondo); border:1px solid var(--gris-borde); border-radius:10px; padding:18px 20px; margin-bottom:20px; }
+        .comparacion-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; }
+        .comp-card { background:#f8f9fa; border:1px solid var(--gris-borde); border-radius:8px; padding:12px; text-align:center; }
+        .comp-card .cval { font-size:20px; font-weight:700; }
+        .comp-card .clbl { font-size:11px; color:var(--gris); margin-top:3px; }
+        .grafico-wrap { position:relative; height:220px; }
+        .ficha-grid  { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; }
+        .ficha-campo label { font-size:12px; color:var(--gris); display:block; margin-bottom:4px; }
+        .ficha-campo select, .ficha-campo textarea, .ficha-campo input[type=text], .ficha-campo input[type=checkbox] { width:100%; }
+        .ficha-campo textarea { resize:vertical; min-height:70px; }
+        .badge-alta   { background:#d5f5e3; color:#1e8449; }
+        .badge-media  { background:#fef9e7; color:#b7950b; }
+        .badge-baja   { background:#fdecea; color:#c0392b; }
+        .historial-nota-btn { background:#f0f4ff; color:#2471a3; border:1px solid #aed6f1; border-radius:5px; padding:2px 8px; font-size:12px; cursor:pointer; }
+        .historial-nota-btn:hover { background:#d6eaf8; }
+        details > summary { cursor:pointer; user-select:none; }
+        details[open] > summary { margin-bottom:14px; }
+        .percentil-bar { height:12px; background:#e9ecef; border-radius:6px; overflow:hidden; margin-top:6px; }
+        .percentil-fill { height:100%; background:var(--primario); border-radius:6px; transition:width .4s; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <button class="btn btn-outline btn-pequeño" onclick="history.back()">← Volver</button>
+                <h1 id="titulo-pagina">Hoja de Vida</h1>
+            </div>
+        </div>
+
+        <div class="contenido" id="contenido">
+            <div style="text-align:center; padding:60px 0; color:var(--gris);">Cargando...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal nota por rodeo -->
+<div id="modal-nota" class="modal" style="display:none;">
+    <div class="modal-contenido" style="max-width:420px;">
+        <div class="modal-cabecera">
+            <h3 id="modal-nota-titulo">Registrar nota</h3>
+            <button class="modal-cerrar" onclick="cerrarModalNota()">×</button>
+        </div>
+        <div class="modal-cuerpo">
+            <p id="modal-nota-rodeo" style="font-size:13px; color:var(--gris); margin-bottom:14px;"></p>
+            <div class="form-grupo">
+                <label>Nota (1.0 – 7.0)</label>
+                <input type="number" id="input-nota" min="1.0" max="7.0" step="0.1" class="form-control" placeholder="ej: 6.5">
+            </div>
+            <div class="form-grupo">
+                <label>Comentario (opcional)</label>
+                <textarea id="input-comentario" class="form-control" rows="3" placeholder="Observaciones sobre el desempeño en este rodeo..."></textarea>
+            </div>
+        </div>
+        <div class="modal-pie">
+            <button class="btn btn-outline" onclick="cerrarModalNota()">Cancelar</button>
+            <button class="btn btn-primario" onclick="guardarNota()">Guardar nota</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const params   = new URLSearchParams(location.search);
+const userId   = params.get('id');
+let _datos     = null;
+let _asigIdActual = null;
+
+function sanitizar(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function formatCLP(n) {
+    if (n == null || n === 0) return '$0';
+    return '$' + Math.round(n).toLocaleString('es-CL');
+}
+function formatFecha(iso) {
+    if (!iso) return '—';
+    const [y, m, d] = iso.slice(0,10).split('-');
+    return `${d}/${m}/${y}`;
+}
+function notaChip(n) {
+    if (n == null) return '<span class="nota-chip nota-na">Sin nota</span>';
+    const v = parseFloat(n);
+    const cls = v >= 6 ? 'nota-alta' : v >= 4.5 ? 'nota-media' : 'nota-baja';
+    return `<span class="nota-chip ${cls}">${v.toFixed(1)}</span>`;
+}
+function tipoLabel(tp) {
+    return tp === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>'
+                           : '<span class="badge badge-delegado">Delegado</span>';
+}
+
+async function cargar() {
+    if (!userId) {
+        document.getElementById('contenido').innerHTML = '<div class="alerta alerta-error">ID de usuario no especificado.</div>';
+        return;
+    }
+    try {
+        const datos = await api.get(`/admin/hojavida/${userId}`);
+        _datos = datos;
+        document.getElementById('titulo-pagina').textContent = 'Hoja de Vida — ' + datos.perfil.nombre_completo;
+        renderTodo(datos);
+    } catch(e) {
+        document.getElementById('contenido').innerHTML = `<div class="alerta alerta-error">Error al cargar: ${sanitizar(e.message)}</div>`;
+    }
+}
+
+function renderTodo(d) {
+    const { perfil, historial, ficha, indicadores, evolucion_notas, frecuencia_propia, comparacion } = d;
+
+    const iniciales = (perfil.nombre_completo || '?').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
+    const catBadge  = perfil.categoria
+        ? `<span class="badge badge-${perfil.categoria.toLowerCase()}">${perfil.categoria}</span>`
+        : '';
+
+    let html = `
+    <div class="hv-perfil">
+        <div class="hv-avatar">${iniciales}</div>
+        <div class="hv-perfil-info">
+            <h2>${sanitizar(perfil.nombre_completo)} ${tipoLabel(perfil.tipo_persona)} ${catBadge}</h2>
+            <p>${sanitizar(perfil.codigo_interno || '')}
+               ${perfil.rut ? ' · ' + sanitizar(perfil.rut) : ''}
+               ${perfil.ciudad ? ' · ' + sanitizar(perfil.ciudad) : ''}
+               ${perfil.asociacion ? ' · ' + sanitizar(perfil.asociacion) : ''}
+            </p>
+            <p style="margin-top:4px;">
+               ${perfil.telefono ? '📞 ' + sanitizar(perfil.telefono) + '&nbsp;&nbsp;' : ''}
+               ${perfil.email ? '✉️ ' + sanitizar(perfil.email) : ''}
+               ${!perfil.activo ? '&nbsp;<span class="badge badge-inactivo">Inactivo</span>' : ''}
+            </p>
+        </div>
+    </div>
+
+    ${renderIndicadores(indicadores)}
+
+    ${comparacion ? renderComparacion(comparacion, perfil, indicadores) : ''}
+
+    <div class="seccion-bloque">
+        <div class="seccion-titulo">Evolución de notas</div>
+        <div class="grafico-wrap"><canvas id="chart-notas"></canvas></div>
+    </div>
+
+    <div class="seccion-bloque">
+        <div class="seccion-titulo">Frecuencia de rodeos por mes</div>
+        <div class="grafico-wrap"><canvas id="chart-frecuencia"></canvas></div>
+    </div>
+
+    ${renderHistorial(historial)}
+
+    ${renderFicha(ficha)}
+    `;
+
+    document.getElementById('contenido').innerHTML = html;
+
+    renderChartNotas(evolucion_notas);
+    renderChartFrecuencia(frecuencia_propia);
+}
+
+function renderIndicadores(ind) {
+    const row = (lbl, val) => `<div class="stat-card"><div class="val">${val}</div><div class="lbl">${lbl}</div></div>`;
+    return `<div class="stat-grid">
+        ${row('Total rodeos', ind.total_rodeos)}
+        ${row('Notas registradas', ind.con_nota)}
+        ${row('Promedio', ind.promedio_nota !== null ? ind.promedio_nota.toFixed(2) : '—')}
+        ${row('Última nota', ind.ultima_nota !== null ? ind.ultima_nota.toFixed(1) : '—')}
+        ${row('Mejor nota', ind.mejor_nota !== null ? ind.mejor_nota.toFixed(1) : '—')}
+        ${row('Peor nota', ind.peor_nota !== null ? ind.peor_nota.toFixed(1) : '—')}
+        ${row('Última asistencia', ind.ultima_asistencia ? formatFecha(ind.ultima_asistencia) : '—')}
+        ${row('Total pagos', formatCLP(ind.total_pagos))}
+    </div>`;
+}
+
+function renderComparacion(comp, perfil, ind) {
+    const tipo = perfil.tipo_persona === 'jurado' ? 'Jurados' : 'Delegados';
+    const prom = comp.promedio_general_tipo !== null ? comp.promedio_general_tipo.toFixed(2) : '—';
+    const propio = ind.promedio_nota !== null ? ind.promedio_nota.toFixed(2) : '—';
+    const pct = comp.percentil;
+    const diff = (ind.promedio_nota !== null && comp.promedio_general_tipo !== null)
+        ? (ind.promedio_nota - comp.promedio_general_tipo).toFixed(2)
+        : null;
+    const diffStr = diff !== null
+        ? (diff >= 0 ? `<span style="color:#1e8449;">+${diff} vs promedio</span>` : `<span style="color:#c0392b;">${diff} vs promedio</span>`)
+        : '';
+
+    return `<div class="seccion-bloque">
+        <div class="seccion-titulo">Comparación vs pares (${tipo})</div>
+        <div class="comparacion-grid">
+            <div class="comp-card">
+                <div class="cval" style="color:var(--primario);">${propio}</div>
+                <div class="clbl">Tu promedio</div>
+            </div>
+            <div class="comp-card">
+                <div class="cval">${prom}</div>
+                <div class="clbl">Promedio ${tipo} (${comp.total_pares} pares)</div>
+            </div>
+            <div class="comp-card">
+                <div class="cval">${diff !== null ? (parseFloat(diff) >= 0 ? '↑' : '↓') + Math.abs(parseFloat(diff)) : '—'}</div>
+                <div class="clbl">${diffStr || 'Diferencia'}</div>
+            </div>
+            ${pct !== null ? `<div class="comp-card">
+                <div class="cval">${pct}°</div>
+                <div class="clbl">Percentil</div>
+                <div class="percentil-bar"><div class="percentil-fill" style="width:${pct}%"></div></div>
+            </div>` : ''}
+        </div>
+    </div>`;
+}
+
+function renderHistorial(historial) {
+    if (!historial || historial.length === 0) {
+        return `<div class="seccion-bloque"><div class="seccion-titulo">Historial de rodeos</div><p style="color:var(--gris); font-size:13px;">Sin asignaciones registradas.</p></div>`;
+    }
+
+    const filas = historial.map(a => {
+        const rodeo = a.rodeos || {};
+        const nr    = a.notas_rodeo;
+        const rechazado = a.estado_designacion === 'rechazado';
+        const estadoBadge = rechazado
+            ? '<span class="badge" style="background:#fdecea;color:#c0392b;">Rechazó</span>'
+            : '<span class="badge badge-activo">Asistió</span>';
+
+        return `<tr style="${rechazado ? 'opacity:0.65;' : ''}">
+            <td>${formatFecha(rodeo.fecha)}</td>
+            <td>${sanitizar(rodeo.club || '—')}</td>
+            <td style="font-size:12px; color:var(--gris);">${sanitizar(rodeo.comuna || '—')}</td>
+            <td>${a.categoria_aplicada || '—'}</td>
+            <td class="monto-positivo">${rechazado ? '<span class="texto-gris">—</span>' : formatCLP(a.pago_base_calculado)}</td>
+            <td>${estadoBadge}</td>
+            <td>${notaChip(nr?.nota)}</td>
+            <td>${rechazado ? '' : `<button class="historial-nota-btn" onclick="abrirModalNota('${a.id}', '${sanitizar(rodeo.club || '')} - ${formatFecha(rodeo.fecha)}', ${nr?.nota ?? 'null'}, '${sanitizar(nr?.comentario || '')}')">
+                ${nr?.nota != null ? 'Editar nota' : '+ Nota'}
+            </button>`}</td>
+        </tr>`;
+    }).join('');
+
+    return `<div class="seccion-bloque">
+        <div class="seccion-titulo">Historial de rodeos (${historial.length})</div>
+        <div style="overflow-x:auto;">
+        <table class="tabla">
+            <thead><tr>
+                <th>Fecha</th><th>Club</th><th>Comuna</th><th>Cat.</th>
+                <th>Pago base</th><th>Estado</th><th>Nota</th><th></th>
+            </tr></thead>
+            <tbody>${filas}</tbody>
+        </table>
+        </div>
+    </div>`;
+}
+
+const OPTS_4 = ['Excelente','Bueno','Regular','Deficiente'];
+const OPTS_LIDER = ['Fuerte','Mediano','Débil'];
+const OPTS_REC   = ['Alta','Media','Baja'];
+
+function selectHtml(id, opciones, valor) {
+    const opts = opciones.map(o => `<option value="${o}" ${valor === o ? 'selected' : ''}>${o}</option>`).join('');
+    return `<select id="${id}" class="form-control"><option value="">— Sin evaluar —</option>${opts}</select>`;
+}
+
+function renderFicha(f) {
+    const v = (k) => f?.[k] ?? '';
+    const chk = (k) => f?.[k] === true;
+
+    const recBadge = f?.recomendacion
+        ? `<span class="badge badge-${f.recomendacion.toLowerCase()}">${f.recomendacion}</span>`
+        : '';
+    const evalEn = f?.evaluado_en ? ' — evaluado el ' + formatFecha(f.evaluado_en) : '';
+
+    return `<div class="seccion-bloque">
+        <details>
+            <summary><div class="seccion-titulo" style="border:none; margin:0; padding:0;">
+                Ficha interna ${recBadge}<span style="font-size:13px; font-weight:400; color:var(--gris);">${evalEn}</span>
+            </div></summary>
+
+            <div class="ficha-grid">
+                <div class="ficha-campo"><label>Carácter</label>${selectHtml('fi-caracter', OPTS_4, v('caracter'))}</div>
+                <div class="ficha-campo"><label>Liderazgo</label>${selectHtml('fi-liderazgo', OPTS_LIDER, v('liderazgo'))}</div>
+                <div class="ficha-campo"><label>Habilidades blandas</label>${selectHtml('fi-habilidades_blandas', OPTS_4, v('habilidades_blandas'))}</div>
+                <div class="ficha-campo"><label>Puntualidad</label>${selectHtml('fi-puntualidad', OPTS_4, v('puntualidad'))}</div>
+                <div class="ficha-campo"><label>Responsabilidad</label>${selectHtml('fi-responsabilidad_admin', OPTS_4, v('responsabilidad_admin'))}</div>
+                <div class="ficha-campo"><label>Trabajo en equipo</label>${selectHtml('fi-trabajo_equipo', OPTS_4, v('trabajo_equipo'))}</div>
+                <div class="ficha-campo"><label>Comunicación</label>${selectHtml('fi-comunicacion', OPTS_4, v('comunicacion'))}</div>
+                <div class="ficha-campo"><label>Manejo de presión</label>${selectHtml('fi-manejo_presion', OPTS_4, v('manejo_presion'))}</div>
+                <div class="ficha-campo"><label>Recomendación</label>${selectHtml('fi-recomendacion', OPTS_REC, v('recomendacion'))}</div>
+                <div class="ficha-campo"><label>Zona preferente</label><input type="text" id="fi-zona_preferente" class="form-control" value="${sanitizar(v('zona_preferente'))}"></div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px;">
+                <div class="ficha-campo"><label>Observaciones técnicas</label><textarea id="fi-observaciones_tecnicas" class="form-control">${sanitizar(v('observaciones_tecnicas'))}</textarea></div>
+                <div class="ficha-campo"><label>Observaciones conductuales</label><textarea id="fi-observaciones_conductuales" class="form-control">${sanitizar(v('observaciones_conductuales'))}</textarea></div>
+                <div class="ficha-campo"><label>Restricciones geográficas</label><textarea id="fi-restricciones_geograficas" class="form-control">${sanitizar(v('restricciones_geograficas'))}</textarea></div>
+                <div class="ficha-campo"><label>Comentarios del administrador</label><textarea id="fi-comentarios_admin" class="form-control">${sanitizar(v('comentarios_admin'))}</textarea></div>
+            </div>
+
+            <div style="display:flex; gap:20px; margin-top:14px; align-items:center;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+                    <input type="checkbox" id="fi-disponibilidad_viajes" ${chk('disponibilidad_viajes') ? 'checked' : ''}>
+                    Disponible para viajes
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+                    <input type="checkbox" id="fi-disponibilidad_reemplazos" ${chk('disponibilidad_reemplazos') ? 'checked' : ''}>
+                    Disponible para reemplazos
+                </label>
+            </div>
+
+            <div class="form-acciones" style="margin-top:16px;">
+                <button class="btn btn-primario" onclick="guardarFicha()">Guardar ficha interna</button>
+            </div>
+        </details>
+    </div>`;
+}
+
+function renderChartNotas(evolucion) {
+    const ctx = document.getElementById('chart-notas');
+    if (!ctx) return;
+    if (!evolucion || evolucion.length === 0) {
+        ctx.parentElement.innerHTML = '<p style="color:var(--gris); font-size:13px; text-align:center; padding:30px 0;">Sin notas registradas aún.</p>';
+        return;
+    }
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: evolucion.map(e => formatFecha(e.fecha)),
+            datasets: [{
+                label: 'Nota',
+                data: evolucion.map(e => e.nota),
+                borderColor: '#2980b9',
+                backgroundColor: 'rgba(41,128,185,0.1)',
+                tension: 0.3,
+                fill: true,
+                pointRadius: 5,
+                pointHoverRadius: 7
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { min: 1, max: 7, ticks: { stepSize: 1 },
+                    grid: { color: '#eee' } },
+                x: { grid: { display: false } }
+            },
+            plugins: { legend: { display: false },
+                tooltip: { callbacks: { label: ctx => 'Nota: ' + ctx.parsed.y.toFixed(1) + (evolucion[ctx.dataIndex]?.club ? ' — ' + evolucion[ctx.dataIndex].club : '') } }
+            }
+        }
+    });
+}
+
+function renderChartFrecuencia(frecuencia) {
+    const ctx = document.getElementById('chart-frecuencia');
+    if (!ctx) return;
+    if (!frecuencia || frecuencia.length === 0) {
+        ctx.parentElement.innerHTML = '<p style="color:var(--gris); font-size:13px; text-align:center; padding:30px 0;">Sin historial de asistencia.</p>';
+        return;
+    }
+    // Completar meses faltantes en el rango
+    const meses = frecuencia.map(f => f.mes);
+    const cantidades = frecuencia.map(f => f.cantidad);
+    const promedio = cantidades.reduce((s, n) => s + n, 0) / cantidades.length;
+
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: meses.map(m => { const [y,mo] = m.split('-'); return `${mo}/${y.slice(2)}`; }),
+            datasets: [
+                {
+                    label: 'Rodeos',
+                    data: cantidades,
+                    backgroundColor: 'rgba(41,128,185,0.65)',
+                    borderColor: '#2980b9',
+                    borderWidth: 1,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Promedio',
+                    data: new Array(meses.length).fill(Math.round(promedio * 10) / 10),
+                    type: 'line',
+                    borderColor: '#e67e22',
+                    borderDash: [5, 4],
+                    pointRadius: 0,
+                    borderWidth: 2,
+                    fill: false
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#eee' } },
+                x: { grid: { display: false } }
+            },
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 12 } } } }
+        }
+    });
+}
+
+// ── Modal nota ───────────────────────────────────────────────
+function abrirModalNota(asigId, rodeoLabel, notaActual, comentarioActual) {
+    _asigIdActual = asigId;
+    document.getElementById('modal-nota-titulo').textContent = notaActual != null && notaActual !== 'null' ? 'Editar nota' : 'Registrar nota';
+    document.getElementById('modal-nota-rodeo').textContent = rodeoLabel;
+    document.getElementById('input-nota').value = (notaActual != null && notaActual !== 'null') ? notaActual : '';
+    document.getElementById('input-comentario').value = comentarioActual && comentarioActual !== 'null' ? comentarioActual : '';
+    document.getElementById('modal-nota').style.display = 'flex';
+}
+function cerrarModalNota() {
+    document.getElementById('modal-nota').style.display = 'none';
+    _asigIdActual = null;
+}
+
+async function guardarNota() {
+    const nota = parseFloat(document.getElementById('input-nota').value);
+    if (isNaN(nota) || nota < 1 || nota > 7) {
+        alert('La nota debe estar entre 1.0 y 7.0');
+        return;
+    }
+    const comentario = document.getElementById('input-comentario').value.trim();
+    try {
+        await api.post(`/admin/hojavida/nota/${_asigIdActual}`, { nota, comentario: comentario || null });
+        cerrarModalNota();
+        await cargar();
+    } catch(e) {
+        alert('Error al guardar nota: ' + e.message);
+    }
+}
+
+// ── Ficha interna ────────────────────────────────────────────
+function campoFicha(id) {
+    const el = document.getElementById(id);
+    if (!el) return undefined;
+    if (el.type === 'checkbox') return el.checked;
+    return el.value || null;
+}
+
+async function guardarFicha() {
+    const payload = {
+        caracter:                campoFicha('fi-caracter'),
+        liderazgo:               campoFicha('fi-liderazgo'),
+        habilidades_blandas:     campoFicha('fi-habilidades_blandas'),
+        puntualidad:             campoFicha('fi-puntualidad'),
+        responsabilidad_admin:   campoFicha('fi-responsabilidad_admin'),
+        trabajo_equipo:          campoFicha('fi-trabajo_equipo'),
+        comunicacion:            campoFicha('fi-comunicacion'),
+        manejo_presion:          campoFicha('fi-manejo_presion'),
+        recomendacion:           campoFicha('fi-recomendacion'),
+        zona_preferente:         campoFicha('fi-zona_preferente'),
+        observaciones_tecnicas:  campoFicha('fi-observaciones_tecnicas'),
+        observaciones_conductuales: campoFicha('fi-observaciones_conductuales'),
+        restricciones_geograficas: campoFicha('fi-restricciones_geograficas'),
+        comentarios_admin:       campoFicha('fi-comentarios_admin'),
+        disponibilidad_viajes:   campoFicha('fi-disponibilidad_viajes'),
+        disponibilidad_reemplazos: campoFicha('fi-disponibilidad_reemplazos'),
+    };
+
+    try {
+        await api.patch(`/admin/hojavida/${userId}/ficha`, payload);
+        await cargar();
+    } catch(e) {
+        alert('Error al guardar ficha: ' + e.message);
+    }
+}
+
+// ── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+    document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+    cargar();
+
+    document.getElementById('modal-nota').addEventListener('click', e => {
+        if (e.target === document.getElementById('modal-nota')) cerrarModalNota();
+    });
+});
+</script>
+</body>
+</html>
