@@ -111,8 +111,77 @@ router.get('/:id', async (req, res) => {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([mes, cantidad]) => ({ mes, cantidad }));
 
-    // ── Comparación vs pares ──────────────────────────────────────────────────
-    // Dos queries separadas: primero IDs de pares, luego sus notas
+    // ── Distribución / frecuencia comparada ──────────────────────────────────
+    // Cuántos rodeos ha hecho este jurado vs pares de su categoría y en general
+    let pares_categoria    = [];
+    let comparacion_frecuencia = null;
+    try {
+        const { data: todosDelTipo } = await supabase
+            .from('usuarios_pagados')
+            .select('id, nombre_completo, categoria')
+            .eq('tipo_persona', perfil.tipo_persona)
+            .eq('activo', true);
+
+        if (todosDelTipo && todosDelTipo.length > 0) {
+            const todosIds = todosDelTipo.map(u => u.id);
+
+            const { data: asigsTodos } = await supabase
+                .from('asignaciones')
+                .select('usuario_pagado_id, estado_designacion')
+                .eq('estado', 'activo')
+                .in('usuario_pagado_id', todosIds);
+
+            const countPorUsuario = {};
+            todosIds.forEach(id => { countPorUsuario[id] = 0; });
+            (asigsTodos || []).forEach(a => {
+                if (a.estado_designacion !== 'rechazado') countPorUsuario[a.usuario_pagado_id]++;
+            });
+
+            const todosConCount = todosDelTipo.map(u => ({
+                id:           u.id,
+                nombre:       u.nombre_completo,
+                categoria:    u.categoria,
+                total_rodeos: countPorUsuario[u.id] || 0,
+                es_actual:    u.id === uid
+            }));
+
+            // Promedio general (mismo tipo, todas las categorías)
+            const promGeneral = Math.round(
+                (todosConCount.reduce((s, u) => s + u.total_rodeos, 0) / todosConCount.length) * 10
+            ) / 10;
+
+            // Categoría específica
+            const deLaCategoria = perfil.categoria
+                ? todosConCount.filter(u => u.categoria === perfil.categoria)
+                : todosConCount;
+
+            const promCat = deLaCategoria.length
+                ? Math.round((deLaCategoria.reduce((s, u) => s + u.total_rodeos, 0) / deLaCategoria.length) * 10) / 10
+                : null;
+
+            // Ranking 1 = más rodeos en la categoría
+            const ordenados = [...deLaCategoria].sort((a, b) => b.total_rodeos - a.total_rodeos);
+            const posicion   = ordenados.findIndex(u => u.es_actual) + 1;
+
+            pares_categoria = ordenados;   // ya ordenado desc
+
+            const propioRodeos = noEjecutadas.length;
+            comparacion_frecuencia = {
+                rodeos_propios:           propioRodeos,
+                promedio_categoria:       promCat,
+                promedio_general:         promGeneral,
+                total_usuarios_categoria: deLaCategoria.length,
+                total_usuarios_general:   todosConCount.length,
+                diferencia_vs_categoria:  promCat !== null ? Math.round((propioRodeos - promCat) * 10) / 10 : null,
+                diferencia_vs_general:    Math.round((propioRodeos - promGeneral) * 10) / 10,
+                ranking_categoria:        posicion > 0 ? posicion : null
+            };
+        }
+    } catch (e) {
+        console.error('[hojavida] error frecuencia_comparada:', e.message);
+    }
+
+    // ── Comparación vs pares (notas) ─────────────────────────────────────────
     let comparacion = null;
     try {
         // a) IDs de usuarios del mismo tipo (excluyendo al actual)
@@ -183,11 +252,13 @@ router.get('/:id', async (req, res) => {
     res.json({
         perfil,
         historial,
-        ficha:     ficha || null,
+        ficha:               ficha || null,
         indicadores,
         evolucion_notas,
         frecuencia_propia,
-        comparacion
+        comparacion,
+        pares_categoria,
+        comparacion_frecuencia
     });
 });
 
