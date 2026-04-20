@@ -243,7 +243,7 @@ function renderComparacion(comp, perfil, ind) {
             </div>
             <div class="comp-card">
                 <div class="cval">${prom}</div>
-                <div class="clbl">Promedio ${tipo} (${comp.total_pares} pares)</div>
+                <div class="clbl">Promedio ${tipo}${comp.pares_con_nota ? ` (${comp.pares_con_nota} evaluados)` : ''}</div>
             </div>
             <div class="comp-card">
                 <div class="cval">${diff !== null ? (parseFloat(diff) >= 0 ? '↑' : '↓') + Math.abs(parseFloat(diff)) : '—'}</div>
@@ -263,7 +263,14 @@ function renderHistorial(historial) {
         return `<div class="seccion-bloque"><div class="seccion-titulo">Historial de rodeos</div><p style="color:var(--gris); font-size:13px;">Sin asignaciones registradas.</p></div>`;
     }
 
-    const filas = historial.map(a => {
+    // Ordenar por fecha del rodeo descendente
+    const ordenado = [...historial].sort((a, b) => {
+        const fa = a.rodeos?.fecha || '';
+        const fb = b.rodeos?.fecha || '';
+        return fb.localeCompare(fa);
+    });
+
+    const filas = ordenado.map(a => {
         const rodeo = a.rodeos || {};
         const nr    = a.notas_rodeo;
         const rechazado = a.estado_designacion === 'rechazado';
