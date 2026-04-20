@@ -485,7 +485,9 @@ function htmlDetalle(r) {
                 designBadge = `<span style="color:#27ae60; font-size:15px;" title="Aceptó asistir (registro anterior)">●</span> <span style="font-size:12px; color:#27ae60;">Aceptó asistir${km}</span>`;
             }
             return `<tr style="${a.estado_designacion === 'rechazado' ? 'opacity:0.65;' : ''}">
-            <td>${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—')}</td>
+            <td>${a.usuarios_pagados?.id
+                ? `<a href="/admin/hojavida.html?id=${a.usuarios_pagados.id}&from=rodeos" style="color:var(--primario);text-decoration:none;font-weight:500;" title="Ver Hoja de Vida">${sanitizar(a.usuarios_pagados.nombre_completo)}</a>`
+                : sanitizar(a.nombre_importado || '—')}</td>
             <td style="font-size:12px; color:var(--gris);">${sanitizar(a.usuarios_pagados?.codigo_interno || '—')}</td>
             <td>${a.tipo_persona === 'jurado' ? '<span class="badge badge-jurado">Jurado</span>' : '<span class="badge badge-delegado">Delegado</span>'}</td>
             <td>${a.categoria_aplicada || '—'}</td>

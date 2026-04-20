@@ -16,5 +16,6 @@ router.use('/reportes', require('./reportes'));
 router.use('/dashboard', require('./dashboard'));
 router.use('/adjuntos', require('./adjuntos'));
 router.use('/disponibilidad', require('./disponibilidad'));
+router.use('/hojavida', require('./hojavida'));
 
 module.exports = router;

@@ -195,6 +195,7 @@ function renderTabla(usuarios, total) {
                 <td>
                     <div class="flex gap-8">
                         <button class="btn btn-pequeño btn-outline" onclick="abrirEditar('${u.id}')">Editar</button>
+                        <button class="btn btn-pequeño btn-primario" onclick="location.href='/admin/hojavida.html?id=${u.id}&from=usuarios'" title="Hoja de Vida">HV</button>
                         <button class="btn btn-pequeño btn-secundario" onclick="abrirAcciones('${u.id}', '${sanitizar(u.nombre_completo)}', '${u.tipo_persona}', '${u.activo}', '${u.categoria || ''}')">▾</button>
                     </div>
                 </td>
