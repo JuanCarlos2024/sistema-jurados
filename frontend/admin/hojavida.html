@@ -282,6 +282,7 @@ function renderHistorial(historial) {
             <td>${formatFecha(rodeo.fecha)}</td>
             <td>${sanitizar(rodeo.club || '—')}</td>
             <td style="font-size:12px; color:var(--gris);">${sanitizar(rodeo.asociacion || '—')}</td>
+            <td style="font-size:12px; color:var(--gris);">${sanitizar(rodeo.tipo_rodeo_nombre || '—')}</td>
             <td>${a.categoria_aplicada || '—'}</td>
             <td class="monto-positivo">${rechazado ? '<span class="texto-gris">—</span>' : formatCLP(a.pago_base_calculado)}</td>
             <td>${estadoBadge}</td>
@@ -297,7 +298,7 @@ function renderHistorial(historial) {
         <div style="overflow-x:auto;">
         <table class="tabla">
             <thead><tr>
-                <th>Fecha</th><th>Club</th><th>Asociación</th><th>Cat.</th>
+                <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Cat.</th>
                 <th>Pago base</th><th>Estado</th><th>Nota</th><th></th>
             </tr></thead>
             <tbody>${filas}</tbody>
