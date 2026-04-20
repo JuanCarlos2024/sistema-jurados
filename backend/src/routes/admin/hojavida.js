@@ -21,8 +21,8 @@ router.get('/:id', async (req, res) => {
         .from('asignaciones')
         .select(`
             id, estado, estado_designacion, categoria_aplicada,
-            pago_base_calculado, valor_diario_aplicado, dias,
-            rodeos(id, club, asociacion, fecha)
+            valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
+            rodeos(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)
         `)
         .eq('usuario_pagado_id', uid)
         .order('created_at', { ascending: false });
