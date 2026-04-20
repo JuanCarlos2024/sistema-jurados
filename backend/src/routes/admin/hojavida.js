@@ -1,14 +1,13 @@
-const express  = require('express');
-const router   = express.Router();
-const supabase = require('../../config/supabase');
+const express   = require('express');
+const router    = express.Router();
+const supabase  = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 
-// ─── GET /api/admin/hojavida/:id ────────────────────────────
-// Devuelve: perfil, historial, ficha, indicadores, comparacion, frecuencia
+// ─── GET /api/admin/hojavida/:id ────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
     const uid = req.params.id;
 
-    // 1. Perfil del usuario
+    // 1. Perfil
     const { data: perfil, error: errPerfil } = await supabase
         .from('usuarios_pagados')
         .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, asociacion, activo, created_at')
@@ -17,71 +16,80 @@ router.get('/:id', async (req, res) => {
 
     if (errPerfil || !perfil) return res.status(404).json({ error: 'Usuario no encontrado' });
 
-    // 2. Historial de asignaciones + notas
-    const { data: asigs } = await supabase
+    // 2. Asignaciones — sin inline join a notas_rodeo para evitar fallo por cache de schema
+    const { data: asigs, error: errAsigs } = await supabase
         .from('asignaciones')
         .select(`
             id, estado, estado_designacion, categoria_aplicada,
             pago_base_calculado, valor_diario_aplicado, dias,
-            rodeos(id, club, fecha, comuna, region),
-            notas_rodeo(nota, comentario, evaluado_en, updated_by)
+            rodeos(id, club, fecha, comuna, region)
         `)
         .eq('usuario_pagado_id', uid)
         .order('created_at', { ascending: false });
 
-    // 3. Ficha interna
+    if (errAsigs) {
+        console.error('[hojavida] error asignaciones:', errAsigs.message);
+        return res.status(500).json({ error: 'Error al obtener historial: ' + errAsigs.message });
+    }
+
+    const todasAsigs = asigs || [];
+
+    // 3. Notas — query separada para no romper la carga si la tabla es nueva o el cache no refrescó
+    let notasMap = {};
+    if (todasAsigs.length > 0) {
+        const ids = todasAsigs.map(a => a.id);
+        const { data: notas } = await supabase
+            .from('notas_rodeo')
+            .select('asignacion_id, nota, comentario, evaluado_en, updated_by')
+            .in('asignacion_id', ids);
+        (notas || []).forEach(n => { notasMap[n.asignacion_id] = n; });
+    }
+
+    // Merge notas en historial
+    const historial = todasAsigs
+        .filter(a => a.estado === 'activo')
+        .map(a => ({ ...a, notas_rodeo: notasMap[a.id] || null }));
+
+    // 4. Ficha interna
     const { data: ficha } = await supabase
         .from('fichas_internas')
         .select('*')
         .eq('usuario_pagado_id', uid)
         .single();
 
-    // ── Indicadores ──────────────────────────────────────────
-    const historial = (asigs || []).filter(a => a.estado === 'activo');
+    // ── Indicadores ──────────────────────────────────────────────────────────
     const noEjecutadas = historial.filter(a => a.estado_designacion !== 'rechazado');
-    const conNota = noEjecutadas.filter(a => a.notas_rodeo?.nota != null);
+    const conNota      = noEjecutadas.filter(a => a.notas_rodeo?.nota != null);
+    const notas        = conNota.map(a => parseFloat(a.notas_rodeo.nota));
 
-    const notas = conNota.map(a => parseFloat(a.notas_rodeo.nota));
-    const promedioNota  = notas.length ? (notas.reduce((s, n) => s + n, 0) / notas.length) : null;
+    const promedioNota  = notas.length ? Math.round((notas.reduce((s, n) => s + n, 0) / notas.length) * 100) / 100 : null;
     const mejorNota     = notas.length ? Math.max(...notas) : null;
     const peorNota      = notas.length ? Math.min(...notas) : null;
-    const ultimaNota    = conNota.length
-        ? parseFloat(conNota[0].notas_rodeo.nota)   // ya ordenado desc por created_at
-        : null;
+
+    // Última nota = la del rodeo más reciente con nota registrada
+    const ultimaNota = conNota
+        .filter(a => a.rodeos?.fecha)
+        .sort((a, b) => b.rodeos.fecha.localeCompare(a.rodeos.fecha))[0]?.notas_rodeo?.nota ?? null;
 
     const fechas = noEjecutadas
         .map(a => a.rodeos?.fecha)
         .filter(Boolean)
         .sort();
 
-    const ultimaAsistencia = fechas.length ? fechas[fechas.length - 1] : null;
-
     const totalPagos = noEjecutadas.reduce((s, a) => s + (a.pago_base_calculado || 0), 0);
 
     const indicadores = {
         total_rodeos:      noEjecutadas.length,
         con_nota:          conNota.length,
-        promedio_nota:     promedioNota !== null ? Math.round(promedioNota * 100) / 100 : null,
-        ultima_nota:       ultimaNota,
+        promedio_nota:     promedioNota,
+        ultima_nota:       ultimaNota !== null ? parseFloat(ultimaNota) : null,
         mejor_nota:        mejorNota,
         peor_nota:         peorNota,
-        ultima_asistencia: ultimaAsistencia,
+        ultima_asistencia: fechas.length ? fechas[fechas.length - 1] : null,
         total_pagos:       totalPagos
     };
 
-    // ── Frecuencia mensual propia ────────────────────────────
-    const frecuencia = {};
-    noEjecutadas.forEach(a => {
-        const f = a.rodeos?.fecha;
-        if (!f) return;
-        const mes = f.slice(0, 7); // YYYY-MM
-        frecuencia[mes] = (frecuencia[mes] || 0) + 1;
-    });
-    const frecuencia_propia = Object.entries(frecuencia)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([mes, cantidad]) => ({ mes, cantidad }));
-
-    // ── Evolución de notas ───────────────────────────────────
+    // ── Evolución de notas (orden cronológico) ────────────────────────────────
     const evolucion_notas = conNota
         .filter(a => a.rodeos?.fecha)
         .map(a => ({
@@ -91,52 +99,90 @@ router.get('/:id', async (req, res) => {
         }))
         .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-    // ── Comparación vs pares (misma categoría/tipo) ──────────
+    // ── Frecuencia mensual ────────────────────────────────────────────────────
+    const frecMap = {};
+    noEjecutadas.forEach(a => {
+        const f = a.rodeos?.fecha;
+        if (!f) return;
+        const mes = f.slice(0, 7);
+        frecMap[mes] = (frecMap[mes] || 0) + 1;
+    });
+    const frecuencia_propia = Object.entries(frecMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([mes, cantidad]) => ({ mes, cantidad }));
+
+    // ── Comparación vs pares ──────────────────────────────────────────────────
+    // Dos queries separadas: primero IDs de pares, luego sus notas
     let comparacion = null;
     try {
-        const { data: pares } = await supabase
-            .from('asignaciones')
-            .select(`
-                usuario_pagado_id,
-                estado_designacion,
-                notas_rodeo(nota),
-                usuarios_pagados!inner(tipo_persona, categoria)
-            `)
-            .eq('estado', 'activo')
-            .eq('usuarios_pagados.tipo_persona', perfil.tipo_persona)
-            .neq('usuario_pagado_id', uid);
+        // a) IDs de usuarios del mismo tipo (excluyendo al actual)
+        const { data: paresUsuarios } = await supabase
+            .from('usuarios_pagados')
+            .select('id')
+            .eq('tipo_persona', perfil.tipo_persona)
+            .neq('id', uid);
 
-        const groupNotas = {};
-        (pares || []).forEach(a => {
-            if (a.estado_designacion === 'rechazado') return;
-            if (!a.notas_rodeo?.nota) return;
-            const pid = a.usuario_pagado_id;
-            if (!groupNotas[pid]) groupNotas[pid] = [];
-            groupNotas[pid].push(parseFloat(a.notas_rodeo.nota));
-        });
+        const pareIds = (paresUsuarios || []).map(u => u.id);
 
-        const promediosPares = Object.values(groupNotas)
-            .map(ns => ns.reduce((s, n) => s + n, 0) / ns.length);
+        if (pareIds.length > 0) {
+            // b) Asignaciones activas y no rechazadas de esos pares
+            const { data: asigsPares } = await supabase
+                .from('asignaciones')
+                .select('id, usuario_pagado_id, estado_designacion')
+                .eq('estado', 'activo')
+                .in('usuario_pagado_id', pareIds);
 
-        const promGeneral = promediosPares.length
-            ? promediosPares.reduce((s, p) => s + p, 0) / promediosPares.length
-            : null;
+            const asigsParesFiltradas = (asigsPares || []).filter(a => a.estado_designacion !== 'rechazado');
+            const asigIdsPares = asigsParesFiltradas.map(a => a.id);
+            // Mapa asignacion_id → usuario_pagado_id para agrupar
+            const asigUserMap = {};
+            asigsParesFiltradas.forEach(a => { asigUserMap[a.id] = a.usuario_pagado_id; });
 
-        // Percentil: cuántos tienen promedio <= que el propio
-        const pctRank = promediosPares.length && promedioNota !== null
-            ? Math.round((promediosPares.filter(p => p <= promedioNota).length / promediosPares.length) * 100)
-            : null;
+            // c) Notas de esas asignaciones
+            let notasPares = [];
+            if (asigIdsPares.length > 0) {
+                const { data: nps } = await supabase
+                    .from('notas_rodeo')
+                    .select('asignacion_id, nota')
+                    .in('asignacion_id', asigIdsPares);
+                notasPares = nps || [];
+            }
 
-        comparacion = {
-            promedio_general_tipo: promGeneral !== null ? Math.round(promGeneral * 100) / 100 : null,
-            total_pares:           promediosPares.length,
-            percentil:             pctRank
-        };
-    } catch (_) { /* comparacion queda null */ }
+            // Agrupar notas por usuario
+            const notasPorUsuario = {};
+            notasPares.forEach(n => {
+                const userId = asigUserMap[n.asignacion_id];
+                if (!userId) return;
+                if (!notasPorUsuario[userId]) notasPorUsuario[userId] = [];
+                notasPorUsuario[userId].push(parseFloat(n.nota));
+            });
+
+            const promediosPares = Object.values(notasPorUsuario)
+                .map(ns => ns.reduce((s, n) => s + n, 0) / ns.length);
+
+            const promGeneral = promediosPares.length
+                ? Math.round((promediosPares.reduce((s, p) => s + p, 0) / promediosPares.length) * 100) / 100
+                : null;
+
+            const pctRank = promediosPares.length && promedioNota !== null
+                ? Math.round((promediosPares.filter(p => p <= promedioNota).length / promediosPares.length) * 100)
+                : null;
+
+            // Promedio general (todas las categorías, mismo tipo)
+            comparacion = {
+                promedio_general_tipo: promGeneral,
+                total_pares:           pareIds.length,
+                pares_con_nota:        promediosPares.length,
+                percentil:             pctRank
+            };
+        }
+    } catch (e) {
+        console.error('[hojavida] error comparacion:', e.message);
+    }
 
     res.json({
         perfil,
-        historial: asigs || [],
+        historial,
         ficha:     ficha || null,
         indicadores,
         evolucion_notas,
@@ -145,11 +191,11 @@ router.get('/:id', async (req, res) => {
     });
 });
 
-// ─── PATCH /api/admin/hojavida/:id/ficha ────────────────────
+// ─── PATCH /api/admin/hojavida/:id/ficha ────────────────────────────────────
 router.patch('/:id/ficha', async (req, res) => {
     const uid = req.params.id;
 
-    const campos = [
+    const camposPermitidos = [
         'caracter', 'liderazgo', 'habilidades_blandas', 'puntualidad',
         'responsabilidad_admin', 'trabajo_equipo', 'comunicacion', 'manejo_presion',
         'disponibilidad_viajes', 'disponibilidad_reemplazos',
@@ -158,13 +204,16 @@ router.patch('/:id/ficha', async (req, res) => {
         'recomendacion', 'comentarios_admin'
     ];
 
-    const payload = { usuario_pagado_id: uid, updated_at: new Date().toISOString(), updated_by: req.usuario.id };
-    campos.forEach(c => { if (req.body[c] !== undefined) payload[c] = req.body[c]; });
+    const payload = {
+        usuario_pagado_id: uid,
+        updated_at: new Date().toISOString(),
+        updated_by: req.usuario.id
+    };
+    camposPermitidos.forEach(c => { if (req.body[c] !== undefined) payload[c] = req.body[c]; });
 
-    // Si hay al menos un campo de evaluación real, marcar evaluado_en
     const camposEval = ['caracter','liderazgo','habilidades_blandas','puntualidad',
         'responsabilidad_admin','trabajo_equipo','comunicacion','manejo_presion','recomendacion'];
-    if (camposEval.some(c => payload[c] !== undefined)) {
+    if (camposEval.some(c => payload[c] != null && payload[c] !== '')) {
         payload.evaluado_en = new Date().toISOString();
     }
 
@@ -204,19 +253,22 @@ router.patch('/:id/ficha', async (req, res) => {
     res.json({ mensaje: 'Ficha guardada', ficha: result.data });
 });
 
-// ─── POST /api/admin/hojavida/nota/:asignacion_id ────────────
+// ─── POST /api/admin/hojavida/nota/:asignacion_id ────────────────────────────
 router.post('/nota/:asignacion_id', async (req, res) => {
     const asig_id = req.params.asignacion_id;
     const { nota, comentario } = req.body;
 
-    if (nota === undefined || nota === null) return res.status(400).json({ error: 'nota requerida' });
+    if (nota === undefined || nota === null || nota === '') {
+        return res.status(400).json({ error: 'nota requerida' });
+    }
     const n = parseFloat(nota);
-    if (isNaN(n) || n < 1.0 || n > 7.0) return res.status(400).json({ error: 'nota debe estar entre 1.0 y 7.0' });
+    if (isNaN(n) || n < 1.0 || n > 7.0) {
+        return res.status(400).json({ error: 'La nota debe estar entre 1.0 y 7.0' });
+    }
 
-    // Verificar que la asignación existe
     const { data: asig } = await supabase
         .from('asignaciones')
-        .select('id')
+        .select('id, usuario_pagado_id')
         .eq('id', asig_id)
         .single();
 
@@ -260,7 +312,7 @@ router.post('/nota/:asignacion_id', async (req, res) => {
         datos_nuevos: payload,
         actor_id: req.usuario.id,
         actor_tipo: 'admin',
-        descripcion: `Nota de rodeo ${existing ? 'actualizada' : 'registrada'}: ${n} para asignación ${asig_id}`,
+        descripcion: `Nota ${existing ? 'actualizada' : 'registrada'}: ${n} para asignación ${asig_id}`,
         ip_address: req.ip
     });
 
