@@ -54,12 +54,12 @@ CREATE INDEX IF NOT EXISTS idx_usuarios_activo ON usuarios_pagados(activo);
 
 -- ============================================================
 -- TABLA: configuracion_tarifas
--- Una fila por categoría (A, B, C). Solo se actualiza.
+-- Una fila por categoría (A, B, C, DR). Solo se actualiza.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS configuracion_tarifas (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     categoria       TEXT        NOT NULL UNIQUE
-                    CHECK (categoria IN ('A', 'B', 'C')),
+                    CHECK (categoria IN ('A', 'B', 'C', 'DR')),
     valor_diario    INTEGER     NOT NULL,                  -- CLP
     valor_2_dias    INTEGER     NOT NULL,                  -- CLP referencia
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -68,9 +68,10 @@ CREATE TABLE IF NOT EXISTS configuracion_tarifas (
 
 -- Insertar valores iniciales
 INSERT INTO configuracion_tarifas (categoria, valor_diario, valor_2_dias) VALUES
-    ('A', 292000, 584000),
-    ('B', 245000, 490000),
-    ('C', 213500, 427000)
+    ('A',  292000, 584000),
+    ('B',  245000, 490000),
+    ('C',  213500, 427000),
+    ('DR', 257250, 514500)
 ON CONFLICT (categoria) DO NOTHING;
 
 -- ============================================================
