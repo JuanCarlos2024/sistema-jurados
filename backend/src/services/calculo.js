@@ -34,14 +34,13 @@ async function obtenerRetencion() {
  * Calcula el pago base para una asignación.
  *
  * @param {string} tipo_persona - 'jurado' | 'delegado_rentado'
- * @param {string|null} categoria - 'A' | 'B' | 'C' | null (delegado usa A)
+ * @param {string|null} categoria - 'A' | 'B' | 'C' | null (delegado usa 'DR')
  * @param {number} duracion_dias
  * @param {object} tarifas - resultado de obtenerTarifas()
  * @returns {{ valor_diario_aplicado, pago_base_calculado, categoria_aplicada }}
  */
 function calcularPagoBase(tipo_persona, categoria, duracion_dias, tarifas) {
-    // Delegado rentado siempre usa tarifa de categoría A
-    const cat = tipo_persona === 'delegado_rentado' ? 'A' : categoria;
+    const cat = tipo_persona === 'delegado_rentado' ? 'DR' : categoria;
 
     if (!tarifas[cat]) {
         throw new Error(`Categoría ${cat} no tiene tarifa configurada`);

@@ -17,8 +17,8 @@ router.get('/tarifas', async (req, res) => {
 // PATCH /api/admin/configuracion/tarifas/:categoria
 router.patch('/tarifas/:categoria', async (req, res) => {
     const cat = req.params.categoria.toUpperCase();
-    if (!['A', 'B', 'C'].includes(cat)) {
-        return res.status(400).json({ error: 'Categoría debe ser A, B o C' });
+    if (!['A', 'B', 'C', 'DR'].includes(cat)) {
+        return res.status(400).json({ error: 'Categoría debe ser A, B, C o DR' });
     }
 
     const { valor_diario, valor_2_dias } = req.body;

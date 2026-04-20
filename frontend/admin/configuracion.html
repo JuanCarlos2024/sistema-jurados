@@ -116,11 +116,13 @@ async function cargarTarifas() {
     const div = document.getElementById('form-tarifas');
     try {
         const data = await api.get('/admin/configuracion/tarifas');
+        const LABEL = { A: 'Categoría A', B: 'Categoría B', C: 'Categoría C', DR: 'Delegado Rentado' };
+        const BADGE = { A: 'badge-a', B: 'badge-b', C: 'badge-c', DR: 'badge-delegado' };
         div.innerHTML = data.map(t => `
             <div style="border:1px solid var(--gris-borde); border-radius:8px; padding:14px; margin-bottom:12px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <strong>Categoría ${t.categoria}</strong>
-                    <span class="badge badge-${t.categoria.toLowerCase()}">Cat. ${t.categoria}</span>
+                    <strong>${LABEL[t.categoria] || t.categoria}</strong>
+                    <span class="badge ${BADGE[t.categoria] || ''}">${LABEL[t.categoria] || t.categoria}</span>
                 </div>
                 <form onsubmit="guardarTarifa(event, '${t.categoria}')">
                     <div class="form-fila">
@@ -133,14 +135,9 @@ async function cargarTarifas() {
                             <input type="number" name="valor_2_dias" class="form-control" value="${t.valor_2_dias}" min="1">
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primario btn-pequeño">Guardar Cat. ${t.categoria}</button>
+                    <button type="submit" class="btn btn-primario btn-pequeño">Guardar ${LABEL[t.categoria] || t.categoria}</button>
                 </form>
             </div>`).join('');
-
-        // Agregar nota sobre delegado rentado
-        div.innerHTML += `<div class="alerta alerta-info">
-            <small>El delegado rentado usa automáticamente el valor diario de <strong>Categoría A</strong>.</small>
-        </div>`;
     } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
 }
 
