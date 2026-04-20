@@ -3,7 +3,7 @@ const router   = express.Router();
 const supabase = require('../../config/supabase');
 
 function esYouTube(url) {
-    return /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/)|youtu\.be\/)/.test(url);
+    return /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)/.test(url);
 }
 
 // ─── GET /api/usuario/links?rodeo_id= ───────────────────────
