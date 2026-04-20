@@ -22,7 +22,7 @@ router.get('/:id', async (req, res) => {
         .select(`
             id, estado, estado_designacion, categoria_aplicada,
             pago_base_calculado, valor_diario_aplicado, dias,
-            rodeos(id, club, fecha, comuna, region)
+            rodeos(id, club, asociacion, fecha)
         `)
         .eq('usuario_pagado_id', uid)
         .order('created_at', { ascending: false });
