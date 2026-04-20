@@ -441,10 +441,14 @@ function renderResumen(data) {
             <th style="text-align:center;">Rodeos</th>
             <th class="monto">Pago base</th><th class="monto">Bonos</th>
             <th class="monto">Bruto</th><th class="monto">Retención</th><th class="monto">Líquido</th>
-            <th>Detalle</th>
+            <th>Rodeos en el rango</th><th>Detalle</th>
         </tr></thead>
         <tbody>
-        ${data.data.map(j => `<tr>
+        ${data.data.map(j => {
+            const rodeosHtml = j.rodeos_detalle && j.rodeos_detalle.length > 0
+                ? j.rodeos_detalle.map(r => `${sanitizar(r.club)} - ${formatFecha(r.fecha)}`).join('<br>')
+                : '<span class="texto-gris">—</span>';
+            return `<tr>
             <td style="font-size:12px;">${sanitizar(j.codigo_interno)}</td>
             <td><strong>${sanitizar(j.nombre_completo)}</strong></td>
             <td style="font-size:12px;">${sanitizar(j.rut||'—')}</td>
@@ -455,8 +459,9 @@ function renderResumen(data) {
             <td class="monto"><strong>${formatCLP(j.bruto)}</strong></td>
             <td class="monto" style="color:#c0392b;">-${formatCLP(j.retencion_monto)}</td>
             <td class="monto monto-positivo"><strong>${formatCLP(j.liquido)}</strong></td>
+            <td style="font-size:12px; line-height:1.7;">${rodeosHtml}</td>
             <td><button class="btn btn-pequeño btn-outline" onclick="verDetalleJurado('${j.id}','${sanitizar(j.nombre_completo)}')">Ver</button></td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
         </tbody>
     </table>`;
 }

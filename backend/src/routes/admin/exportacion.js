@@ -216,14 +216,24 @@ function _buildReportHelpers(supabase) {
         for (const a of asignaciones) {
             const u = a.usuarios_pagados;
             if (!u) continue;
-            if (!mapa[u.id]) mapa[u.id] = { id: u.id, codigo_interno: u.codigo_interno, nombre_completo: u.nombre_completo, rut: u.rut||'—', categoria: u.categoria||'—', tipo_persona: u.tipo_persona, cant_rodeos: 0, total_pago_base: 0, total_bono_aprobado: 0 };
-            mapa[u.id].cant_rodeos++;
-            mapa[u.id].total_pago_base     += (a.pago_base_calculado || 0);
-            mapa[u.id].total_bono_aprobado += (a.bono_aprobado || 0);
+            const esRechazada = a.estado_designacion === 'rechazado';
+            if (!mapa[u.id]) mapa[u.id] = { id: u.id, codigo_interno: u.codigo_interno, nombre_completo: u.nombre_completo, rut: u.rut||'—', categoria: u.categoria||'—', tipo_persona: u.tipo_persona, cant_rodeos: 0, total_pago_base: 0, total_bono_aprobado: 0, rodeos_detalle: [], _seenRodeos: new Set() };
+            if (!esRechazada) {
+                mapa[u.id].cant_rodeos++;
+                mapa[u.id].total_pago_base     += (a.pago_base_calculado || 0);
+                mapa[u.id].total_bono_aprobado += (a.bono_aprobado || 0);
+                const rid = a.rodeos?.id;
+                if (rid && !mapa[u.id]._seenRodeos.has(rid)) {
+                    mapa[u.id]._seenRodeos.add(rid);
+                    mapa[u.id].rodeos_detalle.push({ club: a.rodeos?.club || '—', fecha: a.rodeos?.fecha || '' });
+                }
+            }
         }
         return Object.values(mapa).map(j => {
             const bruto = j.total_pago_base + j.total_bono_aprobado;
             const ret   = Math.round(bruto * pct / 100);
+            j.rodeos_detalle.sort((a, b) => a.fecha.localeCompare(b.fecha));
+            delete j._seenRodeos;
             return { ...j, bruto, retencion_monto: ret, liquido: bruto - ret };
         }).sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
     }

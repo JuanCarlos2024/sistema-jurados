@@ -109,18 +109,27 @@ function calcularTotalesPorJurado(asignaciones, porcentajeRetencion) {
                 cant_rodeos:    0,
                 total_pago_base: 0,
                 total_bono_aprobado: 0,
+                rodeos_detalle: [],
+                _seenRodeos:    new Set(),
             };
         }
         if (!esRechazada) {
             mapa[uid].cant_rodeos++;
             mapa[uid].total_pago_base     += (a.pago_base_calculado || 0);
             mapa[uid].total_bono_aprobado += (a.bono_aprobado || 0);
+            const rid = a.rodeos?.id;
+            if (rid && !mapa[uid]._seenRodeos.has(rid)) {
+                mapa[uid]._seenRodeos.add(rid);
+                mapa[uid].rodeos_detalle.push({ club: a.rodeos?.club || '—', fecha: a.rodeos?.fecha || '' });
+            }
         }
     }
 
     return Object.values(mapa).map(j => {
         const bruto     = j.total_pago_base + j.total_bono_aprobado;
         const retencion = Math.round(bruto * porcentajeRetencion / 100);
+        j.rodeos_detalle.sort((a, b) => a.fecha.localeCompare(b.fecha));
+        delete j._seenRodeos;
         return { ...j, bruto, retencion_monto: retencion, liquido: bruto - retencion };
     }).sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
 }

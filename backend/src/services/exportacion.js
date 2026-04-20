@@ -341,15 +341,22 @@ async function exportarRodeos(filtros, res) {
  * Datos ya calculados vienen como parámetro desde la ruta.
  */
 async function exportarResumenJurados(datos, retencionPct, formato, res) {
-    const headers = ['Código', 'Nombre', 'RUT', 'Categoría', 'Tipo', 'Rodeos', 'Pago Base', 'Bonos Aprobados', 'Bruto', 'Retención', 'Líquido'];
-    const filas = datos.map(j => [
-        j.codigo_interno, j.nombre_completo, j.rut || '—', j.categoria || '—',
-        j.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado',
-        j.cant_rodeos, formatCLP(j.total_pago_base), formatCLP(j.total_bono_aprobado),
-        formatCLP(j.bruto), formatCLP(j.retencion_monto), formatCLP(j.liquido)
-    ]);
+    function fmtFecha(iso) {
+        if (!iso) return '—';
+        const [y, m, d] = iso.split('-');
+        return `${d}/${m}/${y}`;
+    }
+
+    const headers = ['Código', 'Nombre', 'RUT', 'Categoría', 'Tipo', 'Rodeos', 'Pago Base', 'Bonos Aprobados', 'Bruto', 'Retención', 'Líquido', 'Rodeos en el rango'];
 
     if (formato === 'csv') {
+        const filas = datos.map(j => [
+            j.codigo_interno, j.nombre_completo, j.rut || '—', j.categoria || '—',
+            j.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado',
+            j.cant_rodeos, formatCLP(j.total_pago_base), formatCLP(j.total_bono_aprobado),
+            formatCLP(j.bruto), formatCLP(j.retencion_monto), formatCLP(j.liquido),
+            (j.rodeos_detalle || []).map(r => `${r.club} - ${fmtFecha(r.fecha)}`).join(' | ')
+        ]);
         const csv = generarCSV(headers, filas);
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', 'attachment; filename=resumen_jurados.csv');
@@ -359,23 +366,32 @@ async function exportarResumenJurados(datos, retencionPct, formato, res) {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Resumen Jurados');
     ws.columns = [
-        { header: 'Código', key: 'cod', width: 12 }, { header: 'Nombre', key: 'nom', width: 30 },
-        { header: 'RUT', key: 'rut', width: 14 },    { header: 'Categoría', key: 'cat', width: 12 },
-        { header: 'Tipo', key: 'tipo', width: 18 },  { header: 'Rodeos', key: 'rod', width: 10 },
-        { header: 'Pago Base', key: 'pb', width: 16 }, { header: 'Bonos', key: 'bon', width: 16 },
-        { header: 'Bruto', key: 'bruto', width: 16 }, { header: 'Retención', key: 'ret', width: 16 },
-        { header: 'Líquido', key: 'liq', width: 16 },
+        { header: 'Código',            key: 'cod',  width: 12 },
+        { header: 'Nombre',            key: 'nom',  width: 30 },
+        { header: 'RUT',               key: 'rut',  width: 14 },
+        { header: 'Categoría',         key: 'cat',  width: 12 },
+        { header: 'Tipo',              key: 'tipo', width: 18 },
+        { header: 'Rodeos',            key: 'rod',  width: 10 },
+        { header: 'Pago Base',         key: 'pb',   width: 16 },
+        { header: 'Bonos',             key: 'bon',  width: 16 },
+        { header: 'Bruto',             key: 'bruto',width: 16 },
+        { header: 'Retención',         key: 'ret',  width: 16 },
+        { header: 'Líquido',           key: 'liq',  width: 16 },
+        { header: 'Rodeos en el rango',key: 'rng',  width: 40 },
     ];
     ws.getRow(1).eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
     ws.getRow(1).height = 20;
 
     datos.forEach((j, i) => {
+        const rodeosTexto = (j.rodeos_detalle || []).map(r => `${r.club} - ${fmtFecha(r.fecha)}`).join('\n');
         const row = ws.addRow([
             j.codigo_interno, j.nombre_completo, j.rut || '—', j.categoria || '—',
             j.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado',
             j.cant_rodeos, formatCLP(j.total_pago_base), formatCLP(j.total_bono_aprobado),
-            formatCLP(j.bruto), formatCLP(j.retencion_monto), formatCLP(j.liquido)
+            formatCLP(j.bruto), formatCLP(j.retencion_monto), formatCLP(j.liquido),
+            rodeosTexto
         ]);
+        row.getCell(12).alignment = { wrapText: true, vertical: 'top' };
         if (i % 2 === 0) row.eachCell(c => { c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4F8' } }; });
     });
 
@@ -387,10 +403,10 @@ async function exportarResumenJurados(datos, retencionPct, formato, res) {
         formatCLP(datos.reduce((s,j) => s+j.bruto, 0)),
         formatCLP(datos.reduce((s,j) => s+j.retencion_monto, 0)),
         formatCLP(datos.reduce((s,j) => s+j.liquido, 0)),
+        ''
     ]);
     totRow.eachCell(c => { c.font = { bold: true }; c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFE0B2' } }; });
 
-    autoWidth(ws);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename=resumen_jurados.xlsx');
     await wb.xlsx.write(res);
