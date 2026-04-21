@@ -41,6 +41,19 @@
         details[open] > summary { margin-bottom:14px; }
         .percentil-bar { height:12px; background:#e9ecef; border-radius:6px; overflow:hidden; margin-top:6px; }
         .percentil-fill { height:100%; background:var(--primario); border-radius:6px; transition:width .4s; }
+        .nota-popover {
+            position: fixed;
+            z-index: 9999;
+            background: #fff;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            box-shadow: 0 6px 28px rgba(0,0,0,0.15);
+            padding: 16px;
+            width: 280px;
+        }
+        .nota-popover-titulo { font-weight:700; font-size:13px; margin-bottom:6px; }
+        .nota-popover-rodeo  { font-size:12px; color:var(--gris); margin:0 0 12px; line-height:1.4; }
+        .nota-popover-label  { font-size:12px; color:var(--gris); display:block; margin-bottom:4px; }
         .diff-pos { color:#1e8449; font-weight:700; }
         .diff-neg { color:#c0392b; font-weight:700; }
         .diff-neu { color:var(--gris); font-weight:700; }
@@ -93,28 +106,24 @@
     </div>
 </div>
 
-<!-- Modal nota por rodeo -->
-<div id="modal-nota" class="modal" style="display:none;">
-    <div class="modal-contenido" style="max-width:420px;">
-        <div class="modal-cabecera">
-            <h3 id="modal-nota-titulo">Registrar nota</h3>
-            <button class="modal-cerrar" onclick="cerrarModalNota()">×</button>
-        </div>
-        <div class="modal-cuerpo">
-            <p id="modal-nota-rodeo" style="font-size:13px; color:var(--gris); margin-bottom:14px;"></p>
-            <div class="form-grupo">
-                <label>Nota (1.0 – 7.0)</label>
-                <input type="number" id="input-nota" min="1.0" max="7.0" step="0.1" class="form-control" placeholder="ej: 6.5">
-            </div>
-            <div class="form-grupo">
-                <label>Comentario (opcional)</label>
-                <textarea id="input-comentario" class="form-control" rows="3" placeholder="Observaciones sobre el desempeño en este rodeo..."></textarea>
-            </div>
-        </div>
-        <div class="modal-pie">
-            <button class="btn btn-outline" onclick="cerrarModalNota()">Cancelar</button>
-            <button class="btn btn-primario" onclick="guardarNota()">Guardar nota</button>
-        </div>
+<!-- Popover nota por rodeo — posicionado junto al botón presionado -->
+<div id="popover-nota" class="nota-popover" style="display:none;">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px;">
+        <span class="nota-popover-titulo" id="modal-nota-titulo">Registrar nota</span>
+        <button style="background:none;border:none;font-size:20px;line-height:1;cursor:pointer;color:var(--gris);padding:0;" onclick="cerrarModalNota()" title="Cerrar">×</button>
+    </div>
+    <p class="nota-popover-rodeo" id="modal-nota-rodeo"></p>
+    <div style="margin-bottom:10px;">
+        <label class="nota-popover-label">Nota (1.0 – 7.0)</label>
+        <input type="number" id="input-nota" min="1.0" max="7.0" step="0.1" class="form-control" placeholder="ej: 6.5" style="font-size:15px;">
+    </div>
+    <div style="margin-bottom:12px;">
+        <label class="nota-popover-label">Comentario (opcional)</label>
+        <textarea id="input-comentario" class="form-control" rows="2" placeholder="Observaciones..."></textarea>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-outline btn-pequeño" onclick="cerrarModalNota()">Cancelar</button>
+        <button class="btn btn-primario btn-pequeño" onclick="guardarNota()">Guardar</button>
     </div>
 </div>
 
@@ -303,7 +312,7 @@ function renderHistorial(historial) {
             <td class="monto-positivo">${rechazado ? '<span class="texto-gris">—</span>' : formatCLP(a.pago_base_calculado)}</td>
             <td>${estadoBadge}</td>
             <td>${notaChip(nr?.nota)}</td>
-            <td>${rechazado ? '' : `<button class="historial-nota-btn" onclick="abrirModalNota('${a.id}', '${sanitizar(rodeo.club || '')} - ${formatFecha(rodeo.fecha)}', ${nr?.nota ?? 'null'}, '${sanitizar(nr?.comentario || '')}')">
+            <td>${rechazado ? '' : `<button class="historial-nota-btn" onclick="abrirModalNota(this,'${a.id}','${sanitizar(rodeo.club || '')} - ${formatFecha(rodeo.fecha)}',${nr?.nota ?? 'null'},'${sanitizar(nr?.comentario || '')}')">
                 ${nr?.nota != null ? 'Editar nota' : '+ Nota'}
             </button>`}</td>
         </tr>`;
@@ -629,17 +638,63 @@ function renderChartPares(pares, perfil, cf) {
     });
 }
 
-// ── Modal nota ───────────────────────────────────────────────
-function abrirModalNota(asigId, rodeoLabel, notaActual, comentarioActual) {
+// ── Popover nota ─────────────────────────────────────────────
+function abrirModalNota(btn, asigId, rodeoLabel, notaActual, comentarioActual) {
+    const pop = document.getElementById('popover-nota');
+
+    // Toggle: clic en el mismo botón cierra el popover
+    if (pop.style.display !== 'none' && _asigIdActual === asigId) {
+        cerrarModalNota();
+        return;
+    }
+
     _asigIdActual = asigId;
-    document.getElementById('modal-nota-titulo').textContent = notaActual != null && notaActual !== 'null' ? 'Editar nota' : 'Registrar nota';
-    document.getElementById('modal-nota-rodeo').textContent = rodeoLabel;
-    document.getElementById('input-nota').value = (notaActual != null && notaActual !== 'null') ? notaActual : '';
-    document.getElementById('input-comentario').value = comentarioActual && comentarioActual !== 'null' ? comentarioActual : '';
-    document.getElementById('modal-nota').style.display = 'flex';
+    const tieneNota = notaActual != null && notaActual !== 'null';
+
+    document.getElementById('modal-nota-titulo').textContent = tieneNota ? 'Editar nota' : 'Registrar nota';
+    document.getElementById('modal-nota-rodeo').textContent  = rodeoLabel;
+    document.getElementById('input-nota').value              = tieneNota ? notaActual : '';
+    document.getElementById('input-comentario').value        = (comentarioActual && comentarioActual !== 'null') ? comentarioActual : '';
+
+    // Mostrar fuera de pantalla para medir alto real antes de posicionar
+    pop.style.display = 'block';
+    pop.style.left    = '-9999px';
+    pop.style.top     = '-9999px';
+
+    const popW = 280;
+    const popH = pop.offsetHeight;
+    const r    = btn.getBoundingClientRect();
+    const vw   = window.innerWidth;
+    const vh   = window.innerHeight;
+
+    // Pantalla pequeña: centrado en el viewport
+    if (vw < 600) {
+        pop.style.left = Math.max(8, (vw - popW) / 2) + 'px';
+        pop.style.top  = Math.max(8, (vh - popH) / 2) + 'px';
+        document.getElementById('input-nota').focus();
+        return;
+    }
+
+    // Preferencia: a la derecha del botón
+    let left = r.right + 10;
+    let top  = r.top;
+
+    // No cabe a la derecha → izquierda del botón
+    if (left + popW > vw - 8) left = r.left - popW - 10;
+    // No cabe a la izquierda tampoco → centrado horizontal
+    if (left < 8) left = Math.max(8, (vw - popW) / 2);
+    // Desborda por abajo → subir
+    if (top + popH > vh - 8) top = vh - popH - 8;
+    top = Math.max(8, top);
+
+    pop.style.left = left + 'px';
+    pop.style.top  = top  + 'px';
+
+    document.getElementById('input-nota').focus();
 }
+
 function cerrarModalNota() {
-    document.getElementById('modal-nota').style.display = 'none';
+    document.getElementById('popover-nota').style.display = 'none';
     _asigIdActual = null;
 }
 
@@ -700,8 +755,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
     cargar();
 
-    document.getElementById('modal-nota').addEventListener('click', e => {
-        if (e.target === document.getElementById('modal-nota')) cerrarModalNota();
+    // Cerrar popover al hacer clic fuera (fase de captura para atrapar antes del toggle)
+    document.addEventListener('click', e => {
+        const pop = document.getElementById('popover-nota');
+        if (!pop || pop.style.display === 'none') return;
+        if (pop.contains(e.target)) return;
+        if (e.target.closest && e.target.closest('.historial-nota-btn')) return;
+        cerrarModalNota();
+    }, true);
+
+    // Cerrar popover con Escape
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') cerrarModalNota();
     });
 });
 </script>
