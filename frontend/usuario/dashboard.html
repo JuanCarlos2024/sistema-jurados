@@ -214,6 +214,7 @@ const ahora = new Date();
 let añoActual = ahora.getFullYear();
 let mesActual = ahora.getMonth() + 1;
 let bonosConfig = [];
+const ES_DELEGADO = api.getUsuario()?.tipo_persona === 'delegado_rentado';
 
 async function init() {
     try {
@@ -316,7 +317,7 @@ function renderRodeos(asignaciones) {
     div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th>
-            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th><th>Cartilla</th>
+            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th>${ES_DELEGADO ? '' : '<th>Cartilla</th>'}
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
@@ -412,7 +413,7 @@ function renderRodeos(asignaciones) {
                 <td>${designHtml}</td>
                 <td>${bonoHtml}</td>
                 <td>${adjHtml}</td>
-                <td>${cartillaHtml}</td>
+                ${ES_DELEGADO ? '' : `<td>${cartillaHtml}</td>`}
             </tr>`;
         }).join('')}
         </tbody>

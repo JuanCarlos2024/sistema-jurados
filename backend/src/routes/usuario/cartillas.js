@@ -3,6 +3,14 @@ const router   = express.Router();
 const supabase = require('../../config/supabase');
 const { generarCartillaPDF } = require('../../services/cartilla-pdf');
 
+// Middleware: solo jurados pueden usar el módulo de cartilla
+router.use((req, res, next) => {
+    if (req.usuario?.tipo_persona === 'delegado_rentado') {
+        return res.status(403).json({ error: 'Los delegados no completan cartilla desde la plataforma.' });
+    }
+    next();
+});
+
 // ─── GET /api/usuario/cartillas/:asignacion_id ───────────────────
 // Retorna el estado de la cartilla + datos del rodeo + perfil jurado
 router.get('/:asignacion_id', async (req, res) => {
