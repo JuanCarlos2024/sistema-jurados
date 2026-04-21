@@ -390,8 +390,18 @@ router.get('/desempeno', async (req, res) => {
             };
         });
 
-        // ── 7. Evolución mensual ─────────────────────────────────────────
+        // ── 7. Evolución mensual y semanal ───────────────────────────────
+        const isoWeek = dateStr => {
+            const d = new Date(dateStr + 'T12:00:00Z');
+            const day = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - day);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const wk = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+            return `${d.getUTCFullYear()}-W${String(wk).padStart(2, '0')}`;
+        };
+        const emptyBucket = () => ({ salidas: 0, _notas: [], A: 0, B: 0, C: 0, DR: 0, _nA: [], _nB: [], _nC: [], _nDR: [] });
         const porMes = {};
+        const porSemana = {};
         todasAsigs.forEach(a => {
             if (a.estado_designacion === 'rechazado') return;
             const u = usuariosMap[a.usuario_pagado_id];
@@ -401,26 +411,34 @@ router.get('/desempeno', async (req, res) => {
             if (tipoFiltro && u.tipo_persona !== tipoFiltro) return;
             const fecha = a.rodeos?.fecha;
             if (!fecha) return;
-            const m = fecha.slice(0, 7);
-            if (!porMes[m]) porMes[m] = { salidas: 0, _notas: [], A: 0, B: 0, C: 0, DR: 0, _nA: [], _nB: [], _nC: [], _nDR: [] };
-            porMes[m].salidas++;
-            if (porMes[m][uCat] !== undefined) porMes[m][uCat]++;
-            const nota = notasMap[a.id];
-            if (nota != null) {
-                porMes[m]._notas.push(nota);
-                const nKey = { A: '_nA', B: '_nB', C: '_nC', DR: '_nDR' }[uCat];
-                if (nKey) porMes[m][nKey].push(nota);
-            }
+            const mKey = fecha.slice(0, 7);
+            const wKey = isoWeek(fecha);
+            if (!porMes[mKey])    porMes[mKey]    = emptyBucket();
+            if (!porSemana[wKey]) porSemana[wKey] = emptyBucket();
+            [porMes[mKey], porSemana[wKey]].forEach(bucket => {
+                bucket.salidas++;
+                if (bucket[uCat] !== undefined) bucket[uCat]++;
+                const nota = notasMap[a.id];
+                if (nota != null) {
+                    bucket._notas.push(nota);
+                    const nKey = { A: '_nA', B: '_nB', C: '_nC', DR: '_nDR' }[uCat];
+                    if (nKey) bucket[nKey].push(nota);
+                }
+            });
         });
         const avg = arr => arr.length ? Math.round((arr.reduce((s, n) => s + n, 0) / arr.length) * 100) / 100 : null;
+        const bucketToRow = (key, d) => ({
+            periodo: key, salidas: d.salidas,
+            promedio_nota: avg(d._notas),
+            cat_A: d.A, cat_B: d.B, cat_C: d.C, cat_DR: d.DR,
+            nota_A: avg(d._nA), nota_B: avg(d._nB), nota_C: avg(d._nC), nota_DR: avg(d._nDR)
+        });
         const evolucion_mensual = Object.entries(porMes)
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(([m, d]) => ({
-                mes: m, salidas: d.salidas,
-                promedio_nota: avg(d._notas),
-                cat_A: d.A, cat_B: d.B, cat_C: d.C, cat_DR: d.DR,
-                nota_A: avg(d._nA), nota_B: avg(d._nB), nota_C: avg(d._nC), nota_DR: avg(d._nDR)
-            }));
+            .map(([m, d]) => bucketToRow(m, d));
+        const evolucion_semanal = Object.entries(porSemana)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([w, d]) => bucketToRow(w, d));
 
         // ── 8. Rankings ──────────────────────────────────────────────────
         const clean = ({ _notas, ...r }) => r;
@@ -449,7 +467,7 @@ router.get('/desempeno', async (req, res) => {
         const prioridadAlerta = { sobreutilizado: 0, subutilizado: 1, nota_baja: 2, sin_evaluar: 3 };
         alertas.sort((a, b) => (prioridadAlerta[a.tipo] ?? 9) - (prioridadAlerta[b.tipo] ?? 9));
 
-        res.json({ periodo: { año, mes, inicio, fin }, resumen, por_categoria, evolucion_mensual, ranking_salidas, ranking_notas, alertas: alertas.slice(0, 30) });
+        res.json({ periodo: { año, mes, inicio, fin }, resumen, por_categoria, evolucion_mensual, evolucion_semanal, ranking_salidas, ranking_notas, alertas: alertas.slice(0, 30) });
 
     } catch (err) {
         console.error('[DASHBOARD/DESEMPENO]', err.message);

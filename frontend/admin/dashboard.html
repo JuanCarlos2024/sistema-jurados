@@ -121,6 +121,8 @@
         .desemp-alerta-texto span   { color:var(--gris); font-size:12px; }
         .desemp-grafico-wrap { height:200px; position:relative; }
         .desemp-spinner { text-align:center; padding:30px; color:var(--gris); font-size:13px; }
+        .gran-btn { background:transparent; border:none; padding:4px 12px; border-radius:4px; font-size:12px; cursor:pointer; color:var(--gris); font-weight:500; transition:background .15s,color .15s; }
+        .gran-btn.active { background:#fff; color:var(--primario); box-shadow:0 1px 3px rgba(0,0,0,.12); }
     </style>
 </head>
 <body>
@@ -594,6 +596,8 @@ function renderBonosPend(lista) {
 
 let _desempAbierto = false;
 const _desempCharts = {};
+let _desempData = null;
+let _desempGran = 'mes';
 
 function toggleDesempeno() {
     _desempAbierto = !_desempAbierto;
@@ -647,6 +651,7 @@ function crearChartDesemp(id, config) {
 }
 
 function renderDesempeno(d) {
+    _desempData = d;
     const { resumen, por_categoria, evolucion_mensual, ranking_salidas, ranking_notas, alertas } = d;
 
     const COLORES_CAT = { A: '#2980b9', B: '#27ae60', C: '#e67e22', DR: '#8e44ad', '?': '#aaa' };
@@ -700,14 +705,20 @@ function renderDesempeno(d) {
     ${alertas && alertas.length > 0 ? renderAlertasDesemp(alertas) : ''}
 
     <div class="dash-seccion">
-        <div class="dash-seccion-titulo">Evolución mensual</div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+            <span class="dash-seccion-titulo" id="desemp-evol-titulo" style="margin:0;">Evolución mensual</span>
+            <div class="gran-selector" style="display:flex;gap:4px;background:#f0f2f5;border-radius:6px;padding:3px;">
+                <button class="gran-btn active" data-gran="mes"    onclick="cambiarGranularidad('mes')">Mes</button>
+                <button class="gran-btn"         data-gran="semana" onclick="cambiarGranularidad('semana')">Semana</button>
+            </div>
+        </div>
         <div class="desemp-dos-col">
             <div class="desemp-bloque">
-                <div class="desemp-bloque-titulo">Salidas a jurar por mes y categoría</div>
+                <div class="desemp-bloque-titulo" id="desemp-titulo-salidas">Salidas a jurar por mes y categoría</div>
                 <div class="desemp-grafico-wrap"><canvas id="chart-desemp-salidas"></canvas></div>
             </div>
             <div class="desemp-bloque">
-                <div class="desemp-bloque-titulo">Promedio de nota por mes</div>
+                <div class="desemp-bloque-titulo" id="desemp-titulo-notas">Promedio de nota por mes</div>
                 <div class="desemp-grafico-wrap"><canvas id="chart-desemp-notas"></canvas></div>
             </div>
         </div>
@@ -715,8 +726,9 @@ function renderDesempeno(d) {
 
     document.getElementById('desemp-contenido').innerHTML = html;
 
-    renderChartSalidasMes(evolucion_mensual, COLORES_CAT);
-    renderChartNotasMes(evolucion_mensual, COLORES_CAT);
+    _desempGran = 'mes';
+    renderChartSalidasMes(evolucion_mensual, COLORES_CAT, 'mes');
+    renderChartNotasMes(evolucion_mensual, COLORES_CAT, 'mes');
 }
 
 function renderRankingSalidas(ranking, por_categoria, COLORES) {
@@ -795,15 +807,42 @@ function renderAlertasDesemp(alertas) {
     </div>`;
 }
 
-function renderChartSalidasMes(evolucion, COLORES) {
+function formatEvolLabel(key, gran) {
+    if (gran === 'semana') {
+        // key: '2024-W03'
+        const [year, week] = key.split('-W');
+        return `S${week}/${year.slice(2)}`;
+    }
+    // key: '2024-03'
+    const [y, m] = key.split('-');
+    return `${m}/${y.slice(2)}`;
+}
+
+function cambiarGranularidad(gran) {
+    if (!_desempData) return;
+    _desempGran = gran;
+    document.querySelectorAll('.gran-btn').forEach(b => b.classList.toggle('active', b.dataset.gran === gran));
+    const esMes = gran === 'mes';
+    const evolucion = esMes ? _desempData.evolucion_mensual : (_desempData.evolucion_semanal || []);
+    const COLORES = { A: '#2980b9', B: '#27ae60', C: '#e67e22', DR: '#8e44ad' };
+    const titulo = document.getElementById('desemp-evol-titulo');
+    if (titulo) titulo.textContent = esMes ? 'Evolución mensual' : 'Evolución semanal';
+    const tSal = document.getElementById('desemp-titulo-salidas');
+    if (tSal) tSal.textContent = esMes ? 'Salidas a jurar por mes y categoría' : 'Salidas a jurar por semana y categoría';
+    const tNot = document.getElementById('desemp-titulo-notas');
+    if (tNot) tNot.textContent = esMes ? 'Promedio de nota por mes' : 'Promedio de nota por semana';
+    renderChartSalidasMes(evolucion, COLORES, gran);
+    renderChartNotasMes(evolucion, COLORES, gran);
+}
+
+function renderChartSalidasMes(evolucion, COLORES, gran) {
+    gran = gran || 'mes';
     if (!evolucion || evolucion.length === 0) {
         const el = document.getElementById('chart-desemp-salidas');
         if (el) el.parentElement.innerHTML = '<p style="color:var(--gris);font-size:13px;padding:20px;text-align:center;">Sin datos de salidas en el período.</p>';
         return;
     }
-    const labels = evolucion.map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
-    const elSal = document.getElementById('chart-desemp-salidas');
-    if (elSal) { const tag = document.createElement('div'); tag.style.cssText='font-size:10px;color:#888;text-align:right;margin-bottom:2px'; tag.textContent='v2 series temporales'; elSal.parentElement.insertBefore(tag, elSal); }
+    const labels = evolucion.map(e => formatEvolLabel(e.periodo, gran));
     crearChartDesemp('chart-desemp-salidas', {
         type: 'line',
         data: {
@@ -818,7 +857,7 @@ function renderChartSalidasMes(evolucion, COLORES) {
         options: {
             responsive: true, maintainAspectRatio: false,
             scales: {
-                x: { grid: { display: false } },
+                x: { grid: { display: false }, ticks: { maxRotation: 45, font: { size: 10 } } },
                 y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#eee' } }
             },
             plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
@@ -826,16 +865,15 @@ function renderChartSalidasMes(evolucion, COLORES) {
     });
 }
 
-function renderChartNotasMes(evolucion, COLORES) {
-    const labels = (evolucion || []).map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
+function renderChartNotasMes(evolucion, COLORES, gran) {
+    gran = gran || 'mes';
     const hasDatos = (evolucion || []).some(e => e.nota_A !== null || e.nota_B !== null || e.nota_C !== null || e.nota_DR !== null);
     if (!hasDatos) {
         const el = document.getElementById('chart-desemp-notas');
         if (el) el.parentElement.innerHTML = '<p style="color:var(--gris);font-size:13px;padding:20px;text-align:center;">Sin notas registradas en el período.</p>';
         return;
     }
-    const elNot = document.getElementById('chart-desemp-notas');
-    if (elNot) { const tag = document.createElement('div'); tag.style.cssText='font-size:10px;color:#888;text-align:right;margin-bottom:2px'; tag.textContent='v2 barras agrupadas'; elNot.parentElement.insertBefore(tag, elNot); }
+    const labels = (evolucion || []).map(e => formatEvolLabel(e.periodo, gran));
     crearChartDesemp('chart-desemp-notas', {
         type: 'bar',
         data: {
@@ -850,7 +888,7 @@ function renderChartNotasMes(evolucion, COLORES) {
         options: {
             responsive: true, maintainAspectRatio: false,
             scales: {
-                x: { grid: { display: false } },
+                x: { grid: { display: false }, ticks: { maxRotation: 45, font: { size: 10 } } },
                 y: { min: 1, max: 7, ticks: { stepSize: 1 }, grid: { color: '#eee' } }
             },
             plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
