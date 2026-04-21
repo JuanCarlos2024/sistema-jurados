@@ -81,6 +81,46 @@
         @media (max-width: 800px) {
             .monto-bloque { grid-template-columns: 1fr; }
         }
+
+        /* ── Módulo desempeño ── */
+        .desemp-header { display:flex; justify-content:space-between; align-items:center; cursor:pointer; border-top:2px solid var(--gris-borde); padding:12px 0 8px; margin-top:8px; }
+        .desemp-header-titulo { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.7px; color:var(--gris); }
+        .desemp-filtros { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; background:#f8f9fa; border:1px solid var(--gris-borde); border-radius:8px; padding:12px 16px; margin-bottom:16px; }
+        .desemp-filtros > div { display:flex; flex-direction:column; gap:4px; }
+        .desemp-label { font-size:11px; color:var(--gris); font-weight:600; text-transform:uppercase; letter-spacing:.4px; }
+        .desemp-sel { border:1px solid var(--gris-borde); border-radius:6px; padding:5px 10px; font-size:13px; background:#fff; cursor:pointer; }
+        .desemp-kpi-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:10px; margin-bottom:16px; }
+        .desemp-kpi { background:#fff; border:1px solid var(--gris-borde); border-radius:8px; padding:12px 14px; text-align:center; }
+        .desemp-kpi .dval { font-size:20px; font-weight:700; color:var(--primario); }
+        .desemp-kpi .dlbl { font-size:11px; color:var(--gris); margin-top:3px; line-height:1.3; }
+        .desemp-cat-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px,1fr)); gap:10px; margin-bottom:16px; }
+        .desemp-cat-card { background:#fff; border:1px solid var(--gris-borde); border-radius:8px; padding:12px 14px; }
+        .desemp-cat-card .cat-titulo { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--gris); margin-bottom:8px; padding-bottom:5px; border-bottom:2px solid; }
+        .desemp-cat-card .cat-fila { display:flex; justify-content:space-between; font-size:12px; padding:3px 0; }
+        .desemp-cat-card .cat-val { font-weight:700; }
+        .desemp-dos-col { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
+        @media (max-width:800px) { .desemp-dos-col { grid-template-columns:1fr; } }
+        .desemp-bloque { background:#fff; border:1px solid var(--gris-borde); border-radius:8px; padding:14px 16px; }
+        .desemp-bloque-titulo { font-size:12px; font-weight:700; color:var(--oscuro); margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--gris-borde); }
+        .desemp-ranking-fila { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid #f0f0f0; font-size:13px; }
+        .desemp-ranking-fila:last-child { border-bottom:none; }
+        .desemp-rank-num { font-size:11px; color:var(--gris); width:18px; text-align:right; flex-shrink:0; }
+        .desemp-rank-nombre { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .desemp-rank-cat { font-size:11px; background:#eee; border-radius:4px; padding:1px 5px; flex-shrink:0; }
+        .desemp-rank-val { font-weight:700; color:var(--primario); flex-shrink:0; min-width:28px; text-align:right; }
+        .desemp-rank-bar-wrap { width:60px; height:6px; background:#e9ecef; border-radius:3px; flex-shrink:0; }
+        .desemp-rank-bar { height:100%; border-radius:3px; background:var(--primario); }
+        .desemp-alerta-lista { display:flex; flex-direction:column; gap:8px; }
+        .desemp-alerta-item { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border-radius:7px; font-size:13px; }
+        .desemp-alerta-item.sobre  { background:#fef9e7; border:1px solid #f9ca74; }
+        .desemp-alerta-item.sub    { background:#eaf4fb; border:1px solid #aed6f1; }
+        .desemp-alerta-item.nota   { background:#fdecea; border:1px solid #f1948a; }
+        .desemp-alerta-item.sinev  { background:#f4f6f7; border:1px solid #d5d8dc; }
+        .desemp-alerta-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+        .desemp-alerta-texto strong { display:block; margin-bottom:2px; }
+        .desemp-alerta-texto span   { color:var(--gris); font-size:12px; }
+        .desemp-grafico-wrap { height:200px; position:relative; }
+        .desemp-spinner { text-align:center; padding:30px; color:var(--gris); font-size:13px; }
     </style>
 </head>
 <body>
@@ -162,10 +202,61 @@
                 <div class="spinner-wrap"><div class="spinner"></div></div>
             </div>
 
+            <!-- MÓDULO: Análisis de desempeño y distribución -->
+            <div id="modulo-desempeno">
+                <div class="desemp-header" onclick="toggleDesempeno()">
+                    <span class="desemp-header-titulo">Análisis de desempeño y distribución</span>
+                    <button class="btn btn-pequeño btn-primario" id="btn-toggle-desemp" style="pointer-events:none;">Ver análisis ▼</button>
+                </div>
+                <div id="panel-desempeno" style="display:none;">
+                    <!-- Filtros -->
+                    <div class="desemp-filtros">
+                        <div>
+                            <label class="desemp-label">Año</label>
+                            <select id="desemp-año" class="desemp-sel" onchange="recargarDesempeno()"></select>
+                        </div>
+                        <div>
+                            <label class="desemp-label">Mes</label>
+                            <select id="desemp-mes" class="desemp-sel" onchange="recargarDesempeno()">
+                                <option value="">Todo el año</option>
+                                <option value="1">Enero</option><option value="2">Febrero</option>
+                                <option value="3">Marzo</option><option value="4">Abril</option>
+                                <option value="5">Mayo</option><option value="6">Junio</option>
+                                <option value="7">Julio</option><option value="8">Agosto</option>
+                                <option value="9">Septiembre</option><option value="10">Octubre</option>
+                                <option value="11">Noviembre</option><option value="12">Diciembre</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="desemp-label">Categoría</label>
+                            <select id="desemp-cat" class="desemp-sel" onchange="recargarDesempeno()">
+                                <option value="">Todas</option>
+                                <option value="A">Cat. A</option>
+                                <option value="B">Cat. B</option>
+                                <option value="C">Cat. C</option>
+                                <option value="DR">Delegado Rentado</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="desemp-label">Tipo</label>
+                            <select id="desemp-tipo" class="desemp-sel" onchange="recargarDesempeno()">
+                                <option value="">Todos</option>
+                                <option value="jurado">Jurados</option>
+                                <option value="delegado_rentado">Delegados</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="desemp-contenido">
+                        <div class="desemp-spinner">Cargando análisis...</div>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -495,6 +586,272 @@ function renderBonosPend(lista) {
         </tr>`).join('')}
         </tbody>
     </table>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: Análisis de desempeño y distribución
+// ═══════════════════════════════════════════════════════════════════
+
+let _desempAbierto = false;
+const _desempCharts = {};
+
+function toggleDesempeno() {
+    _desempAbierto = !_desempAbierto;
+    document.getElementById('panel-desempeno').style.display = _desempAbierto ? 'block' : 'none';
+    document.getElementById('btn-toggle-desemp').textContent = _desempAbierto ? 'Ocultar ▲' : 'Ver análisis ▼';
+    if (_desempAbierto) {
+        poblarAniosDesemp();
+        recargarDesempeno();
+    }
+}
+
+function poblarAniosDesemp() {
+    const sel = document.getElementById('desemp-año');
+    if (sel.options.length > 0) return;
+    for (let y = hoy.año; y >= hoy.año - 4; y--) {
+        const opt = document.createElement('option');
+        opt.value = String(y);
+        opt.textContent = String(y);
+        if (y === hoy.año) opt.selected = true;
+        sel.appendChild(opt);
+    }
+}
+
+async function recargarDesempeno() {
+    const año  = document.getElementById('desemp-año')?.value || hoy.año;
+    const mes  = document.getElementById('desemp-mes')?.value || '';
+    const cat  = document.getElementById('desemp-cat')?.value || '';
+    const tipo = document.getElementById('desemp-tipo')?.value || '';
+
+    document.getElementById('desemp-contenido').innerHTML = '<div class="desemp-spinner">Cargando análisis...</div>';
+
+    let url = `/admin/dashboard/desempeno?año=${año}`;
+    if (mes)  url += `&mes=${mes}`;
+    if (cat)  url += `&categoria=${cat}`;
+    if (tipo) url += `&tipo=${tipo}`;
+
+    try {
+        const d = await api.get(url);
+        renderDesempeno(d);
+    } catch(e) {
+        document.getElementById('desemp-contenido').innerHTML =
+            `<div class="alerta alerta-error" style="margin:0;">Error: ${sanitizar(e.message)}</div>`;
+    }
+}
+
+function crearChartDesemp(id, config) {
+    if (_desempCharts[id]) { _desempCharts[id].destroy(); delete _desempCharts[id]; }
+    const ctx = document.getElementById(id);
+    if (!ctx) return;
+    _desempCharts[id] = new Chart(ctx, config);
+}
+
+function renderDesempeno(d) {
+    const { resumen, por_categoria, evolucion_mensual, ranking_salidas, ranking_notas, alertas } = d;
+
+    const COLORES_CAT = { A: '#2980b9', B: '#27ae60', C: '#e67e22', DR: '#8e44ad', '?': '#aaa' };
+    const LABEL_CAT   = { A: 'Cat. A', B: 'Cat. B', C: 'Cat. C', DR: 'Delegado Rentado' };
+
+    // ── Resumen ejecutivo ────────────────────────────────────────
+    const kpi = (val, lbl) => `<div class="desemp-kpi"><div class="dval">${val}</div><div class="dlbl">${lbl}</div></div>`;
+    const promNota = resumen.promedio_nota_general !== null ? resumen.promedio_nota_general.toFixed(2) : '—';
+    const promSal  = resumen.promedio_salidas !== undefined ? resumen.promedio_salidas : '—';
+
+    let html = `
+    <div class="dash-seccion">
+        <div class="dash-seccion-titulo">Resumen ejecutivo del período</div>
+        <div class="desemp-kpi-grid">
+            ${kpi(promNota,                         'Promedio nota general')}
+            ${kpi(resumen.total_notas,              'Notas registradas')}
+            ${kpi(resumen.total_evaluados,          'Evaluados con nota')}
+            ${kpi(resumen.total_usuarios,           'Personas en el período')}
+            ${kpi(resumen.total_salidas,            'Total salidas a jurar')}
+            ${kpi(promSal,                          'Promedio salidas / persona')}
+        </div>
+    </div>
+
+    <div class="dash-seccion">
+        <div class="dash-seccion-titulo">Por categoría</div>
+        <div class="desemp-cat-grid">
+            ${['A','B','C','DR'].filter(c => por_categoria[c]).map(cat => {
+                const pc = por_categoria[cat];
+                const col = COLORES_CAT[cat] || '#aaa';
+                const nota = pc.promedio_nota !== null ? pc.promedio_nota.toFixed(2) : '—';
+                return `<div class="desemp-cat-card">
+                    <div class="cat-titulo" style="color:${col};border-color:${col};">${LABEL_CAT[cat] || cat}</div>
+                    <div class="cat-fila"><span>Personas</span><span class="cat-val">${pc.usuarios}</span></div>
+                    <div class="cat-fila"><span>Total salidas</span><span class="cat-val">${pc.total_salidas}</span></div>
+                    <div class="cat-fila"><span>Prom. salidas</span><span class="cat-val">${pc.promedio_salidas}</span></div>
+                    <div class="cat-fila"><span>Prom. nota</span><span class="cat-val" style="color:${col};">${nota}</span></div>
+                    <div class="cat-fila"><span>Evaluados</span><span class="cat-val">${pc.evaluados}</span></div>
+                </div>`;
+            }).join('')}
+        </div>
+    </div>
+
+    <div class="dash-seccion">
+        <div class="dash-seccion-titulo">Rankings del período</div>
+        <div class="desemp-dos-col">
+            ${renderRankingSalidas(ranking_salidas, por_categoria, COLORES_CAT)}
+            ${renderRankingNotas(ranking_notas, COLORES_CAT)}
+        </div>
+    </div>
+
+    ${alertas && alertas.length > 0 ? renderAlertasDesemp(alertas) : ''}
+
+    <div class="dash-seccion">
+        <div class="dash-seccion-titulo">Evolución mensual</div>
+        <div class="desemp-dos-col">
+            <div class="desemp-bloque">
+                <div class="desemp-bloque-titulo">Salidas a jurar por mes y categoría</div>
+                <div class="desemp-grafico-wrap"><canvas id="chart-desemp-salidas"></canvas></div>
+            </div>
+            <div class="desemp-bloque">
+                <div class="desemp-bloque-titulo">Promedio de nota por mes</div>
+                <div class="desemp-grafico-wrap"><canvas id="chart-desemp-notas"></canvas></div>
+            </div>
+        </div>
+    </div>`;
+
+    document.getElementById('desemp-contenido').innerHTML = html;
+
+    renderChartSalidasMes(evolucion_mensual, COLORES_CAT);
+    renderChartNotasMes(evolucion_mensual);
+}
+
+function renderRankingSalidas(ranking, por_categoria, COLORES) {
+    if (!ranking || ranking.length === 0) {
+        return `<div class="desemp-bloque"><div class="desemp-bloque-titulo">Ranking por salidas</div><p style="color:var(--gris);font-size:13px;">Sin datos.</p></div>`;
+    }
+    const max = ranking[0]?.salidas || 1;
+    const filas = ranking.slice(0, 15).map((u, i) => {
+        const promCat = por_categoria[u.categoria]?.promedio_salidas || 0;
+        const diff    = +(u.salidas - promCat).toFixed(1);
+        const diffCol = diff > 0 ? 'color:#e67e22' : (diff < 0 ? 'color:#2980b9' : '');
+        const pct     = Math.round((u.salidas / max) * 100);
+        const nombre  = u.nombre.split(' ').slice(0,3).join(' ');
+        return `<div class="desemp-ranking-fila">
+            <span class="desemp-rank-num">${i + 1}</span>
+            <span class="desemp-rank-nombre" title="${sanitizar(u.nombre)}">${sanitizar(nombre)}</span>
+            <span class="desemp-rank-cat" style="background:${COLORES[u.categoria]}20;color:${COLORES[u.categoria]};">${u.categoria}</span>
+            <div class="desemp-rank-bar-wrap"><div class="desemp-rank-bar" style="width:${pct}%;background:${COLORES[u.categoria]};"></div></div>
+            <span class="desemp-rank-val">${u.salidas}</span>
+            <span style="font-size:11px;${diffCol};width:36px;text-align:right;flex-shrink:0;">${diff > 0 ? '+' : ''}${diff !== 0 ? diff : ''}</span>
+        </div>`;
+    }).join('');
+    return `<div class="desemp-bloque">
+        <div class="desemp-bloque-titulo">Top salidas a jurar <span style="font-weight:400;color:var(--gris);">(diff vs promedio categoría)</span></div>
+        ${filas}
+    </div>`;
+}
+
+function renderRankingNotas(ranking, COLORES) {
+    if (!ranking || ranking.length === 0) {
+        return `<div class="desemp-bloque"><div class="desemp-bloque-titulo">Ranking por nota</div><p style="color:var(--gris);font-size:13px;">Sin evaluaciones suficientes (mínimo 2 por persona).</p></div>`;
+    }
+    const max = ranking[0]?.promedio_nota || 7;
+    const filas = ranking.map((u, i) => {
+        const pct  = Math.round((u.promedio_nota / 7) * 100);
+        const col  = u.promedio_nota >= 6 ? '#27ae60' : u.promedio_nota >= 4.5 ? '#e67e22' : '#c0392b';
+        const nombre = u.nombre.split(' ').slice(0,3).join(' ');
+        return `<div class="desemp-ranking-fila">
+            <span class="desemp-rank-num">${i + 1}</span>
+            <span class="desemp-rank-nombre" title="${sanitizar(u.nombre)}">${sanitizar(nombre)}</span>
+            <span class="desemp-rank-cat" style="background:${COLORES[u.categoria]}20;color:${COLORES[u.categoria]};">${u.categoria}</span>
+            <div class="desemp-rank-bar-wrap"><div class="desemp-rank-bar" style="width:${pct}%;background:${col};"></div></div>
+            <span class="desemp-rank-val" style="color:${col};">${u.promedio_nota.toFixed(2)}</span>
+            <span style="font-size:11px;color:var(--gris);width:36px;text-align:right;flex-shrink:0;">(${u.evaluaciones})</span>
+        </div>`;
+    }).join('');
+    return `<div class="desemp-bloque">
+        <div class="desemp-bloque-titulo">Top promedio de notas <span style="font-weight:400;color:var(--gris);">(mín. 2 evaluaciones)</span></div>
+        ${filas}
+    </div>`;
+}
+
+function renderAlertasDesemp(alertas) {
+    const ICONO = { sobreutilizado: '⚠️', subutilizado: '📉', nota_baja: '🔴', sin_evaluar: '📋' };
+    const CLASE = { sobreutilizado: 'sobre', subutilizado: 'sub', nota_baja: 'nota', sin_evaluar: 'sinev' };
+    const DESC  = {
+        sobreutilizado: u => `${u.salidas} salidas — promedio categoría ${u.categoria}: ${u.promedio_cat} (+${u.diferencia})`,
+        subutilizado:   u => `${u.salidas} salidas — promedio categoría ${u.categoria}: ${u.promedio_cat} (${u.diferencia})`,
+        nota_baja:      u => `Promedio ${u.promedio_nota.toFixed(2)} en ${u.evaluaciones} evaluaciones — Cat. ${u.categoria}`,
+        sin_evaluar:    u => `${u.salidas} salidas sin ninguna evaluación — Cat. ${u.categoria}`
+    };
+    const TITULO = { sobreutilizado: 'Sobreutilizado', subutilizado: 'Subutilizado', nota_baja: 'Nota baja', sin_evaluar: 'Sin evaluar' };
+
+    const items = alertas.map(a => `
+        <div class="desemp-alerta-item ${CLASE[a.tipo] || 'sinev'}">
+            <span class="desemp-alerta-icon">${ICONO[a.tipo] || '•'}</span>
+            <div class="desemp-alerta-texto">
+                <strong>${sanitizar(a.nombre)} — ${TITULO[a.tipo] || a.tipo}</strong>
+                <span>${DESC[a.tipo] ? DESC[a.tipo](a) : ''}</span>
+            </div>
+        </div>`).join('');
+
+    return `<div class="dash-seccion">
+        <div class="dash-seccion-titulo">Alertas de gestión (${alertas.length})</div>
+        <div class="desemp-alerta-lista">${items}</div>
+    </div>`;
+}
+
+function renderChartSalidasMes(evolucion, COLORES) {
+    if (!evolucion || evolucion.length === 0) {
+        const el = document.getElementById('chart-desemp-salidas');
+        if (el) el.parentElement.innerHTML = '<p style="color:var(--gris);font-size:13px;padding:20px;text-align:center;">Sin datos de salidas en el período.</p>';
+        return;
+    }
+    const labels = evolucion.map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
+    crearChartDesemp('chart-desemp-salidas', {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Cat. A',  data: evolucion.map(e => e.cat_A),  backgroundColor: COLORES.A  + 'bb', borderRadius: 3 },
+                { label: 'Cat. B',  data: evolucion.map(e => e.cat_B),  backgroundColor: COLORES.B  + 'bb', borderRadius: 3 },
+                { label: 'Cat. C',  data: evolucion.map(e => e.cat_C),  backgroundColor: COLORES.C  + 'bb', borderRadius: 3 },
+                { label: 'Del. R.', data: evolucion.map(e => e.cat_DR), backgroundColor: COLORES.DR + 'bb', borderRadius: 3 }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { stacked: true, grid: { display: false } },
+                y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#eee' } }
+            },
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+        }
+    });
+}
+
+function renderChartNotasMes(evolucion) {
+    const conNota = (evolucion || []).filter(e => e.promedio_nota !== null);
+    if (conNota.length === 0) {
+        const el = document.getElementById('chart-desemp-notas');
+        if (el) el.parentElement.innerHTML = '<p style="color:var(--gris);font-size:13px;padding:20px;text-align:center;">Sin notas registradas en el período.</p>';
+        return;
+    }
+    const labels = conNota.map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
+    crearChartDesemp('chart-desemp-notas', {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Promedio nota',
+                data: conNota.map(e => e.promedio_nota),
+                borderColor: '#2980b9', backgroundColor: 'rgba(41,128,185,0.1)',
+                tension: 0.3, fill: true, pointRadius: 5
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                y: { min: 1, max: 7, ticks: { stepSize: 1 }, grid: { color: '#eee' } },
+                x: { grid: { display: false } }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
 }
 
 // ─── Init ─────────────────────────────────────────────────────────
