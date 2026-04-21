@@ -802,6 +802,8 @@ function renderChartSalidasMes(evolucion, COLORES) {
         return;
     }
     const labels = evolucion.map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
+    const elSal = document.getElementById('chart-desemp-salidas');
+    if (elSal) { const tag = document.createElement('div'); tag.style.cssText='font-size:10px;color:#888;text-align:right;margin-bottom:2px'; tag.textContent='v2 series temporales'; elSal.parentElement.insertBefore(tag, elSal); }
     crearChartDesemp('chart-desemp-salidas', {
         type: 'line',
         data: {
@@ -832,6 +834,8 @@ function renderChartNotasMes(evolucion, COLORES) {
         if (el) el.parentElement.innerHTML = '<p style="color:var(--gris);font-size:13px;padding:20px;text-align:center;">Sin notas registradas en el período.</p>';
         return;
     }
+    const elNot = document.getElementById('chart-desemp-notas');
+    if (elNot) { const tag = document.createElement('div'); tag.style.cssText='font-size:10px;color:#888;text-align:right;margin-bottom:2px'; tag.textContent='v2 barras agrupadas'; elNot.parentElement.insertBefore(tag, elNot); }
     crearChartDesemp('chart-desemp-notas', {
         type: 'bar',
         data: {
