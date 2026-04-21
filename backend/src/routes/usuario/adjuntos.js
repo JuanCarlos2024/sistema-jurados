@@ -45,12 +45,18 @@ router.get('/', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    // Cartillas solo visibles para su propio dueño
-    const TIPOS_CARTILLA = ['cartilla_jurado', 'cartilla_delegado', 'cartilla'];
+    const uid = req.usuario.id;
     const filtrado = (data || []).filter(adj => {
-        if (TIPOS_CARTILLA.includes(adj.tipo_adjunto)) {
-            return adj.usuario_pagado_id === req.usuario.id;
+        // Cartilla del delegado: nunca visible para el jurado
+        if (adj.tipo_adjunto === 'cartilla_delegado') return false;
+
+        // Cartilla del jurado o genérica: visible si corresponde a este usuario
+        // o si el admin la subió sin asignar a nadie (usuario_pagado_id null)
+        if (adj.tipo_adjunto === 'cartilla_jurado' || adj.tipo_adjunto === 'cartilla') {
+            return adj.usuario_pagado_id === uid || adj.usuario_pagado_id === null;
         }
+
+        // Resto de adjuntos: visibles según la lógica original
         return true;
     });
 
