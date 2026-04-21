@@ -74,9 +74,9 @@ router.get('/:asignacion_id', async (req, res) => {
     });
 });
 
-// ─── PUT /api/usuario/cartillas/:asignacion_id ───────────────────
+// ─── PATCH /api/usuario/cartillas/:asignacion_id ─────────────────
 // Guarda borrador (upsert). Solo disponible si estado != 'enviada'
-router.put('/:asignacion_id', async (req, res) => {
+router.patch('/:asignacion_id', async (req, res) => {
     const uid    = req.usuario.id;
     const asigId = req.params.asignacion_id;
     const datos  = req.body.datos || {};

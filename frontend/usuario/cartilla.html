@@ -445,7 +445,7 @@ async function guardarBorrador() {
     if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
     try {
         const datos = leerDatos();
-        await api.put(`/usuario/cartillas/${ASIG_ID}`, { datos });
+        await api.patch(`/usuario/cartillas/${ASIG_ID}`, { datos });
         const lbl = document.getElementById('lbl-guardado');
         if (lbl) lbl.textContent = 'Último guardado: ' + new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
         if (_estado === 'nueva') {
