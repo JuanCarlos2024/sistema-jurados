@@ -44,7 +44,17 @@ router.get('/', async (req, res) => {
         .order('created_at', { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data || []);
+
+    // Cartillas solo visibles para su propio dueño
+    const TIPOS_CARTILLA = ['cartilla_jurado', 'cartilla_delegado', 'cartilla'];
+    const filtrado = (data || []).filter(adj => {
+        if (TIPOS_CARTILLA.includes(adj.tipo_adjunto)) {
+            return adj.usuario_pagado_id === req.usuario.id;
+        }
+        return true;
+    });
+
+    res.json(filtrado);
 });
 
 // ─── POST /api/usuario/adjuntos ─────────────────────────────
@@ -102,12 +112,16 @@ router.post('/', upload.single('archivo'), async (req, res) => {
 router.get('/:id/url', async (req, res) => {
     const { data: adj } = await supabase
         .from('rodeo_adjuntos')
-        .select('storage_path, nombre_archivo, usuario_pagado_id')
+        .select('storage_path, nombre_archivo, usuario_pagado_id, subido_por_admin, tipo_adjunto')
         .eq('id', req.params.id)
         .single();
 
     if (!adj) return res.status(404).json({ error: 'Adjunto no encontrado' });
-    if (adj.usuario_pagado_id !== req.usuario.id) {
+
+    const TIPOS_CARTILLA = ['cartilla_jurado', 'cartilla_delegado', 'cartilla'];
+    const esPropio = adj.usuario_pagado_id === req.usuario.id;
+    const esAdminNoCartilla = adj.subido_por_admin && !TIPOS_CARTILLA.includes(adj.tipo_adjunto);
+    if (!esPropio && !esAdminNoCartilla) {
         return res.status(403).json({ error: 'Sin permiso' });
     }
 
