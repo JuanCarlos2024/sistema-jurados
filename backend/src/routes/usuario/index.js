@@ -12,5 +12,6 @@ router.use('/asignaciones', require('./asignaciones'));
 router.use('/adjuntos', require('./adjuntos'));
 router.use('/links', require('./links'));
 router.use('/disponibilidad', require('./disponibilidad'));
+router.use('/cartillas', require('./cartillas'));
 
 module.exports = router;

@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cartilla de Jurado — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .cartilla-form { max-width: 720px; margin: 0 auto; }
+        .bloque {
+            background: #fff;
+            border: 1px solid var(--gris-borde, #ddd);
+            border-radius: 10px;
+            margin-bottom: 18px;
+            overflow: hidden;
+        }
+        .bloque-header {
+            background: #1a3c6e;
+            color: #fff;
+            padding: 12px 18px;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+        }
+        .bloque-body { padding: 16px 18px; }
+        .campo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media(max-width: 520px) { .campo-grid { grid-template-columns: 1fr; } }
+        .campo-full { grid-column: 1 / -1; }
+        .campo-solo { margin-bottom: 12px; }
+        .form-label { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; display: block; }
+        .req { color: #e74c3c; }
+        .form-control { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+        .form-control:focus { outline: none; border-color: #1a3c6e; box-shadow: 0 0 0 2px #d5e6ff; }
+        select.form-control { background: #fff; }
+        textarea.form-control { resize: vertical; min-height: 80px; }
+        .campo-readonly { padding: 8px 10px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; color: #333; }
+        .estado-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+        .estado-borrador { background: #fff3cd; color: #856404; border: 1px solid #ffc107; }
+        .estado-enviada  { background: #d1f2eb; color: #145a32; border: 1px solid #27ae60; }
+        .estado-nueva    { background: #e8f4fd; color: #1a5276; border: 1px solid #2980b9; }
+        .barra-acciones {
+            position: sticky;
+            bottom: 0;
+            background: #fff;
+            border-top: 1px solid #ddd;
+            padding: 12px 18px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            z-index: 100;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.07);
+        }
+        .enviada-notice {
+            background: #d1f2eb;
+            border: 1px solid #27ae60;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin-bottom: 18px;
+            font-size: 14px;
+            color: #145a32;
+        }
+        .enviada-notice strong { display: block; font-size: 15px; margin-bottom: 4px; }
+        .spinner-wrap { text-align: center; padding: 40px; }
+        #alerta-global { margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1 id="titulo-topbar">Cartilla de Jurado</h1>
+            </div>
+            <div>
+                <a href="/usuario/dashboard.html" class="btn btn-secundario btn-pequeño">← Mi Panel</a>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="cartilla-form">
+
+                <div id="alerta-global"></div>
+                <div id="cuerpo-cartilla">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+
+// Leer asignacion_id de la URL (?asignacion_id=...)
+const params   = new URLSearchParams(location.search);
+const ASIG_ID  = params.get('asignacion_id');
+let _estado    = null; // 'nueva' | 'borrador' | 'enviada'
+let _autoguardando = false;
+
+if (!ASIG_ID) {
+    document.getElementById('cuerpo-cartilla').innerHTML =
+        '<div class="alerta alerta-error">Falta el parámetro asignacion_id en la URL.</div>';
+} else {
+    init();
+}
+
+async function init() {
+    try {
+        const r = await api.get(`/usuario/cartillas/${ASIG_ID}`);
+        renderCartilla(r);
+    } catch(err) {
+        document.getElementById('cuerpo-cartilla').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar la cartilla')}</div>`;
+    }
+}
+
+function renderCartilla(r) {
+    const { rodeo, perfil, cartilla } = r;
+    _estado = cartilla ? cartilla.estado : 'nueva';
+    const d  = cartilla?.datos || {};
+    const ya = _estado === 'enviada';
+
+    document.getElementById('titulo-topbar').textContent =
+        ya ? 'Cartilla de Jurado (enviada)' : 'Completar Cartilla de Jurado';
+
+    let html = '';
+
+    // ── Aviso si ya está enviada ──────────────────────────────────
+    if (ya) {
+        html += `<div class="enviada-notice">
+            <strong>✓ Cartilla enviada correctamente</strong>
+            Enviada el ${cartilla.enviada_en ? fmtFechaHora(cartilla.enviada_en) : '—'}.
+            Esta cartilla ya no puede ser modificada.
+            <div style="margin-top:10px;">
+                <button class="btn btn-outline btn-pequeño" onclick="descargarPDF()">📄 Descargar PDF</button>
+            </div>
+        </div>`;
+    } else {
+        const badgeClass = _estado === 'borrador' ? 'estado-borrador' : 'estado-nueva';
+        const badgeText  = _estado === 'borrador' ? 'Borrador guardado' : 'Sin completar';
+        html += `<div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+                <span class="estado-badge ${badgeClass}">${badgeText}</span>
+                ${_estado === 'borrador' ? `<span id="lbl-guardado" style="font-size:12px; color:#888; margin-left:8px;">Último guardado: ${cartilla?.updated_at ? fmtFechaHora(cartilla.updated_at) : '—'}</span>` : ''}
+            </div>
+            <div style="font-size:12px; color:#888;">Los cambios se guardan automáticamente</div>
+        </div>`;
+    }
+
+    // ── Bloque 1: Identificación del rodeo ───────────────────────
+    html += bloque('1', 'Identificación del rodeo', `
+        <div class="campo-grid">
+            <div><div class="form-label">Club / Sede</div><div class="campo-readonly">${sanitizar(rodeo?.club || '—')}</div></div>
+            <div><div class="form-label">Asociación</div><div class="campo-readonly">${sanitizar(rodeo?.asociacion || '—')}</div></div>
+            <div><div class="form-label">Fecha</div><div class="campo-readonly">${rodeo?.fecha ? fmtFecha(rodeo.fecha) : '—'}</div></div>
+            <div><div class="form-label">Tipo de rodeo</div><div class="campo-readonly">${sanitizar(rodeo?.tipo_rodeo_nombre || '—')}</div></div>
+        </div>`, ya);
+
+    // ── Bloque 2: Identificación del evaluador ───────────────────
+    html += bloque('2', 'Identificación del evaluador', `
+        <div class="campo-grid">
+            <div><div class="form-label">Nombre</div><div class="campo-readonly">${sanitizar(perfil?.nombre || '—')}</div></div>
+            <div><div class="form-label">RUT</div><div class="campo-readonly">${sanitizar(perfil?.rut || '—')}</div></div>
+            <div><div class="form-label">Rol</div><div class="campo-readonly">${perfil?.tipo_persona === 'delegado_rentado' ? 'Delegado Rentado' : 'Jurado'}</div></div>
+            <div><div class="form-label">Categoría</div><div class="campo-readonly">${perfil?.categoria || (perfil?.tipo_persona === 'delegado_rentado' ? 'DR' : '—')}</div></div>
+        </div>`, ya);
+
+    // ── Bloque 3: Desarrollo del evento ─────────────────────────
+    html += bloque('3', 'Desarrollo del evento', `
+        <div class="campo-grid">
+            <div>
+                <label class="form-label" for="nro_colleras">N° de colleras juzgadas <span class="req">*</span></label>
+                ${ya ? `<div class="campo-readonly">${d.nro_colleras ?? '—'}</div>`
+                     : `<input type="number" id="nro_colleras" class="form-control" min="0" value="${d.nro_colleras ?? ''}" placeholder="Ej: 24" oninput="autoguardar()">`}
+            </div>
+            <div>
+                <label class="form-label" for="nro_animales">N° de animales evaluados</label>
+                ${ya ? `<div class="campo-readonly">${d.nro_animales ?? '—'}</div>`
+                     : `<input type="number" id="nro_animales" class="form-control" min="0" value="${d.nro_animales ?? ''}" placeholder="Ej: 48" oninput="autoguardar()">`}
+            </div>
+            <div>
+                <label class="form-label" for="duracion_horas">Duración efectiva (horas)</label>
+                ${ya ? `<div class="campo-readonly">${d.duracion_horas ?? '—'}</div>`
+                     : `<input type="number" id="duracion_horas" class="form-control" min="0" step="0.5" value="${d.duracion_horas ?? ''}" placeholder="Ej: 6" oninput="autoguardar()">`}
+            </div>
+            <div>
+                <label class="form-label" for="realizo_sorteo">¿Se realizó sorteo?</label>
+                ${ya ? `<div class="campo-readonly">${yesNoLabel(d.realizo_sorteo)}</div>`
+                     : `<select id="realizo_sorteo" class="form-control" onchange="autoguardar()">
+                            <option value="">— Seleccione —</option>
+                            <option value="si" ${d.realizo_sorteo==='si'?'selected':''}>Sí</option>
+                            <option value="no" ${d.realizo_sorteo==='no'?'selected':''}>No</option>
+                        </select>`}
+            </div>
+            <div>
+                <label class="form-label" for="conformidad_sorteo">Conformidad con el sorteo</label>
+                ${ya ? `<div class="campo-readonly">${yesNoLabel(d.conformidad_sorteo)}</div>`
+                     : `<select id="conformidad_sorteo" class="form-control" onchange="autoguardar()">
+                            <option value="">— Seleccione —</option>
+                            <option value="si" ${d.conformidad_sorteo==='si'?'selected':''}>Sí</option>
+                            <option value="no" ${d.conformidad_sorteo==='no'?'selected':''}>No</option>
+                        </select>`}
+            </div>
+        </div>`, ya);
+
+    // ── Bloque 4: Instalaciones ──────────────────────────────────
+    const optsCalidad = ['Muy buena', 'Buena', 'Regular', 'Deficiente'];
+    html += bloque('4', 'Evaluación de instalaciones', `
+        <div class="campo-grid">
+            ${campoSelect(ya, 'estado_pista',    'Estado de la pista', optsCalidad, d.estado_pista, true)}
+            ${campoSelect(ya, 'estado_corrales', 'Corrales / manga',   optsCalidad, d.estado_corrales, false)}
+            ${campoSelect(ya, 'iluminacion',     'Iluminación',         optsCalidad, d.iluminacion, false)}
+            ${campoSelect(ya, 'sanitarios',      'Baños / vestuarios',  optsCalidad, d.sanitarios, false)}
+            ${campoSelect(ya, 'condicion_general', 'Condición general', optsCalidad, d.condicion_general, false)}
+        </div>`, ya);
+
+    // ── Bloque 5: Organización ───────────────────────────────────
+    const optsOrg = ['Excelente', 'Buena', 'Regular', 'Deficiente'];
+    html += bloque('5', 'Evaluación organizativa', `
+        <div class="campo-grid">
+            ${campoSelect(ya, 'puntualidad',   'Puntualidad del inicio', optsOrg, d.puntualidad, true)}
+            ${campoSelect(ya, 'coordinacion',  'Coordinación general',   optsOrg, d.coordinacion, false)}
+            ${campoSelect(ya, 'trato_jurado',  'Trato al jurado',        optsOrg, d.trato_jurado, false)}
+            ${campoSelect(ya, 'difusion',      'Difusión y comunicación',optsOrg, d.difusion, false)}
+        </div>`, ya);
+
+    // ── Bloque 6: Observaciones ──────────────────────────────────
+    html += bloque('6', 'Observaciones e incidentes', `
+        <div>
+            <label class="form-label" for="observaciones">Observaciones, incidentes o comentarios adicionales</label>
+            ${ya ? `<div class="campo-readonly" style="white-space:pre-wrap; min-height:60px;">${sanitizar(d.observaciones || 'Sin observaciones.')}</div>`
+                 : `<textarea id="observaciones" class="form-control" rows="4" placeholder="Describa cualquier incidente, situación especial o comentario relevante del rodeo..." oninput="autoguardar()">${sanitizar(d.observaciones || '')}</textarea>`}
+        </div>`, ya);
+
+    document.getElementById('cuerpo-cartilla').innerHTML = html;
+
+    // Barra de acciones (solo si no está enviada)
+    if (!ya) {
+        const barra = document.createElement('div');
+        barra.className = 'barra-acciones';
+        barra.innerHTML = `
+            <button class="btn btn-secundario" onclick="guardarBorrador()" id="btn-borrador">Guardar borrador</button>
+            <button class="btn btn-primario"   onclick="confirmarEnviar()"  id="btn-enviar">Enviar cartilla</button>`;
+        document.querySelector('.cartilla-form').appendChild(barra);
+    }
+}
+
+// ── Autoguardado con debounce ─────────────────────────────────────
+let _debounce = null;
+function autoguardar() {
+    clearTimeout(_debounce);
+    _debounce = setTimeout(guardarBorrador, 2500);
+}
+
+async function guardarBorrador() {
+    if (_autoguardando) return;
+    _autoguardando = true;
+    const btn = document.getElementById('btn-borrador');
+    if (btn) btn.disabled = true;
+    try {
+        const datos = leerDatos();
+        await api.put(`/usuario/cartillas/${ASIG_ID}`, { datos });
+        const lbl = document.getElementById('lbl-guardado');
+        if (lbl) lbl.textContent = `Último guardado: ${new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}`;
+        // Si era nueva, actualizar estado visual
+        if (_estado === 'nueva') {
+            _estado = 'borrador';
+            const badge = document.querySelector('.estado-badge');
+            if (badge) { badge.className = 'estado-badge estado-borrador'; badge.textContent = 'Borrador guardado'; }
+        }
+    } catch(err) {
+        mostrarError(err);
+    } finally {
+        _autoguardando = false;
+        if (btn) btn.disabled = false;
+    }
+}
+
+function confirmarEnviar() {
+    const datos = leerDatos();
+    // Validación básica frontend
+    if (!datos.nro_colleras && datos.nro_colleras !== 0) {
+        mostrarAlerta('Por favor ingrese el N° de colleras juzgadas.', 'error');
+        document.getElementById('nro_colleras')?.focus();
+        return;
+    }
+    if (!datos.estado_pista) {
+        mostrarAlerta('Por favor seleccione el estado de la pista.', 'error');
+        document.getElementById('estado_pista')?.focus();
+        return;
+    }
+    if (!datos.puntualidad) {
+        mostrarAlerta('Por favor evalúe la puntualidad del inicio.', 'error');
+        document.getElementById('puntualidad')?.focus();
+        return;
+    }
+    if (!confirm('¿Está seguro de enviar la cartilla? Una vez enviada no podrá ser modificada.')) return;
+    enviarCartilla(datos);
+}
+
+async function enviarCartilla(datos) {
+    const btn = document.getElementById('btn-enviar');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+    limpiarAlerta();
+    try {
+        const r = await api.post(`/usuario/cartillas/${ASIG_ID}/enviar`, { datos });
+        mostrarAlerta(r.mensaje || 'Cartilla enviada correctamente.', 'success');
+        // Recargar para mostrar vista de enviada
+        setTimeout(() => init(), 800);
+    } catch(err) {
+        mostrarAlerta(err.message || 'Error al enviar la cartilla.', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Enviar cartilla'; }
+    }
+}
+
+async function descargarPDF() {
+    try {
+        const r = await api.get(`/usuario/cartillas/${ASIG_ID}/pdf`);
+        const a = document.createElement('a');
+        a.href = r.url; a.target = '_blank'; a.download = 'cartilla_jurado.pdf';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch(err) { mostrarError(err); }
+}
+
+// ── Leer todos los valores del formulario ─────────────────────────
+function leerDatos() {
+    const v = id => {
+        const el = document.getElementById(id);
+        if (!el) return undefined;
+        const val = el.value?.trim();
+        return val === '' ? undefined : val;
+    };
+    return {
+        nro_colleras:     v('nro_colleras') !== undefined ? Number(v('nro_colleras')) : undefined,
+        nro_animales:     v('nro_animales') !== undefined ? Number(v('nro_animales')) : undefined,
+        duracion_horas:   v('duracion_horas') !== undefined ? Number(v('duracion_horas')) : undefined,
+        realizo_sorteo:   v('realizo_sorteo'),
+        conformidad_sorteo: v('conformidad_sorteo'),
+        estado_pista:     v('estado_pista'),
+        estado_corrales:  v('estado_corrales'),
+        iluminacion:      v('iluminacion'),
+        sanitarios:       v('sanitarios'),
+        condicion_general: v('condicion_general'),
+        puntualidad:      v('puntualidad'),
+        coordinacion:     v('coordinacion'),
+        trato_jurado:     v('trato_jurado'),
+        difusion:         v('difusion'),
+        observaciones:    v('observaciones')
+    };
+}
+
+// ── Helpers de renderizado ────────────────────────────────────────
+function bloque(num, titulo, contenido, readonly) {
+    return `<div class="bloque">
+        <div class="bloque-header">Bloque ${num} — ${titulo}</div>
+        <div class="bloque-body">${contenido}</div>
+    </div>`;
+}
+
+function campoSelect(readonly, id, label, opciones, valorActual, requerido) {
+    const sel = requerido ? `<span class="req">*</span>` : '';
+    if (readonly) {
+        return `<div>
+            <div class="form-label">${label}</div>
+            <div class="campo-readonly">${sanitizar(valorActual || '—')}</div>
+        </div>`;
+    }
+    const opts = opciones.map(o => `<option value="${o}" ${valorActual===o?'selected':''}>${o}</option>`).join('');
+    return `<div>
+        <label class="form-label" for="${id}">${label} ${sel}</label>
+        <select id="${id}" class="form-control" onchange="autoguardar()">
+            <option value="">— Seleccione —</option>
+            ${opts}
+        </select>
+    </div>`;
+}
+
+function yesNoLabel(v) {
+    if (v === 'si' || v === 'sí' || v === true) return 'Sí';
+    if (v === 'no' || v === false)              return 'No';
+    return '—';
+}
+
+function fmtFecha(iso) {
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function fmtFechaHora(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-CL') + ' ' + d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+}
+
+function mostrarAlerta(msg, tipo) {
+    const el = document.getElementById('alerta-global');
+    el.innerHTML = `<div class="alerta alerta-${tipo === 'error' ? 'error' : 'info'}" style="margin-bottom:12px;">${sanitizar(msg)}</div>`;
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function limpiarAlerta() {
+    document.getElementById('alerta-global').innerHTML = '';
+}
+</script>
+</body>
+</html>

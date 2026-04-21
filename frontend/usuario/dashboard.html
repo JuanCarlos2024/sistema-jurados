@@ -302,7 +302,7 @@ function renderRodeos(asignaciones) {
     div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th>
-            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th>
+            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th><th>Cartilla</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
@@ -369,6 +369,19 @@ function renderRodeos(asignaciones) {
                 ? '<span style="color:#aaa; font-size:12px;">—</span>'
                 : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntos('${a.rodeo_id}', '${sanitizar(a.rodeos?.club||'')}')">📎</button>`;
 
+            // Columna Cartilla
+            let cartillaHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
+            if (!esRechazada) {
+                const cest = a.cartilla_estado;
+                if (cest === 'enviada') {
+                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#27ae60; color:#fff; text-decoration:none;">✓ Enviada</a>`;
+                } else if (cest === 'borrador') {
+                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#f39c12; color:#fff; text-decoration:none;">Borrador</a>`;
+                } else {
+                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño btn-outline" style="text-decoration:none;">Completar</a>`;
+                }
+            }
+
             const nota = a.nota_rodeo?.nota;
             const notaHtml = nota != null
                 ? `<span style="font-weight:700; color:#2980b9; font-size:15px;">${parseFloat(nota).toFixed(1)}</span>`
@@ -385,6 +398,7 @@ function renderRodeos(asignaciones) {
                 <td>${designHtml}</td>
                 <td>${bonoHtml}</td>
                 <td>${adjHtml}</td>
+                <td>${cartillaHtml}</td>
             </tr>`;
         }).join('')}
         </tbody>

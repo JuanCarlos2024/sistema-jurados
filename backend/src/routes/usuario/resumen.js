@@ -131,18 +131,21 @@ router.get('/', async (req, res) => {
     try {
         const resumen = await calcularResumenMensual(req.usuario.id, año, mes);
 
-        // Adjuntar notas por asignación (query separada para no tocar el servicio de cálculo)
+        // Adjuntar notas y estado de cartilla por asignación
         const asigIds = (resumen.asignaciones || []).map(a => a.id);
         if (asigIds.length > 0) {
-            const { data: notas } = await supabase
-                .from('notas_rodeo')
-                .select('asignacion_id, nota, comentario')
-                .in('asignacion_id', asigIds);
-            const notasMap = {};
-            (notas || []).forEach(n => { notasMap[n.asignacion_id] = n; });
+            const [{ data: notas }, { data: cartillas }] = await Promise.all([
+                supabase.from('notas_rodeo').select('asignacion_id, nota, comentario').in('asignacion_id', asigIds),
+                supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds)
+            ]);
+            const notasMap     = {};
+            const cartillasMap = {};
+            (notas     || []).forEach(n => { notasMap[n.asignacion_id]     = n; });
+            (cartillas || []).forEach(c => { cartillasMap[c.asignacion_id] = c.estado; });
             resumen.asignaciones = resumen.asignaciones.map(a => ({
                 ...a,
-                nota_rodeo: notasMap[a.id] || null
+                nota_rodeo:     notasMap[a.id]     || null,
+                cartilla_estado: cartillasMap[a.id] || null
             }));
         }
 
