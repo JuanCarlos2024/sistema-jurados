@@ -402,20 +402,24 @@ router.get('/desempeno', async (req, res) => {
             const fecha = a.rodeos?.fecha;
             if (!fecha) return;
             const m = fecha.slice(0, 7);
-            if (!porMes[m]) porMes[m] = { salidas: 0, _notas: [], A: 0, B: 0, C: 0, DR: 0 };
+            if (!porMes[m]) porMes[m] = { salidas: 0, _notas: [], A: 0, B: 0, C: 0, DR: 0, _nA: [], _nB: [], _nC: [], _nDR: [] };
             porMes[m].salidas++;
             if (porMes[m][uCat] !== undefined) porMes[m][uCat]++;
             const nota = notasMap[a.id];
-            if (nota != null) porMes[m]._notas.push(nota);
+            if (nota != null) {
+                porMes[m]._notas.push(nota);
+                const nKey = { A: '_nA', B: '_nB', C: '_nC', DR: '_nDR' }[uCat];
+                if (nKey) porMes[m][nKey].push(nota);
+            }
         });
+        const avg = arr => arr.length ? Math.round((arr.reduce((s, n) => s + n, 0) / arr.length) * 100) / 100 : null;
         const evolucion_mensual = Object.entries(porMes)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([m, d]) => ({
                 mes: m, salidas: d.salidas,
-                promedio_nota: d._notas.length
-                    ? Math.round((d._notas.reduce((s, n) => s + n, 0) / d._notas.length) * 100) / 100
-                    : null,
-                cat_A: d.A, cat_B: d.B, cat_C: d.C, cat_DR: d.DR
+                promedio_nota: avg(d._notas),
+                cat_A: d.A, cat_B: d.B, cat_C: d.C, cat_DR: d.DR,
+                nota_A: avg(d._nA), nota_B: avg(d._nB), nota_C: avg(d._nC), nota_DR: avg(d._nDR)
             }));
 
         // ── 8. Rankings ──────────────────────────────────────────────────

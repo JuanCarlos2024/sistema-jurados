@@ -716,7 +716,7 @@ function renderDesempeno(d) {
     document.getElementById('desemp-contenido').innerHTML = html;
 
     renderChartSalidasMes(evolucion_mensual, COLORES_CAT);
-    renderChartNotasMes(evolucion_mensual);
+    renderChartNotasMes(evolucion_mensual, COLORES_CAT);
 }
 
 function renderRankingSalidas(ranking, por_categoria, COLORES) {
@@ -803,53 +803,53 @@ function renderChartSalidasMes(evolucion, COLORES) {
     }
     const labels = evolucion.map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
     crearChartDesemp('chart-desemp-salidas', {
-        type: 'bar',
+        type: 'line',
         data: {
             labels,
             datasets: [
-                { label: 'Cat. A',  data: evolucion.map(e => e.cat_A),  backgroundColor: COLORES.A  + 'bb', borderRadius: 3 },
-                { label: 'Cat. B',  data: evolucion.map(e => e.cat_B),  backgroundColor: COLORES.B  + 'bb', borderRadius: 3 },
-                { label: 'Cat. C',  data: evolucion.map(e => e.cat_C),  backgroundColor: COLORES.C  + 'bb', borderRadius: 3 },
-                { label: 'Del. R.', data: evolucion.map(e => e.cat_DR), backgroundColor: COLORES.DR + 'bb', borderRadius: 3 }
+                { label: 'Cat. A',  data: evolucion.map(e => e.cat_A),  borderColor: COLORES.A,  backgroundColor: COLORES.A  + '22', tension: 0.3, pointRadius: 4, fill: false },
+                { label: 'Cat. B',  data: evolucion.map(e => e.cat_B),  borderColor: COLORES.B,  backgroundColor: COLORES.B  + '22', tension: 0.3, pointRadius: 4, fill: false },
+                { label: 'Cat. C',  data: evolucion.map(e => e.cat_C),  borderColor: COLORES.C,  backgroundColor: COLORES.C  + '22', tension: 0.3, pointRadius: 4, fill: false },
+                { label: 'Del. R.', data: evolucion.map(e => e.cat_DR), borderColor: COLORES.DR, backgroundColor: COLORES.DR + '22', tension: 0.3, pointRadius: 4, fill: false }
             ]
         },
         options: {
             responsive: true, maintainAspectRatio: false,
             scales: {
-                x: { stacked: true, grid: { display: false } },
-                y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#eee' } }
+                x: { grid: { display: false } },
+                y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#eee' } }
             },
             plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
         }
     });
 }
 
-function renderChartNotasMes(evolucion) {
-    const conNota = (evolucion || []).filter(e => e.promedio_nota !== null);
-    if (conNota.length === 0) {
+function renderChartNotasMes(evolucion, COLORES) {
+    const labels = (evolucion || []).map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
+    const hasDatos = (evolucion || []).some(e => e.nota_A !== null || e.nota_B !== null || e.nota_C !== null || e.nota_DR !== null);
+    if (!hasDatos) {
         const el = document.getElementById('chart-desemp-notas');
         if (el) el.parentElement.innerHTML = '<p style="color:var(--gris);font-size:13px;padding:20px;text-align:center;">Sin notas registradas en el período.</p>';
         return;
     }
-    const labels = conNota.map(e => { const [y, m] = e.mes.split('-'); return `${m}/${y.slice(2)}`; });
     crearChartDesemp('chart-desemp-notas', {
-        type: 'line',
+        type: 'bar',
         data: {
             labels,
-            datasets: [{
-                label: 'Promedio nota',
-                data: conNota.map(e => e.promedio_nota),
-                borderColor: '#2980b9', backgroundColor: 'rgba(41,128,185,0.1)',
-                tension: 0.3, fill: true, pointRadius: 5
-            }]
+            datasets: [
+                { label: 'Cat. A',  data: (evolucion || []).map(e => e.nota_A),  backgroundColor: COLORES.A  + 'cc', borderRadius: 3 },
+                { label: 'Cat. B',  data: (evolucion || []).map(e => e.nota_B),  backgroundColor: COLORES.B  + 'cc', borderRadius: 3 },
+                { label: 'Cat. C',  data: (evolucion || []).map(e => e.nota_C),  backgroundColor: COLORES.C  + 'cc', borderRadius: 3 },
+                { label: 'Del. R.', data: (evolucion || []).map(e => e.nota_DR), backgroundColor: COLORES.DR + 'cc', borderRadius: 3 }
+            ]
         },
         options: {
             responsive: true, maintainAspectRatio: false,
             scales: {
-                y: { min: 1, max: 7, ticks: { stepSize: 1 }, grid: { color: '#eee' } },
-                x: { grid: { display: false } }
+                x: { grid: { display: false } },
+                y: { min: 1, max: 7, ticks: { stepSize: 1 }, grid: { color: '#eee' } }
             },
-            plugins: { legend: { display: false } }
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
         }
     });
 }
