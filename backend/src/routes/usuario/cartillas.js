@@ -33,9 +33,30 @@ router.get('/:asignacion_id', async (req, res) => {
     // Perfil usuario
     const { data: perfil } = await supabase
         .from('usuarios_pagados')
-        .select('nombre, rut, categoria, tipo_persona')
+        .select('nombre_completo, rut, categoria, tipo_persona')
         .eq('id', uid)
         .single();
+
+    // Buscar delegado rentado asignado al mismo rodeo (puede no existir)
+    let delegado = null;
+    const { data: asigsDelegado } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id')
+        .eq('rodeo_id', asig.rodeo_id)
+        .eq('estado', 'activo')
+        .neq('usuario_pagado_id', uid);
+
+    if (asigsDelegado && asigsDelegado.length > 0) {
+        const ids = asigsDelegado.map(a => a.usuario_pagado_id);
+        const { data: delPerfil } = await supabase
+            .from('usuarios_pagados')
+            .select('nombre_completo, telefono')
+            .eq('tipo_persona', 'delegado_rentado')
+            .in('id', ids)
+            .limit(1)
+            .maybeSingle();
+        if (delPerfil) delegado = delPerfil;
+    }
 
     // Cartilla existente (puede no existir aún)
     const { data: cartilla } = await supabase
@@ -48,6 +69,7 @@ router.get('/:asignacion_id', async (req, res) => {
         asignacion_id: asigId,
         rodeo,
         perfil,
+        delegado,
         cartilla: cartilla || null
     });
 });
@@ -148,20 +170,40 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
     // Si se envía con datos nuevos (puede venir en body), guardarlos primero
     const datosEnvio = req.body.datos || cartilla?.datos || {};
 
-    // Validación mínima: al menos 3 campos clave deben estar presentes
-    const requeridos = ['nro_colleras', 'estado_pista', 'puntualidad'];
-    const faltantes = requeridos.filter(k => !datosEnvio[k] && datosEnvio[k] !== 0);
+    // Validación campos siempre requeridos
+    const siempre = ['hora_inicio', 'serie_campeones_2_vueltas', 'hubo_faltas', 'hubo_ganado_fuera_peso', 'hubo_movimiento_rienda', 'caseta_adecuada'];
+    const faltantes = siempre.filter(k => datosEnvio[k] === undefined || datosEnvio[k] === null || datosEnvio[k] === '');
     if (faltantes.length > 0) {
-        return res.status(422).json({
-            error: `Faltan campos requeridos: ${faltantes.join(', ')}`,
-            faltantes
-        });
+        return res.status(422).json({ error: `Faltan campos requeridos: ${faltantes.join(', ')}`, faltantes });
+    }
+
+    // Validaciones condicionales
+    if (datosEnvio.hubo_ganado_fuera_peso === 'si') {
+        if (!datosEnvio.clasificacion_peso) {
+            return res.status(422).json({ error: 'Debe seleccionar la clasificación de ganado fuera de peso.' });
+        }
+        if (!datosEnvio.filas_ganado || datosEnvio.filas_ganado.length === 0) {
+            return res.status(422).json({ error: 'Debe registrar al menos una serie en la tabla de ganado fuera de peso.' });
+        }
+    }
+    if (datosEnvio.hubo_faltas === 'si' && !datosEnvio.descripcion_faltas?.trim()) {
+        return res.status(422).json({ error: 'Debe describir las faltas disciplinarias o reglamentarias.' });
+    }
+    if (datosEnvio.hubo_movimiento_rienda === 'si') {
+        const registros = datosEnvio.registros_rienda || [];
+        if (registros.length === 0) {
+            return res.status(422).json({ error: 'Debe registrar al menos un movimiento a la rienda.' });
+        }
+        const incompleto = registros.find(r => !r.nombre_socio?.trim() || !r.nombre_equino?.trim());
+        if (incompleto) {
+            return res.status(422).json({ error: 'Todos los registros de movimiento a la rienda deben tener nombre del socio y nombre del equino.' });
+        }
     }
 
     // Cargar rodeo y perfil para el PDF
     const [{ data: rodeo }, { data: perfil }] = await Promise.all([
         supabase.from('rodeos').select('id, club, asociacion, fecha, duracion_dias, tipo_rodeo_nombre').eq('id', asig.rodeo_id).single(),
-        supabase.from('usuarios_pagados').select('nombre, rut, categoria, tipo_persona').eq('id', uid).single()
+        supabase.from('usuarios_pagados').select('nombre_completo, rut, categoria, tipo_persona').eq('id', uid).single()
     ]);
 
     const ahora = new Date().toISOString();
@@ -198,7 +240,7 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
             usuario_pagado_id: uid,
             subido_por_admin:  false,
             tipo_adjunto:      'cartilla_jurado',
-            nombre_archivo:    `Cartilla_${perfil?.nombre || uid}_${fechaStr}.pdf`,
+            nombre_archivo:    `Cartilla_${perfil?.nombre_completo || uid}_${fechaStr}.pdf`,
             storage_path:      storagePath,
             mime_type:         'application/pdf',
             tamano_bytes:      pdfBuffer.length,

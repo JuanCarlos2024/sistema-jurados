@@ -7,62 +7,39 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .cartilla-form { max-width: 720px; margin: 0 auto; }
-        .bloque {
-            background: #fff;
-            border: 1px solid var(--gris-borde, #ddd);
-            border-radius: 10px;
-            margin-bottom: 18px;
-            overflow: hidden;
-        }
-        .bloque-header {
-            background: #1a3c6e;
-            color: #fff;
-            padding: 12px 18px;
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.3px;
-        }
-        .bloque-body { padding: 16px 18px; }
-        .campo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        @media(max-width: 520px) { .campo-grid { grid-template-columns: 1fr; } }
-        .campo-full { grid-column: 1 / -1; }
-        .campo-solo { margin-bottom: 12px; }
-        .form-label { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; display: block; }
-        .req { color: #e74c3c; }
-        .form-control { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
-        .form-control:focus { outline: none; border-color: #1a3c6e; box-shadow: 0 0 0 2px #d5e6ff; }
-        select.form-control { background: #fff; }
-        textarea.form-control { resize: vertical; min-height: 80px; }
-        .campo-readonly { padding: 8px 10px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; color: #333; }
-        .estado-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; }
-        .estado-borrador { background: #fff3cd; color: #856404; border: 1px solid #ffc107; }
-        .estado-enviada  { background: #d1f2eb; color: #145a32; border: 1px solid #27ae60; }
-        .estado-nueva    { background: #e8f4fd; color: #1a5276; border: 1px solid #2980b9; }
-        .barra-acciones {
-            position: sticky;
-            bottom: 0;
-            background: #fff;
-            border-top: 1px solid #ddd;
-            padding: 12px 18px;
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            z-index: 100;
-            box-shadow: 0 -2px 8px rgba(0,0,0,0.07);
-        }
-        .enviada-notice {
-            background: #d1f2eb;
-            border: 1px solid #27ae60;
-            border-radius: 8px;
-            padding: 14px 18px;
-            margin-bottom: 18px;
-            font-size: 14px;
-            color: #145a32;
-        }
-        .enviada-notice strong { display: block; font-size: 15px; margin-bottom: 4px; }
-        .spinner-wrap { text-align: center; padding: 40px; }
-        #alerta-global { margin-bottom: 16px; }
+        .cartilla-form { max-width: 740px; margin: 0 auto; }
+        .bloque { background:#fff; border:1px solid #ddd; border-radius:10px; margin-bottom:16px; overflow:hidden; }
+        .bloque-header { background:#1a3c6e; color:#fff; padding:11px 18px; font-size:13px; font-weight:700; letter-spacing:.3px; }
+        .bloque-body { padding:16px 18px; }
+        .campo-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        @media(max-width:520px){ .campo-grid{ grid-template-columns:1fr; } }
+        .form-label { font-size:12px; font-weight:600; color:#555; margin-bottom:4px; display:block; }
+        .req { color:#e74c3c; }
+        .form-control { width:100%; padding:8px 10px; border:1px solid #ccc; border-radius:6px; font-size:14px; box-sizing:border-box; background:#fff; }
+        .form-control:focus { outline:none; border-color:#1a3c6e; box-shadow:0 0 0 2px #d5e6ff; }
+        textarea.form-control { resize:vertical; min-height:80px; }
+        .campo-readonly { padding:8px 10px; background:#f5f5f5; border:1px solid #ddd; border-radius:6px; font-size:14px; color:#444; }
+        .bloque-condicional { display:none; }
+        .bloque-condicional.visible { display:block; }
+        .tabla-dinamica { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+        .tabla-dinamica th { background:#f0f4f8; color:#1a3c6e; font-size:12px; padding:7px 8px; text-align:left; border:1px solid #ddd; }
+        .tabla-dinamica td { padding:5px 6px; border:1px solid #ddd; vertical-align:top; }
+        .tabla-dinamica input, .tabla-dinamica select { width:100%; border:none; background:transparent; font-size:13px; padding:2px 4px; box-sizing:border-box; }
+        .tabla-dinamica input:focus, .tabla-dinamica select:focus { outline:1px solid #1a3c6e; border-radius:3px; }
+        .btn-agregar { margin-top:8px; font-size:12px; padding:5px 12px; }
+        .btn-quitar  { background:none; border:none; color:#e74c3c; cursor:pointer; font-size:16px; line-height:1; padding:2px 4px; }
+        .rienda-card { background:#f8f9fa; border:1px solid #ddd; border-radius:8px; padding:14px 16px; margin-bottom:12px; position:relative; }
+        .rienda-card-titulo { font-size:13px; font-weight:700; color:#1a3c6e; margin-bottom:10px; }
+        .btn-quitar-rienda { position:absolute; top:10px; right:12px; background:none; border:none; color:#e74c3c; font-size:20px; cursor:pointer; line-height:1; }
+        .barra-acciones { position:sticky; bottom:0; background:#fff; border-top:1px solid #ddd; padding:12px 18px; display:flex; gap:10px; justify-content:flex-end; z-index:100; box-shadow:0 -2px 8px rgba(0,0,0,.07); }
+        .enviada-notice { background:#d1f2eb; border:1px solid #27ae60; border-radius:8px; padding:14px 18px; margin-bottom:16px; font-size:14px; color:#145a32; }
+        .enviada-notice strong { display:block; font-size:15px; margin-bottom:4px; }
+        .estado-badge { display:inline-block; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:700; }
+        .estado-borrador { background:#fff3cd; color:#856404; border:1px solid #ffc107; }
+        .estado-nueva    { background:#e8f4fd; color:#1a5276; border:1px solid #2980b9; }
+        #alerta-global { margin-bottom:14px; }
+        .spinner-wrap { text-align:center; padding:40px; }
+        .yn-label { font-size:12px; color:#888; margin-left:4px; }
     </style>
 </head>
 <body>
@@ -74,8 +51,8 @@
         </div>
         <nav class="sidebar-nav">
             <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
-            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
-            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/resumen.html"   class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html"    class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
         </nav>
         <div class="sidebar-footer">
             <div class="sidebar-usuario" id="nombre-usr"></div>
@@ -89,19 +66,13 @@
                 <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
                 <h1 id="titulo-topbar">Cartilla de Jurado</h1>
             </div>
-            <div>
-                <a href="/usuario/dashboard.html" class="btn btn-secundario btn-pequeño">← Mi Panel</a>
-            </div>
+            <a href="/usuario/dashboard.html" class="btn btn-secundario btn-pequeño">← Mi Panel</a>
         </div>
 
         <div class="page-body">
             <div class="cartilla-form">
-
                 <div id="alerta-global"></div>
-                <div id="cuerpo-cartilla">
-                    <div class="spinner-wrap"><div class="spinner"></div></div>
-                </div>
-
+                <div id="cuerpo-cartilla"><div class="spinner-wrap"><div class="spinner"></div></div></div>
             </div>
         </div>
     </div>
@@ -113,11 +84,11 @@
 protegerRuta('usuario_pagado');
 document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
 
-// Leer asignacion_id de la URL (?asignacion_id=...)
-const params   = new URLSearchParams(location.search);
-const ASIG_ID  = params.get('asignacion_id');
-let _estado    = null; // 'nueva' | 'borrador' | 'enviada'
+const params  = new URLSearchParams(location.search);
+const ASIG_ID = params.get('asignacion_id');
+let _estado   = null;
 let _autoguardando = false;
+let _cargado  = null; // datos del servidor
 
 if (!ASIG_ID) {
     document.getElementById('cuerpo-cartilla').innerHTML =
@@ -128,8 +99,8 @@ if (!ASIG_ID) {
 
 async function init() {
     try {
-        const r = await api.get(`/usuario/cartillas/${ASIG_ID}`);
-        renderCartilla(r);
+        _cargado = await api.get(`/usuario/cartillas/${ASIG_ID}`);
+        renderCartilla(_cargado);
     } catch(err) {
         document.getElementById('cuerpo-cartilla').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar la cartilla')}</div>`;
@@ -137,17 +108,16 @@ async function init() {
 }
 
 function renderCartilla(r) {
-    const { rodeo, perfil, cartilla } = r;
+    const { rodeo, perfil, delegado, cartilla } = r;
     _estado = cartilla ? cartilla.estado : 'nueva';
-    const d  = cartilla?.datos || {};
-    const ya = _estado === 'enviada';
+    const d   = cartilla?.datos || {};
+    const ya  = _estado === 'enviada';
 
     document.getElementById('titulo-topbar').textContent =
         ya ? 'Cartilla de Jurado (enviada)' : 'Completar Cartilla de Jurado';
 
     let html = '';
 
-    // ── Aviso si ya está enviada ──────────────────────────────────
     if (ya) {
         html += `<div class="enviada-notice">
             <strong>✓ Cartilla enviada correctamente</strong>
@@ -163,111 +133,305 @@ function renderCartilla(r) {
         html += `<div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
             <div>
                 <span class="estado-badge ${badgeClass}">${badgeText}</span>
-                ${_estado === 'borrador' ? `<span id="lbl-guardado" style="font-size:12px; color:#888; margin-left:8px;">Último guardado: ${cartilla?.updated_at ? fmtFechaHora(cartilla.updated_at) : '—'}</span>` : ''}
+                <span id="lbl-guardado" style="font-size:12px; color:#888; margin-left:8px;">${_estado === 'borrador' && cartilla?.updated_at ? 'Último guardado: ' + fmtFechaHora(cartilla.updated_at) : ''}</span>
             </div>
             <div style="font-size:12px; color:#888;">Los cambios se guardan automáticamente</div>
         </div>`;
     }
 
-    // ── Bloque 1: Identificación del rodeo ───────────────────────
-    html += bloque('1', 'Identificación del rodeo', `
-        <div class="campo-grid">
-            <div><div class="form-label">Club / Sede</div><div class="campo-readonly">${sanitizar(rodeo?.club || '—')}</div></div>
-            <div><div class="form-label">Asociación</div><div class="campo-readonly">${sanitizar(rodeo?.asociacion || '—')}</div></div>
-            <div><div class="form-label">Fecha</div><div class="campo-readonly">${rodeo?.fecha ? fmtFecha(rodeo.fecha) : '—'}</div></div>
-            <div><div class="form-label">Tipo de rodeo</div><div class="campo-readonly">${sanitizar(rodeo?.tipo_rodeo_nombre || '—')}</div></div>
-        </div>`, ya);
-
-    // ── Bloque 2: Identificación del evaluador ───────────────────
-    html += bloque('2', 'Identificación del evaluador', `
-        <div class="campo-grid">
-            <div><div class="form-label">Nombre</div><div class="campo-readonly">${sanitizar(perfil?.nombre || '—')}</div></div>
-            <div><div class="form-label">RUT</div><div class="campo-readonly">${sanitizar(perfil?.rut || '—')}</div></div>
-            <div><div class="form-label">Rol</div><div class="campo-readonly">${perfil?.tipo_persona === 'delegado_rentado' ? 'Delegado Rentado' : 'Jurado'}</div></div>
-            <div><div class="form-label">Categoría</div><div class="campo-readonly">${perfil?.categoria || (perfil?.tipo_persona === 'delegado_rentado' ? 'DR' : '—')}</div></div>
-        </div>`, ya);
-
-    // ── Bloque 3: Desarrollo del evento ─────────────────────────
-    html += bloque('3', 'Desarrollo del evento', `
-        <div class="campo-grid">
-            <div>
-                <label class="form-label" for="nro_colleras">N° de colleras juzgadas <span class="req">*</span></label>
-                ${ya ? `<div class="campo-readonly">${d.nro_colleras ?? '—'}</div>`
-                     : `<input type="number" id="nro_colleras" class="form-control" min="0" value="${d.nro_colleras ?? ''}" placeholder="Ej: 24" oninput="autoguardar()">`}
+    // ── BLOQUE 1: Datos del rodeo ─────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">Bloque 1 — Datos del rodeo</div>
+        <div class="bloque-body">
+            <div class="campo-grid">
+                <div><div class="form-label">Club / Sede</div><div class="campo-readonly">${sanitizar(rodeo?.club || '—')}</div></div>
+                <div><div class="form-label">Asociación</div><div class="campo-readonly">${sanitizar(rodeo?.asociacion || '—')}</div></div>
+                <div><div class="form-label">Fecha</div><div class="campo-readonly">${rodeo?.fecha ? fmtFecha(rodeo.fecha) : '—'}</div></div>
+                <div><div class="form-label">Tipo de rodeo</div><div class="campo-readonly">${sanitizar(rodeo?.tipo_rodeo_nombre || '—')}</div></div>
+                <div>
+                    <label class="form-label" for="hora_inicio">Hora de inicio <span class="req">*</span></label>
+                    ${ya ? `<div class="campo-readonly">${sanitizar(d.hora_inicio || '—')}</div>`
+                         : `<input type="time" id="hora_inicio" class="form-control" value="${d.hora_inicio || ''}" oninput="autoguardar()">`}
+                </div>
             </div>
-            <div>
-                <label class="form-label" for="nro_animales">N° de animales evaluados</label>
-                ${ya ? `<div class="campo-readonly">${d.nro_animales ?? '—'}</div>`
-                     : `<input type="number" id="nro_animales" class="form-control" min="0" value="${d.nro_animales ?? ''}" placeholder="Ej: 48" oninput="autoguardar()">`}
+            <div style="margin-top:14px; font-size:12px; font-weight:700; color:#1a3c6e; margin-bottom:8px;">Delegado del rodeo</div>
+            <div class="campo-grid">
+                <div>
+                    <label class="form-label" for="delegado_nombre">Nombre del delegado</label>
+                    ${ya ? `<div class="campo-readonly">${sanitizar(d.delegado_nombre || '—')}</div>`
+                         : `<input type="text" id="delegado_nombre" class="form-control" value="${sanitizar(d.delegado_nombre || delegado?.nombre_completo || '')}" placeholder="${delegado ? '' : 'Ingresar manualmente'}" oninput="autoguardar()">`}
+                </div>
+                <div>
+                    <label class="form-label" for="delegado_telefono">Teléfono del delegado</label>
+                    ${ya ? `<div class="campo-readonly">${sanitizar(d.delegado_telefono || '—')}</div>`
+                         : `<input type="tel" id="delegado_telefono" class="form-control" value="${sanitizar(d.delegado_telefono || delegado?.telefono || '')}" placeholder="${delegado ? '' : 'Ingresar manualmente'}" oninput="autoguardar()">`}
+                </div>
             </div>
-            <div>
-                <label class="form-label" for="duracion_horas">Duración efectiva (horas)</label>
-                ${ya ? `<div class="campo-readonly">${d.duracion_horas ?? '—'}</div>`
-                     : `<input type="number" id="duracion_horas" class="form-control" min="0" step="0.5" value="${d.duracion_horas ?? ''}" placeholder="Ej: 6" oninput="autoguardar()">`}
-            </div>
-            <div>
-                <label class="form-label" for="realizo_sorteo">¿Se realizó sorteo?</label>
-                ${ya ? `<div class="campo-readonly">${yesNoLabel(d.realizo_sorteo)}</div>`
-                     : `<select id="realizo_sorteo" class="form-control" onchange="autoguardar()">
-                            <option value="">— Seleccione —</option>
-                            <option value="si" ${d.realizo_sorteo==='si'?'selected':''}>Sí</option>
-                            <option value="no" ${d.realizo_sorteo==='no'?'selected':''}>No</option>
-                        </select>`}
-            </div>
-            <div>
-                <label class="form-label" for="conformidad_sorteo">Conformidad con el sorteo</label>
-                ${ya ? `<div class="campo-readonly">${yesNoLabel(d.conformidad_sorteo)}</div>`
-                     : `<select id="conformidad_sorteo" class="form-control" onchange="autoguardar()">
-                            <option value="">— Seleccione —</option>
-                            <option value="si" ${d.conformidad_sorteo==='si'?'selected':''}>Sí</option>
-                            <option value="no" ${d.conformidad_sorteo==='no'?'selected':''}>No</option>
-                        </select>`}
-            </div>
-        </div>`, ya);
+            ${!delegado && !ya ? `<div class="alerta alerta-advertencia" style="font-size:12px; margin-top:8px; padding:6px 10px;">No hay delegado rentado registrado para este rodeo. Puede ingresarlo manualmente.</div>` : ''}
+        </div>
+    </div>`;
 
-    // ── Bloque 4: Instalaciones ──────────────────────────────────
-    const optsCalidad = ['Muy buena', 'Buena', 'Regular', 'Deficiente'];
-    html += bloque('4', 'Evaluación de instalaciones', `
-        <div class="campo-grid">
-            ${campoSelect(ya, 'estado_pista',    'Estado de la pista', optsCalidad, d.estado_pista, true)}
-            ${campoSelect(ya, 'estado_corrales', 'Corrales / manga',   optsCalidad, d.estado_corrales, false)}
-            ${campoSelect(ya, 'iluminacion',     'Iluminación',         optsCalidad, d.iluminacion, false)}
-            ${campoSelect(ya, 'sanitarios',      'Baños / vestuarios',  optsCalidad, d.sanitarios, false)}
-            ${campoSelect(ya, 'condicion_general', 'Condición general', optsCalidad, d.condicion_general, false)}
-        </div>`, ya);
+    // ── BLOQUE 2: Identificación del jurado ───────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">Bloque 2 — Identificación del jurado</div>
+        <div class="bloque-body">
+            <div class="campo-grid">
+                <div><div class="form-label">Nombre</div><div class="campo-readonly">${sanitizar(perfil?.nombre_completo || '—')}</div></div>
+                <div><div class="form-label">RUT</div><div class="campo-readonly">${sanitizar(perfil?.rut || '—')}</div></div>
+                <div><div class="form-label">Rol</div><div class="campo-readonly">${perfil?.tipo_persona === 'delegado_rentado' ? 'Delegado Rentado' : 'Jurado'}</div></div>
+                <div><div class="form-label">Categoría</div><div class="campo-readonly">${perfil?.categoria || (perfil?.tipo_persona === 'delegado_rentado' ? 'DR' : '—')}</div></div>
+            </div>
+        </div>
+    </div>`;
 
-    // ── Bloque 5: Organización ───────────────────────────────────
-    const optsOrg = ['Excelente', 'Buena', 'Regular', 'Deficiente'];
-    html += bloque('5', 'Evaluación organizativa', `
-        <div class="campo-grid">
-            ${campoSelect(ya, 'puntualidad',   'Puntualidad del inicio', optsOrg, d.puntualidad, true)}
-            ${campoSelect(ya, 'coordinacion',  'Coordinación general',   optsOrg, d.coordinacion, false)}
-            ${campoSelect(ya, 'trato_jurado',  'Trato al jurado',        optsOrg, d.trato_jurado, false)}
-            ${campoSelect(ya, 'difusion',      'Difusión y comunicación',optsOrg, d.difusion, false)}
-        </div>`, ya);
+    // ── BLOQUE 3: Preguntas generales ─────────────────────────────
+    const pregs = [
+        { id: 'serie_campeones_2_vueltas', label: 'Serie de campeones a 2 vueltas',                         req: true  },
+        { id: 'hubo_faltas',               label: '¿Hubo faltas disciplinarias o reglamentarias?',          req: true, trigger: 'blq5' },
+        { id: 'hubo_ganado_fuera_peso',    label: '¿Hubo ganado fuera del peso reglamentario?',             req: true, trigger: 'blq4' },
+        { id: 'hubo_movimiento_rienda',    label: '¿Hubo movimiento de rienda?',                            req: true, trigger: 'blq6' },
+        { id: 'caseta_adecuada',           label: '¿La caseta del jurado ofrece condiciones adecuadas?',    req: true  },
+    ];
+    let pregHtml = '';
+    pregs.forEach(p => {
+        const cur = d[p.id] || '';
+        if (ya) {
+            pregHtml += `<div style="margin-bottom:10px;">
+                <div class="form-label">${p.label}</div>
+                <div class="campo-readonly">${yn(cur)}</div>
+            </div>`;
+        } else {
+            const onChange = p.trigger ? `onchange="autoguardar(); toggleBloque('${p.trigger}', this.value)"` : 'onchange="autoguardar()"';
+            pregHtml += `<div style="margin-bottom:10px;">
+                <label class="form-label">${p.label} ${p.req ? '<span class="req">*</span>' : ''}</label>
+                <div style="display:flex; gap:16px; align-items:center; margin-top:4px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer;">
+                        <input type="radio" name="${p.id}" value="si" ${cur==='si'?'checked':''} ${onChange}> Sí
+                    </label>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer;">
+                        <input type="radio" name="${p.id}" value="no" ${cur==='no'?'checked':''} ${onChange}> No
+                    </label>
+                </div>
+            </div>`;
+        }
+    });
+    html += `<div class="bloque">
+        <div class="bloque-header">Bloque 3 — Preguntas generales</div>
+        <div class="bloque-body">${pregHtml}</div>
+    </div>`;
 
-    // ── Bloque 6: Observaciones ──────────────────────────────────
-    html += bloque('6', 'Observaciones e incidentes', `
-        <div>
-            <label class="form-label" for="observaciones">Observaciones, incidentes o comentarios adicionales</label>
-            ${ya ? `<div class="campo-readonly" style="white-space:pre-wrap; min-height:60px;">${sanitizar(d.observaciones || 'Sin observaciones.')}</div>`
-                 : `<textarea id="observaciones" class="form-control" rows="4" placeholder="Describa cualquier incidente, situación especial o comentario relevante del rodeo..." oninput="autoguardar()">${sanitizar(d.observaciones || '')}</textarea>`}
-        </div>`, ya);
+    // ── BLOQUE 4: Ganado fuera de peso (condicional) ──────────────
+    const mostrarBlq4 = d.hubo_ganado_fuera_peso === 'si';
+    const filasGanado = d.filas_ganado || [{ serie: '', cantidad: '', porcentaje: '', observacion: '' }];
+    const optsClasif  = ['Más del 50%', '11 al 49%', 'Menos del 10%'];
+    let tablaGanado = '';
+    if (!ya) {
+        tablaGanado = `<div style="overflow-x:auto;">
+        <table class="tabla-dinamica" id="tabla-ganado">
+            <thead><tr>
+                <th>Serie</th><th>Cant. fuera de peso</th><th>Porcentaje</th><th>Observación</th><th></th>
+            </tr></thead>
+            <tbody id="tbody-ganado">
+                ${filasGanado.map((f, i) => filaGanadoHtml(f, i)).join('')}
+            </tbody>
+        </table></div>
+        <button type="button" class="btn btn-outline btn-pequeño btn-agregar" onclick="agregarFilaGanado()">+ Agregar serie</button>`;
+    } else {
+        tablaGanado = `<div style="overflow-x:auto;"><table class="tabla-dinamica">
+            <thead><tr><th>Serie</th><th>Cant. fuera de peso</th><th>Porcentaje</th><th>Observación</th></tr></thead>
+            <tbody>${(d.filas_ganado||[]).map(f=>`<tr>
+                <td>${sanitizar(f.serie||'—')}</td>
+                <td>${sanitizar(f.cantidad||'—')}</td>
+                <td>${sanitizar(f.porcentaje||'—')}</td>
+                <td>${sanitizar(f.observacion||'—')}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+    }
+    html += `<div class="bloque bloque-condicional${mostrarBlq4?' visible':''}" id="blq4">
+        <div class="bloque-header">Bloque 4 — Ganado fuera del peso reglamentario</div>
+        <div class="bloque-body">
+            <div style="margin-bottom:12px;">
+                <label class="form-label">Clasificación según artículo 242 <span class="req">*</span></label>
+                ${ya
+                    ? `<div class="campo-readonly">${sanitizar(d.clasificacion_peso || '—')}</div>`
+                    : `<select id="clasificacion_peso" class="form-control" style="max-width:280px;" onchange="autoguardar()">
+                        <option value="">— Seleccione —</option>
+                        ${optsClasif.map(o=>`<option value="${o}" ${d.clasificacion_peso===o?'selected':''}>${o}</option>`).join('')}
+                      </select>`}
+            </div>
+            ${tablaGanado}
+        </div>
+    </div>`;
+
+    // ── BLOQUE 5: Faltas (condicional) ────────────────────────────
+    const mostrarBlq5 = d.hubo_faltas === 'si';
+    html += `<div class="bloque bloque-condicional${mostrarBlq5?' visible':''}" id="blq5">
+        <div class="bloque-header">Bloque 5 — Faltas disciplinarias o reglamentarias</div>
+        <div class="bloque-body">
+            <label class="form-label" for="descripcion_faltas">Descripción de la falta <span class="req">*</span></label>
+            ${ya
+                ? `<div class="campo-readonly" style="white-space:pre-wrap;">${sanitizar(d.descripcion_faltas || '—')}</div>`
+                : `<textarea id="descripcion_faltas" class="form-control" rows="4" placeholder="Describa la falta disciplinaria o reglamentaria..." oninput="autoguardar()">${sanitizar(d.descripcion_faltas || '')}</textarea>`}
+        </div>
+    </div>`;
+
+    // ── BLOQUE 6: Movimiento a la rienda (condicional) ────────────
+    const mostrarBlq6 = d.hubo_movimiento_rienda === 'si';
+    const regRienda   = d.registros_rienda || [];
+    let riendaHtml = '';
+    if (!ya) {
+        riendaHtml = `<div id="contenedor-rienda">
+            ${(regRienda.length > 0 ? regRienda : [{}]).map((r, i) => riendaCardHtml(r, i)).join('')}
+        </div>
+        <button type="button" class="btn btn-outline btn-pequeño btn-agregar" onclick="agregarRienda()">+ Agregar otro movimiento a la rienda</button>`;
+    } else {
+        riendaHtml = regRienda.map((r, i) => `
+        <div class="rienda-card" style="position:static;">
+            <div class="rienda-card-titulo">Registro ${i + 1}</div>
+            <div class="campo-grid">
+                <div><div class="form-label">Categoría</div><div class="campo-readonly">${sanitizar(r.categoria||'—')}</div></div>
+                <div><div class="form-label">Sistema</div><div class="campo-readonly">${sanitizar(r.sistema||'—')}</div></div>
+                <div><div class="form-label">Nombre del socio</div><div class="campo-readonly">${sanitizar(r.nombre_socio||'—')}</div></div>
+                <div><div class="form-label">RUT del socio</div><div class="campo-readonly">${sanitizar(r.rut_socio||'—')}</div></div>
+                <div><div class="form-label">N° de socio</div><div class="campo-readonly">${sanitizar(r.nro_socio||'—')}</div></div>
+                <div><div class="form-label">Nombre del equino</div><div class="campo-readonly">${sanitizar(r.nombre_equino||'—')}</div></div>
+                <div><div class="form-label">N° inscripción equino</div><div class="campo-readonly">${sanitizar(r.nro_inscripcion||'—')}</div></div>
+                <div><div class="form-label">Puntaje</div><div class="campo-readonly">${sanitizar(r.puntaje||'—')}</div></div>
+            </div>
+        </div>`).join('') || '<p style="color:#888; font-size:13px;">Sin registros.</p>';
+    }
+    html += `<div class="bloque bloque-condicional${mostrarBlq6?' visible':''}" id="blq6">
+        <div class="bloque-header">Bloque 6 — Movimiento a la rienda</div>
+        <div class="bloque-body">${riendaHtml}</div>
+    </div>`;
+
+    // ── BLOQUE 7: Observaciones finales ───────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">Bloque 7 — Observaciones finales / Varios</div>
+        <div class="bloque-body">
+            <label class="form-label" for="observaciones_finales">Otros antecedentes / varios <span class="yn-label">(opcional)</span></label>
+            ${ya
+                ? `<div class="campo-readonly" style="white-space:pre-wrap; min-height:50px;">${sanitizar(d.observaciones_finales || 'Sin observaciones.')}</div>`
+                : `<textarea id="observaciones_finales" class="form-control" rows="4" placeholder="Cualquier otro antecedente relevante..." oninput="autoguardar()">${sanitizar(d.observaciones_finales || '')}</textarea>`}
+        </div>
+    </div>`;
 
     document.getElementById('cuerpo-cartilla').innerHTML = html;
 
-    // Barra de acciones (solo si no está enviada)
+    // Barra de acciones
     if (!ya) {
         const barra = document.createElement('div');
         barra.className = 'barra-acciones';
         barra.innerHTML = `
-            <button class="btn btn-secundario" onclick="guardarBorrador()" id="btn-borrador">Guardar borrador</button>
-            <button class="btn btn-primario"   onclick="confirmarEnviar()"  id="btn-enviar">Enviar cartilla</button>`;
+            <button class="btn btn-secundario" id="btn-borrador" onclick="guardarBorrador()">Guardar borrador</button>
+            <button class="btn btn-primario"   id="btn-enviar"   onclick="confirmarEnviar()">Enviar cartilla</button>`;
         document.querySelector('.cartilla-form').appendChild(barra);
     }
+
+    // Inicializar contador rienda
+    window._riendaCount = Math.max((d.registros_rienda||[]).length, 1);
+    window._filaGanadoCount = Math.max((d.filas_ganado||[]).length, 1);
 }
 
-// ── Autoguardado con debounce ─────────────────────────────────────
+// ── Bloques condicionales ─────────────────────────────────────────
+function toggleBloque(blqId, valor) {
+    const el = document.getElementById(blqId);
+    if (!el) return;
+    if (valor === 'si') el.classList.add('visible');
+    else                el.classList.remove('visible');
+}
+
+// ── Tabla dinámica ganado ─────────────────────────────────────────
+function filaGanadoHtml(f, i) {
+    return `<tr id="fila-ganado-${i}">
+        <td><input type="text" name="g_serie_${i}"      value="${sanitizar(f.serie||'')}"      placeholder="Serie" oninput="autoguardar()"></td>
+        <td><input type="number" name="g_cantidad_${i}" value="${sanitizar(f.cantidad||'')}"   placeholder="Cant." min="0" oninput="autoguardar()"></td>
+        <td><input type="text" name="g_porcentaje_${i}" value="${sanitizar(f.porcentaje||'')}" placeholder="%" oninput="autoguardar()"></td>
+        <td><input type="text" name="g_obs_${i}"        value="${sanitizar(f.observacion||'')}" placeholder="Observación" oninput="autoguardar()"></td>
+        <td><button type="button" class="btn-quitar" onclick="quitarFilaGanado(${i})" title="Eliminar">×</button></td>
+    </tr>`;
+}
+
+function agregarFilaGanado() {
+    const tbody = document.getElementById('tbody-ganado');
+    const i = window._filaGanadoCount++;
+    const tr = document.createElement('tr');
+    tr.id = `fila-ganado-${i}`;
+    tr.innerHTML = filaGanadoHtml({}, i).replace(/<tr[^>]*>|<\/tr>/g, '');
+    tbody.appendChild(tr);
+}
+
+function quitarFilaGanado(i) {
+    const el = document.getElementById(`fila-ganado-${i}`);
+    if (el) el.remove();
+    autoguardar();
+}
+
+// ── Cards dinámicos rienda ────────────────────────────────────────
+function riendaCardHtml(r, i) {
+    const cats = ['Adulto masculino','Adulto femenino','Menores masculino','Menores femenino','Amazona huasa'];
+    const sists = ['Sistema A','Sistema B'];
+    return `<div class="rienda-card" id="rienda-card-${i}">
+        <div class="rienda-card-titulo">Registro ${i + 1}</div>
+        ${i > 0 ? `<button type="button" class="btn-quitar-rienda" onclick="quitarRienda(${i})" title="Eliminar">×</button>` : ''}
+        <div class="campo-grid">
+            <div>
+                <label class="form-label">Categoría <span class="req">*</span></label>
+                <select name="r_categoria_${i}" class="form-control" onchange="autoguardar()">
+                    <option value="">— Seleccione —</option>
+                    ${cats.map(c=>`<option value="${c}" ${r.categoria===c?'selected':''}>${c}</option>`).join('')}
+                </select>
+            </div>
+            <div>
+                <label class="form-label">Sistema de competencia</label>
+                <select name="r_sistema_${i}" class="form-control" onchange="autoguardar()">
+                    <option value="">— Seleccione —</option>
+                    ${sists.map(s=>`<option value="${s}" ${r.sistema===s?'selected':''}>${s}</option>`).join('')}
+                </select>
+            </div>
+            <div>
+                <label class="form-label">Nombre completo del socio <span class="req">*</span></label>
+                <input type="text" name="r_nombre_socio_${i}" class="form-control" value="${sanitizar(r.nombre_socio||'')}" placeholder="Nombre completo" oninput="autoguardar()">
+            </div>
+            <div>
+                <label class="form-label">RUT del socio</label>
+                <input type="text" name="r_rut_socio_${i}" class="form-control" value="${sanitizar(r.rut_socio||'')}" placeholder="12345678-9" oninput="autoguardar()">
+            </div>
+            <div>
+                <label class="form-label">N° de socio</label>
+                <input type="text" name="r_nro_socio_${i}" class="form-control" value="${sanitizar(r.nro_socio||'')}" placeholder="N° socio" oninput="autoguardar()">
+            </div>
+            <div>
+                <label class="form-label">Nombre del equino <span class="req">*</span></label>
+                <input type="text" name="r_nombre_equino_${i}" class="form-control" value="${sanitizar(r.nombre_equino||'')}" placeholder="Nombre del equino" oninput="autoguardar()">
+            </div>
+            <div>
+                <label class="form-label">N° inscripción del equino</label>
+                <input type="text" name="r_nro_inscripcion_${i}" class="form-control" value="${sanitizar(r.nro_inscripcion||'')}" placeholder="N° inscripción" oninput="autoguardar()">
+            </div>
+            <div>
+                <label class="form-label">Puntaje</label>
+                <input type="text" name="r_puntaje_${i}" class="form-control" value="${sanitizar(r.puntaje||'')}" placeholder="Puntaje" oninput="autoguardar()">
+            </div>
+        </div>
+    </div>`;
+}
+
+function agregarRienda() {
+    const cont = document.getElementById('contenedor-rienda');
+    const i = window._riendaCount++;
+    const div = document.createElement('div');
+    div.innerHTML = riendaCardHtml({}, i);
+    cont.appendChild(div.firstElementChild);
+}
+
+function quitarRienda(i) {
+    const el = document.getElementById(`rienda-card-${i}`);
+    if (el) el.remove();
+    autoguardar();
+}
+
+// ── Autoguardado ──────────────────────────────────────────────────
 let _debounce = null;
 function autoguardar() {
     clearTimeout(_debounce);
@@ -278,45 +442,55 @@ async function guardarBorrador() {
     if (_autoguardando) return;
     _autoguardando = true;
     const btn = document.getElementById('btn-borrador');
-    if (btn) btn.disabled = true;
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
     try {
         const datos = leerDatos();
         await api.put(`/usuario/cartillas/${ASIG_ID}`, { datos });
         const lbl = document.getElementById('lbl-guardado');
-        if (lbl) lbl.textContent = `Último guardado: ${new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}`;
-        // Si era nueva, actualizar estado visual
+        if (lbl) lbl.textContent = 'Último guardado: ' + new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
         if (_estado === 'nueva') {
             _estado = 'borrador';
             const badge = document.querySelector('.estado-badge');
             if (badge) { badge.className = 'estado-badge estado-borrador'; badge.textContent = 'Borrador guardado'; }
         }
-    } catch(err) {
-        mostrarError(err);
-    } finally {
+    } catch(err) { mostrarError(err); }
+    finally {
         _autoguardando = false;
-        if (btn) btn.disabled = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Guardar borrador'; }
     }
 }
 
 function confirmarEnviar() {
     const datos = leerDatos();
-    // Validación básica frontend
-    if (!datos.nro_colleras && datos.nro_colleras !== 0) {
-        mostrarAlerta('Por favor ingrese el N° de colleras juzgadas.', 'error');
-        document.getElementById('nro_colleras')?.focus();
-        return;
+    if (!datos.hora_inicio) {
+        mostrarAlerta('Debe ingresar la hora de inicio del rodeo.', 'error');
+        document.getElementById('hora_inicio')?.focus(); return;
     }
-    if (!datos.estado_pista) {
-        mostrarAlerta('Por favor seleccione el estado de la pista.', 'error');
-        document.getElementById('estado_pista')?.focus();
-        return;
+    const siempre = ['serie_campeones_2_vueltas','hubo_faltas','hubo_ganado_fuera_peso','hubo_movimiento_rienda','caseta_adecuada'];
+    for (const k of siempre) {
+        if (!datos[k]) {
+            mostrarAlerta('Debe responder todas las preguntas del Bloque 3.', 'error'); return;
+        }
     }
-    if (!datos.puntualidad) {
-        mostrarAlerta('Por favor evalúe la puntualidad del inicio.', 'error');
-        document.getElementById('puntualidad')?.focus();
-        return;
+    if (datos.hubo_ganado_fuera_peso === 'si') {
+        if (!datos.clasificacion_peso) {
+            mostrarAlerta('Debe seleccionar la clasificación de ganado fuera de peso.', 'error'); return;
+        }
+        if (!datos.filas_ganado || datos.filas_ganado.length === 0) {
+            mostrarAlerta('Debe agregar al menos una serie en la tabla de ganado fuera de peso.', 'error'); return;
+        }
     }
-    if (!confirm('¿Está seguro de enviar la cartilla? Una vez enviada no podrá ser modificada.')) return;
+    if (datos.hubo_faltas === 'si' && !datos.descripcion_faltas?.trim()) {
+        mostrarAlerta('Debe describir las faltas disciplinarias.', 'error'); return;
+    }
+    if (datos.hubo_movimiento_rienda === 'si') {
+        const regs = datos.registros_rienda || [];
+        if (regs.length === 0) { mostrarAlerta('Debe agregar al menos un registro de movimiento a la rienda.', 'error'); return; }
+        if (regs.some(r => !r.nombre_socio?.trim() || !r.nombre_equino?.trim())) {
+            mostrarAlerta('Todos los registros de rienda deben tener nombre del socio y nombre del equino.', 'error'); return;
+        }
+    }
+    if (!confirm('¿Está seguro de enviar la cartilla? Una vez enviada no podrá modificarse.')) return;
     enviarCartilla(datos);
 }
 
@@ -327,7 +501,6 @@ async function enviarCartilla(datos) {
     try {
         const r = await api.post(`/usuario/cartillas/${ASIG_ID}/enviar`, { datos });
         mostrarAlerta(r.mensaje || 'Cartilla enviada correctamente.', 'success');
-        // Recargar para mostrar vista de enviada
         setTimeout(() => init(), 800);
     } catch(err) {
         mostrarAlerta(err.message || 'Error al enviar la cartilla.', 'error');
@@ -344,62 +517,60 @@ async function descargarPDF() {
     } catch(err) { mostrarError(err); }
 }
 
-// ── Leer todos los valores del formulario ─────────────────────────
+// ── Leer todos los campos del formulario ──────────────────────────
 function leerDatos() {
-    const v = id => {
-        const el = document.getElementById(id);
-        if (!el) return undefined;
-        const val = el.value?.trim();
-        return val === '' ? undefined : val;
-    };
+    const val = id => { const el = document.getElementById(id); return el ? el.value?.trim() || undefined : undefined; };
+    const radio = name => { const el = document.querySelector(`input[name="${name}"]:checked`); return el ? el.value : undefined; };
+
+    // Filas de ganado fuera de peso
+    const filas_ganado = [];
+    document.querySelectorAll('#tbody-ganado tr').forEach(tr => {
+        const i = tr.id.replace('fila-ganado-', '');
+        const serie      = tr.querySelector(`[name="g_serie_${i}"]`)?.value?.trim();
+        const cantidad   = tr.querySelector(`[name="g_cantidad_${i}"]`)?.value?.trim();
+        const porcentaje = tr.querySelector(`[name="g_porcentaje_${i}"]`)?.value?.trim();
+        const observacion = tr.querySelector(`[name="g_obs_${i}"]`)?.value?.trim();
+        if (serie || cantidad) filas_ganado.push({ serie, cantidad, porcentaje, observacion });
+    });
+
+    // Registros de rienda
+    const registros_rienda = [];
+    document.querySelectorAll('[id^="rienda-card-"]').forEach(card => {
+        const i = card.id.replace('rienda-card-', '');
+        const r = {
+            categoria:       card.querySelector(`[name="r_categoria_${i}"]`)?.value || undefined,
+            sistema:         card.querySelector(`[name="r_sistema_${i}"]`)?.value || undefined,
+            nombre_socio:    card.querySelector(`[name="r_nombre_socio_${i}"]`)?.value?.trim() || undefined,
+            rut_socio:       card.querySelector(`[name="r_rut_socio_${i}"]`)?.value?.trim() || undefined,
+            nro_socio:       card.querySelector(`[name="r_nro_socio_${i}"]`)?.value?.trim() || undefined,
+            nombre_equino:   card.querySelector(`[name="r_nombre_equino_${i}"]`)?.value?.trim() || undefined,
+            nro_inscripcion: card.querySelector(`[name="r_nro_inscripcion_${i}"]`)?.value?.trim() || undefined,
+            puntaje:         card.querySelector(`[name="r_puntaje_${i}"]`)?.value?.trim() || undefined,
+        };
+        if (r.nombre_socio || r.nombre_equino) registros_rienda.push(r);
+    });
+
     return {
-        nro_colleras:     v('nro_colleras') !== undefined ? Number(v('nro_colleras')) : undefined,
-        nro_animales:     v('nro_animales') !== undefined ? Number(v('nro_animales')) : undefined,
-        duracion_horas:   v('duracion_horas') !== undefined ? Number(v('duracion_horas')) : undefined,
-        realizo_sorteo:   v('realizo_sorteo'),
-        conformidad_sorteo: v('conformidad_sorteo'),
-        estado_pista:     v('estado_pista'),
-        estado_corrales:  v('estado_corrales'),
-        iluminacion:      v('iluminacion'),
-        sanitarios:       v('sanitarios'),
-        condicion_general: v('condicion_general'),
-        puntualidad:      v('puntualidad'),
-        coordinacion:     v('coordinacion'),
-        trato_jurado:     v('trato_jurado'),
-        difusion:         v('difusion'),
-        observaciones:    v('observaciones')
+        hora_inicio:              val('hora_inicio'),
+        delegado_nombre:          val('delegado_nombre'),
+        delegado_telefono:        val('delegado_telefono'),
+        serie_campeones_2_vueltas: radio('serie_campeones_2_vueltas'),
+        hubo_faltas:              radio('hubo_faltas'),
+        hubo_ganado_fuera_peso:   radio('hubo_ganado_fuera_peso'),
+        hubo_movimiento_rienda:   radio('hubo_movimiento_rienda'),
+        caseta_adecuada:          radio('caseta_adecuada'),
+        clasificacion_peso:       val('clasificacion_peso'),
+        filas_ganado:             filas_ganado.length > 0 ? filas_ganado : undefined,
+        descripcion_faltas:       val('descripcion_faltas'),
+        registros_rienda:         registros_rienda.length > 0 ? registros_rienda : undefined,
+        observaciones_finales:    val('observaciones_finales'),
     };
 }
 
-// ── Helpers de renderizado ────────────────────────────────────────
-function bloque(num, titulo, contenido, readonly) {
-    return `<div class="bloque">
-        <div class="bloque-header">Bloque ${num} — ${titulo}</div>
-        <div class="bloque-body">${contenido}</div>
-    </div>`;
-}
-
-function campoSelect(readonly, id, label, opciones, valorActual, requerido) {
-    const sel = requerido ? `<span class="req">*</span>` : '';
-    if (readonly) {
-        return `<div>
-            <div class="form-label">${label}</div>
-            <div class="campo-readonly">${sanitizar(valorActual || '—')}</div>
-        </div>`;
-    }
-    const opts = opciones.map(o => `<option value="${o}" ${valorActual===o?'selected':''}>${o}</option>`).join('');
-    return `<div>
-        <label class="form-label" for="${id}">${label} ${sel}</label>
-        <select id="${id}" class="form-control" onchange="autoguardar()">
-            <option value="">— Seleccione —</option>
-            ${opts}
-        </select>
-    </div>`;
-}
-
-function yesNoLabel(v) {
-    if (v === 'si' || v === 'sí' || v === true) return 'Sí';
-    if (v === 'no' || v === false)              return 'No';
+// ── Utilidades ────────────────────────────────────────────────────
+function yn(v) {
+    if (v === 'si' || v === true)  return 'Sí';
+    if (v === 'no' || v === false) return 'No';
     return '—';
 }
 
@@ -415,13 +586,11 @@ function fmtFechaHora(iso) {
 
 function mostrarAlerta(msg, tipo) {
     const el = document.getElementById('alerta-global');
-    el.innerHTML = `<div class="alerta alerta-${tipo === 'error' ? 'error' : 'info'}" style="margin-bottom:12px;">${sanitizar(msg)}</div>`;
+    el.innerHTML = `<div class="alerta alerta-${tipo === 'error' ? 'error' : tipo === 'success' ? 'info' : 'advertencia'}" style="margin-bottom:12px;">${sanitizar(msg)}</div>`;
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function limpiarAlerta() {
-    document.getElementById('alerta-global').innerHTML = '';
-}
+function limpiarAlerta() { document.getElementById('alerta-global').innerHTML = ''; }
 </script>
 </body>
 </html>
