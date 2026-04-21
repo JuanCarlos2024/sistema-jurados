@@ -124,12 +124,22 @@ router.get('/:id/url', async (req, res) => {
 
     if (!adj) return res.status(404).json({ error: 'Adjunto no encontrado' });
 
-    const TIPOS_CARTILLA = ['cartilla_jurado', 'cartilla_delegado', 'cartilla'];
-    const esPropio = adj.usuario_pagado_id === req.usuario.id;
-    const esAdminNoCartilla = adj.subido_por_admin && !TIPOS_CARTILLA.includes(adj.tipo_adjunto);
-    if (!esPropio && !esAdminNoCartilla) {
-        return res.status(403).json({ error: 'Sin permiso' });
+    const uid = req.usuario.id;
+
+    // Misma regla que el listado:
+    // - cartilla_delegado: nunca accesible al jurado
+    // - cartilla_jurado / cartilla: accesible si usuario_pagado_id = uid O es null (admin subió sin asignar)
+    // - resto: accesible si es propio o subido por admin
+    let permitido = false;
+    if (adj.tipo_adjunto === 'cartilla_delegado') {
+        permitido = false;
+    } else if (adj.tipo_adjunto === 'cartilla_jurado' || adj.tipo_adjunto === 'cartilla') {
+        permitido = adj.usuario_pagado_id === uid || adj.usuario_pagado_id === null;
+    } else {
+        permitido = adj.usuario_pagado_id === uid || adj.subido_por_admin === true;
     }
+
+    if (!permitido) return res.status(403).json({ error: 'Sin permiso' });
 
     const { data, error } = await supabase.storage
         .from('rodeo-adjuntos')
