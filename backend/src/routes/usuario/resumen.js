@@ -42,6 +42,86 @@ router.get('/historial', async (req, res) => {
     res.json(result);
 });
 
+// GET /api/usuario/resumen/desempeno
+// KPIs globales del jurado: total rodeos histórico, promedio nota propio, promedio categoría
+router.get('/desempeno', async (req, res) => {
+    const uid = req.usuario.id;
+    try {
+        // 1. Perfil para obtener categoría y tipo
+        const { data: perfil } = await supabase
+            .from('usuarios_pagados')
+            .select('categoria, tipo_persona')
+            .eq('id', uid)
+            .single();
+
+        const esDelegado = perfil?.tipo_persona === 'delegado_rentado';
+        const categoria  = esDelegado ? 'DR' : (perfil?.categoria || null);
+
+        // 2. Todas las asignaciones activas y no rechazadas del usuario
+        const { data: asigs } = await supabase
+            .from('asignaciones')
+            .select('id, estado_designacion')
+            .eq('usuario_pagado_id', uid)
+            .eq('estado', 'activo');
+
+        const propias = (asigs || []).filter(a => a.estado_designacion !== 'rechazado');
+        const total_rodeos = propias.length;
+        const propiosIds   = propias.map(a => a.id);
+
+        // 3. Notas propias
+        let promedio_nota = null;
+        if (propiosIds.length > 0) {
+            const { data: notas } = await supabase
+                .from('notas_rodeo')
+                .select('nota')
+                .in('asignacion_id', propiosIds);
+            const vals = (notas || []).map(n => parseFloat(n.nota)).filter(n => !isNaN(n));
+            if (vals.length > 0)
+                promedio_nota = Math.round((vals.reduce((s, n) => s + n, 0) / vals.length) * 100) / 100;
+        }
+
+        // 4. Promedio de categoría (todos los usuarios del mismo tipo/categoría)
+        let promedio_categoria = null;
+        if (categoria) {
+            const qPares = supabase
+                .from('usuarios_pagados')
+                .select('id')
+                .eq('activo', true);
+            const { data: pares } = esDelegado
+                ? await qPares.eq('tipo_persona', 'delegado_rentado')
+                : await qPares.eq('tipo_persona', 'jurado').eq('categoria', categoria);
+
+            const pareIds = (pares || []).map(u => u.id);
+            if (pareIds.length > 0) {
+                const { data: asigsPares } = await supabase
+                    .from('asignaciones')
+                    .select('id, estado_designacion')
+                    .eq('estado', 'activo')
+                    .in('usuario_pagado_id', pareIds);
+
+                const asigIdsPares = (asigsPares || [])
+                    .filter(a => a.estado_designacion !== 'rechazado')
+                    .map(a => a.id);
+
+                if (asigIdsPares.length > 0) {
+                    const { data: notasPares } = await supabase
+                        .from('notas_rodeo')
+                        .select('nota')
+                        .in('asignacion_id', asigIdsPares);
+                    const vals = (notasPares || []).map(n => parseFloat(n.nota)).filter(n => !isNaN(n));
+                    if (vals.length > 0)
+                        promedio_categoria = Math.round((vals.reduce((s, n) => s + n, 0) / vals.length) * 100) / 100;
+                }
+            }
+        }
+
+        res.json({ total_rodeos, promedio_nota, promedio_categoria, categoria });
+    } catch (err) {
+        console.error('[resumen/desempeno]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/usuario/resumen?año=&mes=
 router.get('/', async (req, res) => {
     const ahora = new Date();
@@ -50,6 +130,22 @@ router.get('/', async (req, res) => {
 
     try {
         const resumen = await calcularResumenMensual(req.usuario.id, año, mes);
+
+        // Adjuntar notas por asignación (query separada para no tocar el servicio de cálculo)
+        const asigIds = (resumen.asignaciones || []).map(a => a.id);
+        if (asigIds.length > 0) {
+            const { data: notas } = await supabase
+                .from('notas_rodeo')
+                .select('asignacion_id, nota, comentario')
+                .in('asignacion_id', asigIds);
+            const notasMap = {};
+            (notas || []).forEach(n => { notasMap[n.asignacion_id] = n; });
+            resumen.asignaciones = resumen.asignaciones.map(a => ({
+                ...a,
+                nota_rodeo: notasMap[a.id] || null
+            }));
+        }
+
         res.json({ año: parseInt(año), mes: parseInt(mes), ...resumen });
     } catch (err) {
         res.status(500).json({ error: 'Error al calcular resumen: ' + err.message });

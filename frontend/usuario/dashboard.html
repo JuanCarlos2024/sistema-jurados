@@ -48,6 +48,13 @@
         .cal-dia.cal-vacio { border: none; background: none; cursor: default; }
         .cal-resumen { margin-top: 10px; font-size: 13px; color: #555; }
         .cal-resumen strong { color: #27ae60; }
+        .desemp-kpi-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+        @media(max-width:560px){ .desemp-kpi-grid { grid-template-columns:1fr; } }
+        .desemp-kpi-card { background:#f8f9fa; border-radius:8px; padding:14px 16px; border-left:4px solid var(--primario); }
+        .desemp-kpi-card .dval { font-size:24px; font-weight:700; color:var(--primario); line-height:1.1; }
+        .desemp-kpi-card .dlbl { font-size:12px; color:#888; margin-top:4px; }
+        .desemp-kpi-card.cat { border-left-color:#27ae60; }
+        .desemp-kpi-card.cat .dval { color:#27ae60; }
     </style>
 </head>
 <body>
@@ -91,6 +98,14 @@
                 <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
                     <strong id="txt-pendientes"></strong>
                     Acepte o rechace cada designación en la tabla de abajo.
+                </div>
+            </div>
+
+            <!-- KPIs de desempeño personal -->
+            <div class="card oculto" id="card-desempeno" style="margin-bottom:16px;">
+                <div class="card-titulo">📊 Mi desempeño</div>
+                <div class="desemp-kpi-grid" id="desempeno-kpis">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
                 </div>
             </div>
 
@@ -206,8 +221,33 @@ async function init() {
         }
     } catch(e) {}
 
+    cargarDesempeno();
     cargarResumen();
     cargarCalendario();
+}
+
+async function cargarDesempeno() {
+    try {
+        const d = await api.get('/usuario/resumen/desempeno');
+        const fmt = v => v !== null && v !== undefined ? parseFloat(v).toFixed(1) : '—';
+        const catLabel = d.categoria === 'DR' ? 'Delegados Rentados' : (d.categoria ? `Categoría ${d.categoria}` : 'Categoría');
+        document.getElementById('desempeno-kpis').innerHTML = `
+            <div class="desemp-kpi-card">
+                <div class="dval">${d.total_rodeos ?? 0}</div>
+                <div class="dlbl">Rodeos asistidos (total histórico)</div>
+            </div>
+            <div class="desemp-kpi-card">
+                <div class="dval">${fmt(d.promedio_nota)}</div>
+                <div class="dlbl">Mi promedio de nota</div>
+            </div>
+            <div class="desemp-kpi-card cat">
+                <div class="dval">${fmt(d.promedio_categoria)}</div>
+                <div class="dlbl">Promedio ${catLabel}</div>
+            </div>`;
+        document.getElementById('card-desempeno').classList.remove('oculto');
+    } catch(e) {
+        document.getElementById('card-desempeno').classList.add('oculto');
+    }
 }
 
 function navegarMes(delta) {
@@ -262,7 +302,7 @@ function renderRodeos(asignaciones) {
     div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th>
-            <th>Designación</th><th>Bono km</th><th>Adjuntos</th>
+            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
@@ -329,6 +369,11 @@ function renderRodeos(asignaciones) {
                 ? '<span style="color:#aaa; font-size:12px;">—</span>'
                 : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntos('${a.rodeo_id}', '${sanitizar(a.rodeos?.club||'')}')">📎</button>`;
 
+            const nota = a.nota_rodeo?.nota;
+            const notaHtml = nota != null
+                ? `<span style="font-weight:700; color:#2980b9; font-size:15px;">${parseFloat(nota).toFixed(1)}</span>`
+                : `<span style="color:#bbb; font-size:12px;">Sin nota</span>`;
+
             return `<tr style="${esRechazada ? 'opacity:0.6;' : ''}">
                 <td style="white-space:nowrap;">${formatFecha(a.rodeos?.fecha)}</td>
                 <td><strong>${sanitizar(a.rodeos?.club||'—')}</strong></td>
@@ -336,6 +381,7 @@ function renderRodeos(asignaciones) {
                 <td>${sanitizar(a.rodeos?.tipo_rodeo_nombre||'—')}</td>
                 <td style="text-align:center;">${a.duracion_dias_aplicada}</td>
                 <td>${a.categoria_aplicada ? `<span class="badge badge-${a.categoria_aplicada.toLowerCase()}">${a.categoria_aplicada}</span>` : '<span style="color:#888; font-size:12px;">Deleg.</span>'}</td>
+                <td style="text-align:center;">${notaHtml}</td>
                 <td>${designHtml}</td>
                 <td>${bonoHtml}</td>
                 <td>${adjHtml}</td>
