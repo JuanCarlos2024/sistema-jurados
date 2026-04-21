@@ -276,7 +276,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// GET /api/admin/dashboard/desempeno?año=&mes=&categoria=&tipo=
+// GET /api/admin/dashboard/desempeno?año=&mes=&desde=&hasta=&categoria=&tipo=
 // Análisis ejecutivo de desempeño y distribución (notas + salidas). No toca la ruta principal.
 router.get('/desempeno', async (req, res) => {
     const hoy  = fechaChile();
@@ -285,12 +285,16 @@ router.get('/desempeno', async (req, res) => {
     const catFiltro  = req.query.categoria || null;  // A | B | C | DR | null
     const tipoFiltro = req.query.tipo      || null;  // jurado | delegado_rentado | null
 
-    const inicio = mes
+    // desde/hasta tienen prioridad sobre año/mes cuando están presentes
+    const desdeParam = req.query.desde || null;  // YYYY-MM-DD
+    const hastaParam = req.query.hasta || null;  // YYYY-MM-DD
+
+    const inicio = desdeParam || (mes
         ? `${año}-${String(mes).padStart(2,'0')}-01`
-        : `${año}-01-01`;
-    const fin = mes
+        : `${año}-01-01`);
+    const fin = hastaParam || (mes
         ? new Date(año, mes, 0).toISOString().split('T')[0]
-        : `${año}-12-31`;
+        : `${año}-12-31`);
 
     try {
         // ── 1. Asignaciones en el período ────────────────────────────────
