@@ -276,6 +276,183 @@ router.get('/', async (req, res) => {
     }
 });
 
+// GET /api/admin/dashboard/desempeno?año=&mes=&categoria=&tipo=
+// Análisis ejecutivo de desempeño y distribución (notas + salidas). No toca la ruta principal.
+router.get('/desempeno', async (req, res) => {
+    const hoy  = fechaChile();
+    const año  = req.query.año  ? parseInt(req.query.año)  : hoy.año;
+    const mes  = req.query.mes  ? parseInt(req.query.mes)  : null;  // null = todo el año
+    const catFiltro  = req.query.categoria || null;  // A | B | C | DR | null
+    const tipoFiltro = req.query.tipo      || null;  // jurado | delegado_rentado | null
+
+    const inicio = mes
+        ? `${año}-${String(mes).padStart(2,'0')}-01`
+        : `${año}-01-01`;
+    const fin = mes
+        ? new Date(año, mes, 0).toISOString().split('T')[0]
+        : `${año}-12-31`;
+
+    try {
+        // ── 1. Asignaciones en el período ────────────────────────────────
+        let qAsigs = supabase
+            .from('asignaciones')
+            .select('id, usuario_pagado_id, tipo_persona, estado_designacion, categoria_aplicada, rodeos!inner(fecha)')
+            .eq('estado', 'activo')
+            .gte('rodeos.fecha', inicio)
+            .lte('rodeos.fecha', fin);
+        if (tipoFiltro) qAsigs = qAsigs.eq('tipo_persona', tipoFiltro);
+
+        const { data: asigs, error: errAsigs } = await qAsigs;
+        if (errAsigs) throw new Error('asignaciones: ' + errAsigs.message);
+        const todasAsigs = asigs || [];
+        const asigIds    = todasAsigs.map(a => a.id);
+
+        // ── 2. Usuarios activos ──────────────────────────────────────────
+        let qUsuarios = supabase
+            .from('usuarios_pagados')
+            .select('id, nombre_completo, categoria, tipo_persona')
+            .eq('activo', true);
+        if (tipoFiltro) qUsuarios = qUsuarios.eq('tipo_persona', tipoFiltro);
+        const { data: usuarios } = await qUsuarios;
+
+        const usuariosMap = {};
+        (usuarios || []).forEach(u => { usuariosMap[u.id] = u; });
+
+        // ── 3. Notas para esas asignaciones ─────────────────────────────
+        const notasMap = {};
+        if (asigIds.length > 0) {
+            const { data: notas } = await supabase
+                .from('notas_rodeo')
+                .select('asignacion_id, nota')
+                .in('asignacion_id', asigIds);
+            (notas || []).forEach(n => { notasMap[n.asignacion_id] = parseFloat(n.nota); });
+        }
+
+        // ── 4. Agregar por usuario ───────────────────────────────────────
+        const perUser = {};
+        todasAsigs.forEach(a => {
+            if (a.estado_designacion === 'rechazado') return;
+            const u = usuariosMap[a.usuario_pagado_id];
+            if (!u) return;
+            const uid = a.usuario_pagado_id;
+            const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
+            if (!perUser[uid]) {
+                perUser[uid] = { id: uid, nombre: u.nombre_completo, categoria: cat, tipo: u.tipo_persona, salidas: 0, notas: [] };
+            }
+            perUser[uid].salidas++;
+            const nota = notasMap[a.id];
+            if (nota != null) perUser[uid].notas.push(nota);
+        });
+
+        let stats = Object.values(perUser).map(u => ({
+            id: u.id, nombre: u.nombre, categoria: u.categoria, tipo: u.tipo,
+            salidas: u.salidas, evaluaciones: u.notas.length,
+            promedio_nota: u.notas.length
+                ? Math.round((u.notas.reduce((s, n) => s + n, 0) / u.notas.length) * 100) / 100
+                : null,
+            _notas: u.notas
+        }));
+        if (catFiltro) stats = stats.filter(u => u.categoria === catFiltro);
+
+        // ── 5. Resumen global ────────────────────────────────────────────
+        const todasNotas = stats.flatMap(u => u._notas);
+        const resumen = {
+            promedio_nota_general: todasNotas.length
+                ? Math.round((todasNotas.reduce((s, n) => s + n, 0) / todasNotas.length) * 100) / 100
+                : null,
+            total_notas:      todasNotas.length,
+            total_evaluados:  stats.filter(u => u.evaluaciones > 0).length,
+            total_usuarios:   stats.length,
+            total_salidas:    stats.reduce((s, u) => s + u.salidas, 0),
+            promedio_salidas: stats.length
+                ? Math.round((stats.reduce((s, u) => s + u.salidas, 0) / stats.length) * 10) / 10
+                : 0
+        };
+
+        // ── 6. Por categoría ─────────────────────────────────────────────
+        const catMap = {};
+        stats.forEach(u => {
+            if (!catMap[u.categoria]) catMap[u.categoria] = { salidas: [], notas: [] };
+            catMap[u.categoria].salidas.push(u.salidas);
+            if (u.promedio_nota !== null) catMap[u.categoria].notas.push(u.promedio_nota);
+        });
+        const por_categoria = {};
+        Object.entries(catMap).forEach(([cat, data]) => {
+            const sumS = data.salidas.reduce((s, n) => s + n, 0);
+            por_categoria[cat] = {
+                usuarios:         data.salidas.length,
+                total_salidas:    sumS,
+                promedio_salidas: Math.round((sumS / data.salidas.length) * 10) / 10,
+                promedio_nota:    data.notas.length
+                    ? Math.round((data.notas.reduce((s, n) => s + n, 0) / data.notas.length) * 100) / 100
+                    : null,
+                evaluados: data.notas.length
+            };
+        });
+
+        // ── 7. Evolución mensual ─────────────────────────────────────────
+        const porMes = {};
+        todasAsigs.forEach(a => {
+            if (a.estado_designacion === 'rechazado') return;
+            const u = usuariosMap[a.usuario_pagado_id];
+            if (!u) return;
+            const uCat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
+            if (catFiltro && uCat !== catFiltro) return;
+            if (tipoFiltro && u.tipo_persona !== tipoFiltro) return;
+            const fecha = a.rodeos?.fecha;
+            if (!fecha) return;
+            const m = fecha.slice(0, 7);
+            if (!porMes[m]) porMes[m] = { salidas: 0, _notas: [], A: 0, B: 0, C: 0, DR: 0 };
+            porMes[m].salidas++;
+            if (porMes[m][uCat] !== undefined) porMes[m][uCat]++;
+            const nota = notasMap[a.id];
+            if (nota != null) porMes[m]._notas.push(nota);
+        });
+        const evolucion_mensual = Object.entries(porMes)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([m, d]) => ({
+                mes: m, salidas: d.salidas,
+                promedio_nota: d._notas.length
+                    ? Math.round((d._notas.reduce((s, n) => s + n, 0) / d._notas.length) * 100) / 100
+                    : null,
+                cat_A: d.A, cat_B: d.B, cat_C: d.C, cat_DR: d.DR
+            }));
+
+        // ── 8. Rankings ──────────────────────────────────────────────────
+        const clean = ({ _notas, ...r }) => r;
+        const ranking_salidas = [...stats].sort((a, b) => b.salidas - a.salidas).slice(0, 20).map(clean);
+        const ranking_notas   = [...stats].filter(u => u.evaluaciones >= 2)
+            .sort((a, b) => b.promedio_nota - a.promedio_nota).slice(0, 15).map(clean);
+
+        // ── 9. Alertas de distribución ───────────────────────────────────
+        const alertas = [];
+        stats.forEach(u => {
+            const promCat = por_categoria[u.categoria]?.promedio_salidas || 0;
+            if (promCat >= 2) {
+                const umbralAlto = Math.max(promCat * 1.5, promCat + 2);
+                if (u.salidas >= umbralAlto) {
+                    alertas.push({ tipo: 'sobreutilizado', nombre: u.nombre, categoria: u.categoria, salidas: u.salidas, promedio_cat: promCat, diferencia: +(u.salidas - promCat).toFixed(1) });
+                } else if (u.salidas > 0 && u.salidas <= promCat * 0.5) {
+                    alertas.push({ tipo: 'subutilizado', nombre: u.nombre, categoria: u.categoria, salidas: u.salidas, promedio_cat: promCat, diferencia: +(u.salidas - promCat).toFixed(1) });
+                }
+            }
+            if (u.evaluaciones === 0 && u.salidas >= 3) {
+                alertas.push({ tipo: 'sin_evaluar', nombre: u.nombre, categoria: u.categoria, salidas: u.salidas });
+            } else if (u.evaluaciones >= 2 && u.promedio_nota < 4.5) {
+                alertas.push({ tipo: 'nota_baja', nombre: u.nombre, categoria: u.categoria, promedio_nota: u.promedio_nota, evaluaciones: u.evaluaciones });
+            }
+        });
+        const prioridadAlerta = { sobreutilizado: 0, subutilizado: 1, nota_baja: 2, sin_evaluar: 3 };
+        alertas.sort((a, b) => (prioridadAlerta[a.tipo] ?? 9) - (prioridadAlerta[b.tipo] ?? 9));
+
+        res.json({ periodo: { año, mes, inicio, fin }, resumen, por_categoria, evolucion_mensual, ranking_salidas, ranking_notas, alertas: alertas.slice(0, 30) });
+
+    } catch (err) {
+        console.error('[DASHBOARD/DESEMPENO]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET /api/admin/dashboard/auditoria?page=&limit=&accion=&tabla=
 router.get('/auditoria', async (req, res) => {
     const { page = 1, limit = 50, accion, tabla, actor_id } = req.query;
