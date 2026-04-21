@@ -394,18 +394,10 @@ router.get('/desempeno', async (req, res) => {
             };
         });
 
-        // ── 7. Evolución mensual y semanal ───────────────────────────────
-        const isoWeek = dateStr => {
-            const d = new Date(dateStr + 'T12:00:00Z');
-            const day = d.getUTCDay() || 7;
-            d.setUTCDate(d.getUTCDate() + 4 - day);
-            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-            const wk = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-            return `${d.getUTCFullYear()}-W${String(wk).padStart(2, '0')}`;
-        };
+        // ── 7. Evolución mensual y por fecha de rodeo ────────────────────
         const emptyBucket = () => ({ salidas: 0, _notas: [], A: 0, B: 0, C: 0, DR: 0, _nA: [], _nB: [], _nC: [], _nDR: [] });
-        const porMes = {};
-        const porSemana = {};
+        const porMes   = {};
+        const porFecha = {};   // agrupa por rodeos.fecha real (YYYY-MM-DD)
         todasAsigs.forEach(a => {
             if (a.estado_designacion === 'rechazado') return;
             const u = usuariosMap[a.usuario_pagado_id];
@@ -416,10 +408,10 @@ router.get('/desempeno', async (req, res) => {
             const fecha = a.rodeos?.fecha;
             if (!fecha) return;
             const mKey = fecha.slice(0, 7);
-            const wKey = isoWeek(fecha);
-            if (!porMes[mKey])    porMes[mKey]    = emptyBucket();
-            if (!porSemana[wKey]) porSemana[wKey] = emptyBucket();
-            [porMes[mKey], porSemana[wKey]].forEach(bucket => {
+            const fKey = fecha;                        // YYYY-MM-DD exacto del rodeo
+            if (!porMes[mKey])   porMes[mKey]   = emptyBucket();
+            if (!porFecha[fKey]) porFecha[fKey] = emptyBucket();
+            [porMes[mKey], porFecha[fKey]].forEach(bucket => {
                 bucket.salidas++;
                 if (bucket[uCat] !== undefined) bucket[uCat]++;
                 const nota = notasMap[a.id];
@@ -440,9 +432,9 @@ router.get('/desempeno', async (req, res) => {
         const evolucion_mensual = Object.entries(porMes)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([m, d]) => bucketToRow(m, d));
-        const evolucion_semanal = Object.entries(porSemana)
+        const evolucion_semanal = Object.entries(porFecha)
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(([w, d]) => bucketToRow(w, d));
+            .map(([f, d]) => bucketToRow(f, d));
 
         // ── 8. Rankings ──────────────────────────────────────────────────
         const clean = ({ _notas, ...r }) => r;
