@@ -132,20 +132,25 @@ router.get('/', async (req, res) => {
         const resumen = await calcularResumenMensual(req.usuario.id, año, mes);
 
         // Adjuntar notas y estado de cartilla por asignación
+        const esDelegado = req.usuario.tipo_persona === 'delegado_rentado';
         const asigIds = (resumen.asignaciones || []).map(a => a.id);
         if (asigIds.length > 0) {
-            const [{ data: notas }, { data: cartillas }] = await Promise.all([
-                supabase.from('notas_rodeo').select('asignacion_id, nota, comentario').in('asignacion_id', asigIds),
-                supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds)
-            ]);
+            // Los delegados no tienen cartilla digital — no se consulta ni se devuelve
+            const queries = [
+                supabase.from('notas_rodeo').select('asignacion_id, nota, comentario').in('asignacion_id', asigIds)
+            ];
+            if (!esDelegado) {
+                queries.push(supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds));
+            }
+            const [{ data: notas }, cartillasRes] = await Promise.all(queries);
             const notasMap     = {};
             const cartillasMap = {};
-            (notas     || []).forEach(n => { notasMap[n.asignacion_id]     = n; });
-            (cartillas || []).forEach(c => { cartillasMap[c.asignacion_id] = c.estado; });
+            (notas                      || []).forEach(n => { notasMap[n.asignacion_id]     = n; });
+            ((cartillasRes?.data) || []).forEach(c => { cartillasMap[c.asignacion_id] = c.estado; });
             resumen.asignaciones = resumen.asignaciones.map(a => ({
                 ...a,
-                nota_rodeo:     notasMap[a.id]     || null,
-                cartilla_estado: cartillasMap[a.id] || null
+                nota_rodeo:      notasMap[a.id]     || null,
+                cartilla_estado: esDelegado ? null : (cartillasMap[a.id] || null)
             }));
         }
 
