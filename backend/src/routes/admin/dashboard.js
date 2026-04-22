@@ -438,9 +438,40 @@ router.get('/desempeno', async (req, res) => {
 
         // ── 8. Rankings ──────────────────────────────────────────────────
         const clean = ({ _notas, ...r }) => r;
-        const ranking_salidas = [...stats].sort((a, b) => b.salidas - a.salidas).slice(0, 20).map(clean);
+        const ranking_salidas = [...stats].sort((a, b) => b.salidas - a.salidas).map(clean);
+        const ranking_menor   = [...stats].filter(u => u.salidas > 0)
+            .sort((a, b) => a.salidas - b.salidas).map(clean);
         const ranking_notas   = [...stats].filter(u => u.evaluaciones >= 2)
             .sort((a, b) => b.promedio_nota - a.promedio_nota).slice(0, 15).map(clean);
+
+        // Usuarios activos con 0 salidas en el período
+        const usersConSalida = new Set(Object.keys(perUser));
+        const sin_salidas = Object.values(usuariosMap)
+            .filter(u => {
+                if (usersConSalida.has(u.id)) return false;
+                const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
+                if (catFiltro && cat !== catFiltro) return false;
+                if (tipoFiltro && u.tipo_persona !== tipoFiltro) return false;
+                return true;
+            })
+            .map(u => ({
+                id: u.id,
+                nombre: u.nombre_completo,
+                categoria: u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?'),
+                tipo: u.tipo_persona,
+                salidas: 0
+            }))
+            .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+        // Cards de distribución
+        const maxSal = ranking_salidas.length > 0 ? ranking_salidas[0].salidas : 0;
+        const minSal = ranking_menor.length    > 0 ? ranking_menor[ranking_menor.length - 1]?.salidas : 0;
+        const promG  = resumen.promedio_salidas || 0;
+        resumen.con_cero_salidas = sin_salidas.length;
+        resumen.sobre_promedio   = stats.filter(u => u.salidas > promG).length;
+        resumen.bajo_promedio    = stats.filter(u => u.salidas > 0 && u.salidas < promG).length;
+        resumen.max_salidas      = maxSal;
+        resumen.min_salidas_activos = ranking_menor.length > 0 ? ranking_menor[0].salidas : null;
 
         // ── 9. Alertas de distribución ───────────────────────────────────
         const alertas = [];
@@ -463,7 +494,7 @@ router.get('/desempeno', async (req, res) => {
         const prioridadAlerta = { sobreutilizado: 0, subutilizado: 1, nota_baja: 2, sin_evaluar: 3 };
         alertas.sort((a, b) => (prioridadAlerta[a.tipo] ?? 9) - (prioridadAlerta[b.tipo] ?? 9));
 
-        res.json({ periodo: { año, mes, inicio, fin }, resumen, por_categoria, evolucion_mensual, evolucion_semanal, ranking_salidas, ranking_notas, alertas: alertas.slice(0, 30) });
+        res.json({ periodo: { año, mes, inicio, fin }, resumen, por_categoria, evolucion_mensual, evolucion_semanal, ranking_salidas, ranking_menor, sin_salidas, ranking_notas, alertas: alertas.slice(0, 30) });
 
     } catch (err) {
         console.error('[DASHBOARD/DESEMPENO]', err.message);

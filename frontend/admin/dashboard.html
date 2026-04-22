@@ -694,7 +694,7 @@ function crearChartDesemp(id, config) {
 
 function renderDesempeno(d) {
     _desempData = d;
-    const { resumen, por_categoria, evolucion_mensual, ranking_salidas, ranking_notas, alertas } = d;
+    const { resumen, por_categoria, evolucion_mensual, ranking_salidas, ranking_menor, sin_salidas, ranking_notas, alertas } = d;
 
     const COLORES_CAT = { A: '#2980b9', B: '#27ae60', C: '#e67e22', DR: '#8e44ad', '?': '#aaa' };
     const LABEL_CAT   = { A: 'Cat. A', B: 'Cat. B', C: 'Cat. C', DR: 'Delegado Rentado' };
@@ -737,9 +737,19 @@ function renderDesempeno(d) {
     </div>
 
     <div class="dash-seccion">
+        <div class="dash-seccion-titulo">Distribución de participación</div>
+        <div class="desemp-kpi-grid">
+            ${kpi(resumen.con_cero_salidas ?? '—', 'Sin salidas en el período')}
+            ${kpi(resumen.bajo_promedio    ?? '—', 'Bajo el promedio')}
+            ${kpi(resumen.sobre_promedio   ?? '—', 'Sobre el promedio')}
+            ${kpi(resumen.max_salidas !== undefined ? (resumen.max_salidas - (resumen.min_salidas_activos ?? 0)) : '—', 'Diferencia máx − mín activos')}
+        </div>
+    </div>
+
+    <div class="dash-seccion">
         <div class="dash-seccion-titulo">Rankings del período</div>
         <div class="desemp-dos-col">
-            ${renderRankingSalidas(ranking_salidas, por_categoria, COLORES_CAT)}
+            ${renderRankingSalidasTabs(ranking_salidas, ranking_menor, sin_salidas, por_categoria, COLORES_CAT)}
             ${renderRankingNotas(ranking_notas, COLORES_CAT)}
         </div>
     </div>
@@ -773,30 +783,103 @@ function renderDesempeno(d) {
     renderChartNotasMes(evolucion_mensual, COLORES_CAT, 'mes');
 }
 
-function renderRankingSalidas(ranking, por_categoria, COLORES) {
-    if (!ranking || ranking.length === 0) {
-        return `<div class="desemp-bloque"><div class="desemp-bloque-titulo">Ranking por salidas</div><p style="color:var(--gris);font-size:13px;">Sin datos.</p></div>`;
-    }
-    const max = ranking[0]?.salidas || 1;
-    const filas = ranking.slice(0, 15).map((u, i) => {
-        const promCat = por_categoria[u.categoria]?.promedio_salidas || 0;
-        const diff    = +(u.salidas - promCat).toFixed(1);
-        const diffCol = diff > 0 ? 'color:#e67e22' : (diff < 0 ? 'color:#2980b9' : '');
-        const pct     = Math.round((u.salidas / max) * 100);
-        const nombre  = u.nombre.split(' ').slice(0,3).join(' ');
-        return `<div class="desemp-ranking-fila">
-            <span class="desemp-rank-num">${i + 1}</span>
-            <span class="desemp-rank-nombre" title="${sanitizar(u.nombre)}">${sanitizar(nombre)}</span>
-            <span class="desemp-rank-cat" style="background:${COLORES[u.categoria]}20;color:${COLORES[u.categoria]};">${u.categoria}</span>
-            <div class="desemp-rank-bar-wrap"><div class="desemp-rank-bar" style="width:${pct}%;background:${COLORES[u.categoria]};"></div></div>
-            <span class="desemp-rank-val">${u.salidas}</span>
-            <span style="font-size:11px;${diffCol};width:36px;text-align:right;flex-shrink:0;">${diff > 0 ? '+' : ''}${diff !== 0 ? diff : ''}</span>
-        </div>`;
-    }).join('');
-    return `<div class="desemp-bloque">
-        <div class="desemp-bloque-titulo">Top salidas a jurar <span style="font-weight:400;color:var(--gris);">(diff vs promedio categoría)</span></div>
-        ${filas}
+function _filaRanking(u, i, max, por_categoria, COLORES, mostrarDiff) {
+    const promCat = por_categoria[u.categoria]?.promedio_salidas || 0;
+    const diff    = +(u.salidas - promCat).toFixed(1);
+    const diffCol = diff > 0 ? 'color:#e67e22' : (diff < 0 ? 'color:#2980b9' : '');
+    const pct     = max > 0 ? Math.round((u.salidas / max) * 100) : 0;
+    const nombre  = u.nombre.split(' ').slice(0, 3).join(' ');
+    const color   = COLORES[u.categoria] || '#aaa';
+    const diffHtml = mostrarDiff
+        ? `<span style="font-size:11px;${diffCol};width:36px;text-align:right;flex-shrink:0;">${diff > 0 ? '+' : ''}${diff !== 0 ? diff : ''}</span>`
+        : '';
+    return `<div class="desemp-ranking-fila">
+        <span class="desemp-rank-num">${i + 1}</span>
+        <span class="desemp-rank-nombre" title="${sanitizar(u.nombre)}">${sanitizar(nombre)}</span>
+        <span class="desemp-rank-cat" style="background:${color}20;color:${color};">${u.categoria}</span>
+        <div class="desemp-rank-bar-wrap"><div class="desemp-rank-bar" style="width:${pct}%;background:${color};"></div></div>
+        <span class="desemp-rank-val">${u.salidas}</span>
+        ${diffHtml}
     </div>`;
+}
+
+function _listaConVerMas(id, items, renderFila, limite) {
+    if (items.length === 0) return '<p style="color:var(--gris);font-size:13px;padding:8px 0;">Sin datos en este período.</p>';
+    const visible   = items.slice(0, limite);
+    const ocultos   = items.slice(limite);
+    const filasVis  = visible.map((u, i) => renderFila(u, i)).join('');
+    const filasOcul = ocultos.length > 0
+        ? `<div id="mas-${id}" style="display:none;">${ocultos.map((u, i) => renderFila(u, limite + i)).join('')}</div>
+           <button onclick="document.getElementById('mas-${id}').style.display='block';this.style.display='none';"
+               style="margin-top:8px;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid #ccc;background:#f8f9fa;cursor:pointer;color:#555;">
+               Ver ${ocultos.length} más ↓
+           </button>`
+        : '';
+    return filasVis + filasOcul;
+}
+
+function renderRankingSalidasTabs(ranking, ranking_menor, sin_salidas, por_categoria, COLORES) {
+    const maxMas   = ranking[0]?.salidas || 1;
+    const maxMenor = ranking[0]?.salidas || 1; // barra relativa al máximo global
+
+    const LIMITE = 10;
+    const tabs = [
+        { id: 'tab-mas',   label: `Más salidas (${ranking.length})`,           activo: true  },
+        { id: 'tab-menor', label: `Menor participación (${ranking_menor.length})`, activo: false },
+        { id: 'tab-cero',  label: `Sin salidas (${sin_salidas.length})`,        activo: false },
+    ];
+
+    const tabBtns = tabs.map(t =>
+        `<button onclick="cambiarTabRanking('${t.id}')"
+            id="btn-${t.id}"
+            style="font-size:12px;padding:4px 10px;border-radius:4px;cursor:pointer;border:1px solid #ccc;
+                   background:${t.activo ? '#1a3c6e' : '#f8f9fa'};color:${t.activo ? '#fff' : '#555'};">
+            ${t.label}
+        </button>`
+    ).join('');
+
+    const contenido_mas = _listaConVerMas('mas',
+        ranking, (u, i) => _filaRanking(u, i, maxMas, por_categoria, COLORES, true), LIMITE);
+
+    const contenido_menor = _listaConVerMas('menor',
+        ranking_menor, (u, i) => _filaRanking(u, i, maxMenor, por_categoria, COLORES, true), LIMITE);
+
+    const contenido_cero = sin_salidas.length === 0
+        ? '<p style="color:var(--gris);font-size:13px;padding:8px 0;">Todos los jurados activos tienen al menos 1 salida en este período.</p>'
+        : _listaConVerMas('cero',
+            sin_salidas,
+            (u, i) => {
+                const color = COLORES[u.categoria] || '#aaa';
+                const nombre = u.nombre.split(' ').slice(0, 3).join(' ');
+                return `<div class="desemp-ranking-fila">
+                    <span class="desemp-rank-num">${i + 1}</span>
+                    <span class="desemp-rank-nombre" title="${sanitizar(u.nombre)}">${sanitizar(nombre)}</span>
+                    <span class="desemp-rank-cat" style="background:${color}20;color:${color};">${u.categoria}</span>
+                    <div class="desemp-rank-bar-wrap"></div>
+                    <span class="desemp-rank-val" style="color:#aaa;">0</span>
+                </div>`;
+            }, LIMITE);
+
+    return `<div class="desemp-bloque">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
+            <div class="desemp-bloque-titulo" style="margin:0;">Salidas a jurar</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;" id="tabs-ranking-salidas">${tabBtns}</div>
+        </div>
+        <div id="tab-mas"   style="display:block;">${contenido_mas}</div>
+        <div id="tab-menor" style="display:none;">${contenido_menor}</div>
+        <div id="tab-cero"  style="display:none;">${contenido_cero}</div>
+    </div>`;
+}
+
+function cambiarTabRanking(tabId) {
+    ['tab-mas','tab-menor','tab-cero'].forEach(id => {
+        document.getElementById(id).style.display        = id === tabId ? 'block' : 'none';
+        const btn = document.getElementById('btn-' + id);
+        if (btn) {
+            btn.style.background = id === tabId ? '#1a3c6e' : '#f8f9fa';
+            btn.style.color      = id === tabId ? '#fff'    : '#555';
+        }
+    });
 }
 
 function renderRankingNotas(ranking, COLORES) {
