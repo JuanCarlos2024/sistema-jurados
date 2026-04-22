@@ -805,17 +805,18 @@ function _filaRanking(u, i, max, por_categoria, COLORES, mostrarDiff) {
 
 function _listaConVerMas(id, items, renderFila, limite) {
     if (items.length === 0) return '<p style="color:var(--gris);font-size:13px;padding:8px 0;">Sin datos en este período.</p>';
-    const visible   = items.slice(0, limite);
-    const ocultos   = items.slice(limite);
-    const filasVis  = visible.map((u, i) => renderFila(u, i)).join('');
-    const filasOcul = ocultos.length > 0
-        ? `<div id="mas-${id}" style="display:none;">${ocultos.map((u, i) => renderFila(u, limite + i)).join('')}</div>
-           <button onclick="document.getElementById('mas-${id}').style.display='block';this.style.display='none';"
-               style="margin-top:8px;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid #ccc;background:#f8f9fa;cursor:pointer;color:#555;">
-               Ver ${ocultos.length} más ↓
-           </button>`
-        : '';
-    return filasVis + filasOcul;
+    const visible  = items.slice(0, limite);
+    const ocultos  = items.slice(limite);
+    const filasVis = visible.map((u, i) => renderFila(u, i)).join('');
+    if (ocultos.length === 0) return filasVis;
+
+    const filasOcul = ocultos.map((u, i) => renderFila(u, limite + i)).join('');
+    const btnStyle  = 'margin-top:8px;font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid #ccc;background:#f8f9fa;cursor:pointer;color:#555;';
+    return `${filasVis}
+        <div id="mas-${id}" style="display:none;">${filasOcul}</div>
+        <button id="btn-ver-mas-${id}" onclick="toggleVerMas('${id}',${ocultos.length})" style="${btnStyle}">
+            Ver ${ocultos.length} más ↓
+        </button>`;
 }
 
 function renderRankingSalidasTabs(ranking, ranking_menor, sin_salidas, por_categoria, COLORES) {
@@ -873,13 +874,22 @@ function renderRankingSalidasTabs(ranking, ranking_menor, sin_salidas, por_categ
 
 function cambiarTabRanking(tabId) {
     ['tab-mas','tab-menor','tab-cero'].forEach(id => {
-        document.getElementById(id).style.display        = id === tabId ? 'block' : 'none';
+        document.getElementById(id).style.display = id === tabId ? 'block' : 'none';
         const btn = document.getElementById('btn-' + id);
         if (btn) {
             btn.style.background = id === tabId ? '#1a3c6e' : '#f8f9fa';
             btn.style.color      = id === tabId ? '#fff'    : '#555';
         }
     });
+}
+
+function toggleVerMas(id, totalOcultos) {
+    const extra = document.getElementById('mas-' + id);
+    const btn   = document.getElementById('btn-ver-mas-' + id);
+    if (!extra || !btn) return;
+    const expandido = extra.style.display !== 'none';
+    extra.style.display = expandido ? 'none' : 'block';
+    btn.textContent     = expandido ? `Ver ${totalOcultos} más ↓` : 'Ver menos ↑';
 }
 
 function renderRankingNotas(ranking, COLORES) {
