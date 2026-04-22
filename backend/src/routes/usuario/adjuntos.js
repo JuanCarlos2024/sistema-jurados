@@ -45,18 +45,23 @@ router.get('/', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    const uid = req.usuario.id;
-    const filtrado = (data || []).filter(adj => {
-        // Cartilla del delegado: nunca visible para el jurado
-        if (adj.tipo_adjunto === 'cartilla_delegado') return false;
+    const uid      = req.usuario.id;
+    const esDelegado = req.usuario.tipo_persona === 'delegado_rentado';
 
-        // Cartilla del jurado o genérica: visible si corresponde a este usuario
-        // o si el admin la subió sin asignar a nadie (usuario_pagado_id null)
-        if (adj.tipo_adjunto === 'cartilla_jurado' || adj.tipo_adjunto === 'cartilla') {
+    // Tipo de cartilla que corresponde a este rol
+    const tipoCartillaPropia = esDelegado ? 'cartilla_delegado' : 'cartilla_jurado';
+    const tipoCartillaAjena  = esDelegado ? 'cartilla_jurado'   : 'cartilla_delegado';
+
+    const filtrado = (data || []).filter(adj => {
+        // Cartilla del rol opuesto: nunca visible
+        if (adj.tipo_adjunto === tipoCartillaAjena) return false;
+
+        // Cartilla del propio rol: visible si pertenece a este usuario o admin no asignó a nadie (null)
+        if (adj.tipo_adjunto === tipoCartillaPropia || adj.tipo_adjunto === 'cartilla') {
             return adj.usuario_pagado_id === uid || adj.usuario_pagado_id === null;
         }
 
-        // Resto de adjuntos: visibles según la lógica original
+        // Resto de adjuntos: visibles según lógica original
         return true;
     });
 
@@ -124,16 +129,17 @@ router.get('/:id/url', async (req, res) => {
 
     if (!adj) return res.status(404).json({ error: 'Adjunto no encontrado' });
 
-    const uid = req.usuario.id;
+    const uid        = req.usuario.id;
+    const esDelegado = req.usuario.tipo_persona === 'delegado_rentado';
 
-    // Misma regla que el listado:
-    // - cartilla_delegado: nunca accesible al jurado
-    // - cartilla_jurado / cartilla: accesible si usuario_pagado_id = uid O es null (admin subió sin asignar)
-    // - resto: accesible si es propio o subido por admin
+    const tipoCartillaPropia = esDelegado ? 'cartilla_delegado' : 'cartilla_jurado';
+    const tipoCartillaAjena  = esDelegado ? 'cartilla_jurado'   : 'cartilla_delegado';
+
+    // Misma regla simétrica que el listado
     let permitido = false;
-    if (adj.tipo_adjunto === 'cartilla_delegado') {
+    if (adj.tipo_adjunto === tipoCartillaAjena) {
         permitido = false;
-    } else if (adj.tipo_adjunto === 'cartilla_jurado' || adj.tipo_adjunto === 'cartilla') {
+    } else if (adj.tipo_adjunto === tipoCartillaPropia || adj.tipo_adjunto === 'cartilla') {
         permitido = adj.usuario_pagado_id === uid || adj.usuario_pagado_id === null;
     } else {
         permitido = adj.usuario_pagado_id === uid || adj.subido_por_admin === true;
