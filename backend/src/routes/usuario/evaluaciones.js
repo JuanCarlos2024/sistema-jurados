@@ -31,7 +31,7 @@ router.get('/', async (req, res) => {
         .from('evaluaciones')
         .select(`
             id, estado, nota_final, puntaje_final, created_at,
-            rodeo:rodeos(id, club, sede, fecha, asociacion)
+            rodeo:rodeos(id, club, fecha, asociacion)
         `)
         .in('rodeo_id', rodeoIds)
         .order('created_at', { ascending: false });
@@ -173,7 +173,7 @@ router.get('/:id/resultado', async (req, res) => {
         .from('evaluaciones')
         .select(`
             id, estado, nota_final, puntaje_final, observacion_general, created_at,
-            rodeo:rodeos(id, club, sede, fecha, asociacion)
+            rodeo:rodeos(id, club, fecha, asociacion)
         `)
         .eq('id', req.params.id)
         .single();

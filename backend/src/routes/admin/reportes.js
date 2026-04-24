@@ -555,7 +555,7 @@ router.get('/evaluaciones', async (req, res) => {
     try {
         const { temporada, asociacion, estado } = req.query;
 
-        let rodeosQuery = supabase.from('rodeos').select('id, club, sede, asociacion, fecha, tipo_rodeo_nombre');
+        let rodeosQuery = supabase.from('rodeos').select('id, club, asociacion, fecha, tipo_rodeo_nombre');
         if (temporada) {
             const anio = parseInt(temporada);
             if (!isNaN(anio)) {
@@ -656,7 +656,7 @@ router.get('/evaluaciones/exportar', async (req, res) => {
     try {
         const { temporada, asociacion, estado } = req.query;
 
-        let rodeosQuery = supabase.from('rodeos').select('id, club, sede, asociacion, fecha');
+        let rodeosQuery = supabase.from('rodeos').select('id, club, asociacion, fecha');
         if (temporada) {
             const anio = parseInt(temporada);
             if (!isNaN(anio)) rodeosQuery = rodeosQuery.gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`);

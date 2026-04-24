@@ -362,7 +362,7 @@ async function cargarEvaluacion() {
 
         const rodeo       = ev.rodeos   || ev.rodeo || {};
         const analista    = ev.analista || {};
-        const rodeoNombre = [rodeo.club, rodeo.sede].filter(Boolean).join(' — ') || ev.rodeo_id || '—';
+        const rodeoNombre = rodeo.club || ev.rodeo_id || '—';
         const rodeoFecha  = rodeo.fecha ? formatFecha(rodeo.fecha) : '—';
 
         document.getElementById('titulo-pagina').textContent = rodeoNombre;

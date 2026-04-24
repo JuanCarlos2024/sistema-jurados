@@ -138,7 +138,7 @@
             <!-- Búsqueda de rodeo -->
             <div class="form-group" style="margin-bottom:14px;">
                 <label class="form-label">Rodeo</label>
-                <input type="text" id="buscar-rodeo" class="form-control" placeholder="Buscar por club o sede..." autocomplete="off" oninput="buscarRodeos(this.value)">
+                <input type="text" id="buscar-rodeo" class="form-control" placeholder="Buscar por club o asociación..." autocomplete="off" oninput="buscarRodeos(this.value)">
                 <div id="resultados-rodeo" style="border:1px solid var(--gris-borde);border-radius:6px;max-height:180px;overflow-y:auto;display:none;background:#fff;margin-top:4px;"></div>
                 <input type="hidden" id="rodeo-seleccionado-id">
                 <div id="rodeo-seleccionado-label" style="font-size:12px;color:var(--gris);margin-top:4px;"></div>
@@ -227,8 +227,8 @@ async function cargarEvaluaciones(pagina) {
                 const fechaRodeo = rodeo.fecha ? formatFecha(rodeo.fecha) : '—';
                 const estadoBadge = `<span class="badge-eval badge-${ev.estado}">${labelEstado(ev.estado)}</span>`;
                 return `<tr>
-                    <td>${sanitizar(rodeo.nombre || rodeo.sede || ev.rodeo_id || '—')}</td>
-                    <td>${sanitizar(rodeo.club || '—')}</td>
+                    <td>${sanitizar(rodeo.club || ev.rodeo_id || '—')}</td>
+                    <td>${sanitizar(rodeo.asociacion || '—')}</td>
                     <td>${fechaRodeo}</td>
                     <td>${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</td>
                     <td>${estadoBadge}</td>
@@ -301,8 +301,8 @@ function buscarRodeos(q) {
                 res.innerHTML = '<div style="padding:10px;font-size:13px;color:var(--gris);">Sin resultados</div>';
             } else {
                 res.innerHTML = rodeos.map(r => {
-                    const label = [r.club, r.sede, r.fecha ? formatFecha(r.fecha) : ''].filter(Boolean).join(' — ');
-                    return `<div onclick="seleccionarRodeo('${r.id}', '${sanitizar(label).replace(/'/g,"\\'")}'')"
+                    const label = [r.club, r.asociacion, r.fecha ? formatFecha(r.fecha) : ''].filter(Boolean).join(' — ');
+                    return `<div onclick="seleccionarRodeo('${r.id}', '${sanitizar(label).replace(/'/g,"\\'")}')"
                         style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0;"
                         onmouseover="this.style.background='#f5f7fa'" onmouseout="this.style.background=''">
                         ${sanitizar(label)}

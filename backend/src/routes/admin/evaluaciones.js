@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
         .from('evaluaciones')
         .select(`
             id, estado, created_at, analista_id, rodeo_id,
-            rodeo:rodeos(id, club, sede, fecha, asociacion),
+            rodeo:rodeos(id, club, fecha, asociacion),
             analista:analista_id(id, nombre_completo)
         `, { count: 'exact' })
         .order('created_at', { ascending: false })
@@ -80,7 +80,7 @@ router.get('/:id', async (req, res) => {
         .from('evaluaciones')
         .select(`
             *,
-            rodeo:rodeos(id, club, sede, fecha, asociacion, tipo_rodeo_nombre),
+            rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre),
             analista:analista_id(id, nombre_completo),
             jefe:jefe_id(id, nombre_completo),
             ciclos:evaluacion_ciclos(*)
@@ -231,7 +231,7 @@ router.get('/:id/revision', async (req, res) => {
 
     const { data: ev, error: evErr } = await supabase
         .from('evaluaciones')
-        .select('id, estado, rodeo:rodeos(id, club, sede, fecha, asociacion, tipo_rodeo_nombre)')
+        .select('id, estado, rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)')
         .eq('id', req.params.id)
         .single();
 
@@ -270,7 +270,7 @@ router.get('/:id/comision', async (req, res) => {
 
     const { data: ev, error: evErr } = await supabase
         .from('evaluaciones')
-        .select('id, estado, rodeo:rodeos(id, club, sede, fecha, asociacion, tipo_rodeo_nombre)')
+        .select('id, estado, rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)')
         .eq('id', req.params.id)
         .single();
 
