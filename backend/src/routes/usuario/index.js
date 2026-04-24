@@ -13,5 +13,6 @@ router.use('/adjuntos', require('./adjuntos'));
 router.use('/links', require('./links'));
 router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/cartillas', require('./cartillas'));
+router.use('/evaluaciones', require('./evaluaciones'));
 
 module.exports = router;

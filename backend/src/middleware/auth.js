@@ -62,4 +62,15 @@ function generarToken(payload) {
     });
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken };
+// Middleware factory: restringe por rol_evaluacion dentro del módulo de evaluación.
+// null rol = admin pleno (acceso total). Llamar después de soloAdmin.
+function soloRolEvaluacion(...roles) {
+    return function (req, res, next) {
+        const rol = req.usuario.rol_evaluacion || null;
+        if (rol === null) return next();
+        if (roles.includes(rol)) return next();
+        return res.status(403).json({ error: 'Sin permisos para esta acción en el módulo de evaluación' });
+    };
+}
+
+module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion };

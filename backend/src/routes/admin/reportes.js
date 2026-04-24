@@ -547,4 +547,346 @@ router.patch('/categorias-rodeo/:id', async (req, res) => {
     res.json(data);
 });
 
+// ─── Reportes del módulo Evaluación Técnica ────────────────────────────────
+
+// GET /api/admin/reportes/evaluaciones
+// Filtros: temporada (año), asociacion (string), estado
+router.get('/evaluaciones', async (req, res) => {
+    try {
+        const { temporada, asociacion, estado } = req.query;
+
+        let rodeosQuery = supabase.from('rodeos').select('id, club, sede, asociacion, fecha, tipo_rodeo_nombre');
+        if (temporada) {
+            const anio = parseInt(temporada);
+            if (!isNaN(anio)) {
+                rodeosQuery = rodeosQuery
+                    .gte('fecha', `${anio}-01-01`)
+                    .lte('fecha', `${anio}-12-31`);
+            }
+        }
+        if (asociacion) rodeosQuery = rodeosQuery.ilike('asociacion', `%${asociacion}%`);
+
+        const { data: rodeos, error: rErr } = await rodeosQuery;
+        if (rErr) throw new Error(rErr.message);
+
+        const rodeoIds = (rodeos || []).map(r => r.id);
+        if (rodeoIds.length === 0) return res.json([]);
+
+        const rodeoMap = {};
+        (rodeos || []).forEach(r => { rodeoMap[r.id] = r; });
+
+        let evQuery = supabase
+            .from('evaluaciones')
+            .select('id, rodeo_id, estado, nota_final, puntaje_final, created_at, fecha_decision_jefe, analista_id')
+            .in('rodeo_id', rodeoIds)
+            .order('created_at', { ascending: false });
+
+        if (estado) evQuery = evQuery.eq('estado', estado);
+
+        const { data: evs, error: eErr } = await evQuery;
+        if (eErr) throw new Error(eErr.message);
+        if (!evs || evs.length === 0) return res.json([]);
+
+        const evIds = evs.map(e => e.id);
+
+        // Estadísticas de casos por evaluacion
+        const { data: todosLosCasos } = await supabase
+            .from('evaluacion_casos')
+            .select('evaluacion_id, resolucion_final, decision_analista, estado, descuento_puntos')
+            .in('evaluacion_id', evIds);
+
+        // Contar jurados por rodeo
+        const { data: todasAsigs } = await supabase
+            .from('asignaciones')
+            .select('id, rodeo_id, usuarios_pagados!inner(tipo_persona)')
+            .in('rodeo_id', rodeoIds)
+            .eq('estado', 'activo')
+            .neq('estado_designacion', 'rechazado')
+            .eq('usuarios_pagados.tipo_persona', 'jurado');
+
+        const juradosPorRodeo = {};
+        (todasAsigs || []).forEach(a => {
+            juradosPorRodeo[a.rodeo_id] = (juradosPorRodeo[a.rodeo_id] || 0) + 1;
+        });
+
+        const resultado = evs.map(ev => {
+            const casos = (todosLosCasos || []).filter(c => c.evaluacion_id === ev.id);
+            const casos_total        = casos.length;
+            const casos_sin_descuento = casos.filter(c => c.resolucion_final === 'sin_descuento').length;
+            const casos_faltas        = casos.filter(c =>
+                ['interpretativa_confirmada', 'reglamentaria_confirmada', 'apelacion_rechazada'].includes(c.resolucion_final)
+            ).length;
+            const casos_derivados     = casos.filter(c =>
+                c.estado === 'derivado_comision' || c.decision_analista === 'derivar_comision'
+            ).length;
+
+            const jurados_count = juradosPorRodeo[ev.rodeo_id] || 0;
+
+            let tiempo_resolucion_dias = null;
+            if (ev.fecha_decision_jefe) {
+                const ms = new Date(ev.fecha_decision_jefe) - new Date(ev.created_at);
+                tiempo_resolucion_dias = Math.round(ms / 86400000);
+            }
+
+            return {
+                id:                    ev.id,
+                estado:                ev.estado,
+                nota_promedio:         ev.nota_final,
+                puntaje_final:         ev.puntaje_final,
+                created_at:            ev.created_at,
+                fecha_decision_jefe:   ev.fecha_decision_jefe,
+                tiempo_resolucion_dias,
+                casos_total,
+                casos_sin_descuento,
+                casos_faltas,
+                casos_derivados,
+                jurados_count,
+                rodeo: rodeoMap[ev.rodeo_id] || null
+            };
+        });
+
+        res.json(resultado);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/admin/reportes/evaluaciones/exportar — CSV
+router.get('/evaluaciones/exportar', async (req, res) => {
+    try {
+        const { temporada, asociacion, estado } = req.query;
+
+        let rodeosQuery = supabase.from('rodeos').select('id, club, sede, asociacion, fecha');
+        if (temporada) {
+            const anio = parseInt(temporada);
+            if (!isNaN(anio)) rodeosQuery = rodeosQuery.gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`);
+        }
+        if (asociacion) rodeosQuery = rodeosQuery.ilike('asociacion', `%${asociacion}%`);
+
+        const { data: rodeos } = await rodeosQuery;
+        const rodeoIds = (rodeos || []).map(r => r.id);
+        if (rodeoIds.length === 0) {
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', 'attachment; filename="evaluaciones.csv"');
+            return res.send('\uFEFFClub;Asociación;Fecha;Estado;Casos;Sin desc.;Faltas;Deriv.;Jurados;Nota;Tiempo (días)\r\n');
+        }
+
+        const rodeoMap = {};
+        (rodeos || []).forEach(r => { rodeoMap[r.id] = r; });
+
+        let evQuery = supabase
+            .from('evaluaciones')
+            .select('id, rodeo_id, estado, nota_final, puntaje_final, created_at, fecha_decision_jefe')
+            .in('rodeo_id', rodeoIds);
+        if (estado) evQuery = evQuery.eq('estado', estado);
+
+        const { data: evs } = await evQuery;
+        if (!evs || evs.length === 0) {
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', 'attachment; filename="evaluaciones.csv"');
+            return res.send('\uFEFFClub;Asociación;Fecha;Estado;Casos;Sin desc.;Faltas;Deriv.;Jurados;Nota;Tiempo (días)\r\n');
+        }
+
+        const evIds = evs.map(e => e.id);
+        const { data: casos } = await supabase
+            .from('evaluacion_casos')
+            .select('evaluacion_id, resolucion_final, decision_analista, estado')
+            .in('evaluacion_id', evIds);
+
+        const { data: asigs } = await supabase
+            .from('asignaciones')
+            .select('id, rodeo_id, usuarios_pagados!inner(tipo_persona)')
+            .in('rodeo_id', rodeoIds)
+            .eq('estado', 'activo')
+            .neq('estado_designacion', 'rechazado')
+            .eq('usuarios_pagados.tipo_persona', 'jurado');
+
+        const juradosPorRodeo = {};
+        (asigs || []).forEach(a => { juradosPorRodeo[a.rodeo_id] = (juradosPorRodeo[a.rodeo_id] || 0) + 1; });
+
+        function q(v) {
+            const s = v == null ? '' : String(v);
+            return s.includes(';') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+        }
+
+        let csv = '\uFEFFClub;Asociación;Fecha;Estado;Casos;Sin desc.;Faltas;Deriv.;Jurados;Nota;Tiempo (días)\r\n';
+        evs.forEach(ev => {
+            const cs   = (casos || []).filter(c => c.evaluacion_id === ev.id);
+            const rodeo = rodeoMap[ev.rodeo_id] || {};
+            const total  = cs.length;
+            const sinD   = cs.filter(c => c.resolucion_final === 'sin_descuento').length;
+            const faltas = cs.filter(c => ['interpretativa_confirmada', 'reglamentaria_confirmada', 'apelacion_rechazada'].includes(c.resolucion_final)).length;
+            const deriv  = cs.filter(c => c.estado === 'derivado_comision' || c.decision_analista === 'derivar_comision').length;
+            const jur    = juradosPorRodeo[ev.rodeo_id] || 0;
+            let tiempo = '';
+            if (ev.fecha_decision_jefe) tiempo = Math.round((new Date(ev.fecha_decision_jefe) - new Date(ev.created_at)) / 86400000);
+
+            csv += [q(rodeo.club), q(rodeo.asociacion), q(rodeo.fecha), q(ev.estado),
+                total, sinD, faltas, deriv, jur,
+                ev.nota_final != null ? parseFloat(ev.nota_final).toFixed(2) : '', tiempo
+            ].join(';') + '\r\n';
+        });
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="evaluaciones.csv"');
+        res.send(csv);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/admin/reportes/jurados
+// Filtros: temporada (año), asociacion
+router.get('/jurados', async (req, res) => {
+    try {
+        const { temporada, asociacion } = req.query;
+
+        let rodeosQuery = supabase.from('rodeos').select('id, club, asociacion, fecha');
+        if (temporada) {
+            const anio = parseInt(temporada);
+            if (!isNaN(anio)) rodeosQuery = rodeosQuery.gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`);
+        }
+        if (asociacion) rodeosQuery = rodeosQuery.ilike('asociacion', `%${asociacion}%`);
+
+        const { data: rodeos, error: rErr } = await rodeosQuery;
+        if (rErr) throw new Error(rErr.message);
+
+        const rodeoIds = (rodeos || []).map(r => r.id);
+        if (rodeoIds.length === 0) return res.json([]);
+
+        const rodeoMap = {};
+        (rodeos || []).forEach(r => { rodeoMap[r.id] = r; });
+
+        // Asignaciones de jurados con notas
+        const { data: asigs, error: aErr } = await supabase
+            .from('asignaciones')
+            .select(`
+                id, rodeo_id,
+                usuario:usuarios_pagados(id, nombre_completo, rut, categoria),
+                nota:notas_rodeo(nota, puntaje_evaluacion, calificacion_cualitativa, fuente, evaluacion_id)
+            `)
+            .in('rodeo_id', rodeoIds)
+            .eq('estado', 'activo')
+            .neq('estado_designacion', 'rechazado')
+            .eq('usuarios_pagados.tipo_persona', 'jurado');
+
+        if (aErr) throw new Error(aErr.message);
+
+        // Contar respuestas acepta/rechaza por asignación en evaluaciones técnicas
+        const asigIds = (asigs || []).map(a => a.id);
+        const { data: respuestas } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select('asignacion_id, decision')
+            .in('asignacion_id', asigIds);
+
+        const respMap = {};
+        (respuestas || []).forEach(r => {
+            if (!respMap[r.asignacion_id]) respMap[r.asignacion_id] = { acepta: 0, rechaza: 0 };
+            respMap[r.asignacion_id][r.decision] = (respMap[r.asignacion_id][r.decision] || 0) + 1;
+        });
+
+        const resultado = (asigs || [])
+            .filter(a => a.usuario)
+            .map(a => {
+                const nota = Array.isArray(a.nota) ? a.nota[0] : a.nota;
+                const resp = respMap[a.id] || { acepta: 0, rechaza: 0 };
+                return {
+                    asignacion_id:         a.id,
+                    usuario:               a.usuario,
+                    rodeo:                 rodeoMap[a.rodeo_id] || null,
+                    nota:                  nota?.nota ?? null,
+                    puntaje_evaluacion:    nota?.puntaje_evaluacion ?? null,
+                    calificacion_cualitativa: nota?.calificacion_cualitativa ?? null,
+                    fuente:                nota?.fuente ?? null,
+                    acepta_count:          resp.acepta,
+                    rechaza_count:         resp.rechaza
+                };
+            });
+
+        res.json(resultado);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/admin/reportes/jurados/exportar — CSV
+router.get('/jurados/exportar', async (req, res) => {
+    try {
+        const { temporada, asociacion } = req.query;
+
+        let rodeosQuery = supabase.from('rodeos').select('id, club, asociacion, fecha');
+        if (temporada) {
+            const anio = parseInt(temporada);
+            if (!isNaN(anio)) rodeosQuery = rodeosQuery.gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`);
+        }
+        if (asociacion) rodeosQuery = rodeosQuery.ilike('asociacion', `%${asociacion}%`);
+
+        const { data: rodeos } = await rodeosQuery;
+        const rodeoIds = (rodeos || []).map(r => r.id);
+
+        const encabezado = 'Jurado;RUT;Categoría;Club;Asociación;Fecha;Nota;Puntaje;Calificación;Acepta;Rechaza;Fuente\r\n';
+        if (rodeoIds.length === 0) {
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', 'attachment; filename="jurados-evaluaciones.csv"');
+            return res.send('\uFEFF' + encabezado);
+        }
+
+        const rodeoMap = {};
+        (rodeos || []).forEach(r => { rodeoMap[r.id] = r; });
+
+        const { data: asigs } = await supabase
+            .from('asignaciones')
+            .select(`
+                id, rodeo_id,
+                usuario:usuarios_pagados(id, nombre_completo, rut, categoria),
+                nota:notas_rodeo(nota, puntaje_evaluacion, calificacion_cualitativa, fuente)
+            `)
+            .in('rodeo_id', rodeoIds)
+            .eq('estado', 'activo')
+            .neq('estado_designacion', 'rechazado')
+            .eq('usuarios_pagados.tipo_persona', 'jurado');
+
+        const asigIds = (asigs || []).map(a => a.id);
+        const { data: respuestas } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select('asignacion_id, decision')
+            .in('asignacion_id', asigIds);
+
+        const respMap = {};
+        (respuestas || []).forEach(r => {
+            if (!respMap[r.asignacion_id]) respMap[r.asignacion_id] = { acepta: 0, rechaza: 0 };
+            respMap[r.asignacion_id][r.decision] = (respMap[r.asignacion_id][r.decision] || 0) + 1;
+        });
+
+        function q(v) {
+            const s = v == null ? '' : String(v);
+            return s.includes(';') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+        }
+
+        let csv = '\uFEFF' + encabezado;
+        (asigs || []).filter(a => a.usuario).forEach(a => {
+            const usr  = a.usuario;
+            const rodeo = rodeoMap[a.rodeo_id] || {};
+            const nota  = Array.isArray(a.nota) ? a.nota[0] : a.nota;
+            const resp  = respMap[a.id] || { acepta: 0, rechaza: 0 };
+
+            csv += [
+                q(usr.nombre_completo), q(usr.rut), q(usr.categoria),
+                q(rodeo.club), q(rodeo.asociacion), q(rodeo.fecha),
+                nota?.nota != null ? parseFloat(nota.nota).toFixed(2) : '',
+                nota?.puntaje_evaluacion ?? '',
+                q(nota?.calificacion_cualitativa ?? ''),
+                resp.acepta, resp.rechaza,
+                q(nota?.fuente ?? '')
+            ].join(';') + '\r\n';
+        });
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="jurados-evaluaciones.csv"');
+        res.send(csv);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;

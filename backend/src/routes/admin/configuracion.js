@@ -226,7 +226,7 @@ router.delete('/bonos/:id', async (req, res) => {
 router.get('/administradores', async (req, res) => {
     const { data, error } = await supabase
         .from('administradores')
-        .select('id, nombre_completo, email, activo, created_at')
+        .select('id, nombre_completo, email, activo, created_at, rol_evaluacion')
         .order('nombre_completo');
 
     if (error) return res.status(500).json({ error: error.message });

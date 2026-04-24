@@ -36,7 +36,8 @@ router.post('/admin/login', async (req, res) => {
         id: admin.id,
         tipo: 'administrador',
         nombre: admin.nombre_completo,
-        email: admin.email
+        email: admin.email,
+        rol_evaluacion: admin.rol_evaluacion || null
     });
 
     await auditoria.registrar({
@@ -55,7 +56,8 @@ router.post('/admin/login', async (req, res) => {
             id: admin.id,
             tipo: 'administrador',
             nombre: admin.nombre_completo,
-            email: admin.email
+            email: admin.email,
+            rol_evaluacion: admin.rol_evaluacion || null
         }
     });
 });
