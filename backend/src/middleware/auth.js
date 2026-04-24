@@ -62,4 +62,23 @@ function generarToken(payload) {
     });
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken };
+// Middleware: admin con rol de evaluación específico
+// roles: array de valores permitidos ('analista', 'comision_tecnica', 'jefe_area')
+// Si rol_evaluacion es null/undefined → admin pleno → siempre pasa
+function soloRolEvaluacion(...roles) {
+    return function (req, res, next) {
+        verificarToken(req, res, () => {
+            if (req.usuario.tipo !== 'administrador') {
+                return res.status(403).json({ error: 'Acceso restringido a administradores' });
+            }
+            const rol = req.usuario.rol_evaluacion ?? null;
+            if (rol === null || roles.includes(rol)) {
+                return next();
+            }
+            console.warn(`[AUTH] 403 rol_evaluacion="${rol}" no autorizado para [${roles.join(',')}]: ${req.method} ${req.path}`);
+            return res.status(403).json({ error: `Se requiere rol: ${roles.join(' o ')}` });
+        });
+    };
+}
+
+module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion };

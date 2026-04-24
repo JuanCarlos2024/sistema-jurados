@@ -17,5 +17,8 @@ router.use('/dashboard', require('./dashboard'));
 router.use('/adjuntos', require('./adjuntos'));
 router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/hojavida', require('./hojavida'));
+router.use('/evaluaciones', require('./evaluaciones'));
+router.use('/ciclos',      require('./ciclos'));
+router.use('/casos',       require('./casos'));
 
 module.exports = router;
