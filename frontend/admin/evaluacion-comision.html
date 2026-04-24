@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bandeja de Comisión — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-eval { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+        .badge-en_proceso           { background:#d6eaf8; color:#1a5276; }
+        .badge-pendiente_comision   { background:#fdebd0; color:#784212; }
+        .badge-pendiente_aprobacion { background:#fef9e7; color:#7d6608; }
+        .badge-devuelto             { background:#fadbd8; color:#922b21; }
+        .badge-aprobado             { background:#d5f5e3; color:#1e8449; }
+
+        .badge-caso-derivado_comision  { background:#fef9e7; color:#7d6608; }
+        .badge-caso-resuelto           { background:#d5f5e3; color:#1e8449; }
+
+        .badge-tipo-interpretativa { background:#eaf4fb; color:#1a5276; }
+        .badge-tipo-reglamentaria  { background:#fef9e7; color:#7d6608; }
+        .badge-tipo-informativo    { background:#e9f7ef; color:#1e8449; }
+
+        .badge-decision-acepta  { background:#d5f5e3; color:#1e8449; }
+        .badge-decision-rechaza { background:#fadbd8; color:#922b21; }
+        .badge-decision-nula    { background:#eaecee; color:#666; }
+
+        .ciclo-header {
+            display:flex; justify-content:space-between; align-items:center;
+            flex-wrap:wrap; gap:8px; margin-bottom:12px;
+        }
+        .caso-card {
+            border:1px solid var(--gris-borde);
+            border-radius:10px;
+            margin-bottom:14px;
+            background:#fff;
+            overflow:hidden;
+        }
+        .caso-card-header {
+            display:flex; justify-content:space-between; align-items:center;
+            flex-wrap:wrap; gap:8px;
+            padding:12px 16px;
+            background:#f8f9fa;
+            border-bottom:1px solid var(--gris-borde);
+        }
+        .caso-card-body { padding:14px 16px; }
+
+        .respuestas-tabla { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+        .respuestas-tabla th {
+            text-align:left; font-weight:600; color:var(--gris);
+            padding:6px 8px; border-bottom:2px solid var(--gris-borde);
+        }
+        .respuestas-tabla td { padding:6px 8px; border-bottom:1px solid var(--gris-borde); vertical-align:top; }
+        .respuestas-tabla tr:last-child td { border-bottom:none; }
+
+        .contexto-analista {
+            background:#f8f9fa; border:1px solid var(--gris-borde); border-left:3px solid #1a5276;
+            border-radius:6px; padding:10px 14px; margin-bottom:12px; font-size:13px;
+        }
+        .contexto-analista .label { font-weight:600; color:#1a5276; margin-bottom:4px; }
+        .decision-comision-tomada {
+            background:#f0faf4; border:1px solid #a9dfbf; border-radius:8px;
+            padding:10px 14px; margin-top:10px; font-size:13px;
+        }
+        .decision-comision-tomada strong { color:#1e8449; }
+
+        .descuento-badge {
+            display:inline-block; padding:1px 6px; border-radius:4px;
+            font-size:11px; font-weight:600; background:#fdebd0; color:#784212;
+        }
+        .descuento-cero { background:#f0f0f0; color:#aaa; }
+        .filtros-bar {
+            display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+            margin-bottom:18px;
+        }
+        .info-eval-header {
+            margin-bottom:18px;
+            padding:14px 16px;
+            background:#fff;
+            border:1px solid var(--gris-borde);
+            border-radius:10px;
+        }
+        .info-eval-header h2 { margin:0 0 4px; font-size:17px; }
+        .info-eval-header p  { margin:0; color:var(--gris); font-size:13px; }
+        .sin-casos { text-align:center; color:var(--gris); padding:32px; }
+        .seccion-label {
+            font-size:11px; font-weight:700; text-transform:uppercase;
+            color:var(--gris); letter-spacing:.5px; margin-bottom:4px;
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+            <div class="nav-seccion">Evaluación Técnica</div>
+            <a href="/admin/evaluaciones.html" class="nav-item activo" data-eval-nav><span class="icon">📝</span> Análisis de Casos</a>
+            <a href="/admin/evaluacion-dashboard.html" class="nav-item" data-eval-nav><span class="icon">📊</span> Dashboard Eval.</a>
+            <a href="/admin/evaluacion-reportes.html" class="nav-item" data-eval-nav><span class="icon">📌</span> Reportes Eval.</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <!-- CONTENIDO -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a id="link-volver-detalle" href="/admin/evaluacion-detalle.html" class="btn btn-secundario btn-pequeño" style="margin-right:8px;">← Volver al detalle</a>
+                <h1>Bandeja de Comisión</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido-comision">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Decisión comisión -->
+<div class="modal-overlay oculto" id="modal-decision-comision">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="modal-dec-comision-titulo">Decisión de comisión</h3>
+            <button class="modal-cerrar" onclick="cerrarModalDecision()">✕</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="dec-comision-caso-id">
+            <div id="dec-comision-contexto" style="margin-bottom:14px;"></div>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Resolución de la comisión</label>
+                <select id="dec-comision-valor" class="form-control">
+                    <option value="aprueba_apelacion">Aprueba apelación — Se revierte la evaluación del jurado</option>
+                    <option value="rechaza_apelacion">Rechaza apelación — Se mantiene la evaluación del jurado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Comentario <span style="color:var(--rojo);">*</span></label>
+                <textarea id="dec-comision-comentario" class="form-control" rows="4"
+                    placeholder="Fundamente la resolución..." maxlength="2000"></textarea>
+                <div id="dec-comision-error" class="form-error oculto"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalDecision()">Cancelar</button>
+            <button class="btn btn-primario" onclick="guardarDecisionComision()">Registrar resolución</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+(async function () {
+    protegerRuta();
+    document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre_completo || '';
+
+    const params  = getQueryParams();
+    const evalId  = params.id;
+    const rolEval = api.getUsuario()?.rol_evaluacion ?? null;
+    const esComision = rolEval === null || rolEval === 'comision_tecnica' || rolEval === 'jefe_area';
+
+    if (!evalId) {
+        document.getElementById('contenido-comision').innerHTML =
+            '<div class="alerta alerta-error">No se especificó una evaluación. Redirigiendo...</div>';
+        setTimeout(() => { window.location.href = '/admin/evaluaciones.html'; }, 2000);
+        return;
+    }
+
+    document.getElementById('link-volver-detalle').href = '/admin/evaluacion-detalle.html?id=' + evalId;
+
+    let _estadoFiltro = 'derivado_comision';
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function badgeEval(estado) {
+        return `<span class="badge-eval badge-${estado}">${labelEstado(estado)}</span>`;
+    }
+    function labelEstado(e) {
+        const m = {
+            en_proceso:'En proceso', pendiente_comision:'Pend. comisión',
+            pendiente_aprobacion:'Pend. aprobación', devuelto:'Devuelto',
+            aprobado:'Aprobado', publicado:'Publicado', cerrado:'Cerrado', borrador:'Borrador'
+        };
+        return m[e] || e;
+    }
+    function badgeCaso(estado) {
+        const m = {
+            derivado_comision:'Deriv. comisión', resuelto:'Resuelto',
+            pendiente_analista:'Pend. analista', consolidado:'Consolidado'
+        };
+        return `<span class="badge-eval badge-caso-${estado}">${m[estado] || estado}</span>`;
+    }
+    function badgeTipo(tipo) {
+        const m = { interpretativa:'Interpretativa', reglamentaria:'Reglamentaria', informativo:'Informativo' };
+        return `<span class="badge-eval badge-tipo-${tipo}">${m[tipo] || tipo}</span>`;
+    }
+    function badgeDecision(dec) {
+        if (!dec) return '<span style="color:var(--gris);font-size:12px;">—</span>';
+        const cfg = {
+            acepta:  { cls:'badge-decision-acepta',  label:'Acepta' },
+            rechaza: { cls:'badge-decision-rechaza', label:'Rechaza' },
+            nula:    { cls:'badge-decision-nula',    label:'Nula' }
+        };
+        const c = cfg[dec] || { cls:'badge-decision-nula', label:dec };
+        return `<span class="badge-eval ${c.cls}">${c.label}</span>`;
+    }
+
+    // ── Carga principal ───────────────────────────────────────────────────────
+    async function cargar() {
+        document.getElementById('contenido-comision').innerHTML =
+            '<div class="spinner-wrap"><div class="spinner"></div></div>';
+        try {
+            const data = await api.get(`/admin/evaluaciones/${evalId}/comision?estado=${_estadoFiltro}`);
+            renderComision(data);
+        } catch (e) {
+            document.getElementById('contenido-comision').innerHTML =
+                `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar la bandeja.')}</div>`;
+        }
+    }
+
+    function renderComision(data) {
+        const rodeo  = data.rodeo || {};
+        const ciclos = data.ciclos || [];
+        const totalCasos = data.total_casos || 0;
+
+        let html = `
+        <div class="info-eval-header">
+            <h2>${sanitizar(rodeo.club || 'Club sin nombre')} — ${sanitizar(rodeo.asociacion || '')}</h2>
+            <p>
+                ${sanitizar(rodeo.fecha || '')}
+                ${rodeo.tipo_rodeo_nombre ? ' &middot; ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
+                &middot; Estado evaluación: ${badgeEval(data.estado || '')}
+            </p>
+        </div>
+
+        <div class="filtros-bar">
+            <label class="form-label" style="margin:0;">Filtrar casos:</label>
+            <select id="filtro-estado-caso" class="form-control" style="width:auto;min-width:210px;" onchange="cambiarFiltro(this.value)">
+                <option value="derivado_comision" ${_estadoFiltro==='derivado_comision'?'selected':''}>Derivados a comisión</option>
+                <option value="resuelto" ${_estadoFiltro==='resuelto'?'selected':''}>Resueltos</option>
+            </select>
+            <span style="color:var(--gris);font-size:13px;">${totalCasos} caso(s)</span>
+        </div>`;
+
+        if (ciclos.length === 0) {
+            html += '<div class="sin-casos">No hay casos con el filtro seleccionado.</div>';
+        } else {
+            ciclos.forEach(ciclo => {
+                const casos = ciclo.casos || [];
+                html += `
+                <div class="card ciclo-card" style="margin-bottom:20px;">
+                    <div class="ciclo-header">
+                        <strong>Ciclo ${ciclo.numero_ciclo}</strong>
+                        <span style="color:var(--gris);font-size:13px;">${casos.length} caso(s)</span>
+                    </div>`;
+
+                if (casos.length === 0) {
+                    html += '<p style="color:var(--gris);font-size:13px;margin:0;">Sin casos en este ciclo para el filtro seleccionado.</p>';
+                } else {
+                    casos.forEach(caso => {
+                        html += renderCasoCard(caso, data.estado, esComision);
+                    });
+                }
+                html += '</div>';
+            });
+        }
+
+        document.getElementById('contenido-comision').innerHTML = html;
+    }
+
+    function renderCasoCard(caso, estadoEval, puedeDecidir) {
+        const respuestas = caso.respuestas || [];
+        const yaDecidio  = !!caso.decision_comision;
+        const puedeEditar = puedeDecidir && estadoEval === 'pendiente_comision';
+
+        let html = `
+        <div class="caso-card">
+            <div class="caso-card-header">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <strong>Caso #${caso.numero_caso}</strong>
+                    ${badgeTipo(caso.tipo_caso)}
+                    ${badgeCaso(caso.estado)}
+                    <span class="descuento-badge ${caso.descuento_puntos === 0 ? 'descuento-cero' : ''}">
+                        ${caso.descuento_puntos === 0 ? 'Sin descuento' : '-' + caso.descuento_puntos + ' pt'}
+                    </span>
+                </div>
+                ${puedeEditar ? `<button class="btn btn-pequeño ${yaDecidio ? 'btn-secundario' : 'btn-primario'}"
+                    onclick='abrirModalDecision(${JSON.stringify({
+                        id: caso.id,
+                        numero: caso.numero_caso,
+                        decisionAnalista: caso.decision_analista,
+                        comentarioAnalista: caso.comentario_analista,
+                        decisionComision: caso.decision_comision,
+                        comentarioComision: caso.comentario_comision
+                    })})'>
+                    ${yaDecidio ? 'Editar resolución' : 'Registrar resolución'}
+                </button>` : ''}
+            </div>
+            <div class="caso-card-body">`;
+
+        if (caso.descripcion) {
+            html += `<p style="margin:0 0 10px;font-size:13px;">${sanitizar(caso.descripcion)}</p>`;
+        }
+        if (caso.video_url) {
+            html += `<p style="margin:0 0 10px;font-size:13px;">
+                <a href="${sanitizar(caso.video_url)}" target="_blank" rel="noopener" style="color:var(--primario);">Ver video ↗</a>
+            </p>`;
+        }
+
+        // Contexto del analista
+        if (caso.decision_analista) {
+            const decLabel = { mantener:'Mantener', revertir:'Revertir', derivar_comision:'Derivar a comisión' };
+            html += `<div class="contexto-analista">
+                <div class="label">Decisión del analista</div>
+                <div><strong>${decLabel[caso.decision_analista] || caso.decision_analista}</strong></div>
+                ${caso.comentario_analista ? `<div style="margin-top:4px;color:var(--texto);">${sanitizar(caso.comentario_analista)}</div>` : ''}
+                ${caso.analista_decidio_en ? `<div style="margin-top:4px;font-size:11px;color:var(--gris);">${formatFecha(caso.analista_decidio_en)}</div>` : ''}
+            </div>`;
+        }
+
+        // Tabla de respuestas de jurados
+        if (respuestas.length > 0) {
+            html += `
+            <div class="seccion-label" style="margin-top:4px;">Respuestas de jurados</div>
+            <table class="respuestas-tabla">
+                <thead>
+                    <tr>
+                        <th>Jurado</th>
+                        <th>Categoría</th>
+                        <th>Decisión</th>
+                        <th>Comentario</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+            respuestas.forEach(r => {
+                const j = r.jurado || {};
+                html += `<tr>
+                    <td>${sanitizar(j.nombre_completo || '—')}</td>
+                    <td>${sanitizar(j.categoria || '—')}</td>
+                    <td>${badgeDecision(r.decision)}</td>
+                    <td style="color:var(--gris);">${sanitizar(r.comentario || '—')}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+
+            if (caso.estado_consolidado) {
+                const iconCon = caso.estado_consolidado === 'acepta' ? '✅' : caso.estado_consolidado === 'rechaza' ? '❌' : '⚠️';
+                html += `<p style="margin-top:8px;font-size:12px;color:var(--gris);">
+                    Resultado consolidado: ${iconCon} <strong>${caso.estado_consolidado}</strong>
+                </p>`;
+            }
+        }
+
+        // Resolución final (si aplica)
+        if (caso.resolucion_final) {
+            html += `<p style="margin-top:8px;font-size:12px;color:var(--gris);">
+                Resolución final: <strong>${sanitizar(caso.resolucion_final)}</strong>
+            </p>`;
+        }
+
+        // Decisión de comisión ya tomada
+        if (yaDecidio) {
+            const decLabel = {
+                aprueba_apelacion: 'Aprueba apelación',
+                rechaza_apelacion: 'Rechaza apelación'
+            };
+            html += `<div class="decision-comision-tomada">
+                <strong>Resolución comisión: ${decLabel[caso.decision_comision] || caso.decision_comision}</strong>
+                ${caso.comentario_comision ? `<p style="margin:6px 0 0;color:var(--texto);">${sanitizar(caso.comentario_comision)}</p>` : ''}
+                ${caso.comision_decidio_en ? `<p style="margin:4px 0 0;font-size:11px;color:var(--gris);">${formatFecha(caso.comision_decidio_en)}</p>` : ''}
+            </div>`;
+        }
+
+        html += '</div></div>';
+        return html;
+    }
+
+    // ── Filtro ────────────────────────────────────────────────────────────────
+    window.cambiarFiltro = function(val) {
+        _estadoFiltro = val;
+        cargar();
+    };
+
+    // ── Modal decisión comisión ───────────────────────────────────────────────
+    window.abrirModalDecision = function(datos) {
+        document.getElementById('dec-comision-caso-id').value = datos.id;
+        document.getElementById('modal-dec-comision-titulo').textContent = `Caso #${datos.numero} — Resolución comisión`;
+        document.getElementById('dec-comision-valor').value = datos.decisionComision || 'aprueba_apelacion';
+        document.getElementById('dec-comision-comentario').value = datos.comentarioComision || '';
+        document.getElementById('dec-comision-error').classList.add('oculto');
+
+        // Contexto analista en el modal
+        const ctxEl = document.getElementById('dec-comision-contexto');
+        if (datos.decisionAnalista) {
+            const decLabel = { mantener:'Mantener', revertir:'Revertir', derivar_comision:'Derivar a comisión' };
+            ctxEl.innerHTML = `<div class="contexto-analista">
+                <div class="label">Contexto — Decisión del analista</div>
+                <div><strong>${decLabel[datos.decisionAnalista] || datos.decisionAnalista}</strong></div>
+                ${datos.comentarioAnalista ? `<div style="margin-top:4px;font-size:13px;">${sanitizar(datos.comentarioAnalista)}</div>` : ''}
+            </div>`;
+        } else {
+            ctxEl.innerHTML = '';
+        }
+
+        document.getElementById('modal-decision-comision').classList.remove('oculto');
+    };
+
+    window.cerrarModalDecision = function() {
+        document.getElementById('modal-decision-comision').classList.add('oculto');
+    };
+
+    window.guardarDecisionComision = async function() {
+        const casoId     = document.getElementById('dec-comision-caso-id').value;
+        const decision   = document.getElementById('dec-comision-valor').value;
+        const comentario = document.getElementById('dec-comision-comentario').value.trim();
+        const errEl      = document.getElementById('dec-comision-error');
+
+        if (!comentario) {
+            errEl.textContent = 'El comentario es obligatorio.';
+            errEl.classList.remove('oculto');
+            return;
+        }
+        errEl.classList.add('oculto');
+
+        try {
+            const res = await api.post(`/admin/casos/${casoId}/decision-comision`, {
+                decision_comision: decision,
+                comentario_comision: comentario
+            });
+            cerrarModalDecision();
+
+            let msg = 'Resolución registrada.';
+            if (res.ciclo_cerrado) msg += ' El ciclo ha sido cerrado automáticamente.';
+            if (res.evaluacion_actualizada && res.evaluacion_estado_nuevo) {
+                msg += ` Evaluación ahora en estado: ${labelEstado(res.evaluacion_estado_nuevo)}.`;
+            }
+            mostrarToast(msg, res.ciclo_cerrado ? 'warning' : 'exito');
+            cargar();
+        } catch (e) {
+            errEl.textContent = e.message || 'Error al registrar la resolución.';
+            errEl.classList.remove('oculto');
+        }
+    };
+
+    // Cerrar modal al click fuera
+    document.getElementById('modal-decision-comision').addEventListener('click', function(e) {
+        if (e.target === this) cerrarModalDecision();
+    });
+
+    cargar();
+})();
+</script>
+</body>
+</html>

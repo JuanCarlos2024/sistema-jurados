@@ -3,6 +3,128 @@
 
 ---
 
+# Instrucciones del proyecto
+
+Estas instrucciones aplican a todo el proyecto y deben considerarse antes de implementar cualquier cambio.
+
+## Proyecto
+**SISTEMA DE JURADOS – FEDERACIÓN DEL RODEO CHILENO**
+
+## Objetivo del proyecto
+Este proyecto prioriza funcionalidad real, continuidad operativa, mantenibilidad y claridad visual. El sistema debe ayudar a administrar jurados, delegados, rodeos, pagos, reportes, hojas de vida, notas, gráficos y futuras decisiones de designación automática.
+
+## Prioridades absolutas
+1. No romper funcionalidades existentes.
+2. Reutilizar lógica, tablas, relaciones y datos reales del sistema.
+3. Mantener compatibilidad con Supabase, Render y la estructura actual del proyecto.
+4. Priorizar utilidad operativa por sobre cambios cosméticos.
+5. Hacer cambios mantenibles, progresivos y fáciles de validar.
+6. Evitar refactors grandes no solicitados.
+7. Validar siempre el esquema real antes de asumir nombres de tablas o columnas.
+
+## Enfoque de trabajo
+- Antes de implementar cambios, revisar cómo está construido actualmente el módulo afectado.
+- No inventar columnas, relaciones ni estructuras si no están confirmadas en la base.
+- Si una mejora requiere backend + frontend + base de datos, mantener consistencia entre las tres capas.
+- Si algo ya funciona, no rehacerlo innecesariamente: extenderlo o corregirlo con el menor impacto posible.
+- Cuando se modifique una pantalla, priorizar claridad de uso y rapidez operativa.
+- Cualquier cambio visual debe respetar el flujo de trabajo actual del administrador.
+- Ante tareas grandes, priorizar implementación por etapas antes que cambios masivos en una sola iteración.
+
+## Criterio de UI/UX
+Aplicar criterio de `/ui-ux pro max` como guía principal para:
+- jerarquía visual clara
+- tablas legibles
+- dashboards útiles
+- modales ordenados
+- formularios cómodos
+- popovers y paneles bien ubicados
+- navegación coherente
+- experiencia centrada en productividad administrativa
+
+### Pero:
+- no cambiar lógica funcional por motivos estéticos
+- no mover componentes clave si empeora la operación
+- no sobrecargar visualmente la interfaz
+- no priorizar animaciones ni adornos sobre claridad
+
+## Criterio de calidad / pulido
+Aplicar criterio de `/impeccable` solo como apoyo secundario para:
+- consistencia visual
+- alineación
+- espaciado
+- labels claros
+- estados vacíos bien resueltos
+- mensajes de error entendibles
+- terminaciones prolijas
+
+### Pero:
+- no hacer sobreingeniería
+- no hacer refactors innecesarios
+- no cambiar flujos completos solo por “perfeccionarlos”
+- no introducir complejidad innecesaria
+
+## Reglas técnicas importantes
+- Validar siempre el esquema real de la base antes de escribir queries.
+- No asumir columnas como `comuna`, `region`, `dias`, etc. si no están confirmadas.
+- Antes de escribir o modificar queries SQL, validar nombres reales de tablas y columnas en el esquema actual.
+- Si existe duda sobre el esquema, consultar primero la base en vez de asumir.
+- Preferir joins y consultas simples, claras y robustas.
+- Si hay riesgo de romper reportes o pagos, optar por cambios mínimos y controlados.
+- Cuando haya datos históricos, reutilizarlos; no duplicarlos.
+- Si una funcionalidad nueva depende de datos faltantes, primero corregir la lectura de datos reales y luego agregar la capa nueva.
+- Si un módulo ya usa una tabla o servicio existente, reutilizar esa fuente antes de crear lógica paralela.
+- Si un dato ya está calculado y almacenado en snapshot, usarlo en vez de recalcularlo sin necesidad.
+
+## Reglas de validación y despliegue
+- Después de cambios en frontend, dashboard o gráficos, verificar que la pantalla real esté usando el archivo correcto.
+- Si un cambio fue subido a GitHub pero no se refleja en la web, validar primero:
+  - archivo real usado por la pantalla
+  - ruta correcta
+  - caché del navegador
+  - despliegue en Render
+- Si se modifica una pantalla crítica, dejar una forma simple de validación visible cuando sea necesario.
+- No asumir que un cambio quedó activo solo porque fue pusheado; validar que también quedó desplegado y visible en la interfaz real.
+
+## Estilo de implementación
+- Mejoras progresivas
+- Impacto acotado
+- Código mantenible
+- UI clara y funcional
+- Validaciones concretas
+- Explicación final breve y útil
+
+## Formato de respuesta esperado al terminar cada cambio
+1. Resumen de cambios
+2. Archivos modificados
+3. Tablas/columnas tocadas si aplica
+4. Lógica implementada
+5. Riesgos detectados
+6. Validaciones realizadas
+7. Confirmación de que no se rompió lo existente
+
+## Lo que se debe evitar
+- refactors masivos no pedidos
+- renombrar estructuras centrales sin necesidad
+- cambiar la UX completa de pantallas ya operativas
+- inventar datos de ejemplo como si fueran reales
+- asumir que una consulta funciona sin validar el esquema
+- mezclar mejoras visuales con cambios de negocio sin separarlos claramente
+- crear lógica duplicada si ya existe una forma correcta de reutilizar el sistema actual
+- tocar pagos, reportes o exportaciones si el cambio no lo requiere directamente
+
+## Criterio final
+Si hay conflicto entre:
+- estética vs continuidad operativa
+- perfección visual vs rapidez de implementación mantenible
+- refactor grande vs ajuste puntual seguro
+
+**SIEMPRE priorizar:**
+1. no romper
+2. reutilizar lo existente
+3. mantener claridad operativa
+4. hacer mejoras progresivas
+
 ## 1. Requisitos previos
 
 Instale las siguientes herramientas en su computador:
@@ -294,3 +416,8 @@ SISTEMA_JURADOS/
     ├── admin/              ← Páginas del administrador
     └── usuario/            ← Páginas del usuario pagado
 ```
+Sigue las reglas de INSTRUCCIONES.md. Necesito corregir la lógica del modo Semana en ambos gráficos del dashboard para que use la fecha real del rodeo y no semana calendario. No romper lo existente.
+Estas instrucciones aplican a todo el proyecto y deben considerarse antes de implementar cualquier cambio.
+Antes de modificar backend, frontend o SQL, validar siempre el esquema y la lógica existente del módulo afectado.
+
+

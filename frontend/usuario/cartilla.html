@@ -53,6 +53,7 @@
             <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
             <a href="/usuario/resumen.html"   class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
             <a href="/usuario/perfil.html"    class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" id="nav-evaluaciones" class="nav-item" style="display:none;"><span class="icon">📋</span> Mis Evaluaciones</a>
         </nav>
         <div class="sidebar-footer">
             <div class="sidebar-usuario" id="nombre-usr"></div>
@@ -83,6 +84,7 @@
 <script>
 protegerRuta('usuario_pagado');
 document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+if (api.getUsuario()?.tipo_persona === 'jurado') document.getElementById('nav-evaluaciones').style.display = '';
 
 const params  = new URLSearchParams(location.search);
 const ASIG_ID = params.get('asignacion_id');

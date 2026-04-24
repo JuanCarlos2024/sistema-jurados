@@ -1,0 +1,44 @@
+[
+  {
+    "id": "7b27209a-7efe-42c7-beea-475b9cd2476d",
+    "rodeo_id": "3a1c5d96-fba3-48d5-bf9b-199eb83bbe7f",
+    "asignacion_id": null,
+    "usuario_pagado_id": null,
+    "subido_por_admin": true,
+    "tipo_adjunto": "cartilla_delegado",
+    "nombre_archivo": "1.INFORME DELEGADO  RODEO 2022-2023.docx",
+    "storage_path": "3a1c5d96-fba3-48d5-bf9b-199eb83bbe7f/admin/1775834762846_1.INFORME_DELEGADO__RODEO_2022-2023.docx",
+    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "tamano_bytes": 43533,
+    "created_at": "2026-04-10T15:26:03.273431+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  },
+  {
+    "id": "ee4cc819-b515-4e5a-b457-d597a1a8496c",
+    "rodeo_id": "3a1c5d96-fba3-48d5-bf9b-199eb83bbe7f",
+    "asignacion_id": null,
+    "usuario_pagado_id": null,
+    "subido_por_admin": true,
+    "tipo_adjunto": "cartilla_jurado",
+    "nombre_archivo": "Instructivo para solicitar 2do pase.pdf",
+    "storage_path": "3a1c5d96-fba3-48d5-bf9b-199eb83bbe7f/admin/1775834815741_Instructivo_para_solicitar_2do_pase.pdf",
+    "mime_type": "application/pdf",
+    "tamano_bytes": 194504,
+    "created_at": "2026-04-10T15:26:56.203248+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  },
+  {
+    "id": "8fbbbd36-6db5-45c9-80a4-34d4fca5ae5e",
+    "rodeo_id": "aa8b64a3-ffa1-4bda-8a85-4a077caeb398",
+    "asignacion_id": "a2e7c495-6fda-4023-bcc1-2f2436d28176",
+    "usuario_pagado_id": "27cd14de-ceee-4c3b-a616-cbbac296c448",
+    "subido_por_admin": false,
+    "tipo_adjunto": "cartilla_jurado",
+    "nombre_archivo": "Historial Socio (40).pdf",
+    "storage_path": "aa8b64a3-ffa1-4bda-8a85-4a077caeb398/27cd14de-ceee-4c3b-a616-cbbac296c448/1776108217111_Historial_Socio__40_.pdf",
+    "mime_type": "application/pdf",
+    "tamano_bytes": 2431,
+    "created_at": "2026-04-13T19:23:37.39434+00:00",
+    "created_by": "27cd14de-ceee-4c3b-a616-cbbac296c448"
+  }
+]

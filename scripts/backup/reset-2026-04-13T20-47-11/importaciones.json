@@ -1,0 +1,62 @@
+[
+  {
+    "id": "c8b601f9-becd-4bbd-a406-88bc907b4c1e",
+    "nombre_archivo": "modelo de excel a subir.xlsx",
+    "total_filas": 58,
+    "insertadas": 57,
+    "pendientes": 1,
+    "duplicadas": 0,
+    "rechazadas": 0,
+    "errores": 0,
+    "created_at": "2026-04-02T23:36:54.25085+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  },
+  {
+    "id": "b8921efa-49d7-457d-aaa3-d15c874d52c4",
+    "nombre_archivo": "nomina de marxo.xlsx",
+    "total_filas": 3,
+    "insertadas": 3,
+    "pendientes": 0,
+    "duplicadas": 0,
+    "rechazadas": 0,
+    "errores": 0,
+    "created_at": "2026-04-03T13:16:06.543687+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  },
+  {
+    "id": "c3219bc4-2b2f-478b-98df-9d34dd620df4",
+    "nombre_archivo": "JURADOS HASTA EL 11 ABRIL.xlsx",
+    "total_filas": 15,
+    "insertadas": 15,
+    "pendientes": 0,
+    "duplicadas": 0,
+    "rechazadas": 0,
+    "errores": 0,
+    "created_at": "2026-04-06T14:02:55.466289+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  },
+  {
+    "id": "069461a2-bf44-4bc6-8968-b0e8bc731d93",
+    "nombre_archivo": "rodeos al 18 de abril 2026.xlsx",
+    "total_filas": 14,
+    "insertadas": 14,
+    "pendientes": 0,
+    "duplicadas": 0,
+    "rechazadas": 0,
+    "errores": 0,
+    "created_at": "2026-04-13T19:17:39.97327+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  },
+  {
+    "id": "7f0f7c4e-9521-4386-9ba7-bc07a82f9d56",
+    "nombre_archivo": "rodeos al 18 de abril 2026-25.xlsx",
+    "total_filas": 1,
+    "insertadas": 1,
+    "pendientes": 0,
+    "duplicadas": 0,
+    "rechazadas": 0,
+    "errores": 0,
+    "created_at": "2026-04-13T20:17:57.040864+00:00",
+    "created_by": "456ec336-9f82-452b-bee4-b6cb95d88982"
+  }
+]

@@ -5,7 +5,13 @@
       "Bash(npm run:*)",
       "Bash(curl -s http://localhost:3000/api/health)",
       "Bash(gh auth:*)",
-      "Bash(git --version)"
+      "Bash(git --version)",
+      "mcp__claude_ai_Supabase__list_tables",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(npx jest:*)",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

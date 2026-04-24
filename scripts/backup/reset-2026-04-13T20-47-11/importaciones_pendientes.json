@@ -1,0 +1,23 @@
+[
+  {
+    "id": "0f160fcb-b72b-4703-8a5f-85658b342603",
+    "importacion_id": "c8b601f9-becd-4bbd-a406-88bc907b4c1e",
+    "datos_originales": {
+      "_fila": 18,
+      "Club  ": "PUERTO VARAS",
+      "Fecha  ": "2026-02-14T03:00:45.000Z",
+      "_nombre_norm": "marcelo raul molina fritz",
+      "Tipo Rodeo  ": "Provincial 3 series",
+      "Asociación  ": "LLANQUIHUE",
+      "_nombre_buscado": "MARCELO RAUL MOLINA FRITZ",
+      "Nombre Jurado  ": "MARCELO RAUL MOLINA FRITZ"
+    },
+    "problema": "jurado_no_encontrado",
+    "estado": "resuelto",
+    "asignacion_id": "03adf289-3ee1-4164-9ebf-7484b454c862",
+    "rodeo_id": "e97eaf89-fbde-449e-9641-3f537c3e6953",
+    "resuelto_por": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "resuelto_at": "2026-04-02T23:52:02.284+00:00",
+    "created_at": "2026-04-02T23:37:35.102147+00:00"
+  }
+]

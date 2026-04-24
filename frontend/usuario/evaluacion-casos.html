@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Casos del Ciclo — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .ciclo-info {
+            padding: 12px 16px;
+            background: #eaf4fb;
+            border: 1px solid #aed6f1;
+            border-radius: 8px;
+            margin-bottom: 18px;
+            font-size: 13px;
+        }
+        .ciclo-info strong { font-size: 14px; }
+
+        .caso-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        .caso-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border-bottom: 1px solid var(--gris-borde);
+        }
+        .caso-card-body { padding: 16px; }
+
+        .badge-tipo-interpretativa { background:#eaf4fb; color:#1a5276; display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+        .badge-tipo-reglamentaria  { background:#fef9e7; color:#7d6608; display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+        .badge-tipo-informativo    { background:#e9f7ef; color:#1e8449; display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+
+        .opciones-decision { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+        .opcion-radio {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border: 2px solid var(--gris-borde);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all .15s;
+            user-select: none;
+        }
+        .opcion-radio input[type=radio] { margin: 0; }
+        .opcion-radio.acepta:has(input:checked)  { border-color: #27ae60; background: #f0fff4; color: #1e8449; }
+        .opcion-radio.rechaza:has(input:checked) { border-color: #e74c3c; background: #fef9f9; color: #922b21; }
+
+        .respuesta-registrada {
+            background: #f0fff4;
+            border: 1px solid #a9dfbf;
+            border-left: 4px solid #27ae60;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+        }
+        .respuesta-registrada .dec-label { font-weight: 700; color: #1e8449; font-size: 14px; margin-bottom: 4px; }
+        .respuesta-registrada .dec-label.rechaza-label { color: #922b21; }
+
+        .informativo-aviso {
+            background: #eaf4fb;
+            border: 1px solid #aed6f1;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #1a5276;
+            margin-bottom: 12px;
+        }
+
+        .form-error { color: var(--rojo, #e74c3c); font-size: 12px; margin-top: 4px; }
+        .sin-ciclo {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--gris);
+        }
+        .sin-ciclo p { font-size: 14px; margin: 8px 0 0; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" class="nav-item activo"><span class="icon">📋</span> Mis Evaluaciones</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a href="/usuario/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-right:8px;">← Volver</a>
+                <h1 id="titulo-pagina">Casos del ciclo</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+
+const params = getQueryParams();
+const evalId = params.id;
+
+if (api.getUsuario()?.tipo_persona !== 'jurado') {
+    document.getElementById('contenido').innerHTML =
+        '<div class="alerta alerta-error">Esta sección solo está disponible para jurados.</div>';
+} else if (!evalId) {
+    document.getElementById('contenido').innerHTML =
+        '<div class="alerta alerta-error">No se especificó una evaluación. Redirigiendo...</div>';
+    setTimeout(() => { window.location.href = '/usuario/evaluaciones.html'; }, 2000);
+} else {
+    cargar();
+}
+
+// IDs de casos respondidos en esta sesión (para deshabilitar doble submit)
+const _respondidos = new Set();
+
+async function cargar() {
+    try {
+        const data = await api.get(`/usuario/evaluaciones/${evalId}/casos`);
+        render(data);
+    } catch(e) {
+        document.getElementById('contenido').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar casos')}</div>`;
+    }
+}
+
+function render(data) {
+    const ciclo = data.ciclo;
+    const casos = data.casos || [];
+
+    if (!ciclo) {
+        document.getElementById('contenido').innerHTML = `
+        <div class="sin-ciclo">
+            <div style="font-size:40px;">⏳</div>
+            <strong>No hay ciclo disponible en este momento</strong>
+            <p>${sanitizar(data.mensaje || 'Espera a que el administrador abra el ciclo de esta evaluación.')}</p>
+            <a href="/usuario/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-top:16px;text-decoration:none;">← Volver a evaluaciones</a>
+        </div>`;
+        return;
+    }
+
+    document.getElementById('titulo-pagina').textContent = `Ciclo ${ciclo.numero_ciclo} — Casos`;
+
+    let html = `
+    <div class="ciclo-info">
+        <strong>Ciclo ${ciclo.numero_ciclo}</strong>
+        · ${casos.length} caso(s)
+        · Responde cada caso usando los botones de abajo.
+        Los casos informativos no requieren decisión, solo reconocimiento opcional.
+    </div>`;
+
+    if (casos.length === 0) {
+        html += '<div class="alerta alerta-info">No hay casos cargados en este ciclo aún.</div>';
+    } else {
+        casos.forEach(caso => {
+            html += renderCasoCard(caso);
+        });
+    }
+
+    document.getElementById('contenido').innerHTML = html;
+}
+
+function renderCasoCard(caso) {
+    const esInformativo = caso.tipo_caso === 'informativo';
+    const yaRespondio   = !!caso.mi_respuesta;
+
+    const tipoBadge = {
+        interpretativa: '<span class="badge-tipo-interpretativa">Interpretativa</span>',
+        reglamentaria:  '<span class="badge-tipo-reglamentaria">Reglamentaria</span>',
+        informativo:    '<span class="badge-tipo-informativo">Informativo</span>'
+    }[caso.tipo_caso] || '';
+
+    const descuentoHtml = caso.descuento_puntos > 0
+        ? `<span style="background:#fdebd0;color:#784212;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600;">-${caso.descuento_puntos} pt</span>`
+        : '';
+
+    let cuerpo = '';
+
+    if (yaRespondio) {
+        cuerpo = renderRespuestaRegistrada(caso, esInformativo);
+    } else if (esInformativo) {
+        cuerpo = renderFormInformativo(caso);
+    } else {
+        cuerpo = renderFormDecision(caso);
+    }
+
+    return `
+    <div class="caso-card" id="card-${caso.id}">
+        <div class="caso-card-header">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <strong>Caso #${caso.numero_caso}</strong>
+                ${tipoBadge}
+                ${descuentoHtml}
+            </div>
+            ${yaRespondio ? '<span style="font-size:12px;color:#27ae60;font-weight:600;">✓ Respondido</span>' : ''}
+        </div>
+        <div class="caso-card-body">
+            ${caso.descripcion ? `<p style="margin:0 0 12px;font-size:14px;">${sanitizar(caso.descripcion)}</p>` : ''}
+            ${caso.video_url ? `<p style="margin:0 0 12px;font-size:13px;"><a href="${sanitizar(caso.video_url)}" target="_blank" rel="noopener" style="color:var(--primario);">Ver video ↗</a></p>` : ''}
+            ${cuerpo}
+        </div>
+    </div>`;
+}
+
+function renderRespuestaRegistrada(caso, esInformativo) {
+    const resp = caso.mi_respuesta;
+    if (esInformativo) {
+        return `<div class="respuesta-registrada">
+            <div class="dec-label">Reconocido</div>
+            ${resp.comentario ? `<p style="margin:4px 0 0;color:var(--texto);">${sanitizar(resp.comentario)}</p>` : ''}
+        </div>`;
+    }
+    const esAcepta  = resp.decision === 'acepta';
+    const decLabel  = esAcepta ? '✓ Acepta' : '✗ Rechaza';
+    const decClass  = esAcepta ? '' : 'rechaza-label';
+    return `<div class="respuesta-registrada">
+        <div class="dec-label ${decClass}">${decLabel}</div>
+        ${resp.comentario ? `<p style="margin:4px 0 0;color:var(--texto);">${sanitizar(resp.comentario)}</p>` : ''}
+    </div>`;
+}
+
+function renderFormInformativo(caso) {
+    return `
+    <div class="informativo-aviso">
+        Este es un caso informativo. No requiere decisión de acepta/rechaza.
+        Puedes agregar un comentario opcional y confirmar que lo has revisado.
+    </div>
+    <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label">Comentario <span style="color:var(--gris);font-weight:400;">(opcional)</span></label>
+        <textarea id="comentario-${caso.id}" class="form-control" rows="3"
+            maxlength="1000" placeholder="Observación sobre este caso..."></textarea>
+    </div>
+    <button class="btn btn-primario btn-pequeño" onclick="enviarInformativo('${caso.id}')">Reconocer caso</button>
+    <div id="error-${caso.id}" class="form-error oculto"></div>`;
+}
+
+function renderFormDecision(caso) {
+    return `
+    <div class="opciones-decision">
+        <label class="opcion-radio acepta">
+            <input type="radio" name="dec-${caso.id}" value="acepta">
+            ✓ Acepta
+        </label>
+        <label class="opcion-radio rechaza">
+            <input type="radio" name="dec-${caso.id}" value="rechaza">
+            ✗ Rechaza
+        </label>
+    </div>
+    <div class="form-group" style="margin-bottom:12px;">
+        <label class="form-label">Comentario
+            <span id="req-label-${caso.id}" style="color:var(--rojo);font-weight:400;display:none;"> * obligatorio si rechaza</span>
+        </label>
+        <textarea id="comentario-${caso.id}" class="form-control" rows="3"
+            maxlength="1000" placeholder="Comentario sobre su decisión..."></textarea>
+    </div>
+    <button class="btn btn-primario btn-pequeño" onclick="enviarDecision('${caso.id}')">Enviar respuesta</button>
+    <div id="error-${caso.id}" class="form-error oculto"></div>`;
+}
+
+// Mostrar hint de "obligatorio" al seleccionar rechaza
+document.addEventListener('change', function(e) {
+    if (e.target.type !== 'radio' || !e.target.name.startsWith('dec-')) return;
+    const casoId = e.target.name.replace('dec-', '');
+    const reqLabel = document.getElementById(`req-label-${casoId}`);
+    if (reqLabel) reqLabel.style.display = e.target.value === 'rechaza' ? '' : 'none';
+});
+
+async function enviarDecision(casoId) {
+    if (_respondidos.has(casoId)) return;
+
+    const radios    = document.querySelectorAll(`input[name="dec-${casoId}"]`);
+    const decision  = [...radios].find(r => r.checked)?.value || null;
+    const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
+    const errEl     = document.getElementById(`error-${casoId}`);
+
+    errEl.classList.add('oculto');
+
+    if (!decision) {
+        errEl.textContent = 'Selecciona Acepta o Rechaza.';
+        errEl.classList.remove('oculto');
+        return;
+    }
+    if (decision === 'rechaza' && !comentario) {
+        errEl.textContent = 'El comentario es obligatorio cuando rechazas.';
+        errEl.classList.remove('oculto');
+        return;
+    }
+
+    const btn = document.querySelector(`#card-${casoId} .btn-primario`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+    try {
+        await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
+            decision,
+            comentario: comentario || undefined
+        });
+        _respondidos.add(casoId);
+        mostrarToast('Respuesta registrada', 'exito');
+        cargar();
+    } catch(e) {
+        if (e.status === 409) {
+            mostrarToast('Ya habías respondido este caso', 'warning');
+            cargar();
+        } else {
+            errEl.textContent = e.message || 'Error al enviar. Intenta de nuevo.';
+            errEl.classList.remove('oculto');
+            if (btn) { btn.disabled = false; btn.textContent = 'Enviar respuesta'; }
+        }
+    }
+}
+
+async function enviarInformativo(casoId) {
+    if (_respondidos.has(casoId)) return;
+
+    const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
+    const errEl      = document.getElementById(`error-${casoId}`);
+    errEl.classList.add('oculto');
+
+    const btn = document.querySelector(`#card-${casoId} .btn-primario`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+    try {
+        await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
+            comentario: comentario || undefined
+        });
+        _respondidos.add(casoId);
+        mostrarToast('Caso informativo reconocido', 'exito');
+        cargar();
+    } catch(e) {
+        if (e.status === 409) {
+            mostrarToast('Ya habías reconocido este caso', 'warning');
+            cargar();
+        } else {
+            errEl.textContent = e.message || 'Error al enviar. Intenta de nuevo.';
+            errEl.classList.remove('oculto');
+            if (btn) { btn.disabled = false; btn.textContent = 'Reconocer caso'; }
+        }
+    }
+}
+</script>
+</body>
+</html>

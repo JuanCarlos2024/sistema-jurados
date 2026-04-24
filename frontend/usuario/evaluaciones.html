@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Evaluaciones — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .eval-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            padding: 16px 18px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        .eval-card-info h3 { margin: 0 0 4px; font-size: 15px; }
+        .eval-card-info p  { margin: 0; font-size: 13px; color: var(--gris); }
+        .seccion-titulo {
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--gris);
+            margin: 20px 0 10px;
+        }
+        .seccion-titulo:first-child { margin-top: 0; }
+        .nota-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 15px;
+            background: #d5f5e3;
+            color: #1e8449;
+        }
+        .sin-items {
+            text-align: center;
+            color: var(--gris);
+            padding: 24px;
+            font-size: 14px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" id="nav-evaluaciones" class="nav-item activo"><span class="icon">📋</span> Mis Evaluaciones</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Mis Evaluaciones</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+
+if (api.getUsuario()?.tipo_persona !== 'jurado') {
+    document.getElementById('contenido').innerHTML =
+        '<div class="alerta alerta-error">Esta sección solo está disponible para jurados.</div>';
+} else {
+    cargar();
+}
+
+async function cargar() {
+    try {
+        const data = await api.get('/usuario/evaluaciones');
+        const evals = data.evaluaciones || [];
+        const activas  = evals.filter(e => e.tipo === 'activo');
+        const resultados = evals.filter(e => e.tipo === 'resultado');
+        renderLista(activas, resultados);
+    } catch(e) {
+        document.getElementById('contenido').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar evaluaciones')}</div>`;
+    }
+}
+
+function renderLista(activas, resultados) {
+    let html = '';
+
+    html += '<div class="seccion-titulo">Para responder</div>';
+    if (activas.length === 0) {
+        html += '<div class="sin-items">No hay evaluaciones con casos disponibles en este momento.</div>';
+    } else {
+        activas.forEach(e => {
+            const rodeo = e.rodeo || {};
+            const ciclo = e.ciclo_abierto;
+            html += `
+            <div class="eval-card">
+                <div class="eval-card-info">
+                    <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
+                    <p>
+                        ${sanitizar(rodeo.fecha || '')}
+                        ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
+                        ${ciclo ? ' · Ciclo ' + ciclo.numero_ciclo + ' abierto' : ''}
+                    </p>
+                </div>
+                <a href="/usuario/evaluacion-casos.html?id=${e.id}" class="btn btn-primario btn-pequeño" style="text-decoration:none;">
+                    Responder casos →
+                </a>
+            </div>`;
+        });
+    }
+
+    html += '<div class="seccion-titulo">Resultados publicados</div>';
+    if (resultados.length === 0) {
+        html += '<div class="sin-items">No hay resultados publicados aún.</div>';
+    } else {
+        resultados.forEach(e => {
+            const rodeo = e.rodeo || {};
+            const estadoLabel = e.estado === 'cerrado' ? 'Cerrado' : 'Publicado';
+            html += `
+            <div class="eval-card">
+                <div class="eval-card-info">
+                    <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
+                    <p>
+                        ${sanitizar(rodeo.fecha || '')}
+                        ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
+                        · ${estadoLabel}
+                    </p>
+                </div>
+                <a href="/usuario/evaluacion-resultado.html?id=${e.id}" class="btn btn-secundario btn-pequeño" style="text-decoration:none;">
+                    Ver resultado →
+                </a>
+            </div>`;
+        });
+    }
+
+    document.getElementById('contenido').innerHTML = html;
+}
+</script>
+</body>
+</html>

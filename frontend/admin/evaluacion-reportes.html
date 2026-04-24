@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reportes de Evaluaciones — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .tabs-bar {
+            display: flex;
+            gap: 4px;
+            border-bottom: 2px solid var(--gris-borde);
+            margin-bottom: 20px;
+        }
+        .tab-btn {
+            padding: 8px 18px;
+            font-size: 13px;
+            font-weight: 600;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            color: var(--gris);
+            transition: color .15s, border-color .15s;
+        }
+        .tab-btn.activo { color: var(--primario); border-bottom-color: var(--primario); }
+
+        .filtros-bar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            margin-bottom: 18px;
+        }
+        .filtros-bar .form-group { margin: 0; }
+        .filtros-bar label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--gris); display: block; margin-bottom: 4px; }
+        .filtros-bar input,
+        .filtros-bar select { font-size: 13px; padding: 6px 10px; }
+
+        .tabla-wrap { overflow-x: auto; }
+        .tabla td, .tabla th { font-size: 13px; }
+        .tabla th { font-size: 11px; }
+
+        .nota-chip { display:inline-block; padding:2px 8px; border-radius:6px; font-weight:700; font-size:12px; background:#d5f5e3; color:#1e8449; }
+        .nota-chip.media { background:#fef9e7; color:#7d6608; }
+        .nota-chip.baja  { background:#fadbd8; color:#922b21; }
+
+        .cal-chip { display:inline-block; padding:1px 7px; border-radius:6px; font-size:11px; font-weight:600; background:#eaecee; color:#444; }
+        .cal-chip.sobresaliente { background:#d5f5e3; color:#1e8449; }
+        .cal-chip.bien          { background:#d6eaf8; color:#1a5276; }
+        .cal-chip.bajo          { background:#fef9e7; color:#7d6608; }
+        .cal-chip.deficiente    { background:#fadbd8; color:#922b21; }
+
+        .badge-eval { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+        .badge-borrador              { background:#f0f0f0; color:#666; }
+        .badge-en_proceso            { background:#d6eaf8; color:#1a5276; }
+        .badge-pendiente_comision    { background:#fdebd0; color:#784212; }
+        .badge-pendiente_aprobacion  { background:#fef9e7; color:#7d6608; }
+        .badge-devuelto              { background:#fadbd8; color:#922b21; }
+        .badge-aprobado              { background:#d5f5e3; color:#1e8449; }
+        .badge-publicado             { background:#d1f2eb; color:#148f77; }
+        .badge-cerrado               { background:#eaecee; color:#555; }
+
+        .sin-resultados { text-align:center; padding:32px; color:var(--gris); font-size:14px; }
+        .contador-resultados { font-size:12px; color:var(--gris); margin-bottom:10px; }
+
+        .tab-panel { display: none; }
+        .tab-panel.activo { display: block; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Reportes de Evaluaciones</h1>
+            </div>
+            <div class="topbar-acciones">
+                <a href="/admin/evaluacion-dashboard.html" class="btn btn-secundario btn-pequeño" style="text-decoration:none;">← Dashboard</a>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Tabs -->
+            <div class="tabs-bar">
+                <button class="tab-btn activo" onclick="cambiarTab('evaluaciones', this)">Por evaluación</button>
+                <button class="tab-btn" onclick="cambiarTab('jurados', this)">Por jurado</button>
+            </div>
+
+            <!-- ── Tab: Por evaluación ── -->
+            <div class="tab-panel activo" id="panel-evaluaciones">
+                <div class="filtros-bar">
+                    <div class="form-group">
+                        <label>Temporada (año)</label>
+                        <input type="number" id="f-ev-temporada" class="form-control" placeholder="2025" style="width:110px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Asociación</label>
+                        <input type="text" id="f-ev-asociacion" class="form-control" placeholder="Nombre parcial..." style="width:200px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Estado</label>
+                        <select id="f-ev-estado" class="form-control" style="width:180px;">
+                            <option value="">Todos</option>
+                            <option value="borrador">Borrador</option>
+                            <option value="en_proceso">En proceso</option>
+                            <option value="pendiente_comision">Pend. comisión</option>
+                            <option value="pendiente_aprobacion">Pend. aprobación</option>
+                            <option value="devuelto">Devuelto</option>
+                            <option value="aprobado">Aprobado</option>
+                            <option value="publicado">Publicado</option>
+                            <option value="cerrado">Cerrado</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primario btn-pequeño" onclick="buscarEvaluaciones()">Filtrar</button>
+                    <button class="btn btn-secundario btn-pequeño" onclick="limpiarEvaluaciones()">Limpiar</button>
+                    <button class="btn btn-secundario btn-pequeño" id="btn-exportar-ev" onclick="exportarEvaluaciones()" style="margin-left:8px;">Exportar CSV</button>
+                </div>
+                <div id="resultado-evaluaciones">
+                    <div class="sin-resultados">Usa los filtros y presiona Filtrar para cargar resultados, o presiona Filtrar sin valores para ver todo.</div>
+                </div>
+            </div>
+
+            <!-- ── Tab: Por jurado ── -->
+            <div class="tab-panel" id="panel-jurados">
+                <div class="filtros-bar">
+                    <div class="form-group">
+                        <label>Temporada (año)</label>
+                        <input type="number" id="f-jur-temporada" class="form-control" placeholder="2025" style="width:110px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Asociación</label>
+                        <input type="text" id="f-jur-asociacion" class="form-control" placeholder="Nombre parcial..." style="width:200px;">
+                    </div>
+                    <button class="btn btn-primario btn-pequeño" onclick="buscarJurados()">Filtrar</button>
+                    <button class="btn btn-secundario btn-pequeño" onclick="limpiarJurados()">Limpiar</button>
+                    <button class="btn btn-secundario btn-pequeño" id="btn-exportar-jur" onclick="exportarJurados()" style="margin-left:8px;">Exportar CSV</button>
+                </div>
+                <div id="resultado-jurados">
+                    <div class="sin-resultados">Usa los filtros y presiona Filtrar para cargar resultados, o presiona Filtrar sin valores para ver todo.</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-eval.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function cambiarTab(nombre, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('activo'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('activo'));
+    document.getElementById('panel-' + nombre).classList.add('activo');
+    btn.classList.add('activo');
+}
+
+// ── Tab: Evaluaciones ─────────────────────────────────────────────────────────
+async function buscarEvaluaciones() {
+    const temporada = document.getElementById('f-ev-temporada').value.trim();
+    const asociacion = document.getElementById('f-ev-asociacion').value.trim();
+    const estado = document.getElementById('f-ev-estado').value;
+
+    const params = new URLSearchParams();
+    if (temporada) params.set('temporada', temporada);
+    if (asociacion) params.set('asociacion', asociacion);
+    if (estado) params.set('estado', estado);
+
+    const contenedor = document.getElementById('resultado-evaluaciones');
+    contenedor.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+
+    try {
+        const qs = params.toString();
+        const { data } = await api.get('/admin/reportes/evaluaciones' + (qs ? '?' + qs : ''));
+        renderTablaEvaluaciones(data || [], contenedor);
+    } catch(e) {
+        contenedor.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar')}</div>`;
+    }
+}
+
+function limpiarEvaluaciones() {
+    document.getElementById('f-ev-temporada').value = '';
+    document.getElementById('f-ev-asociacion').value = '';
+    document.getElementById('f-ev-estado').value = '';
+    document.getElementById('resultado-evaluaciones').innerHTML =
+        '<div class="sin-resultados">Usa los filtros y presiona Filtrar.</div>';
+}
+
+const ESTADO_LABEL = {
+    borrador: 'Borrador', en_proceso: 'En proceso',
+    pendiente_comision: 'Pend. comisión', pendiente_aprobacion: 'Pend. aprobación',
+    devuelto: 'Devuelto', aprobado: 'Aprobado', publicado: 'Publicado', cerrado: 'Cerrado'
+};
+
+function renderTablaEvaluaciones(data, contenedor) {
+    if (data.length === 0) {
+        contenedor.innerHTML = '<div class="sin-resultados">Sin resultados para los filtros aplicados.</div>';
+        return;
+    }
+    let html = `<div class="contador-resultados">${data.length} evaluación(es)</div>`;
+    html += '<div class="tabla-wrap"><table class="tabla" style="width:100%;">';
+    html += `<thead><tr>
+        <th>Club</th>
+        <th>Asociación</th>
+        <th>Fecha</th>
+        <th>Estado</th>
+        <th style="text-align:center;">Casos</th>
+        <th style="text-align:center;">Sin desc.</th>
+        <th style="text-align:center;">Faltas</th>
+        <th style="text-align:center;">Deriv.</th>
+        <th style="text-align:center;">Jurados</th>
+        <th style="text-align:center;">Nota prom.</th>
+        <th style="text-align:center;">Tiempo</th>
+        <th></th>
+    </tr></thead><tbody>`;
+
+    data.forEach(e => {
+        const rodeo = e.rodeo || {};
+        const nota = e.nota_promedio;
+        const notaClass = nota == null ? '' : nota >= 5.5 ? '' : nota >= 4.5 ? 'media' : 'baja';
+        const notaHtml = nota != null
+            ? `<span class="nota-chip ${notaClass}">${parseFloat(nota).toFixed(2)}</span>`
+            : '<span style="color:var(--gris);">—</span>';
+        const tiempoHtml = e.tiempo_resolucion_dias != null
+            ? `${e.tiempo_resolucion_dias}d`
+            : '<span style="color:var(--gris);">—</span>';
+
+        html += `<tr>
+            <td><strong>${sanitizar(rodeo.club || '—')}</strong></td>
+            <td>${sanitizar(rodeo.asociacion || '—')}</td>
+            <td style="white-space:nowrap;">${sanitizar(rodeo.fecha || '—')}</td>
+            <td><span class="badge-eval badge-${e.estado}" style="font-size:11px;">${sanitizar(ESTADO_LABEL[e.estado] || e.estado)}</span></td>
+            <td style="text-align:center;">${e.total_casos ?? 0}</td>
+            <td style="text-align:center;">${e.sin_descuento ?? 0}</td>
+            <td style="text-align:center;">${e.faltas_confirmadas ?? 0}</td>
+            <td style="text-align:center;">${e.derivados_comision ?? 0}</td>
+            <td style="text-align:center;">${e.jurados_evaluados ?? 0}</td>
+            <td style="text-align:center;">${notaHtml}</td>
+            <td style="text-align:center;">${tiempoHtml}</td>
+            <td><a href="/admin/evaluacion-detalle.html?id=${e.id}" class="btn btn-secundario btn-pequeño" style="text-decoration:none;white-space:nowrap;">Ver →</a></td>
+        </tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    contenedor.innerHTML = html;
+}
+
+// ── Tab: Jurados ──────────────────────────────────────────────────────────────
+async function buscarJurados() {
+    const temporada = document.getElementById('f-jur-temporada').value.trim();
+    const asociacion = document.getElementById('f-jur-asociacion').value.trim();
+
+    const params = new URLSearchParams();
+    if (temporada) params.set('temporada', temporada);
+    if (asociacion) params.set('asociacion', asociacion);
+
+    const contenedor = document.getElementById('resultado-jurados');
+    contenedor.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+
+    try {
+        const qs = params.toString();
+        const { data } = await api.get('/admin/reportes/jurados' + (qs ? '?' + qs : ''));
+        renderTablaJurados(data || [], contenedor);
+    } catch(e) {
+        contenedor.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar')}</div>`;
+    }
+}
+
+function limpiarJurados() {
+    document.getElementById('f-jur-temporada').value = '';
+    document.getElementById('f-jur-asociacion').value = '';
+    document.getElementById('resultado-jurados').innerHTML =
+        '<div class="sin-resultados">Usa los filtros y presiona Filtrar.</div>';
+}
+
+function calClass(cal) {
+    if (!cal) return '';
+    const c = cal.toUpperCase();
+    if (c.includes('SOBRESALIENTE')) return 'sobresaliente';
+    if (c.includes('BIEN')) return 'bien';
+    if (c.includes('BAJO')) return 'bajo';
+    if (c.includes('DEFICIENTE')) return 'deficiente';
+    return '';
+}
+
+function renderTablaJurados(data, contenedor) {
+    if (data.length === 0) {
+        contenedor.innerHTML = '<div class="sin-resultados">Sin resultados para los filtros aplicados.</div>';
+        return;
+    }
+    let html = `<div class="contador-resultados">${data.length} registro(s)</div>`;
+    html += '<div class="tabla-wrap"><table class="tabla" style="width:100%;">';
+    html += `<thead><tr>
+        <th>Jurado</th>
+        <th>RUT</th>
+        <th>Categoría</th>
+        <th>Club</th>
+        <th>Asociación</th>
+        <th>Fecha</th>
+        <th style="text-align:center;">Nota</th>
+        <th style="text-align:center;">Puntaje</th>
+        <th>Calificación</th>
+        <th style="text-align:center;">Acepta</th>
+        <th style="text-align:center;">Rechaza</th>
+        <th>Fuente</th>
+    </tr></thead><tbody>`;
+
+    data.forEach(r => {
+        const usr = r.usuario || {};
+        const rodeo = r.rodeo || {};
+        const nota = r.nota;
+        const notaClass = nota == null ? '' : nota >= 5.5 ? '' : nota >= 4.5 ? 'media' : 'baja';
+        const notaHtml = nota != null
+            ? `<span class="nota-chip ${notaClass}">${parseFloat(nota).toFixed(2)}</span>`
+            : '<span style="color:var(--gris);">—</span>';
+        const calHtml = r.calificacion_cualitativa
+            ? `<span class="cal-chip ${calClass(r.calificacion_cualitativa)}">${sanitizar(r.calificacion_cualitativa)}</span>`
+            : '<span style="color:var(--gris);">—</span>';
+        const fuenteHtml = r.fuente === 'evaluacion_tecnica'
+            ? '<span style="font-size:11px;color:#1a5276;">Evaluación</span>'
+            : '<span style="font-size:11px;color:var(--gris);">Manual</span>';
+
+        html += `<tr>
+            <td><strong>${sanitizar(usr.nombre || '—')}</strong></td>
+            <td style="font-size:12px;">${sanitizar(usr.rut || '—')}</td>
+            <td>${sanitizar(usr.categoria || '—')}</td>
+            <td>${sanitizar(rodeo.club || '—')}</td>
+            <td>${sanitizar(rodeo.asociacion || '—')}</td>
+            <td style="white-space:nowrap;">${sanitizar(rodeo.fecha || '—')}</td>
+            <td style="text-align:center;">${notaHtml}</td>
+            <td style="text-align:center;">${r.puntaje_evaluacion ?? '—'}</td>
+            <td>${calHtml}</td>
+            <td style="text-align:center;">${r.respuestas_acepta ?? 0}</td>
+            <td style="text-align:center;">${r.respuestas_rechaza ?? 0}</td>
+            <td>${fuenteHtml}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    contenedor.innerHTML = html;
+}
+
+// ── Exportación CSV ───────────────────────────────────────────
+// Usa api.descargar (fetch + Bearer token + Blob) — no link directo,
+// ya que el token está en localStorage y no se puede enviar por URL.
+
+function buildQsEvaluaciones() {
+    const p = new URLSearchParams();
+    const temporada = document.getElementById('f-ev-temporada').value.trim();
+    const asociacion = document.getElementById('f-ev-asociacion').value.trim();
+    const estado = document.getElementById('f-ev-estado').value;
+    if (temporada) p.set('temporada', temporada);
+    if (asociacion) p.set('asociacion', asociacion);
+    if (estado) p.set('estado', estado);
+    return p.toString();
+}
+
+function buildQsJurados() {
+    const p = new URLSearchParams();
+    const temporada = document.getElementById('f-jur-temporada').value.trim();
+    const asociacion = document.getElementById('f-jur-asociacion').value.trim();
+    if (temporada) p.set('temporada', temporada);
+    if (asociacion) p.set('asociacion', asociacion);
+    return p.toString();
+}
+
+async function exportarEvaluaciones() {
+    const btn = document.getElementById('btn-exportar-ev');
+    btn.disabled = true;
+    btn.textContent = 'Descargando...';
+    try {
+        const qs = buildQsEvaluaciones();
+        await api.descargar('/admin/reportes/evaluaciones/exportar' + (qs ? '?' + qs : ''), 'evaluaciones.csv');
+    } catch(e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Exportar CSV';
+    }
+}
+
+async function exportarJurados() {
+    const btn = document.getElementById('btn-exportar-jur');
+    btn.disabled = true;
+    btn.textContent = 'Descargando...';
+    try {
+        const qs = buildQsJurados();
+        await api.descargar('/admin/reportes/jurados/exportar' + (qs ? '?' + qs : ''), 'jurados-evaluaciones.csv');
+    } catch(e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Exportar CSV';
+    }
+}
+</script>
+</body>
+</html>

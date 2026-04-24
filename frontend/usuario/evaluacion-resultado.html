@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultado de Evaluación — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .resultado-card {
+            background: linear-gradient(135deg, #1a3c6e 0%, #2980b9 100%);
+            color: #fff;
+            border-radius: 12px;
+            padding: 24px 28px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+        .resultado-nota {
+            font-size: 56px;
+            font-weight: 800;
+            line-height: 1;
+            min-width: 100px;
+            text-align: center;
+        }
+        .resultado-nota small { display: block; font-size: 13px; font-weight: 400; opacity: .75; margin-top: 2px; }
+        .resultado-detalle { flex: 1; }
+        .resultado-detalle h2 { margin: 0 0 6px; font-size: 18px; }
+        .resultado-detalle p  { margin: 0; font-size: 13px; opacity: .85; }
+        .calificacion-chip {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            background: rgba(255,255,255,.2);
+            margin-top: 8px;
+            letter-spacing: .3px;
+        }
+        .puntaje-label {
+            font-size: 12px;
+            opacity: .75;
+            margin-top: 4px;
+        }
+
+        .ciclo-bloque { margin-bottom: 20px; }
+        .ciclo-bloque-titulo {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--gris);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: 10px;
+        }
+        .caso-resultado {
+            border: 1px solid var(--gris-borde);
+            border-radius: 8px;
+            background: #fff;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+        }
+        .caso-resultado-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .badge-tipo { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+        .badge-tipo-interpretativa { background:#eaf4fb; color:#1a5276; }
+        .badge-tipo-reglamentaria  { background:#fef9e7; color:#7d6608; }
+        .badge-tipo-informativo    { background:#e9f7ef; color:#1e8449; }
+        .resolucion-chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #eaecee;
+            color: #555;
+        }
+        .resolucion-apelacion_acogida { background:#d5f5e3; color:#1e8449; }
+        .resolucion-apelacion_rechazada { background:#fadbd8; color:#922b21; }
+        .resolucion-interpretativa_confirmada { background:#d6eaf8; color:#1a5276; }
+        .resolucion-reglamentaria_confirmada  { background:#d6eaf8; color:#1a5276; }
+        .resolucion-sin_descuento { background:#f0f0f0; color:#666; }
+
+        .mi-decision {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            color: var(--gris);
+            margin-top: 4px;
+        }
+        .mi-decision.acepta-dec { color: #1e8449; font-weight: 600; }
+        .mi-decision.rechaza-dec { color: #922b21; font-weight: 600; }
+
+        .comision-nota {
+            background: #fef9e7;
+            border: 1px solid #f9e79f;
+            border-left: 3px solid #d4ac0d;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #7d6608;
+            margin-top: 8px;
+        }
+        .comision-nota strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px; }
+
+        .comentario-final-wrap {
+            margin-top: 24px;
+            padding: 18px;
+            background: #fff;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+        }
+        .comentario-final-wrap h3 { margin: 0 0 6px; font-size: 15px; }
+        .comentario-final-wrap p  { margin: 0 0 12px; font-size: 13px; color: var(--gris); }
+        .comentario-registrado {
+            background: #f0fff4;
+            border: 1px solid #a9dfbf;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+        }
+        .comentario-registrado .fecha { font-size: 11px; color: var(--gris); margin-top: 6px; }
+        .form-error { color: var(--rojo, #e74c3c); font-size: 12px; margin-top: 4px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" class="nav-item activo"><span class="icon">📋</span> Mis Evaluaciones</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a href="/usuario/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-right:8px;">← Volver</a>
+                <h1>Resultado de evaluación</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+
+const params = getQueryParams();
+const evalId = params.id;
+
+if (api.getUsuario()?.tipo_persona !== 'jurado') {
+    document.getElementById('contenido').innerHTML =
+        '<div class="alerta alerta-error">Esta sección solo está disponible para jurados.</div>';
+} else if (!evalId) {
+    document.getElementById('contenido').innerHTML =
+        '<div class="alerta alerta-error">No se especificó una evaluación. Redirigiendo...</div>';
+    setTimeout(() => { window.location.href = '/usuario/evaluaciones.html'; }, 2000);
+} else {
+    cargar();
+}
+
+async function cargar() {
+    try {
+        const data = await api.get(`/usuario/evaluaciones/${evalId}/resultado`);
+        render(data);
+    } catch(e) {
+        const msg = e.status === 403
+            ? 'El resultado aún no está disponible. La evaluación debe estar publicada para verlo.'
+            : (e.message || 'Error al cargar el resultado');
+        document.getElementById('contenido').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(msg)}</div>`;
+    }
+}
+
+function render(data) {
+    const rodeo    = data.rodeo || {};
+    const miRes    = data.mi_resultado || null;
+    const ciclos   = data.ciclos || [];
+    const cfinal   = data.comentario_final || null;
+
+    let html = '';
+
+    // ── Card de resultado personal ────────────────────────────────────────────
+    if (miRes) {
+        const nota  = parseFloat(miRes.nota || 0).toFixed(1);
+        const cal   = miRes.calificacion_cualitativa || '';
+        const punt  = miRes.puntaje_evaluacion != null ? miRes.puntaje_evaluacion : null;
+        html += `
+        <div class="resultado-card">
+            <div>
+                <div class="resultado-nota">${nota}<small>de 7.0</small></div>
+                ${punt !== null ? `<div class="puntaje-label">${punt} / 80 pts</div>` : ''}
+            </div>
+            <div class="resultado-detalle">
+                <h2>${sanitizar(rodeo.club || '')} — ${sanitizar(rodeo.asociacion || '')}</h2>
+                <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}</p>
+                ${cal ? `<div class="calificacion-chip">${sanitizar(cal)}</div>` : ''}
+            </div>
+        </div>`;
+    } else {
+        html += `
+        <div class="card" style="margin-bottom:20px;padding:16px 18px;">
+            <p style="margin:0;color:var(--gris);font-size:14px;">
+                No se encontró una nota registrada para esta evaluación. Contacta al administrador si crees que esto es un error.
+            </p>
+        </div>`;
+    }
+
+    // ── Ciclos y casos ────────────────────────────────────────────────────────
+    if (ciclos.length > 0) {
+        html += '<div class="card" style="margin-bottom:20px;padding:16px 18px;">';
+        ciclos.forEach(ciclo => {
+            const casos = ciclo.casos || [];
+            html += `<div class="ciclo-bloque">
+                <div class="ciclo-bloque-titulo">Ciclo ${ciclo.numero_ciclo}</div>`;
+            if (casos.length === 0) {
+                html += '<p style="color:var(--gris);font-size:13px;">Sin casos registrados en este ciclo.</p>';
+            } else {
+                casos.forEach(caso => { html += renderCasoResultado(caso); });
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+
+    // ── Comentario final ──────────────────────────────────────────────────────
+    html += `<div class="comentario-final-wrap">
+        <h3>Mi comentario final</h3>
+        <p>Puedes dejar una observación sobre tu evaluación. Solo puedes enviarlo una vez.</p>
+        ${cfinal ? renderComentarioRegistrado(cfinal) : renderFormComentario()}
+    </div>`;
+
+    document.getElementById('contenido').innerHTML = html;
+}
+
+function renderCasoResultado(caso) {
+    const tipoBadge = `<span class="badge-tipo badge-tipo-${caso.tipo_caso}">${labelTipo(caso.tipo_caso)}</span>`;
+    const resolucion = caso.resolucion_final
+        ? `<span class="resolucion-chip resolucion-${caso.resolucion_final}">${labelResolucion(caso.resolucion_final)}</span>`
+        : '';
+    const descHtml = caso.descuento_puntos > 0
+        ? `<span style="background:#fdebd0;color:#784212;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600;">-${caso.descuento_puntos} pt</span>`
+        : '';
+
+    let miRespHtml = '';
+    if (caso.mi_respuesta) {
+        const r = caso.mi_respuesta;
+        if (r.es_reconocimiento) {
+            miRespHtml = '<span class="mi-decision">📌 Reconocido</span>';
+        } else {
+            const esAcepta = r.decision === 'acepta';
+            miRespHtml = `<span class="mi-decision ${esAcepta ? 'acepta-dec' : 'rechaza-dec'}">
+                ${esAcepta ? '✓ Aceptaste' : '✗ Rechazaste'}
+            </span>`;
+        }
+    } else if (caso.requiere_respuesta) {
+        miRespHtml = '<span class="mi-decision" style="color:#e67e22;">Sin respuesta registrada</span>';
+    }
+
+    return `
+    <div class="caso-resultado">
+        <div class="caso-resultado-header">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <strong>Caso #${caso.numero_caso}</strong>
+                ${tipoBadge}
+                ${descHtml}
+                ${resolucion}
+            </div>
+            ${miRespHtml}
+        </div>
+        ${caso.comentario_comision ? `
+        <div class="comision-nota">
+            <strong>Comentario de la comisión técnica</strong>
+            ${sanitizar(caso.comentario_comision)}
+        </div>` : ''}
+    </div>`;
+}
+
+function renderComentarioRegistrado(cfinal) {
+    return `<div class="comentario-registrado">
+        <p style="margin:0;">${sanitizar(cfinal.comentario)}</p>
+        <div class="fecha">${formatFecha(cfinal.created_at)}</div>
+    </div>`;
+}
+
+function renderFormComentario() {
+    return `
+    <div class="form-group" style="margin-bottom:12px;">
+        <textarea id="txt-comentario-final" class="form-control" rows="4"
+            maxlength="2000" placeholder="Escribe tu observación aquí..."></textarea>
+        <div id="error-cfinal" class="form-error oculto"></div>
+    </div>
+    <button class="btn btn-primario btn-pequeño" onclick="enviarComentarioFinal()">Enviar comentario</button>`;
+}
+
+async function enviarComentarioFinal() {
+    const comentario = document.getElementById('txt-comentario-final')?.value.trim() || '';
+    const errEl      = document.getElementById('error-cfinal');
+    errEl?.classList.add('oculto');
+
+    if (!comentario) {
+        if (errEl) { errEl.textContent = 'El comentario no puede estar vacío.'; errEl.classList.remove('oculto'); }
+        return;
+    }
+
+    const btn = document.querySelector('.comentario-final-wrap .btn-primario');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+    try {
+        await api.post(`/usuario/evaluaciones/${evalId}/comentario-final`, { comentario });
+        mostrarToast('Comentario registrado', 'exito');
+        cargar();
+    } catch(e) {
+        if (e.status === 409) {
+            mostrarToast('Ya habías enviado un comentario', 'warning');
+            cargar();
+        } else {
+            if (errEl) { errEl.textContent = e.message || 'Error al enviar.'; errEl.classList.remove('oculto'); }
+            if (btn) { btn.disabled = false; btn.textContent = 'Enviar comentario'; }
+        }
+    }
+}
+
+function labelTipo(t) {
+    return { interpretativa: 'Interpretativa', reglamentaria: 'Reglamentaria', informativo: 'Informativo' }[t] || t;
+}
+
+function labelResolucion(r) {
+    return {
+        sin_descuento:                'Sin descuento',
+        interpretativa_confirmada:    'Confirmada',
+        reglamentaria_confirmada:     'Confirmada',
+        apelacion_acogida:            'Apelación acogida',
+        apelacion_rechazada:          'Apelación rechazada'
+    }[r] || r;
+}
+</script>
+</body>
+</html>

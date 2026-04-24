@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análisis de Casos — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-eval {
+            display: inline-block;
+            padding: 2px 9px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-borrador         { background: #f0f0f0; color: #666; }
+        .badge-en_proceso       { background: #d6eaf8; color: #1a5276; }
+        .badge-pendiente_comision { background: #fdebd0; color: #784212; }
+        .badge-pendiente_aprobacion { background: #fef9e7; color: #7d6608; }
+        .badge-devuelto         { background: #fadbd8; color: #922b21; }
+        .badge-aprobado         { background: #d5f5e3; color: #1e8449; }
+        .badge-publicado        { background: #d1f2eb; color: #148f77; }
+        .badge-cerrado          { background: #eaecee; color: #555; }
+        .filtros-barra { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+        .filtros-barra select,
+        .filtros-barra input   { padding: 6px 10px; border: 1px solid var(--gris-borde); border-radius: 6px; font-size: 13px; background: #fff; }
+        .tabla-acciones { display: flex; gap: 6px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+            <div class="nav-seccion">Evaluación Técnica</div>
+            <a href="/admin/evaluaciones.html" class="nav-item activo" data-eval-nav><span class="icon">📝</span> Análisis de Casos</a>
+            <a href="/admin/evaluacion-dashboard.html" class="nav-item" data-eval-nav><span class="icon">📊</span> Dashboard Eval.</a>
+            <a href="/admin/evaluacion-reportes.html" class="nav-item" data-eval-nav><span class="icon">📌</span> Reportes Eval.</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <!-- CONTENIDO -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Análisis de Casos</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-primario btn-pequeño" id="btn-nueva-eval" onclick="abrirModalCrear()" style="display:none;">
+                    + Nueva Evaluación
+                </button>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Filtros -->
+            <div class="filtros-barra">
+                <select id="fil-estado" onchange="cargarEvaluaciones(1)">
+                    <option value="">Todos los estados</option>
+                    <option value="borrador">Borrador</option>
+                    <option value="en_proceso">En proceso</option>
+                    <option value="pendiente_comision">Pendiente comisión</option>
+                    <option value="pendiente_aprobacion">Pendiente aprobación</option>
+                    <option value="devuelto">Devuelto</option>
+                    <option value="aprobado">Aprobado</option>
+                    <option value="publicado">Publicado</option>
+                    <option value="cerrado">Cerrado</option>
+                </select>
+                <select id="fil-analista" onchange="cargarEvaluaciones(1)">
+                    <option value="">Todos los analistas</option>
+                </select>
+                <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
+            </div>
+
+            <!-- Tabla -->
+            <div class="card">
+                <div class="tabla-wrap">
+                    <table id="tabla-evaluaciones">
+                        <thead>
+                            <tr>
+                                <th>Rodeo</th>
+                                <th>Club</th>
+                                <th>Fecha rodeo</th>
+                                <th>Analista</th>
+                                <th>Estado</th>
+                                <th>Creada</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-evaluaciones">
+                            <tr><td colspan="7" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="paginacion" class="paginacion" style="margin-top:12px;"></div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Nueva evaluación -->
+<div class="modal-overlay oculto" id="modal-crear">
+    <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Nueva Evaluación</h3>
+            <button class="modal-cerrar" onclick="cerrarModalCrear()">✕</button>
+        </div>
+        <div class="modal-body">
+            <!-- Búsqueda de rodeo -->
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Rodeo</label>
+                <input type="text" id="buscar-rodeo" class="form-control" placeholder="Buscar por club o sede..." autocomplete="off" oninput="buscarRodeos(this.value)">
+                <div id="resultados-rodeo" style="border:1px solid var(--gris-borde);border-radius:6px;max-height:180px;overflow-y:auto;display:none;background:#fff;margin-top:4px;"></div>
+                <input type="hidden" id="rodeo-seleccionado-id">
+                <div id="rodeo-seleccionado-label" style="font-size:12px;color:var(--gris);margin-top:4px;"></div>
+            </div>
+            <!-- Analista -->
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Analista asignado</label>
+                <select id="sel-analista-crear" class="form-control">
+                    <option value="">Seleccionar analista...</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalCrear()">Cancelar</button>
+            <button class="btn btn-primario" onclick="crearEvaluacion()">Crear evaluación</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+const usuario = api.getUsuario();
+const rolEval = usuario?.rol_evaluacion ?? null; // null = admin pleno
+
+// Solo jefe_area y admin pleno pueden crear evaluaciones
+if (rolEval === null || rolEval === 'jefe_area') {
+    document.getElementById('btn-nueva-eval').style.display = '';
+}
+
+let paginaActual = 1;
+let adminsList = [];
+
+// ── Cargar lista de administradores para filtro analista ──────────
+async function cargarAdmins() {
+    try {
+        const admins = await api.get('/admin/configuracion/administradores');
+        adminsList = admins.filter(a => a.activo);
+        const selFil = document.getElementById('fil-analista');
+        const selCre = document.getElementById('sel-analista-crear');
+        adminsList.forEach(a => {
+            const label = sanitizar(a.nombre_completo) + (a.rol_evaluacion ? ` (${labelRol(a.rol_evaluacion)})` : '');
+            selFil.insertAdjacentHTML('beforeend', `<option value="${a.id}">${label}</option>`);
+            selCre.insertAdjacentHTML('beforeend', `<option value="${a.id}">${label}</option>`);
+        });
+    } catch (e) {
+        console.warn('No se pudo cargar administradores:', e.message);
+    }
+}
+
+function labelRol(rol) {
+    const M = { jefe_area: 'Jefe', analista: 'Analista', comision_tecnica: 'Comisión' };
+    return M[rol] || rol;
+}
+
+// ── Cargar tabla ──────────────────────────────────────────────────
+async function cargarEvaluaciones(pagina) {
+    pagina = pagina || 1;
+    paginaActual = pagina;
+
+    const estado   = document.getElementById('fil-estado').value;
+    const analista = document.getElementById('fil-analista').value;
+
+    let url = `/admin/evaluaciones?page=${pagina}&limit=20`;
+    if (estado)   url += `&estado=${estado}`;
+    if (analista) url += `&analista_id=${analista}`;
+
+    const tbody = document.getElementById('tbody-evaluaciones');
+    tbody.innerHTML = '<tr><td colspan="7" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+
+    try {
+        const res = await api.get(url);
+        const items = res.evaluaciones || res.data || res || [];
+        const total = res.total || items.length;
+        const totalPaginas = Math.ceil(total / 20);
+
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="texto-centrado texto-gris" style="padding:24px;">Sin evaluaciones</td></tr>';
+        } else {
+            tbody.innerHTML = items.map(ev => {
+                const rodeo = ev.rodeos || ev.rodeo || {};
+                const analista = ev.analista || {};
+                const fechaRodeo = rodeo.fecha ? formatFecha(rodeo.fecha) : '—';
+                const estadoBadge = `<span class="badge-eval badge-${ev.estado}">${labelEstado(ev.estado)}</span>`;
+                return `<tr>
+                    <td>${sanitizar(rodeo.nombre || rodeo.sede || ev.rodeo_id || '—')}</td>
+                    <td>${sanitizar(rodeo.club || '—')}</td>
+                    <td>${fechaRodeo}</td>
+                    <td>${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</td>
+                    <td>${estadoBadge}</td>
+                    <td>${formatFecha(ev.created_at)}</td>
+                    <td><div class="tabla-acciones">
+                        <a href="/admin/evaluacion-detalle.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">Ver</a>
+                    </div></td>
+                </tr>`;
+            }).join('');
+        }
+
+        // Paginación
+        renderPaginacion(pagina, totalPaginas);
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+    }
+}
+
+function labelEstado(estado) {
+    const M = {
+        borrador: 'Borrador', en_proceso: 'En proceso',
+        pendiente_comision: 'Pend. comisión', pendiente_aprobacion: 'Pend. aprobación',
+        devuelto: 'Devuelto', aprobado: 'Aprobado',
+        publicado: 'Publicado', cerrado: 'Cerrado'
+    };
+    return M[estado] || estado;
+}
+
+function renderPaginacion(actual, total) {
+    const div = document.getElementById('paginacion');
+    if (total <= 1) { div.innerHTML = ''; return; }
+    let html = '';
+    if (actual > 1) html += `<button class="btn btn-secundario btn-pequeño" onclick="cargarEvaluaciones(${actual - 1})">‹ Anterior</button>`;
+    html += `<span style="font-size:13px;color:var(--gris);padding:0 10px;">Página ${actual} de ${total}</span>`;
+    if (actual < total) html += `<button class="btn btn-secundario btn-pequeño" onclick="cargarEvaluaciones(${actual + 1})">Siguiente ›</button>`;
+    div.innerHTML = html;
+}
+
+function limpiarFiltros() {
+    document.getElementById('fil-estado').value = '';
+    document.getElementById('fil-analista').value = '';
+    cargarEvaluaciones(1);
+}
+
+// ── Modal crear ───────────────────────────────────────────────────
+let _buscarRodeoTimer = null;
+
+function abrirModalCrear() {
+    document.getElementById('rodeo-seleccionado-id').value = '';
+    document.getElementById('rodeo-seleccionado-label').textContent = '';
+    document.getElementById('buscar-rodeo').value = '';
+    document.getElementById('resultados-rodeo').style.display = 'none';
+    document.getElementById('sel-analista-crear').value = '';
+    document.getElementById('modal-crear').classList.remove('oculto');
+}
+
+function cerrarModalCrear() {
+    document.getElementById('modal-crear').classList.add('oculto');
+}
+
+function buscarRodeos(q) {
+    clearTimeout(_buscarRodeoTimer);
+    const res = document.getElementById('resultados-rodeo');
+    if (!q || q.trim().length < 2) { res.style.display = 'none'; return; }
+    _buscarRodeoTimer = setTimeout(async () => {
+        try {
+            const lista = await api.get(`/admin/rodeos?buscar=${encodeURIComponent(q.trim())}&limit=20`);
+            const rodeos = lista.rodeos || lista.data || lista || [];
+            if (rodeos.length === 0) {
+                res.innerHTML = '<div style="padding:10px;font-size:13px;color:var(--gris);">Sin resultados</div>';
+            } else {
+                res.innerHTML = rodeos.map(r => {
+                    const label = [r.club, r.sede, r.fecha ? formatFecha(r.fecha) : ''].filter(Boolean).join(' — ');
+                    return `<div onclick="seleccionarRodeo('${r.id}', '${sanitizar(label).replace(/'/g,"\\'")}'')"
+                        style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0;"
+                        onmouseover="this.style.background='#f5f7fa'" onmouseout="this.style.background=''">
+                        ${sanitizar(label)}
+                    </div>`;
+                }).join('');
+            }
+            res.style.display = 'block';
+        } catch (e) {
+            res.innerHTML = `<div style="padding:10px;font-size:13px;color:var(--rojo);">${sanitizar(e.message)}</div>`;
+            res.style.display = 'block';
+        }
+    }, 300);
+}
+
+function seleccionarRodeo(id, label) {
+    document.getElementById('rodeo-seleccionado-id').value = id;
+    document.getElementById('rodeo-seleccionado-label').textContent = label;
+    document.getElementById('buscar-rodeo').value = '';
+    document.getElementById('resultados-rodeo').style.display = 'none';
+}
+
+async function crearEvaluacion() {
+    const rodeo_id   = document.getElementById('rodeo-seleccionado-id').value;
+    const analista_id = document.getElementById('sel-analista-crear').value;
+
+    if (!rodeo_id)    { mostrarToast('Selecciona un rodeo', 'error'); return; }
+    if (!analista_id) { mostrarToast('Selecciona un analista', 'error'); return; }
+
+    try {
+        const res = await api.post('/admin/evaluaciones', { rodeo_id, analista_id });
+        cerrarModalCrear();
+        mostrarToast('Evaluación creada', 'exito');
+        cargarEvaluaciones(1);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al crear', 'error');
+    }
+}
+
+// ── Cerrar dropdown rodeo al hacer click fuera ────────────────────
+document.addEventListener('click', function (e) {
+    if (!e.target.closest('#buscar-rodeo') && !e.target.closest('#resultados-rodeo')) {
+        document.getElementById('resultados-rodeo').style.display = 'none';
+    }
+});
+
+// ── Init ──────────────────────────────────────────────────────────
+cargarAdmins();
+cargarEvaluaciones(1);
+</script>
+</body>
+</html>

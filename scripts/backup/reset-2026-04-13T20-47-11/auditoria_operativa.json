@@ -1,0 +1,424 @@
+[
+  {
+    "id": "24bfae66-dc08-4334-9722-947ba48a7920",
+    "tabla": "asignaciones",
+    "registro_id": "88607ea4-9839-40a5-8789-98722a150e42",
+    "accion": "crear",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "rodeo_id": "b4ee16b5-734a-40e2-81ca-300a86b7536d",
+      "tipo_persona": "jurado",
+      "usuario_pagado_id": "4e5d7f0c-f58c-4cb7-ba85-42d79b3d271f",
+      "pago_base_calculado": 1460000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación creada: HECTOR IGNACIO NAVARRO SEPULVEDA a rodeo b4ee16b5-734a-40e2-81ca-300a86b7536d",
+    "ip_address": "::1",
+    "created_at": "2026-04-03T03:16:27.995951+00:00"
+  },
+  {
+    "id": "7ff562d7-308d-43e0-83c9-888d75464a56",
+    "tabla": "asignaciones",
+    "registro_id": "ba633f19-d95b-4f7d-b5fd-824b18eaebb7",
+    "accion": "crear",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "rodeo_id": "90bd02ee-b77d-4a50-8a71-c9a3e586b51e",
+      "tipo_persona": "jurado",
+      "usuario_pagado_id": "84d46e8d-8db9-413d-9760-9fc8e2b0cf38",
+      "pago_base_calculado": 490000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación creada: ALBERTO ESTEBAN SARAVIA RETAMAL a rodeo 90bd02ee-b77d-4a50-8a71-c9a3e586b51e",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T12:59:11.150579+00:00"
+  },
+  {
+    "id": "71f6eeae-9d01-4c31-8633-9ebf1ae39a2c",
+    "tabla": "asignaciones",
+    "registro_id": "ede4701a-96d1-47b2-9a3b-dbc13d7b9f4e",
+    "accion": "crear",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "rodeo_id": "802b93e2-7bc5-418b-9fd0-18e3030bd5a3",
+      "tipo_persona": "jurado",
+      "usuario_pagado_id": "76a6883b-9bdd-485d-ae08-6816d5bfa3fb",
+      "pago_base_calculado": 427000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación creada: LUIS ANDRES PEDRERO FUENTES a rodeo 802b93e2-7bc5-418b-9fd0-18e3030bd5a3",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T14:04:43.325301+00:00"
+  },
+  {
+    "id": "586d4326-d249-496a-81a0-77b4b350ebab",
+    "tabla": "asignaciones",
+    "registro_id": "ede4701a-96d1-47b2-9a3b-dbc13d7b9f4e",
+    "accion": "eliminar",
+    "datos_anteriores": null,
+    "datos_nuevos": null,
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación eliminada: LUIS ANDRES PEDRERO FUENTES del rodeo 802b93e2-7bc5-418b-9fd0-18e3030bd5a3",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T14:05:53.313606+00:00"
+  },
+  {
+    "id": "ab1e51b4-9447-4636-ba9d-79671022c608",
+    "tabla": "asignaciones",
+    "registro_id": "2632f409-6c32-4870-a4ab-35e2f851c3ef",
+    "accion": "crear",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "rodeo_id": "802b93e2-7bc5-418b-9fd0-18e3030bd5a3",
+      "tipo_persona": "jurado",
+      "usuario_pagado_id": "f79832f0-3899-41df-8709-b1e6eca92644",
+      "pago_base_calculado": 490000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación creada: ANDRES AMOR ALFARO a rodeo 802b93e2-7bc5-418b-9fd0-18e3030bd5a3",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T19:12:08.601661+00:00"
+  },
+  {
+    "id": "2a3d840c-02c4-4adb-8b21-b5259f3fd2ba",
+    "tabla": "asignaciones",
+    "registro_id": "2632f409-6c32-4870-a4ab-35e2f851c3ef",
+    "accion": "editar",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "distancia_km": 650,
+      "estado_designacion": "aceptado"
+    },
+    "actor_id": "f79832f0-3899-41df-8709-b1e6eca92644",
+    "actor_tipo": "usuario_pagado",
+    "descripcion": "Designación aceptada: LO PRADO (2026-04-11), distancia: 650 km",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T19:16:52.559469+00:00"
+  },
+  {
+    "id": "63155309-9aff-4883-8472-a7cf87252d24",
+    "tabla": "asignaciones",
+    "registro_id": "2632f409-6c32-4870-a4ab-35e2f851c3ef",
+    "accion": "eliminar",
+    "datos_anteriores": null,
+    "datos_nuevos": null,
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación eliminada: ANDRES AMOR ALFARO del rodeo 802b93e2-7bc5-418b-9fd0-18e3030bd5a3",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T19:53:56.026707+00:00"
+  },
+  {
+    "id": "003720bb-1391-4e06-a532-e0d8774a7ccb",
+    "tabla": "asignaciones",
+    "registro_id": "6986cc57-7ec3-42cb-bf69-b6b749f11e38",
+    "accion": "crear",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "rodeo_id": "582f1b16-9bcc-492e-aa38-0769910f228e",
+      "tipo_persona": "jurado",
+      "usuario_pagado_id": "e0561e7f-e867-43fd-bdd5-505d952fcad0",
+      "pago_base_calculado": 584000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación creada: CRISTIAN GREENHILL SCHIFFERLI a rodeo 582f1b16-9bcc-492e-aa38-0769910f228e",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T20:23:01.061939+00:00"
+  },
+  {
+    "id": "421bba73-37eb-4e10-a4d1-ea14e7e8d4d7",
+    "tabla": "asignaciones",
+    "registro_id": "6986cc57-7ec3-42cb-bf69-b6b749f11e38",
+    "accion": "editar",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "estado_designacion": "rechazado"
+    },
+    "actor_id": "e0561e7f-e867-43fd-bdd5-505d952fcad0",
+    "actor_tipo": "usuario_pagado",
+    "descripcion": "Designación rechazada: CATEMU (2026-04-11)",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T20:23:58.609246+00:00"
+  },
+  {
+    "id": "de2c34d9-6f78-4451-adaf-8851ee506569",
+    "tabla": "asignaciones",
+    "registro_id": "6986cc57-7ec3-42cb-bf69-b6b749f11e38",
+    "accion": "eliminar",
+    "datos_anteriores": null,
+    "datos_nuevos": null,
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación eliminada: CRISTIAN GREENHILL SCHIFFERLI del rodeo 582f1b16-9bcc-492e-aa38-0769910f228e",
+    "ip_address": "::1",
+    "created_at": "2026-04-10T18:18:02.612002+00:00"
+  },
+  {
+    "id": "d341f7c1-4199-4ea0-93cd-ef9337d19171",
+    "tabla": "asignaciones",
+    "registro_id": "982eaa23-dcb0-42d4-bb53-2e357a519405",
+    "accion": "crear",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "rodeo_id": "1cf51a38-bd1d-4425-99c5-47b09b494115",
+      "tipo_persona": "jurado",
+      "usuario_pagado_id": "79dab3f7-4644-4e9f-bdfb-079949220447",
+      "pago_base_calculado": 876000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Asignación creada: FRANCISCO VERDUGO CORREA a rodeo 1cf51a38-bd1d-4425-99c5-47b09b494115",
+    "ip_address": "::1",
+    "created_at": "2026-04-13T19:24:38.627029+00:00"
+  },
+  {
+    "id": "c0381b76-ee74-43f2-891e-b76d71df4016",
+    "tabla": "asignaciones",
+    "registro_id": "982eaa23-dcb0-42d4-bb53-2e357a519405",
+    "accion": "editar",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "distancia_km": 389,
+      "estado_designacion": "aceptado"
+    },
+    "actor_id": "79dab3f7-4644-4e9f-bdfb-079949220447",
+    "actor_tipo": "usuario_pagado",
+    "descripcion": "Designación aceptada: Sin club (2026-04-17), distancia: 389 km",
+    "ip_address": "::1",
+    "created_at": "2026-04-13T19:26:03.644602+00:00"
+  },
+  {
+    "id": "9951aaf9-e07e-4ae3-88ff-1537b3f038bb",
+    "tabla": "bonos_solicitados",
+    "registro_id": "107e59ce-4ded-481d-882f-e1b5472f3872",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 35000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 35000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para FRANCISCO VERDUGO CORREA: $35000",
+    "ip_address": "::1",
+    "created_at": "2026-04-03T03:20:35.458412+00:00"
+  },
+  {
+    "id": "e238d37f-31c2-4694-8715-c81cd8154fd2",
+    "tabla": "bonos_solicitados",
+    "registro_id": "4b5f2a66-fa06-4848-ad8c-7b5ef9a6b089",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 55000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 55000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para DIEGO MORALES VASQUEZ: $55000",
+    "ip_address": "::1",
+    "created_at": "2026-04-03T13:19:38.810988+00:00"
+  },
+  {
+    "id": "6036c4d8-d1c0-45a8-99ea-4ae928dec0fc",
+    "tabla": "bonos_solicitados",
+    "registro_id": "cba21b26-8a53-4f87-a2de-6dcce771ed06",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 55000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 55000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para ALBERTO ESTEBAN SARAVIA RETAMAL: $55000",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T12:52:46.795907+00:00"
+  },
+  {
+    "id": "017b31dc-b2fb-49f0-9c4a-e521eecdeeb4",
+    "tabla": "bonos_solicitados",
+    "registro_id": "c12cd51c-3c9d-4582-8347-589325da32c3",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 50000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 50000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para ALBERTO ESTEBAN SARAVIA RETAMAL: $50000",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T14:15:04.074589+00:00"
+  },
+  {
+    "id": "7925afbc-af39-4568-9d7d-dc88a0d47845",
+    "tabla": "bonos_solicitados",
+    "registro_id": "c02cf815-897e-4a1b-afa9-3687ddbf10ad",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 35000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 35000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para FELIPE ORDOÑEZ SAAVEDRA: $35000",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T16:08:31.309967+00:00"
+  },
+  {
+    "id": "3a33edf2-5d99-4372-ad73-2efc67d483d4",
+    "tabla": "bonos_solicitados",
+    "registro_id": "2bf6a391-f922-401a-914c-e12c270a7724",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 50000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 50000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para ANDRES AMOR ALFARO: $50000",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T19:20:13.12491+00:00"
+  },
+  {
+    "id": "17889c3f-91bd-4145-9777-3b60e82ebd72",
+    "tabla": "bonos_solicitados",
+    "registro_id": "6090b94b-a1d6-46ba-80e0-e374d474ed7e",
+    "accion": "aprobar_bono",
+    "datos_anteriores": {
+      "monto": 50000,
+      "estado": "pendiente"
+    },
+    "datos_nuevos": {
+      "estado": "aprobado",
+      "monto_aprobado": 50000
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Bono aprobado para ENRIQUE VILLARROEL CAMPAÑA: $50000",
+    "ip_address": "::1",
+    "created_at": "2026-04-13T19:21:45.647929+00:00"
+  },
+  {
+    "id": "6bf29d9a-3235-43ed-81fb-7d1b443ffd52",
+    "tabla": "importaciones",
+    "registro_id": "c8b601f9-becd-4bbd-a406-88bc907b4c1e",
+    "accion": "importar_excel",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "errores": 0,
+      "duplicadas": 0,
+      "insertadas": 57,
+      "pendientes": 1,
+      "nombre_archivo": "modelo de excel a subir.xlsx"
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Excel \"modelo de excel a subir.xlsx\" — OK:57 Pend:1 Dup:0 Err:0",
+    "ip_address": "::1",
+    "created_at": "2026-04-02T23:37:35.484235+00:00"
+  },
+  {
+    "id": "36ec8d00-e900-4b05-8445-31a1827c2896",
+    "tabla": "importaciones",
+    "registro_id": "b8921efa-49d7-457d-aaa3-d15c874d52c4",
+    "accion": "importar_excel",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "errores": 0,
+      "duplicadas": 0,
+      "insertadas": 3,
+      "pendientes": 0,
+      "nombre_archivo": "nomina de marxo.xlsx"
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Excel \"nomina de marxo.xlsx\" — OK:3 Pend:0 Dup:0 Err:0",
+    "ip_address": "::1",
+    "created_at": "2026-04-03T13:16:07.611488+00:00"
+  },
+  {
+    "id": "cf0b78ca-6b83-4aec-a5f5-19d5b83eb4ce",
+    "tabla": "importaciones",
+    "registro_id": "c3219bc4-2b2f-478b-98df-9d34dd620df4",
+    "accion": "importar_excel",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "errores": 0,
+      "duplicadas": 0,
+      "insertadas": 15,
+      "pendientes": 0,
+      "nombre_archivo": "JURADOS HASTA EL 11 ABRIL.xlsx"
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Excel \"JURADOS HASTA EL 11 ABRIL.xlsx\" — OK:15 Pend:0 Dup:0 Err:0",
+    "ip_address": "::1",
+    "created_at": "2026-04-06T14:02:58.241552+00:00"
+  },
+  {
+    "id": "2b078745-0c7c-4c26-92e3-5466e4fe184d",
+    "tabla": "importaciones",
+    "registro_id": "069461a2-bf44-4bc6-8968-b0e8bc731d93",
+    "accion": "importar_excel",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "errores": 0,
+      "duplicadas": 0,
+      "insertadas": 14,
+      "pendientes": 0,
+      "nombre_archivo": "rodeos al 18 de abril 2026.xlsx"
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Excel \"rodeos al 18 de abril 2026.xlsx\" — OK:14 Pend:0 Dup:0 Err:0",
+    "ip_address": "::1",
+    "created_at": "2026-04-13T19:17:42.495292+00:00"
+  },
+  {
+    "id": "4ffecff2-31b1-46a9-806b-0f2c1ba53d1b",
+    "tabla": "importaciones",
+    "registro_id": "7f0f7c4e-9521-4386-9ba7-bc07a82f9d56",
+    "accion": "importar_excel",
+    "datos_anteriores": null,
+    "datos_nuevos": {
+      "errores": 0,
+      "duplicadas": 0,
+      "insertadas": 1,
+      "pendientes": 0,
+      "nombre_archivo": "rodeos al 18 de abril 2026-25.xlsx"
+    },
+    "actor_id": "456ec336-9f82-452b-bee4-b6cb95d88982",
+    "actor_tipo": "administrador",
+    "descripcion": "Excel \"rodeos al 18 de abril 2026-25.xlsx\" — OK:1 Pend:0 Dup:0 Err:0",
+    "ip_address": "::1",
+    "created_at": "2026-04-13T20:17:57.331395+00:00"
+  }
+]

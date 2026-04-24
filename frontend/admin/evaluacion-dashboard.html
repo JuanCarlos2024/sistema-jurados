@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Evaluaciones — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: #fff;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            padding: 16px 18px;
+        }
+        .stat-card .label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+            color: var(--gris);
+            margin-bottom: 6px;
+        }
+        .stat-card .valor {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--primario);
+            line-height: 1;
+        }
+        .stat-card .sub {
+            font-size: 11px;
+            color: var(--gris);
+            margin-top: 3px;
+        }
+        .stat-card.accent-verde .valor { color: #1e8449; }
+        .stat-card.accent-rojo  .valor { color: #922b21; }
+        .stat-card.accent-gris  .valor { color: #555; }
+
+        .estado-dist {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+        .estado-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            background: #f0f0f0;
+            color: #444;
+        }
+        .estado-chip .n { font-size: 16px; font-weight: 800; }
+        .ec-borrador          { background: #f5f5f5; color: #555; }
+        .ec-en_proceso        { background: #eaf4fb; color: #1a5276; }
+        .ec-pendiente_comision { background: #fef9e7; color: #7d6608; }
+        .ec-pendiente_aprobacion { background: #fdebd0; color: #784212; }
+        .ec-aprobado          { background: #e9f7ef; color: #1e8449; }
+        .ec-publicado         { background: #d5f5e3; color: #1e8449; }
+        .ec-cerrado           { background: #eaecee; color: #444; }
+        .ec-devuelto          { background: #fadbd8; color: #922b21; }
+
+        .tabla-reciente th { font-size: 11px; }
+        .tabla-reciente td { font-size: 13px; }
+        .badge-eval { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+        .badge-borrador              { background:#f0f0f0; color:#666; }
+        .badge-en_proceso            { background:#d6eaf8; color:#1a5276; }
+        .badge-pendiente_comision    { background:#fdebd0; color:#784212; }
+        .badge-pendiente_aprobacion  { background:#fef9e7; color:#7d6608; }
+        .badge-devuelto              { background:#fadbd8; color:#922b21; }
+        .badge-aprobado              { background:#d5f5e3; color:#1e8449; }
+        .badge-publicado             { background:#d1f2eb; color:#148f77; }
+        .badge-cerrado               { background:#eaecee; color:#555; }
+
+        .nota-chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            background: #d5f5e3;
+            color: #1e8449;
+        }
+        .nota-chip.baja { background: #fadbd8; color: #922b21; }
+        .nota-chip.media { background: #fef9e7; color: #7d6608; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Dashboard de Evaluaciones</h1>
+            </div>
+            <div class="topbar-acciones">
+                <a href="/admin/evaluacion-reportes.html" class="btn btn-secundario btn-pequeño" style="text-decoration:none;">Ver reportes →</a>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-eval.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+cargar();
+
+async function cargar() {
+    try {
+        const { data: evals } = await api.get('/admin/reportes/evaluaciones');
+        render(evals || []);
+    } catch(e) {
+        document.getElementById('contenido').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar datos')}</div>`;
+    }
+}
+
+function render(evals) {
+    const total = evals.length;
+
+    // Distribución por estado
+    const porEstado = {};
+    evals.forEach(e => { porEstado[e.estado] = (porEstado[e.estado] || 0) + 1; });
+
+    // Nota promedio global (solo evaluaciones con nota_promedio)
+    const conNota = evals.filter(e => e.nota_promedio != null);
+    const notaGlobal = conNota.length > 0
+        ? (conNota.reduce((s, e) => s + e.nota_promedio, 0) / conNota.length).toFixed(2)
+        : null;
+
+    // % sin descuento y % faltas sobre total de casos
+    let sumTotal = 0, sumSinDesc = 0, sumFaltas = 0;
+    evals.forEach(e => {
+        sumTotal    += (e.total_casos || 0);
+        sumSinDesc  += (e.sin_descuento || 0);
+        sumFaltas   += (e.faltas_confirmadas || 0);
+    });
+    const pctSinDesc = sumTotal > 0 ? Math.round(sumSinDesc / sumTotal * 100) : null;
+    const pctFaltas  = sumTotal > 0 ? Math.round(sumFaltas  / sumTotal * 100) : null;
+
+    // Tiempo promedio resolución
+    const conTiempo = evals.filter(e => e.tiempo_resolucion_dias != null);
+    const tiempoProm = conTiempo.length > 0
+        ? Math.round(conTiempo.reduce((s, e) => s + e.tiempo_resolucion_dias, 0) / conTiempo.length)
+        : null;
+
+    // Últimas 10 ya vienen ordenadas desc del backend
+    const recientes = evals.slice(0, 10);
+
+    const ESTADO_LABEL = {
+        borrador: 'Borrador', en_proceso: 'En proceso',
+        pendiente_comision: 'Pend. comisión', pendiente_aprobacion: 'Pend. aprobación',
+        devuelto: 'Devuelto', aprobado: 'Aprobado', publicado: 'Publicado', cerrado: 'Cerrado'
+    };
+
+    let html = '';
+
+    // ── Tarjetas principales ──────────────────────────────────────────────────
+    html += '<div class="stat-grid">';
+    html += `<div class="stat-card"><div class="label">Total evaluaciones</div><div class="valor">${total}</div></div>`;
+    html += `<div class="stat-card accent-verde"><div class="label">Nota promedio global</div><div class="valor">${notaGlobal ?? '—'}</div><div class="sub">de 7.0</div></div>`;
+    html += `<div class="stat-card accent-verde"><div class="label">% sin descuento</div><div class="valor">${pctSinDesc != null ? pctSinDesc + '%' : '—'}</div><div class="sub">${sumSinDesc} de ${sumTotal} casos</div></div>`;
+    html += `<div class="stat-card accent-rojo"><div class="label">% faltas confirmadas</div><div class="valor">${pctFaltas != null ? pctFaltas + '%' : '—'}</div><div class="sub">${sumFaltas} de ${sumTotal} casos</div></div>`;
+    html += `<div class="stat-card accent-gris"><div class="label">Tiempo prom. resolución</div><div class="valor">${tiempoProm != null ? tiempoProm : '—'}</div><div class="sub">días${conTiempo.length < total ? ' · ' + (total - conTiempo.length) + ' sin dato' : ''}</div></div>`;
+    html += '</div>';
+
+    // ── Distribución por estado ───────────────────────────────────────────────
+    if (Object.keys(porEstado).length > 0) {
+        html += '<div class="card" style="padding:16px 18px;margin-bottom:24px;">';
+        html += '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--gris);margin-bottom:10px;">Distribución por estado</div>';
+        html += '<div class="estado-dist">';
+        Object.entries(porEstado).sort((a, b) => b[1] - a[1]).forEach(([estado, n]) => {
+            html += `<div class="estado-chip ec-${estado}"><span class="n">${n}</span> ${sanitizar(ESTADO_LABEL[estado] || estado)}</div>`;
+        });
+        html += '</div></div>';
+    }
+
+    // ── Tabla de últimas evaluaciones ─────────────────────────────────────────
+    html += '<div class="card" style="padding:0;overflow:hidden;">';
+    html += '<div style="padding:14px 18px;border-bottom:1px solid var(--gris-borde);font-size:13px;font-weight:700;">Últimas 10 evaluaciones</div>';
+    if (recientes.length === 0) {
+        html += '<div style="padding:24px;text-align:center;color:var(--gris);font-size:14px;">Sin evaluaciones registradas.</div>';
+    } else {
+        html += `<div style="overflow-x:auto;">
+        <table class="tabla tabla-reciente" style="width:100%;">
+            <thead><tr>
+                <th>Club / Asociación</th>
+                <th>Fecha</th>
+                <th>Estado</th>
+                <th>Casos</th>
+                <th>Faltas</th>
+                <th>Nota prom.</th>
+                <th>Tiempo</th>
+                <th></th>
+            </tr></thead>
+            <tbody>`;
+        recientes.forEach(e => {
+            const rodeo = e.rodeo || {};
+            const notaVal = e.nota_promedio;
+            const notaClass = notaVal == null ? '' : notaVal >= 5.5 ? '' : notaVal >= 4.5 ? 'media' : 'baja';
+            const notaHtml = notaVal != null
+                ? `<span class="nota-chip ${notaClass}">${parseFloat(notaVal).toFixed(2)}</span>`
+                : '<span style="color:var(--gris);">—</span>';
+            const tiempoHtml = e.tiempo_resolucion_dias != null
+                ? `${e.tiempo_resolucion_dias}d`
+                : '<span style="color:var(--gris);">—</span>';
+            html += `<tr>
+                <td><strong>${sanitizar(rodeo.club || '—')}</strong><br><span style="font-size:11px;color:var(--gris);">${sanitizar(rodeo.asociacion || '')}</span></td>
+                <td>${sanitizar(rodeo.fecha || '—')}</td>
+                <td><span class="badge-eval badge-${e.estado}" style="font-size:11px;">${sanitizar(ESTADO_LABEL[e.estado] || e.estado)}</span></td>
+                <td style="text-align:center;">${e.total_casos ?? 0}</td>
+                <td style="text-align:center;">${e.faltas_confirmadas ?? 0}</td>
+                <td style="text-align:center;">${notaHtml}</td>
+                <td style="text-align:center;">${tiempoHtml}</td>
+                <td><a href="/admin/evaluacion-detalle.html?id=${e.id}" class="btn btn-secundario btn-pequeño" style="text-decoration:none;white-space:nowrap;">Ver →</a></td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    if (total > 10) {
+        html += `<div style="text-align:center;padding:14px 0;"><a href="/admin/evaluacion-reportes.html" class="btn btn-secundario btn-pequeño" style="text-decoration:none;">Ver todas las evaluaciones (${total}) →</a></div>`;
+    }
+
+    document.getElementById('contenido').innerHTML = html;
+}
+</script>
+</body>
+</html>

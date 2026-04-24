@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-04-13T20:47:12.852Z",
+  "timezone": "America/Santiago",
+  "modo": "reset-operativo",
+  "tablas_backup": [
+    "bonos_solicitados",
+    "rodeo_adjuntos",
+    "rodeo_links",
+    "importaciones_pendientes",
+    "asignaciones",
+    "rodeos",
+    "importaciones"
+  ],
+  "counts": {
+    "bonos_solicitados": 7,
+    "rodeo_adjuntos": 3,
+    "rodeo_links": 0,
+    "importaciones_pendientes": 1,
+    "asignaciones": 97,
+    "rodeos": 91,
+    "importaciones": 5,
+    "auditoria (operativa)": 24
+  }
+}

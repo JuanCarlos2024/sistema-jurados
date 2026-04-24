@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detalle Evaluación — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-eval {
+            display: inline-block;
+            padding: 2px 9px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-borrador              { background: #f0f0f0; color: #666; }
+        .badge-en_proceso            { background: #d6eaf8; color: #1a5276; }
+        .badge-pendiente_comision    { background: #fdebd0; color: #784212; }
+        .badge-pendiente_aprobacion  { background: #fef9e7; color: #7d6608; }
+        .badge-devuelto              { background: #fadbd8; color: #922b21; }
+        .badge-aprobado              { background: #d5f5e3; color: #1e8449; }
+        .badge-publicado             { background: #d1f2eb; color: #148f77; }
+        .badge-cerrado               { background: #eaecee; color: #555; }
+
+        .badge-ciclo-pendiente_carga { background: #eaecee; color: #555; }
+        .badge-ciclo-cargado         { background: #d6eaf8; color: #1a5276; }
+        .badge-ciclo-abierto         { background: #d5f5e3; color: #1e8449; }
+        .badge-ciclo-en_revision     { background: #fdebd0; color: #784212; }
+        .badge-ciclo-cerrado         { background: #f0f0f0; color: #666; }
+
+        .badge-caso-cargado            { background: #eaecee; color: #555; }
+        .badge-caso-visible_jurado     { background: #d6eaf8; color: #1a5276; }
+        .badge-caso-pendiente_analista { background: #fdebd0; color: #784212; }
+        .badge-caso-derivado_comision  { background: #fef9e7; color: #7d6608; }
+        .badge-caso-consolidado        { background: #d1f2eb; color: #148f77; }
+        .badge-caso-resuelto           { background: #d5f5e3; color: #1e8449; }
+
+        .badge-tipo-interpretativa { background: #eaf4fb; color: #1a5276; }
+        .badge-tipo-reglamentaria  { background: #fef9e7; color: #7d6608; }
+        .badge-tipo-informativo    { background: #e9f7ef; color: #1e8449; }
+
+        .header-eval {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .header-eval-info h2 { margin: 0 0 4px; font-size: 18px; }
+        .header-eval-info p  { margin: 0; color: var(--gris); font-size: 13px; }
+        .ciclo-card { margin-bottom: 20px; }
+        .ciclo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .tabla-acciones { display: flex; gap: 6px; flex-wrap: wrap; }
+        .descuento-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #fdebd0;
+            color: #784212;
+        }
+        .descuento-cero { background: #f0f0f0; color: #aaa; }
+        .acciones-card {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 16px;
+            padding: 14px 16px;
+            background: #fff;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+        }
+        .devuelto-alert {
+            background: #fdf2f2;
+            border: 1px solid #f5c6c6;
+            border-left: 4px solid #c0392b;
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+        }
+        .devuelto-alert strong { color: #922b21; display: block; margin-bottom: 6px; }
+        .devuelto-alert p { margin: 0; font-size: 13px; color: var(--texto); }
+        .devuelto-alert small { color: var(--gris); font-size: 11px; display: block; margin-top: 6px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+            <div class="nav-seccion">Evaluación Técnica</div>
+            <a href="/admin/evaluaciones.html" class="nav-item activo" data-eval-nav><span class="icon">📝</span> Análisis de Casos</a>
+            <a href="/admin/evaluacion-dashboard.html" class="nav-item" data-eval-nav><span class="icon">📊</span> Dashboard Eval.</a>
+            <a href="/admin/evaluacion-reportes.html" class="nav-item" data-eval-nav><span class="icon">📌</span> Reportes Eval.</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <!-- CONTENIDO -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a href="/admin/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-right:8px;">← Volver</a>
+                <h1 id="titulo-pagina">Evaluación</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido-principal">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Agregar / Editar caso -->
+<div class="modal-overlay oculto" id="modal-caso">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="modal-caso-titulo">Agregar caso</h3>
+            <button class="modal-cerrar" onclick="cerrarModalCaso()">✕</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="caso-id-editar">
+            <input type="hidden" id="caso-ciclo-id">
+            <input type="hidden" id="caso-ciclo-numero">
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Tipo de caso</label>
+                <select id="caso-tipo" class="form-control" onchange="onCasoTipoChange()">
+                    <option value="interpretativa">Interpretativa</option>
+                    <option value="reglamentaria">Reglamentaria</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Descuento de puntos</label>
+                <select id="caso-descuento" class="form-control">
+                    <option value="0">Sin descuento (0)</option>
+                    <option value="1">1 punto</option>
+                    <option value="2">2 puntos</option>
+                </select>
+                <div id="descuento-nota" style="font-size:11px;color:var(--gris);margin-top:4px;display:none;">
+                    Los casos informativos no pueden tener descuento.
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Descripción <span style="color:var(--gris);font-weight:400;">(opcional)</span></label>
+                <textarea id="caso-descripcion" class="form-control" rows="3" maxlength="1000" placeholder="Descripción del caso..."></textarea>
+            </div>
+            <div class="form-group" style="margin-bottom:6px;">
+                <label class="form-label">URL de video <span style="color:var(--gris);font-weight:400;">(opcional)</span></label>
+                <input type="url" id="caso-video-url" class="form-control" placeholder="https://...">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalCaso()">Cancelar</button>
+            <button class="btn btn-primario" onclick="guardarCaso()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Cerrar ciclo -->
+<div class="modal-overlay oculto" id="modal-cerrar-ciclo">
+    <div class="modal" style="max-width:440px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="modal-cerrar-ciclo-titulo">Cerrar ciclo</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-cerrar-ciclo').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="cerrar-ciclo-id">
+            <div class="form-group">
+                <label class="form-label">Motivo del cierre</label>
+                <textarea id="cerrar-ciclo-motivo" class="form-control" rows="3" maxlength="500" placeholder="Describe el motivo..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-cerrar-ciclo').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-peligro" onclick="cerrarCiclo()">Cerrar ciclo</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Ver respuestas de jurados -->
+<div class="modal-overlay oculto" id="modal-respuestas">
+    <div class="modal" style="max-width:640px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="modal-respuestas-titulo">Respuestas de jurados</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-respuestas').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body" id="modal-respuestas-body">
+            <div class="spinner-wrap"><div class="spinner"></div></div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Reasignar analista -->
+<div class="modal-overlay oculto" id="modal-reasignar">
+    <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Reasignar analista</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-reasignar').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Nuevo analista</label>
+                <select id="reasignar-analista-id" class="form-control">
+                    <option value="">Seleccionar...</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-reasignar').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-primario" onclick="reasignarAnalista()">Reasignar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Aprobar evaluación -->
+<div class="modal-overlay oculto" id="modal-aprobar">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Aprobar y publicar evaluación</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-aprobar').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:var(--gris);margin-bottom:14px;">Esta acción calculará la nota final y la publicará al jurado. No se puede deshacer.</p>
+            <div class="form-group">
+                <label class="form-label">Comentario <span style="font-weight:400;color:var(--gris);">(opcional)</span></label>
+                <textarea id="aprobar-comentario" class="form-control" rows="3" maxlength="1000" placeholder="Comentario sobre la evaluación..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-aprobar').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-success" onclick="aprobarEvaluacion()">Confirmar y publicar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Devolver al analista -->
+<div class="modal-overlay oculto" id="modal-devolver">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Devolver al analista</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-devolver').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Motivo de la devolución</label>
+                <textarea id="devolver-comentario" class="form-control" rows="4" maxlength="1000" placeholder="Explica qué debe corregir el analista..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-devolver').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-peligro" onclick="devolverEvaluacion()">Devolver</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+const params = getQueryParams();
+const evalId = params.id;
+let _evalData = null;
+
+// ── Rol del usuario en evaluación (null = admin pleno) ────────────
+const rolEval    = api.getUsuario()?.rol_evaluacion ?? null;
+const esJefe     = rolEval === null || rolEval === 'jefe_area';
+const esAnalista = rolEval === null || rolEval === 'analista'          || rolEval === 'jefe_area';
+const esComision = rolEval === null || rolEval === 'comision_tecnica'  || rolEval === 'jefe_area';
+
+// ── Admins (lazy) ─────────────────────────────────────────────────
+let _adminsList = [];
+async function cargarAdmins() {
+    if (_adminsList.length > 0) return;
+    const data = await api.get('/admin/configuracion/administradores');
+    _adminsList = (data || []).filter(a => a.activo);
+}
+
+function labelRolEval(rol) {
+    const M = { jefe_area: 'Jefe', analista: 'Analista', comision_tecnica: 'Comisión' };
+    return M[rol] || rol;
+}
+
+// ── Helpers de etiquetas ──────────────────────────────────────────
+function labelEstadoEval(e) {
+    const M = {
+        borrador: 'Borrador', en_proceso: 'En proceso',
+        pendiente_comision: 'Pend. comisión', pendiente_aprobacion: 'Pend. aprobación',
+        devuelto: 'Devuelto', aprobado: 'Aprobado', publicado: 'Publicado', cerrado: 'Cerrado'
+    };
+    return M[e] || e;
+}
+function labelEstadoCiclo(e) {
+    const M = {
+        pendiente_carga: 'Pendiente carga', cargado: 'Cargado',
+        abierto: 'Abierto', en_revision: 'En revisión', cerrado: 'Cerrado'
+    };
+    return M[e] || e;
+}
+function labelEstadoCaso(e) {
+    const M = {
+        cargado: 'Cargado', visible_jurado: 'Visible jurado',
+        pendiente_analista: 'Pend. analista', derivado_comision: 'Deriv. comisión',
+        consolidado: 'Consolidado', resuelto: 'Resuelto'
+    };
+    return M[e] || e;
+}
+function labelTipo(t) {
+    const M = { interpretativa: 'Interpretativa', reglamentaria: 'Reglamentaria', informativo: 'Informativo' };
+    return M[t] || t;
+}
+
+// ── Cargar evaluación ─────────────────────────────────────────────
+// GET /:id devuelve ciclos sin casos; GET /casos?evaluacion_id= se carga en paralelo
+// y los casos se distribuyen a sus ciclos por evaluacion_ciclos.id.
+async function cargarEvaluacion() {
+    try {
+        const [ev, casosRes] = await Promise.all([
+            api.get(`/admin/evaluaciones/${evalId}`),
+            api.get(`/admin/casos?evaluacion_id=${evalId}`)
+        ]);
+        _evalData = ev;
+
+        const rodeo       = ev.rodeos   || ev.rodeo || {};
+        const analista    = ev.analista || {};
+        const rodeoNombre = [rodeo.club, rodeo.sede].filter(Boolean).join(' — ') || ev.rodeo_id || '—';
+        const rodeoFecha  = rodeo.fecha ? formatFecha(rodeo.fecha) : '—';
+
+        document.getElementById('titulo-pagina').textContent = rodeoNombre;
+
+        const todosLosCasos = casosRes.casos || [];
+        const ciclos = (ev.ciclos || []).map(ciclo => ({
+            ...ciclo,
+            casos: todosLosCasos.filter(c => c.evaluacion_ciclos?.id === ciclo.id)
+        }));
+
+        const html = `
+            ${renderDevueltoAlert(ev)}
+
+            <div class="card header-eval">
+                <div class="header-eval-info">
+                    <h2>${sanitizar(rodeoNombre)}</h2>
+                    <p>Fecha rodeo: ${rodeoFecha} &nbsp;·&nbsp; Analista: ${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</p>
+                </div>
+                <div>
+                    <span class="badge-eval badge-${ev.estado}">${labelEstadoEval(ev.estado)}</span>
+                </div>
+            </div>
+
+            ${renderAccionesEval(ev)}
+
+            ${ciclos.map(ciclo => renderCicloCard(ciclo, ev.estado, ev.id)).join('')}
+        `;
+
+        document.getElementById('contenido-principal').innerHTML = html;
+    } catch (e) {
+        document.getElementById('contenido-principal').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
+    }
+}
+
+// ── Alerta de devolución ──────────────────────────────────────────
+function renderDevueltoAlert(ev) {
+    if (ev.estado !== 'devuelto') return '';
+    const jefeNombre = ev.jefe?.nombre_completo || 'el jefe de área';
+    const fecha      = ev.fecha_decision_jefe ? formatFecha(ev.fecha_decision_jefe) : '';
+    return `<div class="devuelto-alert">
+        <strong>Evaluación devuelta por ${sanitizar(jefeNombre)}${fecha ? ' — ' + fecha : ''}</strong>
+        <p>${sanitizar(ev.comentario_jefe || '')}</p>
+    </div>`;
+}
+
+// ── Panel de acciones según rol y estado ──────────────────────────
+function renderAccionesEval(ev) {
+    const items = [];
+
+    // Acceso a bandejas de trabajo
+    if (['en_proceso', 'pendiente_comision'].includes(ev.estado) && esAnalista) {
+        items.push(`<a href="/admin/evaluacion-revision.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">📋 Bandeja de revisión</a>`);
+    }
+    if (ev.estado === 'pendiente_comision' && esComision) {
+        items.push(`<a href="/admin/evaluacion-comision.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">⚖️ Bandeja de comisión</a>`);
+    }
+
+    // Analista: enviar a aprobación
+    if (['pendiente_aprobacion', 'devuelto'].includes(ev.estado) && esAnalista) {
+        items.push(`<button class="btn btn-primario btn-pequeño" onclick="enviarAprobacion()">Enviar a aprobación</button>`);
+    }
+
+    // Jefe: reasignar analista
+    if (!['aprobado', 'publicado', 'cerrado'].includes(ev.estado) && esJefe) {
+        items.push(`<button class="btn btn-secundario btn-pequeño" onclick="abrirModalReasignar()">Reasignar analista</button>`);
+    }
+
+    // Jefe: aprobar o devolver (solo desde pendiente_aprobacion)
+    if (ev.estado === 'pendiente_aprobacion' && esJefe) {
+        items.push(`<button class="btn btn-success btn-pequeño" onclick="abrirModalAprobar()">Aprobar y publicar</button>`);
+        items.push(`<button class="btn btn-peligro btn-pequeño" onclick="abrirModalDevolver()">Devolver al analista</button>`);
+    }
+
+    if (items.length === 0) return '';
+    return `<div class="acciones-card">${items.join('')}</div>`;
+}
+
+// ── Render ciclo ──────────────────────────────────────────────────
+function renderCicloCard(ciclo, estadoEval, evalId) {
+    const puedeAgregarCaso = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
+        && !['publicado', 'cerrado'].includes(estadoEval);
+
+    const puedeAbrirCiclo = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
+        && !['pendiente_aprobacion', 'aprobado', 'publicado', 'cerrado'].includes(estadoEval);
+
+    const puedeCerrarCiclo = ['abierto', 'en_revision'].includes(ciclo.estado);
+
+    const casos = ciclo.casos || [];
+
+    const tablaCasos = casos.length === 0
+        ? '<p class="texto-gris" style="font-size:13px;padding:8px 0;">Sin casos cargados.</p>'
+        : `<div class="tabla-wrap"><table>
+            <thead><tr>
+                <th style="width:46px;">#</th>
+                <th>Tipo</th>
+                <th>Descuento</th>
+                <th>Descripción</th>
+                <th>Estado</th>
+                <th></th>
+            </tr></thead>
+            <tbody>
+                ${casos.map(c => renderFilaCaso(c, ciclo, estadoEval)).join('')}
+            </tbody>
+          </table></div>`;
+
+    return `<div class="card ciclo-card">
+        <div class="ciclo-header">
+            <div>
+                <span style="font-size:14px;font-weight:700;">Ciclo ${ciclo.numero_ciclo}</span>
+                &nbsp;
+                <span class="badge-eval badge-ciclo-${ciclo.estado}">${labelEstadoCiclo(ciclo.estado)}</span>
+                <span style="font-size:12px;color:var(--gris);margin-left:10px;">${casos.length} caso(s) · mín ${ciclo.min_casos} · máx ${ciclo.max_casos}</span>
+            </div>
+            <div class="tabla-acciones">
+                ${puedeAgregarCaso ? `<button class="btn btn-primario btn-pequeño" onclick="abrirModalAgregar('${ciclo.id}', ${ciclo.numero_ciclo})">+ Agregar caso</button>` : ''}
+                ${puedeAbrirCiclo  ? `<button class="btn btn-success btn-pequeño"  onclick="abrirCiclo('${ciclo.id}', ${ciclo.numero_ciclo})">Abrir ciclo</button>` : ''}
+                ${puedeCerrarCiclo ? `<button class="btn btn-peligro btn-pequeño"  onclick="abrirModalCerrarCiclo('${ciclo.id}', ${ciclo.numero_ciclo})">Cerrar ciclo</button>` : ''}
+            </div>
+        </div>
+        ${tablaCasos}
+    </div>`;
+}
+
+// ── Render fila de caso ───────────────────────────────────────────
+function renderFilaCaso(caso, ciclo, estadoEval) {
+    const puedeEditar = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
+        && !['publicado', 'cerrado'].includes(estadoEval)
+        && caso.estado === 'cargado';
+
+    const puedeVerRespuestas = !['pendiente_carga', 'cargado'].includes(ciclo.estado);
+
+    const descBadge = caso.descuento_puntos > 0
+        ? `<span class="descuento-badge">-${caso.descuento_puntos} pt</span>`
+        : `<span class="descuento-badge descuento-cero">0</span>`;
+
+    const accionesArr = [];
+    if (puedeEditar) {
+        accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="abrirModalEditar(${JSON.stringify(caso).replace(/"/g,'&quot;')}, '${ciclo.id}', ${ciclo.numero_ciclo})">Editar</button>`);
+        accionesArr.push(`<button class="btn btn-peligro btn-pequeño" onclick="eliminarCaso('${caso.id}', ${caso.numero_caso})">Eliminar</button>`);
+    }
+    if (puedeVerRespuestas) {
+        accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="verRespuestas('${caso.id}', ${caso.numero_caso})">Respuestas</button>`);
+    }
+
+    return `<tr>
+        <td>${caso.numero_caso}</td>
+        <td><span class="badge-eval badge-tipo-${caso.tipo_caso}">${labelTipo(caso.tipo_caso)}</span></td>
+        <td>${descBadge}</td>
+        <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+            title="${sanitizar(caso.descripcion || '')}">
+            ${sanitizar(caso.descripcion || '—')}
+        </td>
+        <td><span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span></td>
+        <td><div class="tabla-acciones">${accionesArr.join('')}</div></td>
+    </tr>`;
+}
+
+// ── Acciones de ciclo ─────────────────────────────────────────────
+async function abrirCiclo(cicloId, numeroCiclo) {
+    const ok = await confirmar(`¿Abrir el Ciclo ${numeroCiclo}? Los casos serán visibles para los jurados asignados.`);
+    if (!ok) return;
+    try {
+        const res = await api.post(`/admin/ciclos/${cicloId}/abrir`);
+        mostrarToast(res.mensaje || 'Ciclo abierto', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al abrir el ciclo', 'error');
+    }
+}
+
+let _cicloParaCerrar = null;
+function abrirModalCerrarCiclo(cicloId, numeroCiclo) {
+    _cicloParaCerrar = cicloId;
+    document.getElementById('modal-cerrar-ciclo-titulo').textContent = `Cerrar Ciclo ${numeroCiclo}`;
+    document.getElementById('cerrar-ciclo-motivo').value = '';
+    document.getElementById('modal-cerrar-ciclo').classList.remove('oculto');
+}
+async function cerrarCiclo() {
+    const motivo_cierre = document.getElementById('cerrar-ciclo-motivo').value.trim();
+    if (!motivo_cierre) { mostrarToast('El motivo es requerido', 'error'); return; }
+    try {
+        const res = await api.post(`/admin/ciclos/${_cicloParaCerrar}/cerrar`, { motivo_cierre });
+        document.getElementById('modal-cerrar-ciclo').classList.add('oculto');
+        mostrarToast(res.mensaje || 'Ciclo cerrado', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al cerrar el ciclo', 'error');
+    }
+}
+
+// ── Ver respuestas de jurados ─────────────────────────────────────
+async function verRespuestas(casoId, numeroCaso) {
+    const modal = document.getElementById('modal-respuestas');
+    const body  = document.getElementById('modal-respuestas-body');
+    document.getElementById('modal-respuestas-titulo').textContent = `Caso N° ${numeroCaso} — Respuestas de jurados`;
+    body.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    modal.classList.remove('oculto');
+    try {
+        const d    = await api.get(`/admin/casos/${casoId}/respuestas`);
+        const resp = d.respuestas || [];
+        const total = d.total_jurados_rodeo ?? 0;
+        const consCls   = d.estado_consolidado === 'rechazado' ? 'color:#922b21' : (d.estado_consolidado === 'aceptado' ? 'color:#1e8449' : 'color:#666');
+        const consLabel = d.estado_consolidado === 'rechazado' ? '✗ Rechazado' : (d.estado_consolidado === 'aceptado' ? '✓ Aceptado' : (d.estado_consolidado || 'Sin resultado'));
+
+        let html = `<p style="font-size:13px;color:var(--gris);margin-bottom:12px;">
+            ${resp.length} de ${total} jurado(s) respondieron &nbsp;
+            <strong style="${consCls}">${consLabel}</strong>
+        </p>`;
+
+        if (resp.length === 0) {
+            html += '<p class="texto-gris texto-centrado" style="padding:12px 0;">Sin respuestas registradas.</p>';
+        } else {
+            html += `<div class="tabla-wrap"><table>
+                <thead><tr><th>Jurado</th><th>Cat.</th><th>Decisión</th><th>Comentario</th><th>Fecha</th></tr></thead>
+                <tbody>
+                ${resp.map(r => {
+                    const dec = r.decision === 'acepta'   ? '✓ Acepta'
+                              : r.decision === 'rechaza'  ? '✗ Rechaza'
+                              : sanitizar(r.decision || '—');
+                    const decCls = r.decision === 'acepta'  ? 'color:#1e8449'
+                                 : r.decision === 'rechaza' ? 'color:#922b21' : '';
+                    return `<tr>
+                        <td>${sanitizar(r.jurado?.nombre_completo || '—')}</td>
+                        <td>${sanitizar(r.jurado?.categoria || '—')}</td>
+                        <td style="font-weight:600;${decCls}">${dec}</td>
+                        <td style="font-size:12px;max-width:200px;">${sanitizar(r.comentario || '—')}</td>
+                        <td style="font-size:12px;white-space:nowrap;">${formatFecha(r.created_at)}</td>
+                    </tr>`;
+                }).join('')}
+                </tbody>
+            </table></div>`;
+        }
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
+    }
+}
+
+// ── Reasignar analista ────────────────────────────────────────────
+async function abrirModalReasignar() {
+    const sel = document.getElementById('reasignar-analista-id');
+    sel.innerHTML = '<option value="">Cargando...</option>';
+    document.getElementById('modal-reasignar').classList.remove('oculto');
+    try {
+        await cargarAdmins();
+        sel.innerHTML = '<option value="">Seleccionar...</option>';
+        _adminsList.forEach(a => {
+            const rolLabel = a.rol_evaluacion ? ` (${labelRolEval(a.rol_evaluacion)})` : '';
+            sel.insertAdjacentHTML('beforeend', `<option value="${a.id}">${sanitizar(a.nombre_completo)}${rolLabel}</option>`);
+        });
+        if (_evalData?.analista?.id) sel.value = _evalData.analista.id;
+    } catch (e) {
+        sel.innerHTML = '<option value="">Error al cargar admins</option>';
+    }
+}
+async function reasignarAnalista() {
+    const analista_id = document.getElementById('reasignar-analista-id').value;
+    if (!analista_id) { mostrarToast('Selecciona un analista', 'error'); return; }
+    try {
+        const res = await api.patch(`/admin/evaluaciones/${evalId}/analista`, { analista_id });
+        document.getElementById('modal-reasignar').classList.add('oculto');
+        mostrarToast(res.mensaje || 'Analista reasignado', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al reasignar', 'error');
+    }
+}
+
+// ── Enviar a aprobación ───────────────────────────────────────────
+async function enviarAprobacion() {
+    const ok = await confirmar('¿Enviar esta evaluación a aprobación del jefe de área?');
+    if (!ok) return;
+    try {
+        const res = await api.post(`/admin/evaluaciones/${evalId}/enviar-aprobacion`, {});
+        mostrarToast(res.mensaje || 'Enviado a aprobación', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al enviar', 'error');
+    }
+}
+
+// ── Aprobar evaluación ────────────────────────────────────────────
+function abrirModalAprobar() {
+    document.getElementById('aprobar-comentario').value = '';
+    document.getElementById('modal-aprobar').classList.remove('oculto');
+}
+async function aprobarEvaluacion() {
+    const comentario_jefe = document.getElementById('aprobar-comentario').value.trim() || null;
+    try {
+        const res = await api.post(`/admin/evaluaciones/${evalId}/aprobar`, { comentario_jefe });
+        document.getElementById('modal-aprobar').classList.add('oculto');
+        mostrarToast(`Evaluación publicada — Nota final: ${res.nota_final}`, 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al aprobar', 'error');
+    }
+}
+
+// ── Devolver al analista ──────────────────────────────────────────
+function abrirModalDevolver() {
+    document.getElementById('devolver-comentario').value = '';
+    document.getElementById('modal-devolver').classList.remove('oculto');
+}
+async function devolverEvaluacion() {
+    const comentario_jefe = document.getElementById('devolver-comentario').value.trim();
+    if (!comentario_jefe) { mostrarToast('El motivo es requerido', 'error'); return; }
+    try {
+        const res = await api.post(`/admin/evaluaciones/${evalId}/devolver`, { comentario_jefe });
+        document.getElementById('modal-devolver').classList.add('oculto');
+        mostrarToast('Evaluación devuelta al analista', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al devolver', 'error');
+    }
+}
+
+// ── Modal agregar / editar caso ───────────────────────────────────
+function configurarSelectTipo(numeroCiclo) {
+    const sel = document.getElementById('caso-tipo');
+    const optInfo = sel.querySelector('option[value="informativo"]');
+    if (optInfo) optInfo.remove();
+    if (numeroCiclo === 2) {
+        sel.insertAdjacentHTML('beforeend', '<option value="informativo">Informativo</option>');
+    }
+}
+function onCasoTipoChange() {
+    const tipo    = document.getElementById('caso-tipo').value;
+    const selDesc = document.getElementById('caso-descuento');
+    const nota    = document.getElementById('descuento-nota');
+    if (tipo === 'informativo') {
+        selDesc.value    = '0';
+        selDesc.disabled = true;
+        nota.style.display = '';
+    } else {
+        selDesc.disabled   = false;
+        nota.style.display = 'none';
+    }
+}
+function abrirModalAgregar(cicloId, numeroCiclo) {
+    document.getElementById('caso-id-editar').value          = '';
+    document.getElementById('caso-ciclo-id').value           = cicloId;
+    document.getElementById('caso-ciclo-numero').value       = numeroCiclo;
+    document.getElementById('caso-tipo').value               = 'interpretativa';
+    document.getElementById('caso-descuento').value          = '0';
+    document.getElementById('caso-descuento').disabled       = false;
+    document.getElementById('descuento-nota').style.display  = 'none';
+    document.getElementById('caso-descripcion').value        = '';
+    document.getElementById('caso-video-url').value          = '';
+    document.getElementById('modal-caso-titulo').textContent = 'Agregar caso';
+    configurarSelectTipo(parseInt(numeroCiclo));
+    document.getElementById('modal-caso').classList.remove('oculto');
+}
+function abrirModalEditar(caso, cicloId, numeroCiclo) {
+    document.getElementById('caso-id-editar').value          = caso.id;
+    document.getElementById('caso-ciclo-id').value           = cicloId;
+    document.getElementById('caso-ciclo-numero').value       = numeroCiclo;
+    document.getElementById('caso-descripcion').value        = caso.descripcion || '';
+    document.getElementById('caso-video-url').value          = caso.video_url   || '';
+    document.getElementById('modal-caso-titulo').textContent = 'Editar caso';
+    configurarSelectTipo(parseInt(numeroCiclo));
+    document.getElementById('caso-tipo').value = caso.tipo_caso;
+    if (caso.tipo_caso === 'informativo') {
+        document.getElementById('caso-descuento').value         = '0';
+        document.getElementById('caso-descuento').disabled      = true;
+        document.getElementById('descuento-nota').style.display = '';
+    } else {
+        document.getElementById('caso-descuento').value         = String(caso.descuento_puntos || 0);
+        document.getElementById('caso-descuento').disabled      = false;
+        document.getElementById('descuento-nota').style.display = 'none';
+    }
+    document.getElementById('modal-caso').classList.remove('oculto');
+}
+function cerrarModalCaso() {
+    document.getElementById('modal-caso').classList.add('oculto');
+}
+async function guardarCaso() {
+    const casoId           = document.getElementById('caso-id-editar').value;
+    const cicloId          = document.getElementById('caso-ciclo-id').value;
+    const tipo_caso        = document.getElementById('caso-tipo').value;
+    const descuento_puntos = parseInt(document.getElementById('caso-descuento').value);
+    const descripcion      = document.getElementById('caso-descripcion').value.trim() || null;
+    const video_url        = document.getElementById('caso-video-url').value.trim()   || null;
+    try {
+        if (casoId) {
+            await api.patch(`/admin/casos/${casoId}`, { tipo_caso, descuento_puntos, descripcion, video_url });
+            mostrarToast('Caso actualizado', 'exito');
+        } else {
+            await api.post(`/admin/ciclos/${cicloId}/casos`, { tipo_caso, descuento_puntos, descripcion, video_url });
+            mostrarToast('Caso agregado', 'exito');
+        }
+        cerrarModalCaso();
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al guardar', 'error');
+    }
+}
+async function eliminarCaso(casoId, numeroCaso) {
+    const ok = await confirmar(`¿Eliminar el caso N° ${numeroCaso}? Esta acción no se puede deshacer.`);
+    if (!ok) return;
+    try {
+        await api.delete(`/admin/casos/${casoId}`);
+        mostrarToast('Caso eliminado', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+if (evalId) {
+    cargarEvaluacion();
+} else {
+    document.getElementById('contenido-principal').innerHTML =
+        '<div class="alerta alerta-error">No se especificó una evaluación. Redirigiendo al listado...</div>';
+    setTimeout(() => { window.location.href = '/admin/evaluaciones.html'; }, 2000);
+}
+</script>
+</body>
+</html>

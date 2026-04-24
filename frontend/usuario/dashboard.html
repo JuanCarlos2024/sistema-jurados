@@ -65,6 +65,7 @@
             <a href="/usuario/dashboard.html" class="nav-item activo"><span class="icon">🏠</span> Mi Panel</a>
             <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
             <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" id="nav-evaluaciones" class="nav-item" style="display:none;"><span class="icon">📋</span> Mis Evaluaciones</a>
         </nav>
         <div class="sidebar-footer">
             <div class="sidebar-usuario" id="nombre-usr"></div>
@@ -98,6 +99,14 @@
                 <div class="alerta alerta-advertencia" style="margin-bottom:16px;">
                     <strong id="txt-pendientes"></strong>
                     Acepte o rechace cada designación en la tabla de abajo.
+                </div>
+            </div>
+
+            <div id="alerta-evaluaciones" class="oculto">
+                <div style="display:flex; align-items:center; gap:12px; background:#eaf4fb; border:1px solid #aed6f1; border-left:4px solid #2980b9; border-radius:8px; padding:12px 16px; margin-bottom:16px; flex-wrap:wrap;">
+                    <span style="font-size:20px;">📋</span>
+                    <span style="flex:1; font-size:14px;">Tienes <strong id="txt-eval-pendientes"></strong> evaluación(es) con casos para responder.</span>
+                    <a href="/usuario/evaluaciones.html" class="btn btn-primario btn-pequeño" style="text-decoration:none;">Ver evaluaciones →</a>
                 </div>
             </div>
 
@@ -209,6 +218,8 @@
 <script>
 protegerRuta('usuario_pagado');
 document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
+const ES_JURADO = api.getUsuario()?.tipo_persona === 'jurado';
+if (ES_JURADO) document.getElementById('nav-evaluaciones').style.display = '';
 
 const ahora = new Date();
 let añoActual = ahora.getFullYear();
@@ -239,6 +250,18 @@ async function init() {
     cargarDesempeno();
     cargarResumen();
     cargarCalendario();
+    if (ES_JURADO) cargarEvaluacionesPendientes();
+}
+
+async function cargarEvaluacionesPendientes() {
+    try {
+        const data = await api.get('/usuario/evaluaciones');
+        const activas = (data.evaluaciones || []).filter(e => e.tipo === 'activo');
+        if (activas.length > 0) {
+            document.getElementById('txt-eval-pendientes').textContent = activas.length;
+            document.getElementById('alerta-evaluaciones').classList.remove('oculto');
+        }
+    } catch(e) {}
 }
 
 async function cargarDesempeno() {
