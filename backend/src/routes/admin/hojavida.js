@@ -22,6 +22,7 @@ router.get('/:id', async (req, res) => {
         .select(`
             id, estado, estado_designacion, categoria_aplicada,
             valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
+            comentario_admin,
             rodeos(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)
         `)
         .eq('usuario_pagado_id', uid)
@@ -249,9 +250,16 @@ router.get('/:id', async (req, res) => {
         console.error('[hojavida] error comparacion:', e.message);
     }
 
+    const { data: historial_cambios } = await supabase
+        .from('usuario_historial_cambios')
+        .select('id, tipo_cambio, valor_anterior, valor_nuevo, cambiado_por_nombre, cambiado_en, observacion')
+        .eq('usuario_pagado_id', uid)
+        .order('cambiado_en', { ascending: false });
+
     res.json({
         perfil,
         historial,
+        historial_cambios:   historial_cambios || [],
         ficha:               ficha || null,
         indicadores,
         evolucion_notas,

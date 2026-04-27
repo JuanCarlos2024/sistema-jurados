@@ -3,15 +3,41 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const { soloRolEvaluacion } = require('../../middleware/auth');
 
-// GET / — lista paginada con filtros
+// GET / — lista paginada con filtros, jurados y resumen de faltas
 router.get('/', async (req, res) => {
-    const { estado, analista_id, page = 1, limit = 20 } = req.query;
+    const { estado, analista_id, buscar, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Pre-queries para búsqueda textual cruzada
+    let rodeoIdsFiltro   = null;
+    let analistaIdsFiltro = null;
+
+    if (buscar) {
+        const b = buscar.trim();
+        const [{ data: rodeosMatch }, { data: analistasMatch }, { data: juraAsigs }] = await Promise.all([
+            supabase.from('rodeos')
+                .select('id')
+                .or(`club.ilike.%${b}%,asociacion.ilike.%${b}%`),
+            supabase.from('administradores')
+                .select('id')
+                .ilike('nombre_completo', `%${b}%`),
+            supabase.from('asignaciones')
+                .select('rodeo_id, usuarios_pagados!inner(nombre_completo)')
+                .eq('tipo_persona', 'jurado')
+                .eq('estado', 'activo')
+                .ilike('usuarios_pagados.nombre_completo', `%${b}%`)
+        ]);
+
+        const rodeoIdsTexto    = (rodeosMatch   || []).map(r => r.id);
+        const juradoRodeoIds   = (juraAsigs     || []).map(a => a.rodeo_id);
+        rodeoIdsFiltro   = [...new Set([...rodeoIdsTexto, ...juradoRodeoIds])];
+        analistaIdsFiltro = (analistasMatch || []).map(a => a.id);
+    }
 
     let query = supabase
         .from('evaluaciones')
         .select(`
-            id, estado, created_at, analista_id, rodeo_id,
+            id, estado, created_at, analista_id, rodeo_id, nota_final,
             rodeo:rodeos(id, club, fecha, asociacion),
             analista:analista_id(id, nombre_completo)
         `, { count: 'exact' })
@@ -21,9 +47,90 @@ router.get('/', async (req, res) => {
     if (estado)      query = query.eq('estado', estado);
     if (analista_id) query = query.eq('analista_id', analista_id);
 
+    if (buscar) {
+        const b = buscar.trim();
+        const orParts = [];
+        if (rodeoIdsFiltro && rodeoIdsFiltro.length > 0)
+            orParts.push(`rodeo_id.in.(${rodeoIdsFiltro.join(',')})`);
+        if (analistaIdsFiltro && analistaIdsFiltro.length > 0)
+            orParts.push(`analista_id.in.(${analistaIdsFiltro.join(',')})`);
+        // estado exact match si el término coincide
+        const estadoMatch = ['borrador','en_proceso','pendiente_comision','pendiente_aprobacion','devuelto','aprobado','publicado','cerrado']
+            .find(e => e.includes(b.toLowerCase()));
+        if (estadoMatch) orParts.push(`estado.eq.${estadoMatch}`);
+        if (orParts.length > 0) query = query.or(orParts.join(','));
+        else return res.json({ evaluaciones: [], total: 0 });
+    }
+
     const { data, error, count } = await query;
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ evaluaciones: data || [], total: count || 0 });
+
+    const evaluaciones = data || [];
+    if (evaluaciones.length === 0) {
+        return res.json({ evaluaciones: [], total: count || 0 });
+    }
+
+    const evalIds  = evaluaciones.map(e => e.id);
+    const rodeoIds = [...new Set(evaluaciones.map(e => e.rodeo_id))];
+
+    const [{ data: casos }, { data: asigs }, { data: ciclosData }] = await Promise.all([
+        supabase
+            .from('evaluacion_casos')
+            .select('evaluacion_id, tipo_caso')
+            .in('evaluacion_id', evalIds),
+        supabase
+            .from('asignaciones')
+            .select('id, rodeo_id, estado_designacion, nombre_importado, usuarios_pagados(id, nombre_completo, categoria)')
+            .in('rodeo_id', rodeoIds)
+            .eq('tipo_persona', 'jurado')
+            .eq('estado', 'activo'),
+        supabase
+            .from('evaluacion_ciclos')
+            .select('id, evaluacion_id, numero_ciclo, estado, fecha_limite_respuesta, notificacion_enviada_at')
+            .in('evaluacion_id', evalIds)
+            .order('numero_ciclo')
+    ]);
+
+    const casosPorEval = {};
+    for (const c of (casos || [])) {
+        if (!casosPorEval[c.evaluacion_id]) casosPorEval[c.evaluacion_id] = { reglamentarias: 0, interpretativas: 0, informativos: 0 };
+        if (c.tipo_caso === 'reglamentaria')  casosPorEval[c.evaluacion_id].reglamentarias++;
+        if (c.tipo_caso === 'interpretativa') casosPorEval[c.evaluacion_id].interpretativas++;
+        if (c.tipo_caso === 'informativo')    casosPorEval[c.evaluacion_id].informativos++;
+    }
+    for (const rf of Object.values(casosPorEval)) {
+        rf.puntos_descontados = rf.reglamentarias * 2 + rf.interpretativas * 1;
+    }
+
+    const juradosPorRodeo = {};
+    for (const a of (asigs || [])) {
+        if (a.estado_designacion === 'rechazado') continue;
+        if (!juradosPorRodeo[a.rodeo_id]) juradosPorRodeo[a.rodeo_id] = [];
+        const nombre_completo = a.usuarios_pagados?.nombre_completo || a.nombre_importado;
+        if (!nombre_completo) continue;
+        juradosPorRodeo[a.rodeo_id].push({
+            id:             a.usuarios_pagados?.id    || null,
+            nombre_completo,
+            categoria:      a.usuarios_pagados?.categoria || null,
+            asignacion_id:  a.id
+        });
+    }
+
+    const ciclosPorEval = {};
+    for (const c of (ciclosData || [])) {
+        if (!ciclosPorEval[c.evaluacion_id]) ciclosPorEval[c.evaluacion_id] = {};
+        ciclosPorEval[c.evaluacion_id][c.numero_ciclo] = c;
+    }
+
+    const resultado = evaluaciones.map(ev => ({
+        ...ev,
+        jurados:        juradosPorRodeo[ev.rodeo_id] || [],
+        resumen_faltas: casosPorEval[ev.id]          || null,
+        ciclo1:         ciclosPorEval[ev.id]?.[1]    || null,
+        ciclo2:         ciclosPorEval[ev.id]?.[2]    || null
+    }));
+
+    res.json({ evaluaciones: resultado, total: count || 0 });
 });
 
 // POST / — crear evaluación (solo jefe_area o admin pleno)
@@ -72,6 +179,120 @@ router.post('/', soloRolEvaluacion('jefe_area'), async (req, res) => {
     });
 
     res.status(201).json(ev);
+});
+
+// GET /rodeos-disponibles — rodeos activos + jurados + indicador tiene_evaluacion
+router.get('/rodeos-disponibles', async (req, res) => {
+    const { fecha_desde, fecha_hasta, asociacion, buscar } = req.query;
+
+    let query = supabase
+        .from('rodeos')
+        .select('id, club, fecha, asociacion, tipo_rodeo_nombre')
+        .order('fecha', { ascending: false })
+        .limit(150);
+
+    if (fecha_desde) query = query.gte('fecha', fecha_desde);
+    if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
+    if (asociacion)  query = query.ilike('asociacion', `%${asociacion}%`);
+    if (buscar)      query = query.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
+
+    const { data: rodeos, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!rodeos || rodeos.length === 0) return res.json({ rodeos: [] });
+
+    const rodeoIds = rodeos.map(r => r.id);
+
+    const [{ data: evals }, { data: asigs }] = await Promise.all([
+        supabase.from('evaluaciones').select('rodeo_id').in('rodeo_id', rodeoIds),
+        supabase
+            .from('asignaciones')
+            .select('rodeo_id, estado_designacion, nombre_importado, usuarios_pagados(nombre_completo)')
+            .in('rodeo_id', rodeoIds)
+            .eq('tipo_persona', 'jurado')
+            .eq('estado', 'activo')
+    ]);
+
+    const evalSet = new Set((evals || []).map(e => e.rodeo_id));
+
+    const juradosPorRodeo = {};
+    for (const a of (asigs || [])) {
+        if (a.estado_designacion === 'rechazado') continue;
+        const nombre = a.usuarios_pagados?.nombre_completo || a.nombre_importado;
+        if (!nombre) continue;
+        if (!juradosPorRodeo[a.rodeo_id]) juradosPorRodeo[a.rodeo_id] = [];
+        juradosPorRodeo[a.rodeo_id].push(nombre);
+    }
+
+    res.json({
+        rodeos: rodeos.map(r => ({
+            ...r,
+            tiene_evaluacion: evalSet.has(r.id),
+            jurados:          juradosPorRodeo[r.id] || []
+        }))
+    });
+});
+
+// POST /crear-masivo — crear evaluaciones en lote (una por rodeo_id)
+router.post('/crear-masivo', soloRolEvaluacion('jefe_area'), async (req, res) => {
+    const { rodeo_ids, analista_id } = req.body;
+
+    if (!Array.isArray(rodeo_ids) || rodeo_ids.length === 0)
+        return res.status(400).json({ error: 'rodeo_ids requerido (array no vacío)' });
+    if (!analista_id)
+        return res.status(400).json({ error: 'analista_id requerido' });
+
+    const { data: config } = await supabase
+        .from('evaluacion_configuracion')
+        .select('*')
+        .eq('activo', true)
+        .single();
+
+    const cfg = config || { puntaje_base: 80, min_casos_ciclo1: 0, max_casos_ciclo1: 10, min_casos_ciclo2: 8, max_casos_ciclo2: 8 };
+
+    const { data: existentes } = await supabase
+        .from('evaluaciones')
+        .select('rodeo_id')
+        .in('rodeo_id', rodeo_ids);
+
+    const existeSet = new Set((existentes || []).map(e => e.rodeo_id));
+
+    let creadas = 0, omitidas = 0;
+    const errores = [];
+
+    for (const rodeo_id of rodeo_ids) {
+        if (existeSet.has(rodeo_id)) { omitidas++; continue; }
+
+        const { data: ev, error: evErr } = await supabase
+            .from('evaluaciones')
+            .insert({ rodeo_id, analista_id, puntaje_base: cfg.puntaje_base, creado_por: req.usuario.id })
+            .select()
+            .single();
+
+        if (evErr) {
+            if (evErr.code === '23505') { omitidas++; }
+            else errores.push({ rodeo_id, error: evErr.message });
+            continue;
+        }
+
+        await supabase.from('evaluacion_ciclos').insert([
+            { evaluacion_id: ev.id, numero_ciclo: 1, min_casos: cfg.min_casos_ciclo1, max_casos: cfg.max_casos_ciclo1 },
+            { evaluacion_id: ev.id, numero_ciclo: 2, min_casos: cfg.min_casos_ciclo2, max_casos: cfg.max_casos_ciclo2 }
+        ]);
+
+        await supabase.from('evaluacion_auditoria').insert({
+            evaluacion_id: ev.id,
+            accion:        'crear_evaluacion',
+            detalle:       { rodeo_id, analista_id, origen: 'masivo' },
+            actor_id:      req.usuario.id,
+            actor_tipo:    'administrador',
+            actor_nombre:  req.usuario.nombre,
+            ip_address:    req.ip
+        });
+
+        creadas++;
+    }
+
+    res.json({ creadas, omitidas, errores });
 });
 
 // GET /:id — detalle con rodeo, analista, jefe, ciclos
@@ -301,6 +522,51 @@ router.get('/:id/comision', async (req, res) => {
         ciclos:      ciclosConCasos,
         total_casos: totalCasos
     });
+});
+
+// DELETE /:id — eliminar evaluación (bloqueado si publicado/aprobado/cerrado)
+router.delete('/:id', soloRolEvaluacion('jefe_area'), async (req, res) => {
+    const { data: ev, error: evErr } = await supabase
+        .from('evaluaciones')
+        .select('id, estado')
+        .eq('id', req.params.id)
+        .single();
+
+    if (evErr || !ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+
+    if (['publicado', 'aprobado', 'cerrado'].includes(ev.estado)) {
+        return res.status(409).json({ error: `No se puede eliminar una evaluación en estado "${ev.estado}"` });
+    }
+
+    const { data: ciclos } = await supabase
+        .from('evaluacion_ciclos')
+        .select('id')
+        .eq('evaluacion_id', req.params.id);
+
+    const cicloIds = (ciclos || []).map(c => c.id);
+
+    if (cicloIds.length > 0) {
+        const { data: casos } = await supabase
+            .from('evaluacion_casos')
+            .select('id')
+            .in('ciclo_id', cicloIds);
+
+        const casoIds = (casos || []).map(c => c.id);
+
+        if (casoIds.length > 0) {
+            await supabase.from('evaluacion_respuestas_jurado').delete().in('caso_id', casoIds);
+            await supabase.from('evaluacion_casos').delete().in('id', casoIds);
+        }
+        await supabase.from('evaluacion_ciclos').delete().in('id', cicloIds);
+    }
+
+    await supabase.from('evaluacion_auditoria').delete().eq('evaluacion_id', req.params.id);
+    await supabase.from('evaluacion_comentarios_finales').delete().eq('evaluacion_id', req.params.id);
+
+    const { error } = await supabase.from('evaluaciones').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ mensaje: 'Evaluación eliminada' });
 });
 
 module.exports = router;

@@ -6,6 +6,9 @@
     <title>Jurados y Delegados — Administrador</title>
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-receso { background: #fde8d8; color: #a04000; border: 1px solid #f0a070; }
+    </style>
 </head>
 <body>
 <div class="layout">
@@ -28,6 +31,7 @@
             <div class="nav-seccion">Reportes</div>
             <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -64,9 +68,10 @@
                 <div class="form-grupo">
                     <label class="form-label">Estado</label>
                     <select id="f-activo" class="form-control" onchange="cargar()">
+                        <option value="">Todos</option>
                         <option value="true">Activos</option>
                         <option value="false">Inactivos</option>
-                        <option value="">Todos</option>
+                        <option value="receso">En receso</option>
                     </select>
                 </div>
                 <div class="form-grupo">
@@ -141,9 +146,11 @@ async function cargar(pagina = 1) {
     const wrap = document.getElementById('tabla-wrap');
     mostrarSpinner(wrap);
 
+    const filtroEstado = document.getElementById('f-activo').value;
     const params = toQueryString({
         tipo:      document.getElementById('f-tipo').value,
-        activo:    document.getElementById('f-activo').value,
+        // si es 'receso' usamos param estado; si es true/false usamos activo (legacy)
+        ...(filtroEstado === 'receso' ? { estado: 'receso' } : { activo: filtroEstado }),
         categoria: document.getElementById('f-categoria').value,
         buscar:    document.getElementById('f-buscar').value.trim(),
         page: paginaActual,
@@ -191,12 +198,12 @@ function renderTabla(usuarios, total) {
                 <td>${sanitizar(u.ciudad || '—')}</td>
                 <td>${u.telefono ? sanitizar(u.telefono) : '<span class="texto-gris">—</span>'}</td>
                 <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${sanitizar(u.email || '')}">${u.email ? sanitizar(u.email) : '<span class="texto-gris">—</span>'}</td>
-                <td>${u.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
+                <td>${_badgeEstado(u.estado_usuario, u.activo)}</td>
                 <td>
                     <div class="flex gap-8">
                         <button class="btn btn-pequeño btn-outline" onclick="abrirEditar('${u.id}')">Editar</button>
                         <button class="btn btn-pequeño btn-primario" onclick="location.href='/admin/hojavida.html?id=${u.id}&from=usuarios'" title="Hoja de Vida">HV</button>
-                        <button class="btn btn-pequeño btn-secundario" onclick="abrirAcciones('${u.id}', '${sanitizar(u.nombre_completo)}', '${u.tipo_persona}', '${u.activo}', '${u.categoria || ''}')">▾</button>
+                        <button class="btn btn-pequeño btn-secundario" onclick="abrirAcciones('${u.id}', '${sanitizar(u.nombre_completo)}', '${u.tipo_persona}', '${u.estado_usuario || (u.activo ? 'activo' : 'inactivo')}', '${u.categoria || ''}')">▾</button>
                     </div>
                 </td>
             </tr>
@@ -331,9 +338,34 @@ async function abrirEditar(id) {
     }
 }
 
-function abrirAcciones(id, nombre, tipo, activo, categoria) {
-    const esBool = activo === 'true';
+function _badgeEstado(estadoUsuario, activoFallback) {
+    const e = estadoUsuario || (activoFallback ? 'activo' : 'inactivo');
+    if (e === 'activo')   return '<span class="badge badge-activo">Activo</span>';
+    if (e === 'receso')   return '<span class="badge badge-receso">En receso</span>';
+    return '<span class="badge badge-inactivo">Inactivo</span>';
+}
+
+function abrirAcciones(id, nombre, tipo, estadoActual, categoria) {
     document.getElementById('modal-titulo').textContent = 'Acciones — ' + nombre;
+
+    let btnEstado;
+    if (estadoActual === 'activo') {
+        btnEstado = `<button class="btn btn-advertencia w-100" onclick="cambiarEstado('${id}','receso','${nombre}')">⏸ Poner en receso</button>
+                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${nombre}')">🚫 Desactivar usuario</button>`;
+    } else if (estadoActual === 'receso') {
+        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${nombre}')">✅ Activar usuario</button>
+                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${nombre}')">🚫 Desactivar usuario</button>`;
+    } else {
+        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${nombre}')">✅ Activar usuario</button>
+                     <button class="btn btn-advertencia w-100" onclick="cambiarEstado('${id}','receso','${nombre}')">⏸ Poner en receso</button>`;
+    }
+
+    const adminActual = getUsuario();
+    const esAdminPleno = adminActual && adminActual.rol_evaluacion === null;
+    const btnEliminar = esAdminPleno
+        ? `<button class="btn btn-peligro w-100" style="margin-top:6px; border-top:1px solid #eee; padding-top:12px;" onclick="eliminarUsuario('${id}','${nombre}')">🗑 Eliminar usuario</button>`
+        : '';
+
     document.getElementById('modal-contenido').innerHTML = `
         <div style="display:flex; flex-direction:column; gap:10px;">
             ${tipo === 'jurado' ? `
@@ -344,11 +376,36 @@ function abrirAcciones(id, nombre, tipo, activo, categoria) {
             <button class="btn btn-advertencia w-100" onclick="resetPassword('${id}', '${nombre}')">
                 🔑 Resetear contraseña
             </button>
-            <button class="btn ${esBool ? 'btn-peligro' : 'btn-success'} w-100" onclick="toggleActivo('${id}', ${!esBool}, '${nombre}')">
-                ${esBool ? '🚫 Desactivar usuario' : '✅ Activar usuario'}
-            </button>
+            ${btnEstado}
+            ${btnEliminar}
         </div>`;
     document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function eliminarUsuario(id, nombre) {
+    const ok = await confirmar(
+        `¿Eliminar permanentemente a ${nombre}?\n\nEsta acción NO se puede deshacer. El usuario será eliminado del sistema junto con todos sus datos si no tiene registros asociados.`
+    );
+    if (!ok) return;
+    try {
+        await api.delete('/admin/usuarios/' + id);
+        mostrarToast('Usuario eliminado correctamente', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) { mostrarError(err); }
+}
+
+async function cambiarEstado(id, nuevoEstado, nombre) {
+    const labels = { activo: 'activar', inactivo: 'desactivar', receso: 'poner en receso' };
+    const ok = await confirmar(`¿Desea ${labels[nuevoEstado] || nuevoEstado} a ${nombre}?`);
+    if (!ok) return;
+    try {
+        await api.patch('/admin/usuarios/' + id + '/estado', { estado: nuevoEstado });
+        const msgs = { activo: 'activado', inactivo: 'desactivado', receso: 'en receso' };
+        mostrarToast(`Usuario ${msgs[nuevoEstado] || nuevoEstado}`, 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) { mostrarError(err); }
 }
 
 async function cambiarCategoria(id, catActual) {
@@ -389,15 +446,8 @@ async function resetPassword(id, nombre) {
 }
 
 async function toggleActivo(id, nuevoEstado, nombre) {
-    const accion = nuevoEstado ? 'activar' : 'desactivar';
-    const ok = await confirmar(`¿Desea ${accion} a ${nombre}?`);
-    if (!ok) return;
-    try {
-        await api.patch('/admin/usuarios/' + id + '/activar', { activo: nuevoEstado });
-        mostrarToast(`Usuario ${nuevoEstado ? 'activado' : 'desactivado'}`, 'success');
-        cerrarModal();
-        cargar(paginaActual);
-    } catch (err) { mostrarError(err); }
+    // kept for backward compat; redirects to cambiarEstado
+    await cambiarEstado(id, nuevoEstado ? 'activo' : 'inactivo', nombre);
 }
 
 async function exportar() {
@@ -420,5 +470,6 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
 cargar();
 </script>
 <script src="/js/sidebar-eval.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
 </body>
 </html>

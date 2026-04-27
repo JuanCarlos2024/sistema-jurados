@@ -268,7 +268,7 @@ router.get('/:id', async (req, res) => {
         .select(`
             id, tipo_persona, nombre_importado, categoria_aplicada,
             valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
-            estado, estado_designacion, distancia_km, aceptado_en, observacion, created_at,
+            estado, estado_designacion, distancia_km, aceptado_en, observacion, comentario_admin, created_at,
             usuarios_pagados(id, codigo_interno, nombre_completo, tipo_persona, categoria)
         `)
         .eq('rodeo_id', req.params.id)

@@ -25,6 +25,7 @@
             <div class="nav-seccion">Reportes</div>
             <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item activo"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -87,6 +88,41 @@
                     <div class="spinner-wrap"><div class="spinner"></div></div>
                 </div>
             </div>
+
+            <!-- Evaluación técnica — abarca full width -->
+            <div class="card" style="grid-column:1/-1;">
+                <div class="card-titulo">📝 Evaluación técnica — Configuración completa</div>
+                <div class="alerta alerta-info" style="margin-bottom:16px;font-size:13px;">
+                    Los cambios en puntaje base, ciclos y descuentos se aplican solo a nuevas evaluaciones. Las escalas de nota y calificación se usan en la próxima publicación.
+                </div>
+                <div id="form-eval-config">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <!-- Tabla puntaje → nota -->
+                <div class="divider" style="margin:20px 0;"></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <strong style="font-size:14px;">📊 Tabla puntaje → nota</strong>
+                    <button class="btn btn-outline btn-pequeño" onclick="toggleTabla('escala-nota')">Ver / Ocultar tabla</button>
+                </div>
+                <div id="wrap-escala-nota" style="display:none;">
+                    <div class="alerta alerta-advertencia" style="font-size:12px;margin-bottom:12px;">
+                        ⚠️ Cambiar esta tabla afecta el cálculo de notas en <strong>futuras publicaciones</strong>. La tabla debe cubrir todos los puntajes posibles (0 al puntaje base).
+                    </div>
+                    <div id="tabla-escala-nota"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+                </div>
+                <!-- Tabla nota → calificación -->
+                <div class="divider" style="margin:20px 0;"></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <strong style="font-size:14px;">🏅 Tabla nota → calificación cualitativa</strong>
+                    <button class="btn btn-outline btn-pequeño" onclick="toggleTabla('escala-cal')">Ver / Ocultar tabla</button>
+                </div>
+                <div id="wrap-escala-cal" style="display:none;">
+                    <div class="alerta alerta-advertencia" style="font-size:12px;margin-bottom:12px;">
+                        ⚠️ Los rangos de la misma categoría no deben solaparse. nota_min debe ser menor que nota_max.
+                    </div>
+                    <div id="tabla-escala-cal"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -109,7 +145,266 @@ protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
 async function init() {
-    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins()]);
+    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins(), cargarEvalConfig()]);
+}
+
+function toggleTabla(id) {
+    const wrap = document.getElementById('wrap-' + id);
+    if (!wrap) return;
+    const visible = wrap.style.display !== 'none';
+    wrap.style.display = visible ? 'none' : 'block';
+    if (!visible) {
+        if (id === 'escala-nota') cargarEscalaNota();
+        if (id === 'escala-cal')  cargarEscalaCal();
+    }
+}
+
+async function cargarEvalConfig() {
+    const div = document.getElementById('form-eval-config');
+    try {
+        const cfg = await api.get('/admin/configuracion/evaluacion');
+        const v = (campo, defecto) => cfg?.[campo] ?? defecto;
+        div.innerHTML = `
+            <form onsubmit="guardarEvalConfig(event)">
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px;">
+                    <div class="form-grupo">
+                        <label class="form-label">Puntaje base</label>
+                        <input type="number" name="puntaje_base" class="form-control" value="${v('puntaje_base',80)}" min="0" max="200" required>
+                        <div class="form-hint">Puntaje inicial antes de descontos.</div>
+                    </div>
+                    <div>
+                        <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--oscuro);">Ciclo 1</div>
+                        <div class="form-grupo">
+                            <label class="form-label">Mín. casos</label>
+                            <input type="number" name="min_casos_ciclo1" class="form-control" value="${v('min_casos_ciclo1',0)}" min="0">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Máx. casos</label>
+                            <input type="number" name="max_casos_ciclo1" class="form-control" value="${v('max_casos_ciclo1',10)}" min="0">
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--oscuro);">Ciclo 2</div>
+                        <div class="form-grupo">
+                            <label class="form-label">Mín. casos</label>
+                            <input type="number" name="min_casos_ciclo2" class="form-control" value="${v('min_casos_ciclo2',8)}" min="0">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Máx. casos</label>
+                            <input type="number" name="max_casos_ciclo2" class="form-control" value="${v('max_casos_ciclo2',8)}" min="0">
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--oscuro);">Descuentos (pts)</div>
+                        <div class="form-grupo">
+                            <label class="form-label">Interpretativa</label>
+                            <input type="number" name="descuento_interpretativa" class="form-control" value="${v('descuento_interpretativa',1)}" min="0" required>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Reglamentaria</label>
+                            <input type="number" name="descuento_reglamentaria" class="form-control" value="${v('descuento_reglamentaria',2)}" min="0" required>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Informativo</label>
+                            <input type="number" name="descuento_informativo" class="form-control" value="${v('descuento_informativo',0)}" min="0" required>
+                        </div>
+                    </div>
+                </div>
+                <div style="border-top:1px solid #e8e8e8;margin-top:4px;padding-top:14px;">
+                    <div style="font-weight:600;font-size:13px;margin-bottom:10px;color:var(--oscuro);">Notificaciones y plazos de respuesta</div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+                        <div class="form-grupo" style="grid-column:1/-1;">
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                                <input type="checkbox" name="usar_plazo_respuesta" id="chk-usar-plazo" value="true" ${v('usar_plazo_respuesta',false) ? 'checked' : ''} onchange="togglePlazoCampos(this.checked)">
+                                Habilitar plazo de respuesta para jurados
+                            </label>
+                        </div>
+                        <div id="grupo-plazo-ciclo1" style="${v('usar_plazo_respuesta',false) ? '' : 'opacity:0.4;pointer-events:none;'}">
+                            <div style="font-weight:600;font-size:12px;margin-bottom:6px;color:var(--oscuro);">Ciclo 1 — vence el</div>
+                            <div class="form-grupo">
+                                <label class="form-label">Día</label>
+                                <select name="ciclo1_dia_limite" class="form-control">
+                                    ${['lunes','martes','miércoles','jueves','viernes','sábado','domingo'].map(d => `<option value="${d.normalize('NFD').replace(/[\u0300-\u036f]/g,'')}" ${v('ciclo1_dia_limite','lunes')===d.normalize('NFD').replace(/[\u0300-\u036f]/g,'')?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div class="form-grupo">
+                                <label class="form-label">Hora límite</label>
+                                <input type="time" name="ciclo1_hora_limite" class="form-control" value="${v('ciclo1_hora_limite','23:59')}">
+                            </div>
+                        </div>
+                        <div id="grupo-plazo-ciclo2" style="${v('usar_plazo_respuesta',false) ? '' : 'opacity:0.4;pointer-events:none;'}">
+                            <div style="font-weight:600;font-size:12px;margin-bottom:6px;color:var(--oscuro);">Ciclo 2 — vence el</div>
+                            <div class="form-grupo">
+                                <label class="form-label">Día</label>
+                                <select name="ciclo2_dia_limite" class="form-control">
+                                    ${['lunes','martes','miércoles','jueves','viernes','sábado','domingo'].map(d => `<option value="${d.normalize('NFD').replace(/[\u0300-\u036f]/g,'')}" ${v('ciclo2_dia_limite','miercoles')===d.normalize('NFD').replace(/[\u0300-\u036f]/g,'')?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div class="form-grupo">
+                                <label class="form-label">Hora límite</label>
+                                <input type="time" name="ciclo2_hora_limite" class="form-control" value="${v('ciclo2_hora_limite','23:59')}">
+                            </div>
+                        </div>
+                        <div class="form-grupo" id="grupo-silencio" style="grid-column:1/-1;${v('usar_plazo_respuesta',false) ? '' : 'opacity:0.4;pointer-events:none;'}">
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                                <input type="checkbox" name="usar_aceptacion_silencio" value="true" ${v('usar_aceptacion_silencio',false) ? 'checked' : ''}>
+                                Si el jurado no responde antes del plazo, se considera aceptado (silencio positivo)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primario btn-pequeño" style="margin-top:16px;">Guardar configuración</button>
+            </form>`;
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function togglePlazoCampos(activo) {
+    ['grupo-plazo-ciclo1','grupo-plazo-ciclo2','grupo-silencio'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.style.opacity = activo ? '1' : '0.4'; el.style.pointerEvents = activo ? '' : 'none'; }
+    });
+}
+
+async function guardarEvalConfig(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const fd    = new FormData(e.target);
+    const datos = Object.fromEntries(fd);
+    datos.usar_plazo_respuesta    = fd.has('usar_plazo_respuesta');
+    datos.usar_aceptacion_silencio = fd.has('usar_aceptacion_silencio');
+    try {
+        await api.patch('/admin/configuracion/evaluacion', datos);
+        mostrarToast('Configuración guardada', 'success');
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+// ── Tabla puntaje → nota ──────────────────────────────────────────────────────
+let _escalaNota = [];
+
+async function cargarEscalaNota() {
+    const div = document.getElementById('tabla-escala-nota');
+    try {
+        _escalaNota = await api.get('/admin/configuracion/evaluacion/escala-nota');
+        renderEscalaNota();
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function renderEscalaNota() {
+    const div = document.getElementById('tabla-escala-nota');
+    const filas = _escalaNota.map((r, i) => `
+        <tr>
+            <td style="width:110px; padding:4px 8px;">
+                <input type="number" class="form-control" style="width:100%;min-width:80px;text-align:center;"
+                    value="${r.puntaje}" min="0"
+                    onchange="_escalaNota[${i}].puntaje=parseInt(this.value)">
+            </td>
+            <td style="width:110px; padding:4px 8px;">
+                <input type="number" class="form-control" style="width:100%;min-width:80px;text-align:center;"
+                    value="${r.nota}" min="1" max="7" step="0.1"
+                    onchange="_escalaNota[${i}].nota=parseFloat(this.value)">
+            </td>
+            <td style="width:48px; padding:4px 8px; text-align:center;">
+                <button class="btn btn-pequeño btn-peligro" style="padding:2px 8px;"
+                    onclick="_escalaNota.splice(${i},1);renderEscalaNota()">×</button>
+            </td>
+        </tr>`).join('');
+    div.innerHTML = `
+        <div style="overflow:auto; max-height:420px; border:1px solid var(--gris-borde); border-radius:6px;">
+            <table style="table-layout:fixed; width:280px; border-collapse:collapse;">
+                <colgroup>
+                    <col style="width:110px;">
+                    <col style="width:110px;">
+                    <col style="width:60px;">
+                </colgroup>
+                <thead style="position:sticky;top:0;background:#f8f9fa;z-index:1;">
+                    <tr>
+                        <th style="padding:8px;text-align:center;font-size:12px;border-bottom:2px solid var(--gris-borde);">Puntaje</th>
+                        <th style="padding:8px;text-align:center;font-size:12px;border-bottom:2px solid var(--gris-borde);">Nota</th>
+                        <th style="padding:8px;text-align:center;font-size:12px;border-bottom:2px solid var(--gris-borde);"></th>
+                    </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+            </table>
+        </div>
+        <div class="flex gap-8" style="margin-top:10px;">
+            <button class="btn btn-outline btn-pequeño" onclick="_escalaNota.push({puntaje:_escalaNota.length,nota:1.0});renderEscalaNota()">+ Agregar fila</button>
+            <button class="btn btn-primario btn-pequeño" onclick="guardarEscalaNota()">Guardar tabla</button>
+        </div>`;
+}
+
+async function guardarEscalaNota() {
+    if (_escalaNota.length === 0) return mostrarToast('La tabla no puede estar vacía', 'error');
+    const puntajes = _escalaNota.map(r => r.puntaje);
+    if (new Set(puntajes).size !== puntajes.length) return mostrarToast('Existen puntajes duplicados', 'error');
+    for (const r of _escalaNota) {
+        if (r.nota < 1.0 || r.nota > 7.0) return mostrarToast(`Nota ${r.nota} fuera del rango 1.0–7.0`, 'error');
+    }
+    try {
+        await api.put('/admin/configuracion/evaluacion/escala-nota', { rows: _escalaNota });
+        mostrarToast('Tabla puntaje→nota guardada', 'success');
+    } catch(err) { mostrarError(err); }
+}
+
+// ── Tabla nota → calificación ─────────────────────────────────────────────────
+// Trabajamos con una lista plana de filas {categoria, nota_min, nota_max, calificacion}
+let _escalaCal = [];
+
+async function cargarEscalaCal() {
+    const div = document.getElementById('tabla-escala-cal');
+    try {
+        _escalaCal = await api.get('/admin/configuracion/evaluacion/escala-calificacion');
+        renderEscalaCal();
+    } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+const CAL_OPTS = ['SOBRESALIENTE','BIEN','BAJO LO ESPERADO','DEFICIENTE'];
+
+function renderEscalaCal() {
+    const div = document.getElementById('tabla-escala-cal');
+    const opts = CAL_OPTS.map(c => `<option value="${c}">${c}</option>`).join('');
+    const filas = _escalaCal.map((r, i) => `
+        <tr>
+            <td>
+                <select class="form-control form-control" onchange="_escalaCal[${i}].categoria=this.value">
+                    ${['A','B','C'].map(c=>`<option value="${c}" ${r.categoria===c?'selected':''}>${c}</option>`).join('')}
+                </select>
+            </td>
+            <td><input type="number" class="form-control form-control" value="${r.nota_min}" min="1" max="7" step="0.01"
+                onchange="_escalaCal[${i}].nota_min=parseFloat(this.value)"></td>
+            <td><input type="number" class="form-control form-control" value="${r.nota_max}" min="1" max="7" step="0.01"
+                onchange="_escalaCal[${i}].nota_max=parseFloat(this.value)"></td>
+            <td>
+                <select class="form-control form-control" onchange="_escalaCal[${i}].calificacion=this.value">
+                    ${CAL_OPTS.map(c=>`<option value="${c}" ${r.calificacion===c?'selected':''}>${c}</option>`).join('')}
+                </select>
+            </td>
+            <td><button class="btn btn-pequeño btn-peligro" onclick="_escalaCal.splice(${i},1);renderEscalaCal()">×</button></td>
+        </tr>`).join('');
+    div.innerHTML = `
+        <div style="max-height:420px;overflow-y:auto;border:1px solid var(--gris-borde);border-radius:6px;">
+            <table>
+                <thead><tr><th>Categoría</th><th>Nota mín.</th><th>Nota máx.</th><th>Calificación</th><th></th></tr></thead>
+                <tbody>${filas}</tbody>
+            </table>
+        </div>
+        <div class="flex gap-8" style="margin-top:10px;">
+            <button class="btn btn-outline btn-pequeño" onclick="_escalaCal.push({categoria:'A',nota_min:1.0,nota_max:1.0,calificacion:'DEFICIENTE'});renderEscalaCal()">+ Agregar fila</button>
+            <button class="btn btn-primario btn-pequeño" onclick="guardarEscalaCal()">Guardar tabla</button>
+        </div>`;
+}
+
+async function guardarEscalaCal() {
+    if (_escalaCal.length === 0) return mostrarToast('La tabla no puede estar vacía', 'error');
+    for (const r of _escalaCal) {
+        if (parseFloat(r.nota_min) >= parseFloat(r.nota_max)) {
+            return mostrarToast(`Rango inválido: nota_min (${r.nota_min}) debe ser menor que nota_max (${r.nota_max})`, 'error');
+        }
+    }
+    try {
+        await api.put('/admin/configuracion/evaluacion/escala-calificacion', { rows: _escalaCal });
+        mostrarToast('Tabla calificación guardada', 'success');
+    } catch(err) { mostrarError(err); }
 }
 
 async function cargarTarifas() {
@@ -281,24 +576,91 @@ async function eliminarBono(id) {
     } catch(err) { mostrarError(err); }
 }
 
+function labelRolEval(rol) {
+    const M = { jefe_area: 'Jefe Área Deportiva', analista: 'Analista', comision_tecnica: 'Comisión Técnica' };
+    return M[rol] || 'Admin pleno';
+}
+
 async function cargarAdmins() {
     const div = document.getElementById('tabla-admins');
     try {
         const data = await api.get('/admin/configuracion/administradores');
         div.innerHTML = `<table>
-            <thead><tr><th>Nombre</th><th>Email</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Email</th><th>Rol evaluación</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
             ${(data||[]).map(a => `<tr>
                 <td>${sanitizar(a.nombre_completo)}</td>
-                <td style="font-size:13px;">${sanitizar(a.email)}</td>
+                <td style="font-size:12px;">${sanitizar(a.email)}</td>
+                <td style="font-size:12px;">${labelRolEval(a.rol_evaluacion)}</td>
                 <td>${a.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
                 <td>
-                    <button class="btn btn-pequeño btn-advertencia" onclick="resetAdminPass('${a.id}', '${sanitizar(a.nombre_completo)}')">Reset</button>
+                    <div class="flex gap-8">
+                        <button class="btn btn-pequeño btn-advertencia" onclick="resetAdminPass('${a.id}', '${sanitizar(a.nombre_completo).replace(/'/g,"\\'")}')">Reset</button>
+                        <button class="btn btn-pequeño btn-outline" onclick="editarRolAdmin('${a.id}', '${sanitizar(a.nombre_completo).replace(/'/g,"\\'")}', '${a.rol_evaluacion||''}')">Editar rol</button>
+                        ${a.activo
+                            ? `<button class="btn btn-pequeño btn-peligro" onclick="desactivarAdmin('${a.id}', '${sanitizar(a.nombre_completo).replace(/'/g,"\\'")}')">Desactivar</button>`
+                            : `<button class="btn btn-pequeño btn-outline" onclick="activarAdmin('${a.id}', '${sanitizar(a.nombre_completo).replace(/'/g,"\\'")}')">Activar</button>`
+                        }
+                    </div>
                 </td>
             </tr>`).join('')}
             </tbody>
         </table>`;
     } catch(err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function editarRolAdmin(id, nombre, rolActual) {
+    document.getElementById('modal-titulo').textContent = 'Editar rol — ' + nombre;
+    document.getElementById('modal-body').innerHTML = `
+        <form onsubmit="guardarRolAdmin(event, '${id}')">
+            <div class="form-grupo">
+                <label class="form-label">Rol de evaluación</label>
+                <select name="rol_evaluacion" class="form-control">
+                    <option value="" ${!rolActual?'selected':''}>Admin pleno (sin rol)</option>
+                    <option value="jefe_area" ${rolActual==='jefe_area'?'selected':''}>Jefe Área Deportiva</option>
+                    <option value="analista" ${rolActual==='analista'?'selected':''}>Analista</option>
+                    <option value="comision_tecnica" ${rolActual==='comision_tecnica'?'selected':''}>Comisión Técnica</option>
+                </select>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Guardar</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function guardarRolAdmin(e, id) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const datos = Object.fromEntries(new FormData(e.target));
+    try {
+        await api.patch('/admin/configuracion/administradores/' + id, { rol_evaluacion: datos.rol_evaluacion || null });
+        mostrarToast('Rol actualizado', 'success');
+        cerrarModal();
+        cargarAdmins();
+    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function desactivarAdmin(id, nombre) {
+    const ok = await confirmar(`¿Desactivar a ${nombre}? No podrá iniciar sesión.`);
+    if (!ok) return;
+    try {
+        await api.patch('/admin/configuracion/administradores/' + id, { activo: false });
+        mostrarToast('Administrador desactivado', 'success');
+        cargarAdmins();
+    } catch(err) { mostrarError(err); }
+}
+
+async function activarAdmin(id, nombre) {
+    const ok = await confirmar(`¿Reactivar a ${nombre}?`);
+    if (!ok) return;
+    try {
+        await api.patch('/admin/configuracion/administradores/' + id, { activo: true });
+        mostrarToast('Administrador reactivado', 'success');
+        cargarAdmins();
+    } catch(err) { mostrarError(err); }
 }
 
 function abrirNuevoAdmin() {
@@ -318,6 +680,15 @@ function abrirNuevoAdmin() {
                 <input type="password" name="password" class="form-control" required minlength="8">
                 <div class="form-hint">Mínimo 8 caracteres</div>
             </div>
+            <div class="form-grupo">
+                <label class="form-label">Rol de evaluación</label>
+                <select name="rol_evaluacion" class="form-control">
+                    <option value="">Admin pleno (sin rol)</option>
+                    <option value="jefe_area">Jefe Área Deportiva</option>
+                    <option value="analista">Analista</option>
+                    <option value="comision_tecnica">Comisión Técnica</option>
+                </select>
+            </div>
             <div class="form-acciones">
                 <button type="submit" class="btn btn-primario">Crear administrador</button>
                 <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
@@ -331,6 +702,7 @@ async function crearAdmin(e) {
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
     const datos = Object.fromEntries(new FormData(e.target));
+    if (!datos.rol_evaluacion) datos.rol_evaluacion = null;
     try {
         await api.post('/admin/configuracion/administradores', datos);
         mostrarToast('Administrador creado', 'success');
@@ -371,5 +743,6 @@ document.getElementById('modal-overlay').addEventListener('click', function(e) {
 init();
 </script>
 <script src="/js/sidebar-eval.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
 </body>
 </html>

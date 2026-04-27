@@ -91,6 +91,7 @@
             <div class="nav-seccion">Reportes</div>
             <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -165,6 +166,10 @@
                         <label>Asociación</label>
                         <input type="text" id="f-jur-asociacion" class="form-control" placeholder="Nombre parcial..." style="width:200px;">
                     </div>
+                    <div class="form-group">
+                        <label>Nombre jurado</label>
+                        <input type="text" id="f-jur-nombre" class="form-control" placeholder="Buscar jurado..." style="width:200px;">
+                    </div>
                     <button class="btn btn-primario btn-pequeño" onclick="buscarJurados()">Filtrar</button>
                     <button class="btn btn-secundario btn-pequeño" onclick="limpiarJurados()">Limpiar</button>
                     <button class="btn btn-secundario btn-pequeño" id="btn-exportar-jur" onclick="exportarJurados()" style="margin-left:8px;">Exportar CSV</button>
@@ -181,6 +186,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-eval.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
 <script>
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
@@ -287,10 +293,12 @@ function renderTablaEvaluaciones(data, contenedor) {
 async function buscarJurados() {
     const temporada = document.getElementById('f-jur-temporada').value.trim();
     const asociacion = document.getElementById('f-jur-asociacion').value.trim();
+    const jurado = document.getElementById('f-jur-nombre').value.trim();
 
     const params = new URLSearchParams();
     if (temporada) params.set('temporada', temporada);
     if (asociacion) params.set('asociacion', asociacion);
+    if (jurado) params.set('jurado', jurado);
 
     const contenedor = document.getElementById('resultado-jurados');
     contenedor.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
@@ -307,6 +315,7 @@ async function buscarJurados() {
 function limpiarJurados() {
     document.getElementById('f-jur-temporada').value = '';
     document.getElementById('f-jur-asociacion').value = '';
+    document.getElementById('f-jur-nombre').value = '';
     document.getElementById('resultado-jurados').innerHTML =
         '<div class="sin-resultados">Usa los filtros y presiona Filtrar.</div>';
 }

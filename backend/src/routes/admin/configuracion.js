@@ -222,6 +222,197 @@ router.delete('/bonos/:id', async (req, res) => {
     res.json({ mensaje: 'Bono eliminado' });
 });
 
+// GET /api/admin/configuracion/evaluacion
+router.get('/evaluacion', async (req, res) => {
+    const { data, error } = await supabase
+        .from('evaluacion_configuracion')
+        .select('*')
+        .eq('activo', true)
+        .single();
+
+    if (error && error.code !== 'PGRST116') return res.status(500).json({ error: error.message });
+    res.json(data || null);
+});
+
+const DIAS_VALIDOS = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
+
+// PATCH /api/admin/configuracion/evaluacion
+router.patch('/evaluacion', async (req, res) => {
+    const {
+        puntaje_base, min_casos_ciclo1, max_casos_ciclo1, min_casos_ciclo2, max_casos_ciclo2,
+        descuento_interpretativa, descuento_reglamentaria, descuento_informativo,
+        usar_plazo_respuesta, ciclo1_dia_limite, ciclo1_hora_limite,
+        ciclo2_dia_limite, ciclo2_hora_limite, usar_aceptacion_silencio
+    } = req.body;
+
+    const cambios = { updated_at: new Date().toISOString() };
+    if (puntaje_base                !== undefined) cambios.puntaje_base                = parseInt(puntaje_base);
+    if (min_casos_ciclo1            !== undefined) cambios.min_casos_ciclo1            = parseInt(min_casos_ciclo1);
+    if (max_casos_ciclo1            !== undefined) cambios.max_casos_ciclo1            = parseInt(max_casos_ciclo1);
+    if (min_casos_ciclo2            !== undefined) cambios.min_casos_ciclo2            = parseInt(min_casos_ciclo2);
+    if (max_casos_ciclo2            !== undefined) cambios.max_casos_ciclo2            = parseInt(max_casos_ciclo2);
+    if (descuento_interpretativa    !== undefined) cambios.descuento_interpretativa    = parseInt(descuento_interpretativa);
+    if (descuento_reglamentaria     !== undefined) cambios.descuento_reglamentaria     = parseInt(descuento_reglamentaria);
+    if (descuento_informativo       !== undefined) cambios.descuento_informativo       = parseInt(descuento_informativo);
+    if (usar_plazo_respuesta        !== undefined) cambios.usar_plazo_respuesta        = usar_plazo_respuesta === true || usar_plazo_respuesta === 'true';
+    if (usar_aceptacion_silencio    !== undefined) cambios.usar_aceptacion_silencio    = usar_aceptacion_silencio === true || usar_aceptacion_silencio === 'true';
+    if (ciclo1_dia_limite           !== undefined) {
+        if (!DIAS_VALIDOS.includes(ciclo1_dia_limite)) return res.status(400).json({ error: 'ciclo1_dia_limite inválido' });
+        cambios.ciclo1_dia_limite = ciclo1_dia_limite;
+    }
+    if (ciclo2_dia_limite           !== undefined) {
+        if (!DIAS_VALIDOS.includes(ciclo2_dia_limite)) return res.status(400).json({ error: 'ciclo2_dia_limite inválido' });
+        cambios.ciclo2_dia_limite = ciclo2_dia_limite;
+    }
+    if (ciclo1_hora_limite          !== undefined) cambios.ciclo1_hora_limite = ciclo1_hora_limite;
+    if (ciclo2_hora_limite          !== undefined) cambios.ciclo2_hora_limite = ciclo2_hora_limite;
+
+    if (Object.keys(cambios).length === 1) return res.status(400).json({ error: 'Sin campos a actualizar' });
+
+    // Upsert: si no existe registro activo, lo crea
+    const { data: actual } = await supabase
+        .from('evaluacion_configuracion')
+        .select('id')
+        .eq('activo', true)
+        .single();
+
+    let data, error;
+    if (actual) {
+        ({ data, error } = await supabase
+            .from('evaluacion_configuracion')
+            .update(cambios)
+            .eq('id', actual.id)
+            .select()
+            .single());
+    } else {
+        ({ data, error } = await supabase
+            .from('evaluacion_configuracion')
+            .insert({ ...cambios, activo: true })
+            .select()
+            .single());
+    }
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'evaluacion_configuracion',
+        registro_id: data.id,
+        accion: 'editar',
+        datos_nuevos: cambios,
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: 'Configuración de evaluación técnica actualizada',
+        ip_address: req.ip
+    });
+
+    res.json(data);
+});
+
+// GET /api/admin/configuracion/evaluacion/escala-nota
+router.get('/evaluacion/escala-nota', async (req, res) => {
+    const { data, error } = await supabase
+        .from('evaluacion_escala_puntaje_nota')
+        .select('puntaje, nota, activo')
+        .order('puntaje');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+});
+
+// PUT /api/admin/configuracion/evaluacion/escala-nota  (reemplaza tabla completa)
+router.put('/evaluacion/escala-nota', async (req, res) => {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(400).json({ error: 'rows debe ser un arreglo no vacío' });
+    }
+    for (const r of rows) {
+        const p = parseInt(r.puntaje);
+        const n = parseFloat(r.nota);
+        if (isNaN(p) || p < 0)          return res.status(400).json({ error: `Puntaje inválido: ${r.puntaje}` });
+        if (isNaN(n) || n < 1.0 || n > 7.0) return res.status(400).json({ error: `Nota inválida: ${r.nota} (puntaje ${r.puntaje})` });
+    }
+    const puntajes = rows.map(r => parseInt(r.puntaje));
+    if (new Set(puntajes).size !== puntajes.length) {
+        return res.status(400).json({ error: 'Existen puntajes duplicados' });
+    }
+
+    await supabase.from('evaluacion_escala_puntaje_nota').delete().gte('id', 0);
+
+    const inserts = rows.map(r => ({
+        puntaje: parseInt(r.puntaje),
+        nota:    parseFloat(r.nota),
+        activo:  r.activo !== false
+    }));
+    const { error } = await supabase.from('evaluacion_escala_puntaje_nota').insert(inserts);
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'evaluacion_escala_puntaje_nota',
+        registro_id: 'all',
+        accion: 'reemplazar_tabla',
+        datos_nuevos: { total_filas: rows.length },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Tabla puntaje→nota reemplazada (${rows.length} filas)`,
+        ip_address: req.ip
+    });
+
+    res.json({ mensaje: `Tabla actualizada con ${rows.length} filas` });
+});
+
+// GET /api/admin/configuracion/evaluacion/escala-calificacion
+router.get('/evaluacion/escala-calificacion', async (req, res) => {
+    const { data, error } = await supabase
+        .from('evaluacion_escala_calificacion')
+        .select('id, categoria, nota_min, nota_max, calificacion, activo')
+        .order('nota_min', { ascending: false })
+        .order('categoria');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+});
+
+// PUT /api/admin/configuracion/evaluacion/escala-calificacion  (reemplaza tabla completa)
+router.put('/evaluacion/escala-calificacion', async (req, res) => {
+    const { rows } = req.body;
+    const CATS  = ['A', 'B', 'C'];
+    const CALS  = ['SOBRESALIENTE', 'BIEN', 'BAJO LO ESPERADO', 'DEFICIENTE'];
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return res.status(400).json({ error: 'rows debe ser un arreglo no vacío' });
+    }
+    for (const r of rows) {
+        if (!CATS.includes(r.categoria))  return res.status(400).json({ error: `categoria inválida: ${r.categoria}` });
+        if (!CALS.includes(r.calificacion)) return res.status(400).json({ error: `calificacion inválida: ${r.calificacion}` });
+        const mn = parseFloat(r.nota_min), mx = parseFloat(r.nota_max);
+        if (isNaN(mn) || mn < 1.0 || mn > 7.0) return res.status(400).json({ error: `nota_min inválida: ${r.nota_min}` });
+        if (isNaN(mx) || mx < 1.0 || mx > 7.0) return res.status(400).json({ error: `nota_max inválida: ${r.nota_max}` });
+        if (mn >= mx) return res.status(400).json({ error: `nota_min debe ser menor que nota_max (${r.nota_min} ≥ ${r.nota_max})` });
+    }
+
+    await supabase.from('evaluacion_escala_calificacion').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+    const inserts = rows.map(r => ({
+        categoria:    r.categoria,
+        nota_min:     parseFloat(r.nota_min),
+        nota_max:     parseFloat(r.nota_max),
+        calificacion: r.calificacion,
+        activo:       r.activo !== false
+    }));
+    const { error } = await supabase.from('evaluacion_escala_calificacion').insert(inserts);
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'evaluacion_escala_calificacion',
+        registro_id: 'all',
+        accion: 'reemplazar_tabla',
+        datos_nuevos: { total_filas: rows.length },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Tabla calificación reemplazada (${rows.length} filas)`,
+        ip_address: req.ip
+    });
+
+    res.json({ mensaje: `Tabla actualizada con ${rows.length} filas` });
+});
+
 // GET /api/admin/configuracion/administradores
 router.get('/administradores', async (req, res) => {
     const { data, error } = await supabase
@@ -235,13 +426,18 @@ router.get('/administradores', async (req, res) => {
 
 // POST /api/admin/configuracion/administradores
 router.post('/administradores', async (req, res) => {
-    const { nombre_completo, email, password } = req.body;
+    const { nombre_completo, email, password, rol_evaluacion } = req.body;
 
     if (!nombre_completo || !email || !password) {
         return res.status(400).json({ error: 'nombre_completo, email y password son requeridos' });
     }
     if (password.length < 8) {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+    const ROLES_EVAL = ['jefe_area', 'analista', 'comision_tecnica'];
+    const rolEval = rol_evaluacion || null;
+    if (rolEval && !ROLES_EVAL.includes(rolEval)) {
+        return res.status(400).json({ error: 'rol_evaluacion debe ser jefe_area, analista o comision_tecnica' });
     }
 
     const bcrypt = require('bcryptjs');
@@ -252,9 +448,10 @@ router.post('/administradores', async (req, res) => {
         .insert({
             nombre_completo: nombre_completo.trim(),
             email: email.trim().toLowerCase(),
-            password_hash
+            password_hash,
+            rol_evaluacion: rolEval
         })
-        .select('id, nombre_completo, email, activo, created_at')
+        .select('id, nombre_completo, email, activo, created_at, rol_evaluacion')
         .single();
 
     if (error) {
@@ -278,21 +475,42 @@ router.post('/administradores', async (req, res) => {
 
 // PATCH /api/admin/configuracion/administradores/:id
 router.patch('/administradores/:id', async (req, res) => {
-    const { nombre_completo, email, activo } = req.body;
+    const { nombre_completo, email, activo, rol_evaluacion } = req.body;
     const cambios = { updated_at: new Date().toISOString() };
 
     if (nombre_completo) cambios.nombre_completo = nombre_completo.trim();
     if (email) cambios.email = email.trim().toLowerCase();
     if (activo !== undefined) cambios.activo = !!activo;
 
+    if ('rol_evaluacion' in req.body) {
+        const ROLES_EVAL = ['jefe_area', 'analista', 'comision_tecnica'];
+        const rolEval = rol_evaluacion || null;
+        if (rolEval && !ROLES_EVAL.includes(rolEval)) {
+            return res.status(400).json({ error: 'rol_evaluacion debe ser jefe_area, analista o comision_tecnica' });
+        }
+        cambios.rol_evaluacion = rolEval;
+    }
+
     const { data, error } = await supabase
         .from('administradores')
         .update(cambios)
         .eq('id', req.params.id)
-        .select('id, nombre_completo, email, activo')
+        .select('id, nombre_completo, email, activo, rol_evaluacion')
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'administradores',
+        registro_id: req.params.id,
+        accion: 'editar',
+        datos_nuevos: cambios,
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Administrador actualizado`,
+        ip_address: req.ip
+    });
+
     res.json(data);
 });
 

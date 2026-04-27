@@ -36,22 +36,48 @@ router.get('/:id/respuestas', async (req, res) => {
     res.json({ respuestas: data || [] });
 });
 
+async function getDescuentos() {
+    const { data } = await supabase
+        .from('evaluacion_configuracion')
+        .select('descuento_interpretativa, descuento_reglamentaria, descuento_informativo')
+        .eq('activo', true)
+        .single();
+    return {
+        interpretativa: data?.descuento_interpretativa ?? 1,
+        reglamentaria:  data?.descuento_reglamentaria  ?? 2,
+        informativo:    data?.descuento_informativo    ?? 0
+    };
+}
+
 // PATCH /:id — editar datos del caso
 router.patch('/:id', async (req, res) => {
-    const { tipo_caso, descuento_puntos, descripcion, video_url } = req.body;
+    const { tipo_caso, descripcion, video_url } = req.body;
     const cambios = { updated_at: new Date().toISOString() };
 
     if (tipo_caso !== undefined) {
         if (!['interpretativa', 'reglamentaria', 'informativo'].includes(tipo_caso)) {
             return res.status(400).json({ error: 'tipo_caso inválido' });
         }
-        cambios.tipo_caso = tipo_caso;
-    }
-    if (descuento_puntos !== undefined) {
-        if (![0, 1, 2].includes(parseInt(descuento_puntos))) {
-            return res.status(400).json({ error: 'descuento_puntos debe ser 0, 1 o 2' });
+        if (tipo_caso === 'informativo') {
+            const { data: casoActual } = await supabase
+                .from('evaluacion_casos')
+                .select('ciclo_id')
+                .eq('id', req.params.id)
+                .single();
+            if (casoActual) {
+                const { data: ciclo } = await supabase
+                    .from('evaluacion_ciclos')
+                    .select('numero_ciclo')
+                    .eq('id', casoActual.ciclo_id)
+                    .single();
+                if (!ciclo || ciclo.numero_ciclo !== 2) {
+                    return res.status(400).json({ error: 'Los casos informativos solo pueden estar en el ciclo 2' });
+                }
+            }
         }
-        cambios.descuento_puntos = parseInt(descuento_puntos);
+        const desc = await getDescuentos();
+        cambios.tipo_caso        = tipo_caso;
+        cambios.descuento_puntos = desc[tipo_caso] ?? 0;
     }
     if (descripcion !== undefined) cambios.descripcion = descripcion || null;
     if (video_url   !== undefined) cambios.video_url   = video_url   || null;

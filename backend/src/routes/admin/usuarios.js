@@ -23,20 +23,22 @@ async function generarCodigo() {
     return 'USR-' + String(num).padStart(4, '0');
 }
 
-// GET /api/admin/usuarios?tipo=&activo=&buscar=&categoria=&page=&limit=
+// GET /api/admin/usuarios?tipo=&activo=&estado=&buscar=&categoria=&page=&limit=
 router.get('/', async (req, res) => {
-    const { tipo, activo, buscar, categoria, page = 1, limit = 50 } = req.query;
+    const { tipo, activo, estado, buscar, categoria, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     let query = supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, created_at, updated_at', { count: 'exact' })
+        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, estado_usuario, created_at, updated_at', { count: 'exact' })
         .order('nombre_completo', { ascending: true })
         .range(offset, offset + parseInt(limit) - 1);
 
-    if (tipo)     query = query.eq('tipo_persona', tipo);
-    if (activo !== undefined) query = query.eq('activo', activo === 'true');
-    if (buscar)   query = query.or(`nombre_completo.ilike.%${buscar}%,codigo_interno.ilike.%${buscar}%,rut.ilike.%${buscar}%`);
+    if (tipo) query = query.eq('tipo_persona', tipo);
+    // estado toma precedencia sobre activo (legacy)
+    if (estado)        query = query.eq('estado_usuario', estado);
+    else if (activo !== undefined && activo !== '') query = query.eq('activo', activo === 'true');
+    if (buscar)    query = query.or(`nombre_completo.ilike.%${buscar}%,codigo_interno.ilike.%${buscar}%,rut.ilike.%${buscar}%`);
     if (categoria) query = query.eq('categoria', categoria);
 
     const { data, error, count } = await query;
@@ -218,7 +220,7 @@ router.patch('/:id', async (req, res) => {
 
 // PATCH /api/admin/usuarios/:id/categoria
 router.patch('/:id/categoria', async (req, res) => {
-    const { categoria } = req.body;
+    const { categoria, observacion } = req.body;
 
     if (!['A', 'B', 'C'].includes(categoria)) {
         return res.status(400).json({ error: 'Categoría debe ser A, B o C' });
@@ -252,24 +254,37 @@ router.patch('/:id/categoria', async (req, res) => {
         ip_address: req.ip
     });
 
+    await supabase.from('usuario_historial_cambios').insert({
+        usuario_pagado_id:   req.params.id,
+        tipo_cambio:         'categoria',
+        valor_anterior:      anterior.categoria || null,
+        valor_nuevo:         categoria,
+        cambiado_por:        req.usuario.id,
+        cambiado_por_nombre: req.usuario.nombre,
+        observacion:         observacion || null
+    });
+
     res.json({ mensaje: `Categoría actualizada a ${categoria}` });
 });
 
-// PATCH /api/admin/usuarios/:id/activar
+// PATCH /api/admin/usuarios/:id/activar  (legacy — mantiene compatibilidad)
 router.patch('/:id/activar', async (req, res) => {
-    const { activo } = req.body;
+    const { activo, observacion } = req.body;
+    const nuevoEstado = activo ? 'activo' : 'inactivo';
 
     const { data: u } = await supabase
         .from('usuarios_pagados')
-        .select('nombre_completo, activo')
+        .select('nombre_completo, activo, estado_usuario')
         .eq('id', req.params.id)
         .single();
 
     if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
 
+    const estadoAnterior = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
+
     await supabase
         .from('usuarios_pagados')
-        .update({ activo: !!activo, updated_at: new Date().toISOString() })
+        .update({ activo: !!activo, estado_usuario: nuevoEstado, updated_at: new Date().toISOString() })
         .eq('id', req.params.id);
 
     await auditoria.registrar({
@@ -284,7 +299,67 @@ router.patch('/:id/activar', async (req, res) => {
         ip_address: req.ip
     });
 
+    await supabase.from('usuario_historial_cambios').insert({
+        usuario_pagado_id:   req.params.id,
+        tipo_cambio:         'estado',
+        valor_anterior:      estadoAnterior,
+        valor_nuevo:         nuevoEstado,
+        cambiado_por:        req.usuario.id,
+        cambiado_por_nombre: req.usuario.nombre,
+        observacion:         observacion || null
+    });
+
     res.json({ mensaje: `Usuario ${activo ? 'activado' : 'desactivado'}` });
+});
+
+// PATCH /api/admin/usuarios/:id/estado — activo | inactivo | receso
+router.patch('/:id/estado', async (req, res) => {
+    const { estado, observacion } = req.body;
+    const ESTADOS = ['activo', 'inactivo', 'receso'];
+
+    if (!ESTADOS.includes(estado)) {
+        return res.status(400).json({ error: `estado debe ser uno de: ${ESTADOS.join(', ')}` });
+    }
+
+    const { data: u } = await supabase
+        .from('usuarios_pagados')
+        .select('nombre_completo, activo, estado_usuario')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const estadoAnterior = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
+    const activoBool = estado === 'activo';
+
+    await supabase
+        .from('usuarios_pagados')
+        .update({ estado_usuario: estado, activo: activoBool, updated_at: new Date().toISOString() })
+        .eq('id', req.params.id);
+
+    await auditoria.registrar({
+        tabla: 'usuarios_pagados',
+        registro_id: req.params.id,
+        accion: `cambiar_estado_${estado}`,
+        datos_anteriores: { estado_usuario: estadoAnterior },
+        datos_nuevos:     { estado_usuario: estado },
+        actor_id:   req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Estado de ${u.nombre_completo} cambiado de ${estadoAnterior} a ${estado}`,
+        ip_address: req.ip
+    });
+
+    await supabase.from('usuario_historial_cambios').insert({
+        usuario_pagado_id:   req.params.id,
+        tipo_cambio:         'estado',
+        valor_anterior:      estadoAnterior,
+        valor_nuevo:         estado,
+        cambiado_por:        req.usuario.id,
+        cambiado_por_nombre: req.usuario.nombre,
+        observacion:         observacion || null
+    });
+
+    res.json({ mensaje: `Estado actualizado a ${estado}` });
 });
 
 // POST /api/admin/usuarios/:id/resetear-password
@@ -321,8 +396,12 @@ router.post('/:id/resetear-password', async (req, res) => {
     res.json({ mensaje: `Contraseña reseteada. El usuario deberá usar "${PASS_INICIAL}" en su próximo ingreso.` });
 });
 
-// DELETE /api/admin/usuarios/:id (soft delete = desactivar)
+// DELETE /api/admin/usuarios/:id — eliminación física (solo admin pleno)
 router.delete('/:id', async (req, res) => {
+    if (req.usuario.rol_evaluacion !== null && req.usuario.rol_evaluacion !== undefined) {
+        return res.status(403).json({ error: 'Solo el administrador pleno puede eliminar usuarios' });
+    }
+
     const { data: u } = await supabase
         .from('usuarios_pagados')
         .select('nombre_completo')
@@ -331,35 +410,30 @@ router.delete('/:id', async (req, res) => {
 
     if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
 
-    // Verificar si tiene asignaciones activas
-    const { count } = await supabase
+    const { count: cAsig } = await supabase
         .from('asignaciones')
         .select('id', { count: 'exact', head: true })
-        .eq('usuario_pagado_id', req.params.id)
-        .eq('estado', 'activo');
+        .eq('usuario_pagado_id', req.params.id);
 
-    if (count > 0) {
-        return res.status(400).json({
-            error: `No se puede eliminar: el usuario tiene ${count} asignaciones activas. Desactívelo en su lugar.`
+    if (cAsig > 0) {
+        return res.status(409).json({
+            error: `No se puede eliminar: el usuario tiene ${cAsig} asignación${cAsig > 1 ? 'es' : ''} registrada${cAsig > 1 ? 's' : ''}. Desactívelo en su lugar si ya no debe usarse.`
         });
     }
 
-    await supabase
-        .from('usuarios_pagados')
-        .update({ activo: false, updated_at: new Date().toISOString() })
-        .eq('id', req.params.id);
+    await supabase.from('usuarios_pagados').delete().eq('id', req.params.id);
 
     await auditoria.registrar({
         tabla: 'usuarios_pagados',
         registro_id: req.params.id,
-        accion: 'eliminar',
+        accion: 'eliminar_fisico',
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: `Usuario ${u.nombre_completo} desactivado (eliminación lógica)`,
+        descripcion: `Usuario ${u.nombre_completo} eliminado permanentemente`,
         ip_address: req.ip
     });
 
-    res.json({ mensaje: 'Usuario desactivado correctamente' });
+    res.json({ mensaje: `Usuario ${u.nombre_completo} eliminado correctamente` });
 });
 
 // GET /api/admin/usuarios/:id/historial

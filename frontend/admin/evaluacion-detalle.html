@@ -117,6 +117,7 @@
             <div class="nav-seccion">Reportes</div>
             <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -168,15 +169,9 @@
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:14px;">
-                <label class="form-label">Descuento de puntos</label>
-                <select id="caso-descuento" class="form-control">
-                    <option value="0">Sin descuento (0)</option>
-                    <option value="1">1 punto</option>
-                    <option value="2">2 puntos</option>
-                </select>
-                <div id="descuento-nota" style="font-size:11px;color:var(--gris);margin-top:4px;display:none;">
-                    Los casos informativos no pueden tener descuento.
-                </div>
+                <label class="form-label">Descuento de puntos <span style="color:var(--gris);font-weight:400;">(automático)</span></label>
+                <input type="text" id="caso-descuento-display" class="form-control" disabled style="background:var(--gris-fondo,#f5f5f5);cursor:default;">
+                <input type="hidden" id="caso-descuento" value="0">
             </div>
             <div class="form-group" style="margin-bottom:14px;">
                 <label class="form-label">Descripción <span style="color:var(--gris);font-weight:400;">(opcional)</span></label>
@@ -203,14 +198,53 @@
         </div>
         <div class="modal-body">
             <input type="hidden" id="cerrar-ciclo-id">
+            <div id="cerrar-ciclo-sin-casos" class="alerta alerta-info" style="display:none;margin-bottom:14px;">
+                Sin casos cargados — evaluación sin faltas. Descuento: 0 puntos.
+            </div>
             <div class="form-group">
-                <label class="form-label">Motivo del cierre</label>
+                <label class="form-label">Motivo del cierre <span id="cerrar-ciclo-motivo-req" style="color:var(--gris);font-size:11px;">(opcional si sin casos)</span></label>
                 <textarea id="cerrar-ciclo-motivo" class="form-control" rows="3" maxlength="500" placeholder="Describe el motivo..."></textarea>
             </div>
         </div>
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="document.getElementById('modal-cerrar-ciclo').classList.add('oculto')">Cancelar</button>
             <button class="btn btn-peligro" onclick="cerrarCiclo()">Cerrar ciclo</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Importar casos Excel -->
+<div class="modal-overlay oculto" id="modal-importar-casos">
+    <div class="modal" style="max-width:660px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="modal-importar-titulo">Importar casos</h3>
+            <button class="modal-cerrar" onclick="cerrarModalImportar()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="import-step-1">
+                <div class="alerta alerta-info" style="margin-bottom:14px;">
+                    Columnas requeridas: <strong>ciclo · numero_caso · tipo_caso · descripcion · url_video</strong><br>
+                    <small>tipo_caso: interpretativa · reglamentaria · informativo (solo ciclo 2)</small>
+                </div>
+                <div style="margin-bottom:14px;">
+                    <button class="btn btn-secundario btn-pequeño" onclick="descargarPlantillaCasos()">Descargar plantilla Excel</button>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Archivo Excel (.xlsx)</label>
+                    <input type="file" id="import-file-input" class="form-control" accept=".xlsx,.xls">
+                </div>
+            </div>
+            <div id="import-step-2" style="display:none;">
+                <div id="import-preview-resumen" style="margin-bottom:10px;"></div>
+                <div id="import-preview-errores" style="margin-bottom:10px;"></div>
+                <div id="import-preview-tabla"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalImportar()">Cancelar</button>
+            <button class="btn btn-outline btn-pequeño" id="import-btn-volver" onclick="importarVolver()" style="display:none;">Volver</button>
+            <button class="btn btn-primario" id="import-btn-preview" onclick="previewImportar()">Previsualizar</button>
+            <button class="btn btn-primario" id="import-btn-confirmar" onclick="confirmarImportar()" style="display:none;">Confirmar importación</button>
         </div>
     </div>
 </div>
@@ -442,6 +476,28 @@ function renderAccionesEval(ev) {
 }
 
 // ── Render ciclo ──────────────────────────────────────────────────
+function _fmtDT(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-CL') + ' ' + d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+}
+
+function renderCicloMeta(ciclo) {
+    const items = [];
+    if (ciclo.fecha_apertura)
+        items.push(`<span>📂 Abierto: <strong>${_fmtDT(ciclo.fecha_apertura)}</strong></span>`);
+    if (ciclo.fecha_limite_respuesta)
+        items.push(`<span>⏰ Vence: <strong>${_fmtDT(ciclo.fecha_limite_respuesta)}</strong></span>`);
+    if (ciclo.notificacion_enviada_at)
+        items.push(`<span>📧 Notificado: <strong>${_fmtDT(ciclo.notificacion_enviada_at)}</strong></span>`);
+    if (ciclo.notificacion_reenviada_at)
+        items.push(`<span>🔁 Reenviado: <strong>${_fmtDT(ciclo.notificacion_reenviada_at)}</strong></span>`);
+    if (items.length === 0) return '';
+    return `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--gris);margin-top:8px;margin-bottom:4px;">
+        ${items.join('')}
+    </div>`;
+}
+
 function renderCicloCard(ciclo, estadoEval, evalId) {
     const puedeAgregarCaso = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
         && !['publicado', 'cerrado'].includes(estadoEval);
@@ -449,7 +505,8 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
     const puedeAbrirCiclo = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
         && !['pendiente_aprobacion', 'aprobado', 'publicado', 'cerrado'].includes(estadoEval);
 
-    const puedeCerrarCiclo = ['abierto', 'en_revision'].includes(ciclo.estado);
+    const puedeCerrarCiclo  = ['abierto', 'en_revision'].includes(ciclo.estado);
+    const puedeReenviar     = ['abierto', 'en_revision'].includes(ciclo.estado);
 
     const casos = ciclo.casos || [];
 
@@ -479,10 +536,13 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
             </div>
             <div class="tabla-acciones">
                 ${puedeAgregarCaso ? `<button class="btn btn-primario btn-pequeño" onclick="abrirModalAgregar('${ciclo.id}', ${ciclo.numero_ciclo})">+ Agregar caso</button>` : ''}
+                ${puedeAgregarCaso ? `<button class="btn btn-outline btn-pequeño"  onclick="abrirModalImportar('${ciclo.id}', ${ciclo.numero_ciclo})">Importar Excel</button>` : ''}
                 ${puedeAbrirCiclo  ? `<button class="btn btn-success btn-pequeño"  onclick="abrirCiclo('${ciclo.id}', ${ciclo.numero_ciclo})">Abrir ciclo</button>` : ''}
-                ${puedeCerrarCiclo ? `<button class="btn btn-peligro btn-pequeño"  onclick="abrirModalCerrarCiclo('${ciclo.id}', ${ciclo.numero_ciclo})">Cerrar ciclo</button>` : ''}
+                ${puedeCerrarCiclo ? `<button class="btn btn-peligro btn-pequeño"  onclick="abrirModalCerrarCiclo('${ciclo.id}', ${ciclo.numero_ciclo}, ${casos.length})">Cerrar ciclo</button>` : ''}
+                ${puedeReenviar    ? `<button class="btn btn-outline btn-pequeño"   onclick="reenviarNotificacion('${ciclo.id}', ${ciclo.numero_ciclo})">📧 Reenviar notif.</button>` : ''}
             </div>
         </div>
+        ${renderCicloMeta(ciclo)}
         ${tablaCasos}
     </div>`;
 }
@@ -523,7 +583,7 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
 
 // ── Acciones de ciclo ─────────────────────────────────────────────
 async function abrirCiclo(cicloId, numeroCiclo) {
-    const ok = await confirmar(`¿Abrir el Ciclo ${numeroCiclo}? Los casos serán visibles para los jurados asignados.`);
+    const ok = await confirmar(`¿Abrir el Ciclo ${numeroCiclo}? Los casos serán visibles para los jurados asignados y se enviará una notificación por correo electrónico.`);
     if (!ok) return;
     try {
         const res = await api.post(`/admin/ciclos/${cicloId}/abrir`);
@@ -534,18 +594,36 @@ async function abrirCiclo(cicloId, numeroCiclo) {
     }
 }
 
-let _cicloParaCerrar = null;
-function abrirModalCerrarCiclo(cicloId, numeroCiclo) {
+async function reenviarNotificacion(cicloId, numeroCiclo) {
+    const ok = await confirmar(`¿Reenviar notificación por correo del Ciclo ${numeroCiclo} a los jurados asignados?`);
+    if (!ok) return;
+    try {
+        const res = await api.post(`/admin/ciclos/${cicloId}/reenviar-notificacion`);
+        const enviados  = (res.resultados || []).filter(r => r.ok).length;
+        const fallidos  = (res.resultados || []).filter(r => !r.ok).length;
+        const detalle   = fallidos > 0 ? ` (${fallidos} sin email o con error)` : '';
+        mostrarToast(`Notificación reenviada a ${enviados} jurado(s)${detalle}`, enviados > 0 ? 'exito' : 'advertencia');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al reenviar la notificación', 'error');
+    }
+}
+
+let _cicloParaCerrar  = null;
+let _cicloSinCasos    = false;
+function abrirModalCerrarCiclo(cicloId, numeroCiclo, numCasos) {
     _cicloParaCerrar = cicloId;
+    _cicloSinCasos   = (numCasos === 0);
     document.getElementById('modal-cerrar-ciclo-titulo').textContent = `Cerrar Ciclo ${numeroCiclo}`;
-    document.getElementById('cerrar-ciclo-motivo').value = '';
+    document.getElementById('cerrar-ciclo-motivo').value             = _cicloSinCasos ? 'Sin casos — evaluación sin faltas' : '';
+    document.getElementById('cerrar-ciclo-sin-casos').style.display  = _cicloSinCasos ? '' : 'none';
     document.getElementById('modal-cerrar-ciclo').classList.remove('oculto');
 }
 async function cerrarCiclo() {
     const motivo_cierre = document.getElementById('cerrar-ciclo-motivo').value.trim();
-    if (!motivo_cierre) { mostrarToast('El motivo es requerido', 'error'); return; }
+    if (!motivo_cierre && !_cicloSinCasos) { mostrarToast('El motivo es requerido', 'error'); return; }
     try {
-        const res = await api.post(`/admin/ciclos/${_cicloParaCerrar}/cerrar`, { motivo_cierre });
+        const res = await api.post(`/admin/ciclos/${_cicloParaCerrar}/cerrar`, { motivo_cierre: motivo_cierre || null });
         document.getElementById('modal-cerrar-ciclo').classList.add('oculto');
         mostrarToast(res.mensaje || 'Ciclo cerrado', 'exito');
         cargarEvaluacion();
@@ -689,31 +767,25 @@ function configurarSelectTipo(numeroCiclo) {
         sel.insertAdjacentHTML('beforeend', '<option value="informativo">Informativo</option>');
     }
 }
+const _DESCUENTO_POR_TIPO = { interpretativa: 1, reglamentaria: 2, informativo: 0 };
+const _DESCUENTO_LABEL    = { 0: 'Sin descuento (0 puntos)', 1: '1 punto', 2: '2 puntos' };
+
 function onCasoTipoChange() {
-    const tipo    = document.getElementById('caso-tipo').value;
-    const selDesc = document.getElementById('caso-descuento');
-    const nota    = document.getElementById('descuento-nota');
-    if (tipo === 'informativo') {
-        selDesc.value    = '0';
-        selDesc.disabled = true;
-        nota.style.display = '';
-    } else {
-        selDesc.disabled   = false;
-        nota.style.display = 'none';
-    }
+    const tipo  = document.getElementById('caso-tipo').value;
+    const pts   = _DESCUENTO_POR_TIPO[tipo] ?? 0;
+    document.getElementById('caso-descuento').value         = String(pts);
+    document.getElementById('caso-descuento-display').value = _DESCUENTO_LABEL[pts];
 }
 function abrirModalAgregar(cicloId, numeroCiclo) {
     document.getElementById('caso-id-editar').value          = '';
     document.getElementById('caso-ciclo-id').value           = cicloId;
     document.getElementById('caso-ciclo-numero').value       = numeroCiclo;
     document.getElementById('caso-tipo').value               = 'interpretativa';
-    document.getElementById('caso-descuento').value          = '0';
-    document.getElementById('caso-descuento').disabled       = false;
-    document.getElementById('descuento-nota').style.display  = 'none';
     document.getElementById('caso-descripcion').value        = '';
     document.getElementById('caso-video-url').value          = '';
     document.getElementById('modal-caso-titulo').textContent = 'Agregar caso';
     configurarSelectTipo(parseInt(numeroCiclo));
+    onCasoTipoChange();
     document.getElementById('modal-caso').classList.remove('oculto');
 }
 function abrirModalEditar(caso, cicloId, numeroCiclo) {
@@ -725,15 +797,7 @@ function abrirModalEditar(caso, cicloId, numeroCiclo) {
     document.getElementById('modal-caso-titulo').textContent = 'Editar caso';
     configurarSelectTipo(parseInt(numeroCiclo));
     document.getElementById('caso-tipo').value = caso.tipo_caso;
-    if (caso.tipo_caso === 'informativo') {
-        document.getElementById('caso-descuento').value         = '0';
-        document.getElementById('caso-descuento').disabled      = true;
-        document.getElementById('descuento-nota').style.display = '';
-    } else {
-        document.getElementById('caso-descuento').value         = String(caso.descuento_puntos || 0);
-        document.getElementById('caso-descuento').disabled      = false;
-        document.getElementById('descuento-nota').style.display = 'none';
-    }
+    onCasoTipoChange();
     document.getElementById('modal-caso').classList.remove('oculto');
 }
 function cerrarModalCaso() {
@@ -769,6 +833,126 @@ async function eliminarCaso(casoId, numeroCaso) {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ── Importar casos Excel ──────────────────────────────────────────
+let _importCicloId     = null;
+let _importNumeroCiclo = null;
+let _importFile        = null;
+
+function abrirModalImportar(cicloId, numeroCiclo) {
+    _importCicloId     = cicloId;
+    _importNumeroCiclo = numeroCiclo;
+    document.getElementById('modal-importar-titulo').textContent = `Importar casos — Ciclo ${numeroCiclo}`;
+    document.getElementById('import-file-input').value           = '';
+    document.getElementById('import-step-1').style.display       = '';
+    document.getElementById('import-step-2').style.display       = 'none';
+    document.getElementById('import-btn-preview').style.display  = '';
+    document.getElementById('import-btn-volver').style.display   = 'none';
+    document.getElementById('import-btn-confirmar').style.display = 'none';
+    document.getElementById('import-preview-resumen').innerHTML  = '';
+    document.getElementById('import-preview-errores').innerHTML  = '';
+    document.getElementById('import-preview-tabla').innerHTML    = '';
+    _importFile = null;
+    document.getElementById('modal-importar-casos').classList.remove('oculto');
+}
+
+function cerrarModalImportar() {
+    _importFile = null;
+    document.getElementById('modal-importar-casos').classList.add('oculto');
+}
+
+async function descargarPlantillaCasos() {
+    try {
+        await api.descargar(`/admin/ciclos/${_importCicloId}/plantilla`, 'plantilla_casos.xlsx');
+    } catch (e) {
+        mostrarToast(e.message || 'Error al descargar plantilla', 'error');
+    }
+}
+
+async function previewImportar() {
+    const file = document.getElementById('import-file-input').files[0];
+    if (!file) { mostrarToast('Selecciona un archivo Excel', 'error'); return; }
+    _importFile = file;
+    const btn = document.getElementById('import-btn-preview');
+    btn.disabled = true; btn.textContent = 'Procesando...';
+    try {
+        const fd = new FormData();
+        fd.append('archivo', file);
+        const res = await api.upload(`/admin/ciclos/${_importCicloId}/importar?preview=true`, fd);
+        _mostrarPreviewImportar(res);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al procesar archivo', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Previsualizar';
+    }
+}
+
+function _mostrarPreviewImportar(res) {
+    document.getElementById('import-step-1').style.display        = 'none';
+    document.getElementById('import-step-2').style.display        = '';
+    document.getElementById('import-btn-preview').style.display   = 'none';
+    document.getElementById('import-btn-volver').style.display    = '';
+    const hayValidas = res.filas_validas && res.filas_validas.length > 0;
+    document.getElementById('import-btn-confirmar').style.display = hayValidas ? '' : 'none';
+
+    document.getElementById('import-preview-resumen').innerHTML = `
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:4px;">
+            <span class="badge badge-activo">${res.filas_validas?.length || 0} válidas</span>
+            <span class="badge ${(res.errores?.length||0)>0 ? 'badge-inactivo' : ''}">${res.errores?.length || 0} con error</span>
+            <span style="font-size:12px;color:var(--gris);">Total leídas: ${res.total || 0}</span>
+        </div>`;
+
+    if (res.errores && res.errores.length > 0) {
+        document.getElementById('import-preview-errores').innerHTML = `
+            <div class="alerta alerta-error" style="max-height:110px;overflow-y:auto;font-size:12px;">
+                ${res.errores.map(e => `<div>Fila ${e.fila}: ${sanitizar(e.error)}</div>`).join('')}
+            </div>`;
+    }
+
+    if (hayValidas) {
+        const LABEL = { interpretativa: 'Interpretativa', reglamentaria: 'Reglamentaria', informativo: 'Informativo' };
+        document.getElementById('import-preview-tabla').innerHTML = `
+            <div class="tabla-wrap" style="max-height:240px;overflow-y:auto;">
+            <table>
+                <thead><tr><th style="width:46px;">#</th><th>Tipo</th><th>Desc.</th><th>Video</th></tr></thead>
+                <tbody>
+                    ${res.filas_validas.map(f => `<tr>
+                        <td>${f.numero_caso}</td>
+                        <td><span class="badge-eval badge-tipo-${f.tipo_caso}">${LABEL[f.tipo_caso]||f.tipo_caso}</span></td>
+                        <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${sanitizar(f.descripcion||'')}">${sanitizar(f.descripcion||'—')}</td>
+                        <td style="font-size:11px;">${f.video_url ? `<a href="${sanitizar(f.video_url)}" target="_blank">Ver</a>` : '—'}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table></div>`;
+    } else {
+        document.getElementById('import-preview-tabla').innerHTML = '<p class="texto-gris" style="padding:8px 0;">No hay filas válidas para importar.</p>';
+    }
+}
+
+function importarVolver() {
+    document.getElementById('import-step-1').style.display        = '';
+    document.getElementById('import-step-2').style.display        = 'none';
+    document.getElementById('import-btn-preview').style.display   = '';
+    document.getElementById('import-btn-volver').style.display    = 'none';
+    document.getElementById('import-btn-confirmar').style.display = 'none';
+}
+
+async function confirmarImportar() {
+    if (!_importFile) return;
+    const btn = document.getElementById('import-btn-confirmar');
+    btn.disabled = true; btn.textContent = 'Importando...';
+    try {
+        const fd = new FormData();
+        fd.append('archivo', _importFile);
+        const res = await api.upload(`/admin/ciclos/${_importCicloId}/importar`, fd);
+        mostrarToast(res.mensaje || 'Importación completada', 'exito');
+        cerrarModalImportar();
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al importar', 'error');
+        btn.disabled = false; btn.textContent = 'Confirmar importación';
     }
 }
 

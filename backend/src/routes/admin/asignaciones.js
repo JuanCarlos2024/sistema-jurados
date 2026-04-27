@@ -285,6 +285,46 @@ router.patch('/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/admin/asignaciones/:id/comentario-admin
+router.patch('/:id/comentario-admin', async (req, res) => {
+    const { comentario_admin } = req.body;
+
+    const { data: asig } = await supabase
+        .from('asignaciones')
+        .select('id, estado')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
+    if (asig.estado === 'anulado') return res.status(400).json({ error: 'La asignación está anulada' });
+
+    const texto = typeof comentario_admin === 'string' ? comentario_admin.trim() : null;
+
+    const { data, error } = await supabase
+        .from('asignaciones')
+        .update({ comentario_admin: texto || null, updated_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .select('id, comentario_admin')
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'asignaciones',
+        registro_id: req.params.id,
+        accion: 'actualizar_comentario_admin_asignacion',
+        entidad: 'asignaciones',
+        entidad_id: req.params.id,
+        datos_nuevos: { comentario_admin: texto || null },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: texto ? `Comentario admin guardado en asignación ${req.params.id}` : `Comentario admin eliminado en asignación ${req.params.id}`,
+        ip_address: req.ip
+    });
+
+    res.json({ mensaje: texto ? 'Comentario guardado' : 'Comentario eliminado', comentario_admin: data.comentario_admin });
+});
+
 // POST /api/admin/asignaciones/:id/estado
 // Cambia estado_designacion sin restricción de fecha (solo admin).
 // body: { accion: 'aceptar'|'rechazar'|'pendiente', distancia_km?: number, motivo?: string }

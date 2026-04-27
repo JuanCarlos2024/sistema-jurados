@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporte Cartillas Jurado — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .filtros-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 900px) { .filtros-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 560px) { .filtros-grid { grid-template-columns: 1fr; } }
+
+        .tabla-reporte { font-size: 12px; }
+        .tabla-reporte th { font-size: 11px; white-space: nowrap; }
+        .tabla-reporte td { vertical-align: top; max-width: 260px; word-break: break-word; }
+
+        .campo-tag {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #eaf4fb;
+            color: #1a5276;
+        }
+        .campo-tag.faltas       { background: #fdebd0; color: #784212; }
+        .campo-tag.ganado       { background: #fef9e7; color: #7d6608; }
+        .campo-tag.rienda       { background: #e9f7ef; color: #1e8449; }
+        .campo-tag.observ       { background: #f0f0f0; color: #555; }
+
+        .badge-enviada  { background: #d5f5e3; color: #1e8449; }
+        .badge-borrador { background: #f0f0f0; color: #666; }
+        .badge-estado {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .respuesta-si  { color: #1e8449; font-weight: 600; }
+        .respuesta-no  { color: #922b21; font-weight: 600; }
+
+        .resumen-bar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: var(--gris);
+        }
+        .resumen-stat { font-weight: 600; color: var(--oscuro); }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item activo"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">🗒️</span> Auditoría</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Reporte Cartillas Digitales — Jurados</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Filtros -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-titulo">Filtros</div>
+                <form id="form-filtros" onsubmit="window.buscar(event)">
+                    <div class="filtros-grid">
+                        <div class="form-grupo">
+                            <label class="form-label">Fecha desde</label>
+                            <input type="date" id="f-fecha-desde" name="fecha_desde" class="form-control">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Fecha hasta</label>
+                            <input type="date" id="f-fecha-hasta" name="fecha_hasta" class="form-control">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Club</label>
+                            <input type="text" id="f-club" name="club" class="form-control" placeholder="Ej: Club de Huasos…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Asociación</label>
+                            <input type="text" id="f-asociacion" name="asociacion" class="form-control" placeholder="Ej: Santiago…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Jurado</label>
+                            <input type="text" id="f-jurado" name="jurado" class="form-control" placeholder="Nombre del jurado…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Tipo de rodeo</label>
+                            <input type="text" id="f-tipo-rodeo" name="tipo_rodeo" class="form-control" placeholder="Ej: Nacional…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Estado cartilla</label>
+                            <select id="f-estado" name="estado" class="form-control">
+                                <option value="">Todos</option>
+                                <option value="enviada">Enviada</option>
+                                <option value="borrador">Borrador</option>
+                            </select>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Campo / Tipo de respuesta</label>
+                            <select id="f-tipo-respuesta" name="tipo_respuesta" class="form-control">
+                                <option value="">Todos los campos</option>
+                                <option value="hora_inicio">Hora de inicio</option>
+                                <option value="serie_campeones_2_vueltas">Serie campeones - 2 vueltas</option>
+                                <option value="caseta_adecuada">Caseta adecuada</option>
+                                <option value="hubo_faltas">Faltas disciplinarias/reglamentarias</option>
+                                <option value="hubo_ganado_fuera_peso">Ganado fuera del peso reglamentario</option>
+                                <option value="registro_ganado">Registros de ganado fuera de peso</option>
+                                <option value="hubo_movimiento_rienda">Movimiento a la rienda</option>
+                                <option value="registro_rienda">Registros de movimiento a la rienda</option>
+                                <option value="observaciones_finales">Observaciones finales</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-grupo" style="max-width:500px;">
+                        <label class="form-label">Búsqueda libre (en respuesta, comentario, club, jurado)</label>
+                        <input type="text" id="f-buscar" name="buscar" class="form-control" placeholder="Ej: infracción, sin incidentes…">
+                    </div>
+                    <div class="flex gap-8" style="flex-wrap:wrap;">
+                        <button type="submit" class="btn btn-primario">Buscar</button>
+                        <button type="button" class="btn btn-outline" onclick="limpiarFiltros()">Limpiar filtros</button>
+                        <button type="button" class="btn btn-secundario" onclick="exportar()" id="btn-exportar" disabled>Exportar CSV/Excel</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Resultados -->
+            <div class="card">
+                <div id="resumen-bar" class="resumen-bar" style="display:none;"></div>
+                <div id="contenido-tabla">
+                    <div class="alerta alerta-info" style="font-size:13px;">
+                        Usa los filtros y haz clic en <strong>Buscar</strong> para ver resultados.
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/sidebar-eval.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+    const u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    document.getElementById('nombre-admin').textContent = u.nombre_completo || u.email || '';
+});
+
+// ─── Estado ───────────────────────────────────────────────────────────────────
+
+let _ultimosFiltros = null;
+let _ultimosResultados = [];
+
+// ─── Buscar ───────────────────────────────────────────────────────────────────
+
+async function buscar(e) {
+    if (e) e.preventDefault();
+    const form = document.getElementById('form-filtros');
+    const fd   = new FormData(form);
+    const params = {};
+    fd.forEach((v, k) => { if (v.trim()) params[k] = v.trim(); });
+    _ultimosFiltros = params;
+
+    const div = document.getElementById('contenido-tabla');
+    div.innerHTML = '<div class="alerta alerta-info">Cargando…</div>';
+    document.getElementById('resumen-bar').style.display = 'none';
+    document.getElementById('btn-exportar').disabled = true;
+
+    try {
+        const qs  = new URLSearchParams(params).toString();
+        const url = '/admin/reportes/cartillas-jurado' + (qs ? '?' + qs : '');
+        console.log('[cartillas] GET', url);
+        const datos = await api.get(url);
+        console.log('[cartillas] respuesta:', Array.isArray(datos) ? `${datos.length} filas` : datos);
+        _ultimosResultados = datos;
+        renderTabla(datos);
+    } catch (err) {
+        console.error('[cartillas] error:', err);
+        div.innerHTML = `<div class="alerta alerta-error">${err.message || 'Error al cargar datos'}</div>`;
+    }
+}
+
+// ─── Render tabla ─────────────────────────────────────────────────────────────
+
+function renderCampoTag(campo, key) {
+    let cls = '';
+    if (key === 'hubo_faltas')            cls = 'faltas';
+    else if (key === 'hubo_ganado_fuera_peso' || key === 'registro_ganado') cls = 'ganado';
+    else if (key === 'hubo_movimiento_rienda' || key === 'registro_rienda') cls = 'rienda';
+    else if (key === 'observaciones_finales') cls = 'observ';
+    return `<span class="campo-tag ${cls}">${sanitizar(campo)}</span>`;
+}
+
+function renderRespuesta(resp) {
+    if (resp === 'Sí') return `<span class="respuesta-si">Sí</span>`;
+    if (resp === 'No') return `<span class="respuesta-no">No</span>`;
+    return sanitizar(resp);
+}
+
+function renderEstado(estado) {
+    const cls = estado === 'enviada' ? 'badge-enviada' : 'badge-borrador';
+    return `<span class="badge-estado ${cls}">${estado}</span>`;
+}
+
+function sanitizar(txt) {
+    return String(txt ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderTabla(datos) {
+    const div = document.getElementById('contenido-tabla');
+    const bar = document.getElementById('resumen-bar');
+
+    if (!datos || datos.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-advertencia">No se encontraron resultados con los filtros aplicados.</div>';
+        bar.style.display = 'none';
+        document.getElementById('btn-exportar').disabled = true;
+        return;
+    }
+
+    // Resumen
+    const cartillasUnicas = new Set(datos.map(f => f.asignacion_id)).size;
+    bar.style.display = 'flex';
+    bar.innerHTML = `
+        <span>${datos.length} fila(s)</span>
+        <span>·</span>
+        <span class="resumen-stat">${cartillasUnicas}</span> cartilla(s) distintas
+    `;
+    document.getElementById('btn-exportar').disabled = false;
+
+    const html = `
+    <div style="overflow-x:auto;">
+    <table class="tabla tabla-reporte">
+        <thead>
+            <tr>
+                <th>Fecha rodeo</th>
+                <th>Club</th>
+                <th>Asociación</th>
+                <th>Tipo rodeo</th>
+                <th>Jurado</th>
+                <th>Categoría</th>
+                <th>Estado</th>
+                <th>Campo / Pregunta</th>
+                <th>Respuesta</th>
+                <th>Comentario</th>
+                <th>Fecha envío</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${datos.map(f => `
+            <tr>
+                <td style="white-space:nowrap;">${sanitizar(f.fecha_rodeo)}</td>
+                <td>${sanitizar(f.club)}</td>
+                <td>${sanitizar(f.asociacion)}</td>
+                <td style="white-space:nowrap;">${sanitizar(f.tipo_rodeo)}</td>
+                <td>${sanitizar(f.jurado)}</td>
+                <td style="white-space:nowrap;">${sanitizar(f.categoria_jurado)}</td>
+                <td>${renderEstado(f.estado_cartilla)}</td>
+                <td>${renderCampoTag(f.campo, f.campo_key)}</td>
+                <td>${renderRespuesta(f.respuesta)}</td>
+                <td style="color:var(--gris);font-size:11px;">${sanitizar(f.comentario)}</td>
+                <td style="white-space:nowrap;font-size:11px;">${sanitizar(f.fecha_envio)}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table>
+    </div>`;
+
+    div.innerHTML = html;
+}
+
+// ─── Exportar ─────────────────────────────────────────────────────────────────
+
+function exportar() {
+    if (!_ultimosFiltros) return;
+    const qs = new URLSearchParams(_ultimosFiltros).toString();
+    const url = '/api/admin/reportes/cartillas-jurado/exportar' + (qs ? '?' + qs : '');
+    const a   = document.createElement('a');
+    a.href    = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+// ─── Limpiar filtros ──────────────────────────────────────────────────────────
+
+function limpiarFiltros() {
+    document.getElementById('form-filtros').reset();
+    _ultimosFiltros  = null;
+    _ultimosResultados = [];
+    document.getElementById('contenido-tabla').innerHTML =
+        '<div class="alerta alerta-info" style="font-size:13px;">Usa los filtros y haz clic en <strong>Buscar</strong> para ver resultados.</div>';
+    document.getElementById('resumen-bar').style.display = 'none';
+    document.getElementById('btn-exportar').disabled = true;
+}
+</script>
+</body>
+</html>

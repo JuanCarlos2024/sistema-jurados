@@ -97,7 +97,8 @@ async function descargarArchivo(endpoint, nombreArchivo) {
 // Métodos de conveniencia
 const api = {
     get:      (endpoint) => apiFetch(endpoint, { method: 'GET' }),
-    post:     (endpoint, body) => apiFetch(endpoint, { method: 'POST', body: JSON.stringify(body) }),
+    post:     (endpoint, body) => apiFetch(endpoint, { method: 'POST',  body: JSON.stringify(body) }),
+    put:      (endpoint, body) => apiFetch(endpoint, { method: 'PUT',   body: JSON.stringify(body) }),
     patch:    (endpoint, body) => apiFetch(endpoint, { method: 'PATCH', body: JSON.stringify(body) }),
     delete:   (endpoint) => apiFetch(endpoint, { method: 'DELETE' }),
     upload:   (endpoint, formData) => apiFetch(endpoint, { method: 'POST', body: formData }),

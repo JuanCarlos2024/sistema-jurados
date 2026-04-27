@@ -51,6 +51,7 @@
             <div class="nav-seccion">Reportes</div>
             <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -73,6 +74,9 @@
                 <h1>Análisis de Casos</h1>
             </div>
             <div class="topbar-acciones">
+                <button class="btn btn-secundario btn-pequeño" id="btn-masivo" onclick="abrirModalMasivo()" style="display:none;">
+                    Buscar rodeos para evaluar
+                </button>
                 <button class="btn btn-primario btn-pequeño" id="btn-nueva-eval" onclick="abrirModalCrear()" style="display:none;">
                     + Nueva Evaluación
                 </button>
@@ -83,6 +87,7 @@
 
             <!-- Filtros -->
             <div class="filtros-barra">
+                <input type="text" id="fil-buscar" class="form-control" placeholder="Buscar club, asociación, jurado, analista..." style="width:280px;" oninput="debounceCargar()">
                 <select id="fil-estado" onchange="cargarEvaluaciones(1)">
                     <option value="">Todos los estados</option>
                     <option value="borrador">Borrador</option>
@@ -106,17 +111,22 @@
                     <table id="tabla-evaluaciones">
                         <thead>
                             <tr>
-                                <th>Rodeo</th>
                                 <th>Club</th>
+                                <th>Asociación</th>
                                 <th>Fecha rodeo</th>
                                 <th>Analista</th>
+                                <th>Jurado(s)</th>
+                                <th>Faltas</th>
+                                <th>Nota final</th>
+                                <th>Ciclo 1</th>
+                                <th>Ciclo 2</th>
                                 <th>Estado</th>
                                 <th>Creada</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="tbody-evaluaciones">
-                            <tr><td colspan="7" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                            <tr><td colspan="12" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -158,6 +168,61 @@
     </div>
 </div>
 
+<!-- MODAL: Buscar rodeos para evaluar (creación masiva) -->
+<div class="modal-overlay oculto" id="modal-masivo">
+    <div class="modal" style="max-width:860px;width:95vw;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Buscar rodeos para evaluar</h3>
+            <button class="modal-cerrar" onclick="cerrarModalMasivo()">✕</button>
+        </div>
+        <div class="modal-body">
+
+            <!-- Filtros -->
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+                <div>
+                    <label style="font-size:12px;display:block;margin-bottom:3px;color:var(--gris);">Fecha desde</label>
+                    <input type="date" id="mas-fecha-desde" class="form-control" style="width:145px;">
+                </div>
+                <div>
+                    <label style="font-size:12px;display:block;margin-bottom:3px;color:var(--gris);">Fecha hasta</label>
+                    <input type="date" id="mas-fecha-hasta" class="form-control" style="width:145px;">
+                </div>
+                <div>
+                    <label style="font-size:12px;display:block;margin-bottom:3px;color:var(--gris);">Asociación</label>
+                    <input type="text" id="mas-asociacion" class="form-control" placeholder="Filtrar asociación..." style="width:175px;">
+                </div>
+                <div>
+                    <label style="font-size:12px;display:block;margin-bottom:3px;color:var(--gris);">Club / búsqueda libre</label>
+                    <input type="text" id="mas-buscar" class="form-control" placeholder="Buscar..." style="width:155px;" onkeydown="if(event.key==='Enter')buscarRodeosMasivo()">
+                </div>
+                <button class="btn btn-primario btn-pequeño" onclick="buscarRodeosMasivo()">Buscar</button>
+            </div>
+
+            <!-- Resultados -->
+            <div id="mas-resultados" style="min-height:100px;max-height:380px;overflow-y:auto;">
+                <p style="font-size:13px;color:var(--gris);padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos disponibles.</p>
+            </div>
+
+            <!-- Footer: analista + contador + acción -->
+            <div id="mas-footer" style="display:none;margin-top:14px;border-top:1px solid var(--gris-borde);padding-top:14px;">
+                <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:220px;">
+                        <label class="form-label" style="font-size:12px;">Analista para todas las evaluaciones</label>
+                        <select id="mas-analista" class="form-control"></select>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                        <span id="mas-contador" style="font-size:13px;color:var(--gris);white-space:nowrap;">0 seleccionados</span>
+                        <button class="btn btn-primario btn-pequeño" id="mas-btn-crear" onclick="crearMasivo()" disabled>
+                            Crear evaluaciones seleccionadas
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -170,10 +235,24 @@ const rolEval = usuario?.rol_evaluacion ?? null; // null = admin pleno
 // Solo jefe_area y admin pleno pueden crear evaluaciones
 if (rolEval === null || rolEval === 'jefe_area') {
     document.getElementById('btn-nueva-eval').style.display = '';
+    document.getElementById('btn-masivo').style.display = '';
 }
 
 let paginaActual = 1;
 let adminsList = [];
+
+// ── Eliminar evaluación ───────────────────────────────────────────
+async function eliminarEvaluacion(id, club) {
+    const ok = await confirmar(`¿Eliminar la evaluación de "${club}"? Se eliminarán todos sus casos y ciclos. Esta acción no se puede deshacer.`);
+    if (!ok) return;
+    try {
+        await api.delete(`/admin/evaluaciones/${id}`);
+        mostrarToast('Evaluación eliminada', 'exito');
+        cargarEvaluaciones(paginaActual);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al eliminar', 'error');
+    }
+}
 
 // ── Cargar lista de administradores para filtro analista ──────────
 async function cargarAdmins() {
@@ -205,12 +284,14 @@ async function cargarEvaluaciones(pagina) {
     const estado   = document.getElementById('fil-estado').value;
     const analista = document.getElementById('fil-analista').value;
 
+    const buscar = document.getElementById('fil-buscar').value.trim();
     let url = `/admin/evaluaciones?page=${pagina}&limit=20`;
     if (estado)   url += `&estado=${estado}`;
     if (analista) url += `&analista_id=${analista}`;
+    if (buscar)   url += `&buscar=${encodeURIComponent(buscar)}`;
 
     const tbody = document.getElementById('tbody-evaluaciones');
-    tbody.innerHTML = '<tr><td colspan="7" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
 
     try {
         const res = await api.get(url);
@@ -219,22 +300,45 @@ async function cargarEvaluaciones(pagina) {
         const totalPaginas = Math.ceil(total / 20);
 
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="texto-centrado texto-gris" style="padding:24px;">Sin evaluaciones</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" class="texto-centrado texto-gris" style="padding:24px;">Sin evaluaciones</td></tr>';
         } else {
             tbody.innerHTML = items.map(ev => {
                 const rodeo = ev.rodeos || ev.rodeo || {};
                 const analista = ev.analista || {};
                 const fechaRodeo = rodeo.fecha ? formatFecha(rodeo.fecha) : '—';
                 const estadoBadge = `<span class="badge-eval badge-${ev.estado}">${labelEstado(ev.estado)}</span>`;
+
+                const juradosTexto = (ev.jurados && ev.jurados.length > 0)
+                    ? ev.jurados.map(j => sanitizar(j.nombre_completo)).join(', ')
+                    : '<span class="texto-gris">Sin jurados</span>';
+
+                const rf = ev.resumen_faltas;
+                const hayFaltas = rf && (rf.reglamentarias > 0 || rf.interpretativas > 0 || rf.informativos > 0);
+                const faltasTexto = hayFaltas
+                    ? `Reglamentarias: ${rf.reglamentarias}<br>Interpretativas: ${rf.interpretativas}<br>Informativas: ${rf.informativos}<br><strong>Puntos descontados: ${rf.puntos_descontados}</strong>`
+                    : '<span class="texto-gris">Sin casos</span>';
+
+                const notaFinal = ev.nota_final != null
+                    ? `<strong>${parseFloat(ev.nota_final).toFixed(2)}</strong>`
+                    : '<span class="texto-gris">—</span>';
+
                 return `<tr>
                     <td>${sanitizar(rodeo.club || ev.rodeo_id || '—')}</td>
                     <td>${sanitizar(rodeo.asociacion || '—')}</td>
                     <td>${fechaRodeo}</td>
                     <td>${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</td>
+                    <td style="font-size:12px;">${juradosTexto}</td>
+                    <td style="font-size:12px;">${faltasTexto}</td>
+                    <td style="text-align:center;">${notaFinal}</td>
+                    <td style="font-size:12px;">${renderCicloResumen(ev.ciclo1)}</td>
+                    <td style="font-size:12px;">${renderCicloResumen(ev.ciclo2)}</td>
                     <td>${estadoBadge}</td>
                     <td>${formatFecha(ev.created_at)}</td>
                     <td><div class="tabla-acciones">
                         <a href="/admin/evaluacion-detalle.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">Ver</a>
+                        ${!['publicado','aprobado','cerrado'].includes(ev.estado) && (rolEval === null || rolEval === 'jefe_area')
+                            ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarEvaluacion('${ev.id}', '${sanitizar(rodeo.club || '').replace(/'/g,"\\'")}')">Eliminar</button>`
+                            : ''}
                     </div></td>
                 </tr>`;
             }).join('');
@@ -243,7 +347,7 @@ async function cargarEvaluaciones(pagina) {
         // Paginación
         renderPaginacion(pagina, totalPaginas);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="7"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
     }
 }
 
@@ -257,6 +361,28 @@ function labelEstado(estado) {
     return M[estado] || estado;
 }
 
+function renderCicloResumen(ciclo) {
+    if (!ciclo) return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    const ESTILOS = {
+        pendiente_carga: 'background:#eaecee;color:#555',
+        cargado:         'background:#d6eaf8;color:#1a5276',
+        abierto:         'background:#d5f5e3;color:#1e8449',
+        en_revision:     'background:#fdebd0;color:#784212',
+        cerrado:         'background:#f0f0f0;color:#666'
+    };
+    const LABELS = {
+        pendiente_carga: 'Pend. carga', cargado: 'Cargado',
+        abierto: 'Abierto', en_revision: 'En revisión', cerrado: 'Cerrado'
+    };
+    const estilo = ESTILOS[ciclo.estado] || 'background:#eee;color:#555';
+    let html = `<span style="display:inline-block;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600;${estilo};">${LABELS[ciclo.estado] || ciclo.estado}</span>`;
+    if (ciclo.fecha_limite_respuesta) {
+        const d = new Date(ciclo.fecha_limite_respuesta);
+        html += `<br><span style="font-size:10px;color:var(--gris);">Vence ${d.toLocaleDateString('es-CL')} ${d.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})}</span>`;
+    }
+    return html;
+}
+
 function renderPaginacion(actual, total) {
     const div = document.getElementById('paginacion');
     if (total <= 1) { div.innerHTML = ''; return; }
@@ -267,7 +393,14 @@ function renderPaginacion(actual, total) {
     div.innerHTML = html;
 }
 
+let _evalDebounce = null;
+function debounceCargar() {
+    clearTimeout(_evalDebounce);
+    _evalDebounce = setTimeout(() => cargarEvaluaciones(1), 380);
+}
+
 function limpiarFiltros() {
+    document.getElementById('fil-buscar').value = '';
     document.getElementById('fil-estado').value = '';
     document.getElementById('fil-analista').value = '';
     cargarEvaluaciones(1);
@@ -348,9 +481,182 @@ document.addEventListener('click', function (e) {
     }
 });
 
+// ══════════════════════════════════════════════════════════════════
+// MODAL: Creación masiva de evaluaciones
+// ══════════════════════════════════════════════════════════════════
+
+let _masRodeos = [];   // resultados actuales de búsqueda
+
+function abrirModalMasivo() {
+    // Poblar selector analista desde adminsList
+    const sel = document.getElementById('mas-analista');
+    sel.innerHTML = '<option value="">Seleccionar analista...</option>';
+    adminsList.forEach(a => {
+        const label = sanitizar(a.nombre_completo) + (a.rol_evaluacion ? ` (${labelRol(a.rol_evaluacion)})` : '');
+        sel.insertAdjacentHTML('beforeend', `<option value="${a.id}">${label}</option>`);
+    });
+
+    // Limpiar estado previo
+    document.getElementById('mas-fecha-desde').value = '';
+    document.getElementById('mas-fecha-hasta').value = '';
+    document.getElementById('mas-asociacion').value = '';
+    document.getElementById('mas-buscar').value = '';
+    document.getElementById('mas-resultados').innerHTML =
+        '<p style="font-size:13px;color:var(--gris);padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos disponibles.</p>';
+    document.getElementById('mas-footer').style.display = 'none';
+    _masRodeos = [];
+
+    document.getElementById('modal-masivo').classList.remove('oculto');
+}
+
+function cerrarModalMasivo() {
+    document.getElementById('modal-masivo').classList.add('oculto');
+}
+
+async function buscarRodeosMasivo() {
+    const params = new URLSearchParams();
+    const fd = document.getElementById('mas-fecha-desde').value;
+    const fh = document.getElementById('mas-fecha-hasta').value;
+    const as = document.getElementById('mas-asociacion').value.trim();
+    const bs = document.getElementById('mas-buscar').value.trim();
+    if (fd) params.set('fecha_desde', fd);
+    if (fh) params.set('fecha_hasta', fh);
+    if (as) params.set('asociacion', as);
+    if (bs) params.set('buscar', bs);
+
+    const div = document.getElementById('mas-resultados');
+    div.innerHTML = '<div style="padding:20px;text-align:center;"><div class="spinner"></div></div>';
+
+    try {
+        const res = await api.get('/admin/evaluaciones/rodeos-disponibles?' + params.toString());
+        _masRodeos = res.rodeos || [];
+        _renderTablaRodeosMasivo();
+    } catch (e) {
+        div.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
+    }
+}
+
+function _renderTablaRodeosMasivo() {
+    const div = document.getElementById('mas-resultados');
+
+    if (_masRodeos.length === 0) {
+        div.innerHTML = '<p style="font-size:13px;color:var(--gris);padding:8px 0;">Sin rodeos encontrados con esos filtros.</p>';
+        document.getElementById('mas-footer').style.display = 'none';
+        return;
+    }
+
+    const filas = _masRodeos.map((r, i) => {
+        const yaCreada = r.tiene_evaluacion;
+        const sinJurados = r.jurados.length === 0;
+        const juradosTexto = sinJurados
+            ? '<span style="color:#e67e22;font-size:11px;">Sin jurados asignados</span>'
+            : r.jurados.map(j => sanitizar(j)).join(', ');
+
+        const checkbox = yaCreada
+            ? `<input type="checkbox" disabled title="Ya tiene evaluación">`
+            : `<input type="checkbox" class="mas-chk" data-idx="${i}" onchange="_actualizarContadorMasivo()">`;
+
+        const estadoCell = yaCreada
+            ? `<span class="badge-eval badge-en_proceso" style="font-size:11px;">Ya creada</span>`
+            : (sinJurados ? `<span style="font-size:11px;color:#e67e22;">Sin jurados</span>` : '');
+
+        return `<tr style="${yaCreada ? 'opacity:0.55;' : ''}">
+            <td style="text-align:center;">${checkbox}</td>
+            <td style="font-size:13px;">${r.fecha ? formatFecha(r.fecha) : '—'}</td>
+            <td style="font-size:13px;">${sanitizar(r.club || '—')}</td>
+            <td style="font-size:13px;">${sanitizar(r.asociacion || '—')}</td>
+            <td style="font-size:12px;">${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
+            <td style="font-size:12px;">${juradosTexto}</td>
+            <td>${estadoCell}</td>
+        </tr>`;
+    }).join('');
+
+    const disponibles = _masRodeos.filter(r => !r.tiene_evaluacion).length;
+
+    div.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-size:13px;color:var(--gris);">${_masRodeos.length} rodeo(s) encontrado(s) — ${disponibles} disponible(s) para evaluar</span>
+            <label style="font-size:12px;cursor:pointer;display:flex;gap:6px;align-items:center;">
+                <input type="checkbox" id="mas-sel-todos" onchange="_seleccionarTodosMasivo(this.checked)"> Seleccionar todos
+            </label>
+        </div>
+        <div class="tabla-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:36px;text-align:center;"></th>
+                    <th>Fecha</th>
+                    <th>Club</th>
+                    <th>Asociación</th>
+                    <th>Tipo rodeo</th>
+                    <th>Jurado(s)</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody>${filas}</tbody>
+        </table>
+        </div>`;
+
+    document.getElementById('mas-footer').style.display = '';
+    _actualizarContadorMasivo();
+}
+
+function _seleccionarTodosMasivo(checked) {
+    document.querySelectorAll('.mas-chk').forEach(chk => { chk.checked = checked; });
+    _actualizarContadorMasivo();
+}
+
+function _actualizarContadorMasivo() {
+    const seleccionados = document.querySelectorAll('.mas-chk:checked').length;
+    document.getElementById('mas-contador').textContent = `${seleccionados} seleccionado(s)`;
+    document.getElementById('mas-btn-crear').disabled = seleccionados === 0;
+    // Desmarcar "Seleccionar todos" si no están todos marcados
+    const todos = document.querySelectorAll('.mas-chk');
+    const selTodos = document.getElementById('mas-sel-todos');
+    if (selTodos) selTodos.checked = todos.length > 0 && seleccionados === todos.length;
+}
+
+async function crearMasivo() {
+    const analista_id = document.getElementById('mas-analista').value;
+    if (!analista_id) { mostrarToast('Selecciona un analista', 'error'); return; }
+
+    const indices = [...document.querySelectorAll('.mas-chk:checked')].map(c => parseInt(c.dataset.idx));
+    const rodeo_ids = indices.map(i => _masRodeos[i].id);
+
+    if (rodeo_ids.length === 0) { mostrarToast('Selecciona al menos un rodeo', 'error'); return; }
+
+    // Advertir si algún rodeo seleccionado no tiene jurados
+    const sinJurados = indices.filter(i => _masRodeos[i].jurados.length === 0).length;
+    if (sinJurados > 0) {
+        const ok = await confirmar(`${sinJurados} rodeo(s) seleccionado(s) no tiene(n) jurados asignados. ¿Continuar de todas formas?`);
+        if (!ok) return;
+    }
+
+    const btn = document.getElementById('mas-btn-crear');
+    btn.disabled = true;
+    btn.textContent = 'Creando...';
+
+    try {
+        const res = await api.post('/admin/evaluaciones/crear-masivo', { rodeo_ids, analista_id });
+        const partes = [];
+        if (res.creadas  > 0) partes.push(`${res.creadas} creada(s)`);
+        if (res.omitidas > 0) partes.push(`${res.omitidas} omitida(s) (ya existían)`);
+        if (res.errores && res.errores.length > 0) partes.push(`${res.errores.length} con error`);
+        mostrarToast(partes.join(' · '), res.creadas > 0 ? 'exito' : 'advertencia');
+        cerrarModalMasivo();
+        cargarEvaluaciones(1);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al crear evaluaciones', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Crear evaluaciones seleccionadas';
+    }
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 cargarAdmins();
 cargarEvaluaciones(1);
 </script>
+<script src="/js/sidebar-eval.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
 </body>
 </html>

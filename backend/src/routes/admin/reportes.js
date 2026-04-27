@@ -739,7 +739,7 @@ router.get('/evaluaciones/exportar', async (req, res) => {
 // Filtros: temporada (año), asociacion
 router.get('/jurados', async (req, res) => {
     try {
-        const { temporada, asociacion } = req.query;
+        const { temporada, asociacion, jurado } = req.query;
 
         let rodeosQuery = supabase.from('rodeos').select('id, club, asociacion, fecha');
         if (temporada) {
@@ -787,6 +787,7 @@ router.get('/jurados', async (req, res) => {
 
         const resultado = (asigs || [])
             .filter(a => a.usuario)
+            .filter(a => !jurado || (a.usuario.nombre_completo || '').toLowerCase().includes(jurado.toLowerCase()))
             .map(a => {
                 const nota = Array.isArray(a.nota) ? a.nota[0] : a.nota;
                 const resp = respMap[a.id] || { acepta: 0, rechaza: 0 };

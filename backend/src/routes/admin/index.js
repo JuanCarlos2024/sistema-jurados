@@ -12,6 +12,8 @@ router.use('/bonos', require('./bonos'));
 router.use('/configuracion', require('./configuracion'));
 router.use('/importacion', require('./importacion'));
 router.use('/exportacion', require('./exportacion'));
+// Debe ir ANTES de /reportes para que no sea interceptado por el router general
+router.use('/reportes/cartillas-jurado', require('./reporte-cartillas'));
 router.use('/reportes', require('./reportes'));
 router.use('/dashboard', require('./dashboard'));
 router.use('/adjuntos', require('./adjuntos'));

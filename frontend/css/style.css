@@ -126,6 +126,26 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    transition: margin-left 0.3s;
+}
+
+/* ── SIDEBAR COLLAPSE (desktop) ── */
+.btn-sidebar-collapse {
+    display: none;
+    background: none;
+    border: 1px solid var(--gris-borde);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 15px;
+    line-height: 1.4;
+    cursor: pointer;
+    color: var(--azul);
+    flex-shrink: 0;
+}
+@media (min-width: 769px) {
+    .btn-sidebar-collapse { display: inline-flex; align-items: center; }
+    body.sidebar-collapsed .sidebar { transform: translateX(-240px); }
+    body.sidebar-collapsed .main-content { margin-left: 0; }
 }
 
 .topbar {
