@@ -17,6 +17,7 @@ router.use('/reportes/cartillas-jurado', require('./reporte-cartillas'));
 router.use('/reportes', require('./reportes'));
 router.use('/dashboard', require('./dashboard'));
 router.use('/adjuntos', require('./adjuntos'));
+router.use('/cartillas-jurado', require('./cartillas-jurado'));
 router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/hojavida', require('./hojavida'));
 router.use('/evaluaciones', require('./evaluaciones'));

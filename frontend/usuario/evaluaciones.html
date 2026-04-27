@@ -101,9 +101,8 @@ if (api.getUsuario()?.tipo_persona !== 'jurado') {
 async function cargar() {
     try {
         const data = await api.get('/usuario/evaluaciones');
-        const evals = data.evaluaciones || [];
-        const activas  = evals.filter(e => e.tipo === 'activo');
-        const resultados = evals.filter(e => e.tipo === 'resultado');
+        const activas    = data.activas    || [];
+        const resultados = data.resultados || [];
         renderLista(activas, resultados);
     } catch(e) {
         document.getElementById('contenido').innerHTML =

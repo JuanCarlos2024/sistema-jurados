@@ -4,12 +4,16 @@ const supabase = require('../../config/supabase');
 
 // GET / — evaluaciones activas y con resultado para el jurado
 router.get('/', async (req, res) => {
+    const uid = req.usuario.id;
+    console.log(`[eval-usuario] GET / uid=${uid}`);
+
     const { data: usuario } = await supabase
         .from('usuarios_pagados')
-        .select('tipo_persona')
-        .eq('id', req.usuario.id)
+        .select('tipo_persona, nombre_completo')
+        .eq('id', uid)
         .single();
 
+    console.log(`[eval-usuario] usuario:`, usuario);
     if (!usuario || usuario.tipo_persona !== 'jurado') {
         return res.json({ activas: [], resultados: [] });
     }
@@ -17,11 +21,12 @@ router.get('/', async (req, res) => {
     const { data: asignaciones } = await supabase
         .from('asignaciones')
         .select('id, rodeo_id')
-        .eq('usuario_pagado_id', req.usuario.id)
+        .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
         .neq('estado_designacion', 'rechazado');
 
-    if (!asignaciones || asignaciones.length === 0) {
+    console.log(`[eval-usuario] asignaciones: ${asignaciones?.length || 0}`, asignaciones?.map(a => a.rodeo_id));
+    if (!asignaciones?.length) {
         return res.json({ activas: [], resultados: [] });
     }
 
@@ -31,15 +36,61 @@ router.get('/', async (req, res) => {
         .from('evaluaciones')
         .select(`
             id, estado, nota_final, puntaje_final, created_at,
-            rodeo:rodeos(id, club, fecha, asociacion)
+            rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .in('rodeo_id', rodeoIds)
         .order('created_at', { ascending: false });
 
-    const evs      = evaluaciones || [];
-    const activas   = evs.filter(e => !['publicado', 'cerrado'].includes(e.estado));
-    const resultados = evs.filter(e => ['publicado', 'cerrado'].includes(e.estado));
+    console.log(`[eval-usuario] evaluaciones encontradas: ${evaluaciones?.length || 0}`, evaluaciones?.map(e => ({ id: e.id, estado: e.estado })));
 
+    const evs = evaluaciones || [];
+    const resultados = evs.filter(e => ['publicado', 'cerrado'].includes(e.estado));
+    const noPublicadas = evs.filter(e => !['publicado', 'cerrado'].includes(e.estado));
+
+    if (!noPublicadas.length) {
+        console.log(`[eval-usuario] sin evaluaciones no publicadas → activas=0`);
+        return res.json({ activas: [], resultados });
+    }
+
+    // Para cada evaluación no publicada, buscar ciclo abierto con casos visible_jurado
+    const evalIds = noPublicadas.map(e => e.id);
+
+    const { data: ciclosAbiertos } = await supabase
+        .from('evaluacion_ciclos')
+        .select('id, evaluacion_id, numero_ciclo, estado')
+        .in('evaluacion_id', evalIds)
+        .eq('estado', 'abierto');
+
+    console.log(`[eval-usuario] ciclos abiertos: ${ciclosAbiertos?.length || 0}`, ciclosAbiertos?.map(c => ({ id: c.id, eval: c.evaluacion_id, num: c.numero_ciclo })));
+
+    if (!ciclosAbiertos?.length) {
+        return res.json({ activas: [], resultados });
+    }
+
+    const cicloIds = ciclosAbiertos.map(c => c.id);
+
+    const { data: casosVisibles } = await supabase
+        .from('evaluacion_casos')
+        .select('ciclo_id')
+        .in('ciclo_id', cicloIds)
+        .eq('estado', 'visible_jurado');
+
+    console.log(`[eval-usuario] casos visible_jurado: ${casosVisibles?.length || 0}`);
+
+    const ciclosConCasos = new Set((casosVisibles || []).map(c => c.ciclo_id));
+
+    // Mapa evaluacion_id → ciclo abierto (uno por evaluación)
+    const cicloMap = {};
+    ciclosAbiertos.forEach(c => { cicloMap[c.evaluacion_id] = c; });
+
+    const activas = noPublicadas
+        .filter(e => {
+            const ciclo = cicloMap[e.id];
+            return ciclo && ciclosConCasos.has(ciclo.id);
+        })
+        .map(e => ({ ...e, ciclo_abierto: cicloMap[e.id] }));
+
+    console.log(`[eval-usuario] activas finales: ${activas.length}`);
     res.json({ activas, resultados });
 });
 

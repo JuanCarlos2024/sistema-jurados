@@ -66,11 +66,12 @@ router.get('/:asignacion_id', async (req, res) => {
         if (delPerfil) delegado = delPerfil;
     }
 
-    // Cartilla existente (puede no existir aún)
+    // Cartilla existente — solo la versión actual
     const { data: cartilla } = await supabase
         .from('cartillas_jurado')
         .select('*')
         .eq('asignacion_id', asigId)
+        .eq('es_actual', true)
         .maybeSingle();
 
     res.json({
@@ -103,22 +104,26 @@ router.patch('/:asignacion_id', async (req, res) => {
         return res.status(403).json({ error: 'Sin permiso' });
     }
 
-    // Verificar que no esté ya enviada
+    // Solo la versión actual
     const { data: existente } = await supabase
         .from('cartillas_jurado')
-        .select('id, estado')
+        .select('id, estado, version')
         .eq('asignacion_id', asigId)
+        .eq('es_actual', true)
         .maybeSingle();
 
     if (existente?.estado === 'enviada') {
         return res.status(409).json({ error: 'La cartilla ya fue enviada y no puede modificarse' });
     }
 
+    // Si está reabierta, conservar ese estado (no regresar a 'borrador')
+    const estadoDraft = existente?.estado === 'reabierta' ? 'reabierta' : 'borrador';
+
     const payload = {
         asignacion_id:     asigId,
         rodeo_id:          asig.rodeo_id,
         usuario_pagado_id: uid,
-        estado:            'borrador',
+        estado:            estadoDraft,
         datos,
         updated_at:        new Date().toISOString()
     };
@@ -164,11 +169,12 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
         return res.status(403).json({ error: 'Sin permiso' });
     }
 
-    // Verificar que no esté ya enviada
+    // Solo la versión actual
     const { data: cartilla } = await supabase
         .from('cartillas_jurado')
         .select('*')
         .eq('asignacion_id', asigId)
+        .eq('es_actual', true)
         .maybeSingle();
 
     if (cartilla?.estado === 'enviada') {
@@ -261,8 +267,7 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
         return res.status(500).json({ error: 'Error al registrar adjunto: ' + adjErr.message });
     }
 
-    // Upsert cartilla como 'enviada'
-    const cartillaPayload = {
+    const cartillaPayloadBase = {
         asignacion_id:     asigId,
         rodeo_id:          asig.rodeo_id,
         usuario_pagado_id: uid,
@@ -275,17 +280,27 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
     };
 
     let cartillaFinal;
-    if (cartilla) {
+    if (cartilla && cartilla.estado === 'reabierta') {
+        // Nueva versión — marcar la anterior como historial
+        await supabase.from('cartillas_jurado').update({ es_actual: false }).eq('id', cartilla.id);
         const { data } = await supabase
             .from('cartillas_jurado')
-            .update(cartillaPayload)
+            .insert({ ...cartillaPayloadBase, version: cartilla.version + 1, es_actual: true, reemplaza_cartilla_id: cartilla.id })
+            .select().single();
+        cartillaFinal = data;
+    } else if (cartilla) {
+        // Borrador existente — actualizar en la misma fila
+        const { data } = await supabase
+            .from('cartillas_jurado')
+            .update({ ...cartillaPayloadBase, es_actual: true })
             .eq('id', cartilla.id)
             .select().single();
         cartillaFinal = data;
     } else {
+        // Primera cartilla
         const { data } = await supabase
             .from('cartillas_jurado')
-            .insert(cartillaPayload)
+            .insert({ ...cartillaPayloadBase, version: 1, es_actual: true })
             .select().single();
         cartillaFinal = data;
     }
@@ -307,6 +322,7 @@ router.get('/:asignacion_id/pdf', async (req, res) => {
         .from('cartillas_jurado')
         .select('storage_path_pdf, estado, usuario_pagado_id')
         .eq('asignacion_id', asigId)
+        .eq('es_actual', true)
         .maybeSingle();
 
     if (!cartilla) return res.status(404).json({ error: 'Cartilla no encontrada' });

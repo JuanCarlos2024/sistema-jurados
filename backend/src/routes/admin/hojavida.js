@@ -10,7 +10,7 @@ router.get('/:id', async (req, res) => {
     // 1. Perfil
     const { data: perfil, error: errPerfil } = await supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, asociacion, activo, created_at')
+        .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, asociacion, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, created_at')
         .eq('id', uid)
         .single();
 
@@ -252,14 +252,28 @@ router.get('/:id', async (req, res) => {
 
     const { data: historial_cambios } = await supabase
         .from('usuario_historial_cambios')
-        .select('id, tipo_cambio, valor_anterior, valor_nuevo, cambiado_por_nombre, cambiado_en, observacion')
+        .select('id, tipo_cambio, valor_anterior, valor_nuevo, cambiado_por, cambiado_por_nombre, cambiado_en, observacion, fecha_desde, fecha_hasta')
         .eq('usuario_pagado_id', uid)
         .order('cambiado_en', { ascending: false });
+
+    const hadm = (historial_cambios || []).map(c => ({
+        id:                 c.id,
+        fecha:              c.cambiado_en,
+        tipo_cambio:        c.tipo_cambio,
+        valor_anterior:     c.valor_anterior,
+        valor_nuevo:        c.valor_nuevo,
+        observacion:        c.observacion,
+        fecha_desde:        c.fecha_desde,
+        fecha_hasta:        c.fecha_hasta,
+        cambiado_por:       c.cambiado_por,
+        cambiado_por_nombre: c.cambiado_por_nombre
+    }));
 
     res.json({
         perfil,
         historial,
-        historial_cambios:   historial_cambios || [],
+        historial_cambios:        historial_cambios || [],
+        historial_administrativo: hadm,
         ficha:               ficha || null,
         indicadores,
         evolucion_notas,

@@ -30,13 +30,14 @@ router.get('/', async (req, res) => {
 
     let query = supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, estado_usuario, created_at, updated_at', { count: 'exact' })
+        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, created_at, updated_at', { count: 'exact' })
         .order('nombre_completo', { ascending: true })
         .range(offset, offset + parseInt(limit) - 1);
 
     if (tipo) query = query.eq('tipo_persona', tipo);
     // estado toma precedencia sobre activo (legacy)
-    if (estado)        query = query.eq('estado_usuario', estado);
+    const ESTADOS_VALIDOS = ['activo', 'inactivo', 'receso', 'suspendido'];
+    if (estado && ESTADOS_VALIDOS.includes(estado)) query = query.eq('estado_usuario', estado);
     else if (activo !== undefined && activo !== '') query = query.eq('activo', activo === 'true');
     if (buscar)    query = query.or(`nombre_completo.ilike.%${buscar}%,codigo_interno.ilike.%${buscar}%,rut.ilike.%${buscar}%`);
     if (categoria) query = query.eq('categoria', categoria);
@@ -332,9 +333,17 @@ router.patch('/:id/estado', async (req, res) => {
     const estadoAnterior = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
     const activoBool = estado === 'activo';
 
+    const updatePayload = { estado_usuario: estado, activo: activoBool, updated_at: new Date().toISOString() };
+    // Al reactivar desde suspensión, limpiar campos de suspensión
+    if (estado === 'activo' && estadoAnterior === 'suspendido') {
+        updatePayload.suspension_desde  = null;
+        updatePayload.suspension_hasta  = null;
+        updatePayload.suspension_motivo = null;
+    }
+
     await supabase
         .from('usuarios_pagados')
-        .update({ estado_usuario: estado, activo: activoBool, updated_at: new Date().toISOString() })
+        .update(updatePayload)
         .eq('id', req.params.id);
 
     await auditoria.registrar({
@@ -360,6 +369,64 @@ router.patch('/:id/estado', async (req, res) => {
     });
 
     res.json({ mensaje: `Estado actualizado a ${estado}` });
+});
+
+// PATCH /api/admin/usuarios/:id/suspender
+router.patch('/:id/suspender', async (req, res) => {
+    const { fecha_desde, fecha_hasta, motivo } = req.body;
+
+    if (!fecha_desde) return res.status(400).json({ error: 'fecha_desde es obligatoria' });
+    if (!fecha_hasta) return res.status(400).json({ error: 'fecha_hasta es obligatoria' });
+    if (!motivo || !motivo.trim()) return res.status(400).json({ error: 'El motivo es obligatorio' });
+    if (fecha_hasta < fecha_desde) return res.status(400).json({ error: 'fecha_hasta debe ser igual o posterior a fecha_desde' });
+
+    const { data: u } = await supabase
+        .from('usuarios_pagados')
+        .select('nombre_completo, activo, estado_usuario')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const estadoAnterior = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
+    const ahora = new Date().toISOString();
+
+    await supabase
+        .from('usuarios_pagados')
+        .update({
+            estado_usuario:     'suspendido',
+            suspension_desde:   fecha_desde,
+            suspension_hasta:   fecha_hasta,
+            suspension_motivo:  motivo.trim(),
+            updated_at:         ahora
+        })
+        .eq('id', req.params.id);
+
+    await auditoria.registrar({
+        tabla: 'usuarios_pagados',
+        registro_id: req.params.id,
+        accion: 'suspender',
+        datos_anteriores: { estado_usuario: estadoAnterior },
+        datos_nuevos:     { estado_usuario: 'suspendido', suspension_desde: fecha_desde, suspension_hasta: fecha_hasta },
+        actor_id:   req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `${u.nombre_completo} suspendido del ${fecha_desde} al ${fecha_hasta}: ${motivo.trim()}`,
+        ip_address: req.ip
+    });
+
+    await supabase.from('usuario_historial_cambios').insert({
+        usuario_pagado_id:   req.params.id,
+        tipo_cambio:         'suspension',
+        valor_anterior:      estadoAnterior,
+        valor_nuevo:         'suspendido',
+        fecha_desde:         fecha_desde,
+        fecha_hasta:         fecha_hasta,
+        cambiado_por:        req.usuario.id,
+        cambiado_por_nombre: req.usuario.nombre,
+        observacion:         motivo.trim()
+    });
+
+    res.json({ mensaje: `Usuario suspendido del ${fecha_desde} al ${fecha_hasta}` });
 });
 
 // POST /api/admin/usuarios/:id/resetear-password

@@ -140,7 +140,7 @@ router.get('/', async (req, res) => {
                 supabase.from('notas_rodeo').select('asignacion_id, nota, comentario').in('asignacion_id', asigIds)
             ];
             if (!esDelegado) {
-                queries.push(supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds));
+                queries.push(supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds).eq('es_actual', true));
             }
             const [{ data: notas }, cartillasRes] = await Promise.all(queries);
             const notasMap     = {};

@@ -413,6 +413,8 @@ function renderRodeos(asignaciones) {
                 const cest = a.cartilla_estado;
                 if (cest === 'enviada') {
                     cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#27ae60; color:#fff; text-decoration:none;">✓ Enviada</a>`;
+                } else if (cest === 'reabierta') {
+                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#e67e22; color:#fff; text-decoration:none;">⚠ Corregir</a>`;
                 } else if (cest === 'borrador') {
                     cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#f39c12; color:#fff; text-decoration:none;">Borrador</a>`;
                 } else {

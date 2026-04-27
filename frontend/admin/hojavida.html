@@ -61,6 +61,17 @@
         .dist-card { background:#f8f9fa; border:1px solid var(--gris-borde); border-radius:8px; padding:12px 14px; text-align:center; }
         .dist-card .dval { font-size:20px; font-weight:700; }
         .dist-card .dlbl { font-size:11px; color:var(--gris); margin-top:3px; line-height:1.3; }
+        .badge-suspendido { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
+        .badge-hist-cat   { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+        .hadm-lista       { display: flex; flex-direction: column; gap: 10px; }
+        .hadm-fila        { display: flex; gap: 14px; padding: 10px 12px; background: #fafafa; border: 1px solid var(--gris-borde); border-radius: 8px; align-items: flex-start; }
+        .hadm-left        { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 110px; flex-shrink: 0; }
+        .hadm-fecha       { font-size: 12px; color: var(--gris); white-space: nowrap; }
+        .hadm-right       { flex: 1; }
+        .hadm-resumen     { font-size: 13px; font-weight: 600; color: var(--oscuro); margin-bottom: 3px; }
+        .hadm-obs         { font-size: 12px; color: var(--gris); font-style: italic; margin-bottom: 2px; }
+        .hadm-rango       { font-size: 11px; color: #6c3483; margin-bottom: 2px; }
+        .hadm-quien       { font-size: 11px; color: var(--gris); }
     </style>
 </head>
 <body>
@@ -175,8 +186,10 @@ async function cargar() {
 }
 
 function renderTodo(d) {
-    const { perfil, historial, historial_cambios, ficha, indicadores, evolucion_notas, frecuencia_propia,
+    const { perfil, historial, historial_cambios, historial_administrativo, ficha, indicadores,
+            evolucion_notas, frecuencia_propia,
             comparacion, pares_categoria, comparacion_frecuencia } = d;
+    const hadm = historial_administrativo || historial_cambios || [];
 
     const iniciales = (perfil.nombre_completo || '?').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
     const catBadge  = perfil.categoria
@@ -196,10 +209,21 @@ function renderTodo(d) {
             <p style="margin-top:4px;">
                ${perfil.telefono ? '📞 ' + sanitizar(perfil.telefono) + '&nbsp;&nbsp;' : ''}
                ${perfil.email ? '✉️ ' + sanitizar(perfil.email) : ''}
-               ${!perfil.activo ? '&nbsp;<span class="badge badge-inactivo">Inactivo</span>' : ''}
+               ${perfil.estado_usuario === 'suspendido'
+                   ? '&nbsp;<span class="badge badge-suspendido">Suspendido' +
+                     (perfil.suspension_hasta ? ' hasta ' + _fmtFecha(perfil.suspension_hasta) : '') + '</span>'
+                   : (!perfil.activo ? '&nbsp;<span class="badge badge-inactivo">Inactivo</span>' : '')}
             </p>
+            ${perfil.estado_usuario === 'suspendido' && perfil.suspension_motivo
+               ? `<p style="margin-top:6px;font-size:12px;color:#6c3483;background:#fdf2f8;border:1px solid #d7bde2;border-radius:6px;padding:6px 10px;">
+                  <strong>Motivo suspensión:</strong> ${sanitizar(perfil.suspension_motivo)}
+                  ${perfil.suspension_desde ? ' · Del ' + _fmtFecha(perfil.suspension_desde) + ' al ' + _fmtFecha(perfil.suspension_hasta) : ''}
+                  </p>`
+               : ''}
         </div>
     </div>
+
+    ${renderHistorialAdmin(hadm)}
 
     ${renderIndicadores(indicadores)}
 
@@ -223,8 +247,6 @@ function renderTodo(d) {
     </div>
 
     ${renderHistorial(historial)}
-
-    ${renderHistorialCambios(historial_cambios || [])}
 
     ${renderFicha(ficha)}
     `;
@@ -337,38 +359,80 @@ function renderHistorial(historial) {
     </div>`;
 }
 
-function renderHistorialCambios(cambios) {
-    if (!cambios || cambios.length === 0) return '';
+function _fmtFecha(iso) {
+    if (!iso) return '—';
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return d + '/' + m + '/' + y;
+}
 
-    const TIPO_LABEL = { estado: 'Estado', categoria: 'Categoría' };
-    const filas = cambios.map(c => {
-        const tipo  = TIPO_LABEL[c.tipo_cambio] || c.tipo_cambio;
-        const ant   = c.valor_anterior || '—';
-        const nuevo = c.valor_nuevo;
-        const quien = sanitizar(c.cambiado_por_nombre || '—');
-        const fecha = c.cambiado_en ? formatFecha(c.cambiado_en) : '—';
-        const obs   = c.observacion ? `<span style="font-size:11px;color:var(--gris);">${sanitizar(c.observacion)}</span>` : '';
-        return `<tr>
-            <td style="white-space:nowrap;">${fecha}</td>
-            <td>${tipo}</td>
-            <td><span style="text-decoration:line-through;color:var(--gris);font-size:12px;">${sanitizar(ant)}</span></td>
-            <td><strong>${sanitizar(nuevo)}</strong></td>
-            <td style="font-size:12px;">${quien}</td>
-            <td>${obs}</td>
-        </tr>`;
+function _badgeEvento(tipo_cambio, valor_nuevo) {
+    if (tipo_cambio === 'suspension') {
+        return '<span class="badge badge-suspendido">Suspensión</span>';
+    }
+    if (tipo_cambio === 'categoria') {
+        return '<span class="badge badge-hist-cat">Categoría</span>';
+    }
+    if (tipo_cambio === 'estado') {
+        if (valor_nuevo === 'activo')   return '<span class="badge badge-activo">Activación</span>';
+        if (valor_nuevo === 'receso')   return '<span class="badge badge-receso">Receso</span>';
+        if (valor_nuevo === 'inactivo') return '<span class="badge badge-inactivo">Desactivación</span>';
+    }
+    return '<span class="badge">' + sanitizar(tipo_cambio) + '</span>';
+}
+
+function _resumenEvento(e) {
+    if (e.tipo_cambio === 'suspension') {
+        const d = e.fecha_desde ? _fmtFecha(e.fecha_desde) : '?';
+        const h = e.fecha_hasta ? _fmtFecha(e.fecha_hasta) : '?';
+        return 'Suspendido del ' + d + ' al ' + h;
+    }
+    if (e.tipo_cambio === 'categoria') {
+        return 'Categoría: ' + sanitizar(e.valor_anterior || '—') + ' → ' + sanitizar(e.valor_nuevo || '—');
+    }
+    if (e.tipo_cambio === 'estado') {
+        const LABELS = { activo: 'Activo', inactivo: 'Inactivo', receso: 'En receso', suspendido: 'Suspendido' };
+        const ant   = LABELS[e.valor_anterior] || sanitizar(e.valor_anterior || '—');
+        const nuevo = LABELS[e.valor_nuevo]    || sanitizar(e.valor_nuevo    || '—');
+        return 'Estado: ' + ant + ' → ' + nuevo;
+    }
+    return sanitizar(e.valor_anterior || '—') + ' → ' + sanitizar(e.valor_nuevo || '—');
+}
+
+function renderHistorialAdmin(eventos) {
+    if (!eventos || eventos.length === 0) {
+        return `<div class="seccion-bloque">
+            <div class="seccion-titulo">Historial administrativo</div>
+            <p style="color:var(--gris);font-size:13px;">No existen eventos administrativos registrados.</p>
+        </div>`;
+    }
+
+    const filas = eventos.map(e => {
+        const fecha   = e.fecha ? formatFecha(e.fecha) : '—';
+        const badge   = _badgeEvento(e.tipo_cambio, e.valor_nuevo);
+        const resumen = _resumenEvento(e);
+        const quien   = sanitizar(e.cambiado_por_nombre || '—');
+        const obs     = e.observacion
+            ? '<div class="hadm-obs">' + sanitizar(e.observacion) + '</div>'
+            : '';
+        const rango   = (e.tipo_cambio === 'suspension' && (e.fecha_desde || e.fecha_hasta))
+            ? '<div class="hadm-rango">Del ' + _fmtFecha(e.fecha_desde) + ' al ' + _fmtFecha(e.fecha_hasta) + '</div>'
+            : '';
+
+        return '<div class="hadm-fila">'
+             +   '<div class="hadm-left"><span class="hadm-fecha">' + fecha + '</span>' + badge + '</div>'
+             +   '<div class="hadm-right">'
+             +     '<div class="hadm-resumen">' + resumen + '</div>'
+             +     rango
+             +     obs
+             +     '<div class="hadm-quien">Realizado por: ' + quien + '</div>'
+             +   '</div>'
+             + '</div>';
     }).join('');
 
-    return `<div class="seccion-bloque">
-        <div class="seccion-titulo">Historial de cambios (${cambios.length})</div>
-        <div style="overflow-x:auto;">
-        <table class="tabla">
-            <thead><tr>
-                <th>Fecha</th><th>Tipo</th><th>Anterior</th><th>Nuevo</th><th>Cambiado por</th><th>Observación</th>
-            </tr></thead>
-            <tbody>${filas}</tbody>
-        </table>
-        </div>
-    </div>`;
+    return '<div class="seccion-bloque">'
+         +   '<div class="seccion-titulo">Historial administrativo (' + eventos.length + ')</div>'
+         +   '<div class="hadm-lista">' + filas + '</div>'
+         + '</div>';
 }
 
 const OPTS_4 = ['Excelente','Bueno','Regular','Deficiente'];

@@ -124,14 +124,25 @@ function renderCartilla(r) {
         html += `<div class="enviada-notice">
             <strong>✓ Cartilla enviada correctamente</strong>
             Enviada el ${cartilla.enviada_en ? fmtFechaHora(cartilla.enviada_en) : '—'}.
+            ${cartilla.version > 1 ? ' · Versión ' + cartilla.version + '.' : ''}
             Esta cartilla ya no puede ser modificada.
             <div style="margin-top:10px;">
                 <button class="btn btn-outline btn-pequeño" onclick="descargarPDF()">📄 Descargar PDF</button>
             </div>
         </div>`;
     } else {
+        if (_estado === 'reabierta') {
+            html += `<div style="background:#fff3cd;border:1px solid #ffc107;border-left:4px solid #f39c12;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:14px;color:#856404;">
+                <strong style="display:block;font-size:15px;margin-bottom:4px;">⚠ Cartilla reabierta para corrección</strong>
+                El administrador ha solicitado que envíes una nueva versión de la cartilla.<br>
+                ${cartilla.motivo_reapertura ? '<span style="margin-top:6px;display:block;"><strong>Motivo:</strong> ' + sanitizar(cartilla.motivo_reapertura) + '</span>' : ''}
+                ${cartilla.reabierta_en ? '<span style="font-size:12px;color:#9c7a00;margin-top:4px;display:block;">Reabierta el ' + fmtFechaHora(cartilla.reabierta_en) + '</span>' : ''}
+            </div>`;
+        }
         const badgeClass = _estado === 'borrador' ? 'estado-borrador' : 'estado-nueva';
-        const badgeText  = _estado === 'borrador' ? 'Borrador guardado' : 'Sin completar';
+        const badgeText  = _estado === 'borrador' ? 'Borrador guardado'
+                         : _estado === 'reabierta' ? 'Pendiente corrección'
+                         : 'Sin completar';
         html += `<div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
             <div>
                 <span class="estado-badge ${badgeClass}">${badgeText}</span>

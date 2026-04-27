@@ -34,6 +34,7 @@ function expandirCartilla(cartilla) {
         jurado:           clean(jurado.nombre_completo),
         categoria_jurado: clean(jurado.categoria),
         estado_cartilla:  cartilla.estado || '—',
+        version:          cartilla.version || 1,
         fecha_envio:      fmtDT(cartilla.enviada_en),
     };
 
@@ -110,12 +111,14 @@ async function queryCartillas(filtros) {
             rodeo_id,
             usuario_pagado_id,
             estado,
+            version,
             datos,
             enviada_en,
             created_at,
             rodeo:rodeos!cartillas_jurado_rodeo_id_fkey(id, club, asociacion, fecha, tipo_rodeo_nombre),
             jurado:usuarios_pagados!cartillas_jurado_usuario_pagado_id_fkey(id, nombre_completo, categoria)
         `)
+        .eq('es_actual', true)
         .order('created_at', { ascending: false });
 
     if (estado) q = q.eq('estado', estado);

@@ -1168,11 +1168,65 @@ async function abrirAdjuntosAdmin(rodeoId, clubNombre) {
     await renderAdjuntosAdmin();
 }
 
+let _reabrirCartillaId = null;
+
+async function verPdfCartilla(cartillaId) {
+    try {
+        const r = await api.get('/admin/cartillas-jurado/pdf/' + cartillaId);
+        window.open(r.url, '_blank');
+    } catch(e) { mostrarToast(e.message || 'Error al obtener PDF', 'error'); }
+}
+
+function abrirModalReabrir(cartillaId) {
+    _reabrirCartillaId = cartillaId;
+    if (!document.getElementById('modal-reabrir')) {
+        const div = document.createElement('div');
+        div.id = 'modal-reabrir';
+        div.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;padding:16px;';
+        div.innerHTML = '<div style="background:#fff;border-radius:10px;padding:24px;max-width:480px;width:100%;">'
+            + '<h3 style="margin:0 0 10px;font-size:16px;">Reabrir cartilla para correccion</h3>'
+            + '<p style="font-size:13px;color:#555;margin:0 0 14px;">La version actual quedara guardada como historial. El jurado podra enviar una nueva version corregida.</p>'
+            + '<label class="form-label">Motivo de reapertura <span style="color:red">*</span></label>'
+            + '<textarea id="reabrir-motivo" class="form-control" rows="3" maxlength="500" placeholder="Ej: Falta completar observaciones..."></textarea>'
+            + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">'
+            + '<button class="btn btn-secundario btn-pequeño" onclick="cerrarModalReabrir()">Cancelar</button>'
+            + '<button id="btn-confirmar-reabrir" class="btn btn-primario btn-pequeño" onclick="confirmarReabrir()">Solicitar corrección</button>'
+            + '</div></div>';
+        document.body.appendChild(div);
+    }
+    document.getElementById('reabrir-motivo').value = '';
+    document.getElementById('modal-reabrir').style.display = 'flex';
+}
+
+function cerrarModalReabrir() {
+    const el = document.getElementById('modal-reabrir');
+    if (el) el.style.display = 'none';
+}
+
+async function confirmarReabrir() {
+    const motivo = (document.getElementById('reabrir-motivo')?.value || '').trim();
+    if (!motivo) { mostrarToast('El motivo de reapertura es obligatorio', 'error'); return; }
+    const btn = document.getElementById('btn-confirmar-reabrir');
+    if (btn) { btn.disabled = true; btn.textContent = 'Procesando...'; }
+    try {
+        await api.post('/admin/cartillas-jurado/' + _reabrirCartillaId + '/reabrir', { motivo });
+        cerrarModalReabrir();
+        mostrarToast('Cartilla reabierta. El jurado puede enviar una nueva version.', 'exito');
+        await renderAdjuntosAdmin();
+    } catch(e) {
+        mostrarToast(e.message || 'Error al reabrir cartilla', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Solicitar corrección'; }
+    }
+}
+
 async function renderAdjuntosAdmin() {
     try {
-        const res = await api.get(`/admin/adjuntos?rodeo_id=${adjAdminRodeoId}`);
+        const [res, cartillasVersiones] = await Promise.all([
+            api.get('/admin/adjuntos?rodeo_id=' + adjAdminRodeoId),
+            api.get('/admin/cartillas-jurado/by-rodeo/' + adjAdminRodeoId).catch(() => [])
+        ]);
         const adjuntos = res.adjuntos || [];
-        const links = res.links || [];
+        const links    = res.links    || [];
 
         let html = `<div class="card" style="margin-bottom:16px; padding:14px;">
             <div style="font-weight:600; margin-bottom:10px;">Subir archivo (como administrador)</div>
@@ -1211,8 +1265,48 @@ async function renderAdjuntosAdmin() {
             </form>
         </div>`;
 
+        // ── Versiones Cartilla Digital ─────────────────────────────────────
+        if (cartillasVersiones.length > 0) {
+            html += '<div style="font-weight:600;margin-bottom:8px;color:#1a5276;">&#128203; Cartillas Digitales — Versiones</div>';
+            const porJurado = {};
+            cartillasVersiones.forEach(function(c) {
+                const jid = (c.jurado && c.jurado.id) ? c.jurado.id : 'sin-jurado';
+                if (!porJurado[jid]) porJurado[jid] = { jurado: c.jurado, versiones: [] };
+                porJurado[jid].versiones.push(c);
+            });
+            Object.values(porJurado).forEach(function(item) {
+                const nombre = item.jurado ? sanitizar(item.jurado.nombre_completo) : 'Jurado';
+                const cat    = item.jurado && item.jurado.categoria ? ' · ' + sanitizar(item.jurado.categoria) : '';
+                html += '<div style="margin-bottom:10px;">'
+                    + '<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:5px;">' + nombre + cat + '</div>'
+                    + '<div style="display:flex;flex-direction:column;gap:5px;">';
+                item.versiones.forEach(function(v) {
+                    const estadoColor = v.estado === 'enviada' ? '#27ae60' : v.estado === 'reabierta' ? '#e67e22' : '#f39c12';
+                    const estadoText  = v.estado === 'enviada' ? 'Enviada' : v.estado === 'reabierta' ? 'Reabierta' : 'Borrador';
+                    const fechaStr    = v.enviada_en ? new Date(v.enviada_en).toLocaleString('es-CL') : (v.reabierta_en ? 'Reabierta ' + new Date(v.reabierta_en).toLocaleString('es-CL') : '—');
+                    const actualBadge = v.es_actual ? '<span style="background:#e8f4fd;color:#1a5276;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px;">ACTUAL</span>' : '';
+                    const motivo      = v.motivo_reapertura ? ' · <em>' + sanitizar(v.motivo_reapertura) + '</em>' : '';
+                    const btnPdf      = v.storage_path_pdf
+                        ? '<button class="btn btn-pequeño btn-outline" onclick="verPdfCartilla(\'' + v.id + '\')">&#128196; PDF</button>'
+                        : '';
+                    const btnReabrir  = (v.es_actual && v.estado === 'enviada')
+                        ? '<button class="btn btn-pequeño" style="background:#fff3cd;color:#856404;border:1px solid #ffc107;" onclick="abrirModalReabrir(\'' + v.id + '\')">'
+                          + '&#128275; Reabrir</button>'
+                        : '';
+                    html += '<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid ' + estadoColor + ';">'
+                        + '<span style="font-size:12px;font-weight:700;color:' + estadoColor + ';white-space:nowrap;">v' + v.version + ' · ' + estadoText + '</span>'
+                        + actualBadge
+                        + '<span style="font-size:11px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + fechaStr + motivo + '</span>'
+                        + btnPdf + btnReabrir
+                        + '</div>';
+                });
+                html += '</div></div>';
+            });
+            html += '<hr style="margin:10px 0;">';
+        }
+
         // Adjuntos
-        html += `<div style="font-weight:600; margin-bottom:8px;">Archivos adjuntos (${adjuntos.length})</div>`;
+        html += '<div style="font-weight:600; margin-bottom:8px;">Archivos adjuntos (' + adjuntos.length + ')</div>';
         if (adjuntos.length === 0) {
             html += '<p style="color:#888; font-size:13px; margin-bottom:16px;">Sin archivos adjuntos</p>';
         } else {

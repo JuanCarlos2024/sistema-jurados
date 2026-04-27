@@ -7,7 +7,8 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .badge-receso { background: #fde8d8; color: #a04000; border: 1px solid #f0a070; }
+        .badge-receso     { background: #fde8d8; color: #a04000; border: 1px solid #f0a070; }
+        .badge-suspendido { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
     </style>
 </head>
 <body>
@@ -72,6 +73,7 @@
                         <option value="true">Activos</option>
                         <option value="false">Inactivos</option>
                         <option value="receso">En receso</option>
+                        <option value="suspendido">Suspendidos</option>
                     </select>
                 </div>
                 <div class="form-grupo">
@@ -123,6 +125,7 @@ document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre |
 let paginaActual = 1;
 const POR_PAGINA = 20;
 let usuarioEditando = null;
+let _usuariosMap = {};
 
 let debounceTimer;
 function debounce(fn, delay) {
@@ -147,10 +150,11 @@ async function cargar(pagina = 1) {
     mostrarSpinner(wrap);
 
     const filtroEstado = document.getElementById('f-activo').value;
+    const ESTADOS_NOMBRE = ['activo', 'inactivo', 'receso', 'suspendido'];
     const params = toQueryString({
         tipo:      document.getElementById('f-tipo').value,
-        // si es 'receso' usamos param estado; si es true/false usamos activo (legacy)
-        ...(filtroEstado === 'receso' ? { estado: 'receso' } : { activo: filtroEstado }),
+        // estados con nombre propio usan param 'estado'; true/false usan 'activo' (legacy)
+        ...(ESTADOS_NOMBRE.includes(filtroEstado) ? { estado: filtroEstado } : { activo: filtroEstado }),
         categoria: document.getElementById('f-categoria').value,
         buscar:    document.getElementById('f-buscar').value.trim(),
         page: paginaActual,
@@ -172,6 +176,8 @@ function renderTabla(usuarios, total) {
         wrap.innerHTML = '<p class="tabla-vacia">No se encontraron usuarios</p>';
         return;
     }
+    _usuariosMap = {};
+    usuarios.forEach(u => { _usuariosMap[u.id] = u; });
 
     wrap.innerHTML = `
     <table style="font-size:13px;">
@@ -198,12 +204,12 @@ function renderTabla(usuarios, total) {
                 <td>${sanitizar(u.ciudad || '—')}</td>
                 <td>${u.telefono ? sanitizar(u.telefono) : '<span class="texto-gris">—</span>'}</td>
                 <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${sanitizar(u.email || '')}">${u.email ? sanitizar(u.email) : '<span class="texto-gris">—</span>'}</td>
-                <td>${_badgeEstado(u.estado_usuario, u.activo)}</td>
+                <td>${_badgeEstado(u)}</td>
                 <td>
                     <div class="flex gap-8">
                         <button class="btn btn-pequeño btn-outline" onclick="abrirEditar('${u.id}')">Editar</button>
                         <button class="btn btn-pequeño btn-primario" onclick="location.href='/admin/hojavida.html?id=${u.id}&from=usuarios'" title="Hoja de Vida">HV</button>
-                        <button class="btn btn-pequeño btn-secundario" onclick="abrirAcciones('${u.id}', '${sanitizar(u.nombre_completo)}', '${u.tipo_persona}', '${u.estado_usuario || (u.activo ? 'activo' : 'inactivo')}', '${u.categoria || ''}')">▾</button>
+                        <button class="btn btn-pequeño btn-secundario" onclick="abrirAcciones('${u.id}')">▾</button>
                     </div>
                 </td>
             </tr>
@@ -338,32 +344,56 @@ async function abrirEditar(id) {
     }
 }
 
-function _badgeEstado(estadoUsuario, activoFallback) {
-    const e = estadoUsuario || (activoFallback ? 'activo' : 'inactivo');
-    if (e === 'activo')   return '<span class="badge badge-activo">Activo</span>';
-    if (e === 'receso')   return '<span class="badge badge-receso">En receso</span>';
+function _badgeEstado(u) {
+    const e = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
+    if (e === 'activo')      return '<span class="badge badge-activo">Activo</span>';
+    if (e === 'receso')      return '<span class="badge badge-receso">En receso</span>';
+    if (e === 'suspendido') {
+        const hasta = u.suspension_hasta ? ` — hasta ${fmtFecha(u.suspension_hasta)}` : '';
+        return `<span class="badge badge-suspendido" title="${sanitizar(u.suspension_motivo || '')}">Suspendido${hasta}</span>`;
+    }
     return '<span class="badge badge-inactivo">Inactivo</span>';
 }
 
-function abrirAcciones(id, nombre, tipo, estadoActual, categoria) {
+function fmtFecha(iso) {
+    if (!iso) return '—';
+    const [y, m, d] = iso.slice(0, 10).split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function abrirAcciones(id) {
+    const u = _usuariosMap[id];
+    if (!u) return;
+    const nombre       = u.nombre_completo;
+    const tipo         = u.tipo_persona;
+    const estadoActual = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
+    const categoria    = u.categoria || '';
+
     document.getElementById('modal-titulo').textContent = 'Acciones — ' + nombre;
 
     let btnEstado;
     if (estadoActual === 'activo') {
-        btnEstado = `<button class="btn btn-advertencia w-100" onclick="cambiarEstado('${id}','receso','${nombre}')">⏸ Poner en receso</button>
-                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${nombre}')">🚫 Desactivar usuario</button>`;
+        btnEstado = `<button class="btn btn-advertencia w-100" onclick="cambiarEstado('${id}','receso','${sanitizar(nombre)}')">⏸ Poner en receso</button>
+                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${sanitizar(nombre)}')">🚫 Desactivar usuario</button>`;
     } else if (estadoActual === 'receso') {
-        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${nombre}')">✅ Activar usuario</button>
-                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${nombre}')">🚫 Desactivar usuario</button>`;
+        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${sanitizar(nombre)}')">✅ Activar usuario</button>
+                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${sanitizar(nombre)}')">🚫 Desactivar usuario</button>`;
+    } else if (estadoActual === 'suspendido') {
+        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${sanitizar(nombre)}')">✅ Activar usuario</button>
+                     <button class="btn btn-peligro w-100" onclick="cambiarEstado('${id}','inactivo','${sanitizar(nombre)}')">🚫 Desactivar usuario</button>`;
     } else {
-        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${nombre}')">✅ Activar usuario</button>
-                     <button class="btn btn-advertencia w-100" onclick="cambiarEstado('${id}','receso','${nombre}')">⏸ Poner en receso</button>`;
+        btnEstado = `<button class="btn btn-success w-100" onclick="cambiarEstado('${id}','activo','${sanitizar(nombre)}')">✅ Activar usuario</button>
+                     <button class="btn btn-advertencia w-100" onclick="cambiarEstado('${id}','receso','${sanitizar(nombre)}')">⏸ Poner en receso</button>`;
     }
+
+    const btnSuspender = estadoActual !== 'suspendido'
+        ? `<button class="btn w-100" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="abrirFormSuspender('${id}', '${sanitizar(nombre)}')">⏸ Suspender usuario</button>`
+        : '';
 
     const adminActual = getUsuario();
     const esAdminPleno = adminActual && adminActual.rol_evaluacion === null;
     const btnEliminar = esAdminPleno
-        ? `<button class="btn btn-peligro w-100" style="margin-top:6px; border-top:1px solid #eee; padding-top:12px;" onclick="eliminarUsuario('${id}','${nombre}')">🗑 Eliminar usuario</button>`
+        ? `<button class="btn btn-peligro w-100" style="margin-top:6px; border-top:1px solid #eee; padding-top:12px;" onclick="eliminarUsuario('${id}','${sanitizar(nombre)}')">🗑 Eliminar usuario</button>`
         : '';
 
     document.getElementById('modal-contenido').innerHTML = `
@@ -373,10 +403,11 @@ function abrirAcciones(id, nombre, tipo, estadoActual, categoria) {
                 🏅 Cambiar categoría
             </button>
             ` : ''}
-            <button class="btn btn-advertencia w-100" onclick="resetPassword('${id}', '${nombre}')">
+            <button class="btn btn-advertencia w-100" onclick="resetPassword('${id}', '${sanitizar(nombre)}')">
                 🔑 Resetear contraseña
             </button>
             ${btnEstado}
+            ${btnSuspender}
             ${btnEliminar}
         </div>`;
     document.getElementById('modal-overlay').classList.remove('oculto');
@@ -445,8 +476,58 @@ async function resetPassword(id, nombre) {
     } catch (err) { mostrarError(err); }
 }
 
+function abrirFormSuspender(id, nombre) {
+    const hoy = new Date().toISOString().slice(0, 10);
+    document.getElementById('modal-titulo').textContent = 'Suspender usuario — ' + nombre;
+    document.getElementById('modal-contenido').innerHTML = `
+        <form onsubmit="confirmarSuspension(event, '${id}')">
+            <div class="form-grupo">
+                <label class="form-label">Fecha desde <span class="req">*</span></label>
+                <input type="date" id="susp-desde" name="fecha_desde" class="form-control" required value="${hoy}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Fecha hasta <span class="req">*</span></label>
+                <input type="date" id="susp-hasta" name="fecha_hasta" class="form-control" required value="${hoy}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Motivo <span class="req">*</span></label>
+                <textarea name="motivo" id="susp-motivo" class="form-control" rows="3" required placeholder="Describa el motivo de la suspensión..."></textarea>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn" style="background:#6c3483;color:#fff;">Confirmar suspensión</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+}
+
+async function confirmarSuspension(e, id) {
+    e.preventDefault();
+    const form = e.target;
+    const btn  = form.querySelector('button[type=submit]');
+    const desde  = form.fecha_desde.value;
+    const hasta  = form.fecha_hasta.value;
+    const motivo = form.motivo.value.trim();
+
+    if (hasta < desde) {
+        mostrarToast('La fecha hasta debe ser igual o posterior a la fecha desde', 'error');
+        return;
+    }
+
+    btn.disabled = true;
+    try {
+        await api.patch('/admin/usuarios/' + id + '/suspender', { fecha_desde: desde, fecha_hasta: hasta, motivo });
+        mostrarToast('Usuario suspendido correctamente', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function toggleActivo(id, nuevoEstado, nombre) {
-    // kept for backward compat; redirects to cambiarEstado
+    // kept for backward compat; redirects a cambiarEstado
     await cambiarEstado(id, nuevoEstado ? 'activo' : 'inactivo', nombre);
 }
 
