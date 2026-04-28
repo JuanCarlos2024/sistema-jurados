@@ -5,7 +5,7 @@ const { soloRolEvaluacion } = require('../../middleware/auth');
 
 // GET / — lista paginada con filtros, jurados y resumen de faltas
 router.get('/', async (req, res) => {
-    const { estado, analista_id, buscar, page = 1, limit = 20 } = req.query;
+    const { estado, analista_id, buscar, respuesta_estado, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     // Pre-queries para búsqueda textual cruzada
@@ -34,6 +34,9 @@ router.get('/', async (req, res) => {
         analistaIdsFiltro = (analistasMatch || []).map(a => a.id);
     }
 
+    // Cuando hay filtro por respuesta_estado, cargamos un lote amplio y filtramos en memoria
+    const hasRespFiltro = !!respuesta_estado;
+
     let query = supabase
         .from('evaluaciones')
         .select(`
@@ -41,8 +44,13 @@ router.get('/', async (req, res) => {
             rodeo:rodeos(id, club, fecha, asociacion),
             analista:analista_id(id, nombre_completo)
         `, { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(offset, offset + parseInt(limit) - 1);
+        .order('created_at', { ascending: false });
+
+    if (!hasRespFiltro) {
+        query = query.range(offset, offset + parseInt(limit) - 1);
+    } else {
+        query = query.limit(300);
+    }
 
     if (estado)      query = query.eq('estado', estado);
     if (analista_id) query = query.eq('analista_id', analista_id);
@@ -122,15 +130,87 @@ router.get('/', async (req, res) => {
         ciclosPorEval[c.evaluacion_id][c.numero_ciclo] = c;
     }
 
-    const resultado = evaluaciones.map(ev => ({
-        ...ev,
-        jurados:        juradosPorRodeo[ev.rodeo_id] || [],
-        resumen_faltas: casosPorEval[ev.id]          || null,
-        ciclo1:         ciclosPorEval[ev.id]?.[1]    || null,
-        ciclo2:         ciclosPorEval[ev.id]?.[2]    || null
-    }));
+    // Batch: stats de respuestas por ciclo
+    const cicloIds = (ciclosData || []).map(c => c.id);
+    const respStatsPorCiclo = {};
 
-    res.json({ evaluaciones: resultado, total: count || 0 });
+    if (cicloIds.length > 0) {
+        const { data: casosCiclos } = await supabase
+            .from('evaluacion_casos')
+            .select('id, ciclo_id')
+            .in('ciclo_id', cicloIds);
+
+        if (casosCiclos && casosCiclos.length > 0) {
+            const casoIdsLista = casosCiclos.map(c => c.id);
+            const casoToCiclo  = {};
+            for (const c of casosCiclos) casoToCiclo[c.id] = c.ciclo_id;
+
+            const { data: respList } = await supabase
+                .from('evaluacion_respuestas_jurado')
+                .select('caso_id, decision, asignacion_id')
+                .in('caso_id', casoIdsLista);
+
+            for (const c of casosCiclos) {
+                if (!respStatsPorCiclo[c.ciclo_id])
+                    respStatsPorCiclo[c.ciclo_id] = { asignaciones: new Set(), tiene_rechazos: false };
+            }
+            for (const r of (respList || [])) {
+                const cid = casoToCiclo[r.caso_id];
+                if (!cid) continue;
+                if (!respStatsPorCiclo[cid]) respStatsPorCiclo[cid] = { asignaciones: new Set(), tiene_rechazos: false };
+                respStatsPorCiclo[cid].asignaciones.add(r.asignacion_id);
+                if (r.decision === 'rechaza') respStatsPorCiclo[cid].tiene_rechazos = true;
+            }
+        }
+    }
+
+    const enrichCiclo = (ciclo, juradosRodeo) => {
+        if (!ciclo) return null;
+        const stats = respStatsPorCiclo[ciclo.id] || {};
+        return {
+            ...ciclo,
+            total_jurados:      (juradosRodeo || []).length,
+            total_respondieron: stats.asignaciones ? stats.asignaciones.size : 0,
+            tiene_rechazos:     stats.tiene_rechazos || false
+        };
+    };
+
+    let resultado = evaluaciones.map(ev => {
+        const jurados = juradosPorRodeo[ev.rodeo_id] || [];
+        return {
+            ...ev,
+            jurados,
+            resumen_faltas: casosPorEval[ev.id] || null,
+            ciclo1: enrichCiclo(ciclosPorEval[ev.id]?.[1], jurados),
+            ciclo2: enrichCiclo(ciclosPorEval[ev.id]?.[2], jurados)
+        };
+    });
+
+    // Filtro en memoria por respuesta_estado
+    if (hasRespFiltro) {
+        resultado = resultado.filter(ev => {
+            const ciclos       = [ev.ciclo1, ev.ciclo2].filter(Boolean);
+            const activos      = ciclos.filter(c => ['abierto', 'en_revision', 'cerrado'].includes(c.estado));
+            const totalResp    = ciclos.reduce((s, c) => s + (c.total_respondieron || 0), 0);
+            const hasRechazos  = ciclos.some(c => c.tiene_rechazos);
+            const totalJurados = (ev.jurados || []).length;
+            const completa     = activos.length > 0 && activos.every(c => totalJurados > 0 && (c.total_respondieron || 0) >= totalJurados);
+
+            switch (respuesta_estado) {
+                case 'con_respuestas':       return totalResp > 0;
+                case 'sin_respuestas':       return totalResp === 0;
+                case 'respondida_completa':  return completa;
+                case 'pendiente_respuesta':  return !completa && activos.length > 0;
+                case 'con_rechazos':         return hasRechazos;
+                default:                     return true;
+            }
+        });
+    }
+
+    const totalFinal = hasRespFiltro ? resultado.length : (count || 0);
+    const pageData   = hasRespFiltro ? resultado.slice(offset, offset + parseInt(limit)) : resultado;
+
+    res.json({ evaluaciones: pageData, total: totalFinal });
 });
 
 // POST / — crear evaluación (solo jefe_area o admin pleno)

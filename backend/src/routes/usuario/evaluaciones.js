@@ -166,7 +166,7 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
 
     const { data: caso } = await supabase
         .from('evaluacion_casos')
-        .select('id, tipo_caso, estado, evaluacion_id')
+        .select('id, tipo_caso, estado, evaluacion_id, descuento_puntos')
         .eq('id', casoId)
         .single();
 
@@ -196,21 +196,40 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
     if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
 
     // Casos informativos siempre acepta
-    const decisionFinal  = caso.tipo_caso === 'informativo' ? 'acepta' : decision;
+    const decisionFinal   = caso.tipo_caso === 'informativo' ? 'acepta' : decision;
     const comentarioFinal = decisionFinal === 'rechaza' ? (comentario || '').trim() : (comentario || null);
+    const now = new Date().toISOString();
+
+    const upsertPayload = {
+        caso_id:       casoId,
+        asignacion_id: asignacion.id,
+        decision:      decisionFinal,
+        comentario:    comentarioFinal,
+        updated_at:    now,
+        // Reset comité fields on re-answer
+        decision_comite:     null,
+        comentario_comite:   null,
+        decidido_comite_por: null,
+        decidido_comite_en:  null
+    };
+
+    if (decisionFinal === 'acepta') {
+        upsertPayload.decision_analista    = 'aprobada_auto';
+        upsertPayload.comentario_analista  = 'Aprobada automáticamente por aceptación del jurado';
+        upsertPayload.decidido_analista_en = now;
+        upsertPayload.decidido_analista_por = null;
+        upsertPayload.descuento_final      = caso.descuento_puntos ?? 0;
+    } else {
+        upsertPayload.decision_analista    = null;
+        upsertPayload.comentario_analista  = null;
+        upsertPayload.decidido_analista_en = null;
+        upsertPayload.decidido_analista_por = null;
+        upsertPayload.descuento_final      = null;
+    }
 
     const { data, error } = await supabase
         .from('evaluacion_respuestas_jurado')
-        .upsert(
-            {
-                caso_id:      casoId,
-                asignacion_id: asignacion.id,
-                decision:     decisionFinal,
-                comentario:   comentarioFinal,
-                updated_at:   new Date().toISOString()
-            },
-            { onConflict: 'caso_id,asignacion_id' }
-        )
+        .upsert(upsertPayload, { onConflict: 'caso_id,asignacion_id' })
         .select()
         .single();
 

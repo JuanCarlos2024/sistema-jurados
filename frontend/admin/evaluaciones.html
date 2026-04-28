@@ -102,6 +102,14 @@
                 <select id="fil-analista" onchange="cargarEvaluaciones(1)">
                     <option value="">Todos los analistas</option>
                 </select>
+                <select id="fil-respuesta" onchange="cargarEvaluaciones(1)">
+                    <option value="">Todas las respuestas</option>
+                    <option value="con_respuestas">Con respuestas</option>
+                    <option value="sin_respuestas">Sin respuestas</option>
+                    <option value="respondida_completa">Respondidas completas</option>
+                    <option value="pendiente_respuesta">Pendientes de respuesta</option>
+                    <option value="con_rechazos">Con rechazos</option>
+                </select>
                 <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
             </div>
 
@@ -281,14 +289,16 @@ async function cargarEvaluaciones(pagina) {
     pagina = pagina || 1;
     paginaActual = pagina;
 
-    const estado   = document.getElementById('fil-estado').value;
-    const analista = document.getElementById('fil-analista').value;
+    const estado    = document.getElementById('fil-estado').value;
+    const analista  = document.getElementById('fil-analista').value;
+    const respuesta = document.getElementById('fil-respuesta').value;
 
     const buscar = document.getElementById('fil-buscar').value.trim();
     let url = `/admin/evaluaciones?page=${pagina}&limit=20`;
-    if (estado)   url += `&estado=${estado}`;
-    if (analista) url += `&analista_id=${analista}`;
-    if (buscar)   url += `&buscar=${encodeURIComponent(buscar)}`;
+    if (estado)    url += `&estado=${estado}`;
+    if (analista)  url += `&analista_id=${analista}`;
+    if (buscar)    url += `&buscar=${encodeURIComponent(buscar)}`;
+    if (respuesta) url += `&respuesta_estado=${respuesta}`;
 
     const tbody = document.getElementById('tbody-evaluaciones');
     tbody.innerHTML = '<tr><td colspan="10" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
@@ -376,6 +386,25 @@ function renderCicloResumen(ciclo) {
     };
     const estilo = ESTILOS[ciclo.estado] || 'background:#eee;color:#555';
     let html = `<span style="display:inline-block;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600;${estilo};">${LABELS[ciclo.estado] || ciclo.estado}</span>`;
+
+    // Indicador de respuestas
+    const total  = ciclo.total_jurados     ?? null;
+    const resp   = ciclo.total_respondieron ?? null;
+    const activo = ['abierto', 'en_revision', 'cerrado'].includes(ciclo.estado);
+
+    if (activo && total !== null && resp !== null) {
+        if (resp >= total && total > 0) {
+            html += `<br><span style="font-size:10px;font-weight:700;color:#1e8449;">&#10003; ${resp}/${total} respondió</span>`;
+        } else if (resp > 0) {
+            html += `<br><span style="font-size:10px;font-weight:600;color:#e67e22;">${resp}/${total} respondió</span>`;
+        } else {
+            html += `<br><span style="font-size:10px;color:var(--gris);">0/${total} pendiente</span>`;
+        }
+        if (ciclo.tiene_rechazos) {
+            html += `<br><span style="font-size:10px;font-weight:700;color:#922b21;">&#10007; Con rechazos</span>`;
+        }
+    }
+
     if (ciclo.fecha_limite_respuesta) {
         const d = new Date(ciclo.fecha_limite_respuesta);
         html += `<br><span style="font-size:10px;color:var(--gris);">Vence ${d.toLocaleDateString('es-CL')} ${d.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})}</span>`;
@@ -403,6 +432,7 @@ function limpiarFiltros() {
     document.getElementById('fil-buscar').value = '';
     document.getElementById('fil-estado').value = '';
     document.getElementById('fil-analista').value = '';
+    document.getElementById('fil-respuesta').value = '';
     cargarEvaluaciones(1);
 }
 

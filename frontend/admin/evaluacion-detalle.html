@@ -92,6 +92,31 @@
         .devuelto-alert strong { color: #922b21; display: block; margin-bottom: 6px; }
         .devuelto-alert p { margin: 0; font-size: 13px; color: var(--texto); }
         .devuelto-alert small { color: var(--gris); font-size: 11px; display: block; margin-top: 6px; }
+        .resp-acepta   { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#d5f5e3; color:#1e8449; }
+        .resp-rechaza  { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#fadbd8; color:#922b21; }
+        .resp-pendiente{ display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; background:#fef9e7; color:#7d6608; }
+        .resp-celda    { font-size:12px; min-width:120px; max-width:200px; }
+        .resp-fila     { margin-bottom:5px; line-height:1.5; }
+        .resp-nombre   { font-size:11px; color:var(--gris); display:block; }
+        .resp-comentario { font-size:11px; color:var(--gris); font-style:italic; display:block; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .dec-auto        { font-size:11px; font-weight:600; color:#1e8449; }
+        .dec-badge       { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; }
+        .dec-acept       { background:#d5f5e3; color:#1e8449; }
+        .dec-rech        { background:#fadbd8; color:#922b21; }
+        .dec-deriv       { background:#fef9e7; color:#7d6608; }
+        .dec-celda       { font-size:12px; min-width:140px; max-width:200px; vertical-align:top; }
+        .dec-btn         { margin-top:2px; }
+        .reapertura-info {
+            background: #fef9e7;
+            border: 1px solid #f9e79f;
+            border-left: 4px solid #f39c12;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #7d6608;
+            margin-bottom: 10px;
+        }
+        .reapertura-info strong { color: #784212; }
     </style>
 </head>
 <body>
@@ -185,6 +210,30 @@
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="cerrarModalCaso()">Cancelar</button>
             <button class="btn btn-primario" onclick="guardarCaso()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Reabrir ciclo -->
+<div class="modal-overlay oculto" id="modal-reabrir-ciclo">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="reabrir-ciclo-titulo">Reabrir Ciclo</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-reabrir-ciclo').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:var(--gris);margin-bottom:14px;">
+                Esta acción permitirá agregar nuevas situaciones al ciclo.
+                Las respuestas y decisiones ya registradas se conservarán intactas.
+            </p>
+            <div class="form-group">
+                <label class="form-label">Motivo de reapertura <span style="color:#c0392b;">*</span></label>
+                <textarea id="reabrir-ciclo-motivo" class="form-control" rows="3" maxlength="500" placeholder="Describe el motivo de la reapertura..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-reabrir-ciclo').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-primario" onclick="reabrirCiclo()">Confirmar reapertura</button>
         </div>
     </div>
 </div>
@@ -321,6 +370,76 @@
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="document.getElementById('modal-devolver').classList.add('oculto')">Cancelar</button>
             <button class="btn btn-peligro" onclick="devolverEvaluacion()">Devolver</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Decisión analista -->
+<div class="modal-overlay oculto" id="modal-decision-analista">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Decisión analista sobre apelación</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-decision-analista').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Decisión</label>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="dec_anal" value="apelacion_aceptada">
+                        <span>Acoger apelación — sin descuento</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="dec_anal" value="apelacion_rechazada">
+                        <span>Rechazar apelación — aplicar descuento</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="dec_anal" value="derivada_comite">
+                        <span>Derivar al comité técnico</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Comentario <span style="color:#c0392b;">*</span></label>
+                <textarea id="dec-anal-comentario" class="form-control" rows="3" maxlength="1000" placeholder="Justificación de la decisión..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-decision-analista').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-primario" onclick="confirmarDecisionAnalista()">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Decisión comité -->
+<div class="modal-overlay oculto" id="modal-decision-comite">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Resolución comité técnico</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-decision-comite').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Resolución</label>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="dec_com" value="confirma_falta">
+                        <span>Confirma falta — aplicar descuento</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="dec_com" value="acoge_apelacion">
+                        <span>Acoge apelación — sin descuento</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Comentario <span style="color:#c0392b;">*</span></label>
+                <textarea id="dec-com-comentario" class="form-control" rows="3" maxlength="1000" placeholder="Resolución del comité..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-decision-comite').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-primario" onclick="confirmarDecisionComite()">Confirmar</button>
         </div>
     </div>
 </div>
@@ -499,14 +618,19 @@ function renderCicloMeta(ciclo) {
 }
 
 function renderCicloCard(ciclo, estadoEval, evalId) {
-    const puedeAgregarCaso = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
-        && !['publicado', 'cerrado'].includes(estadoEval);
+    const esCicloRebiertoAbierto = ciclo.estado === 'abierto' && ciclo.cantidad_reaperturas > 0;
+
+    const puedeAgregarCaso = (
+        ['pendiente_carga', 'cargado', 'abierto'].includes(ciclo.estado)
+    ) && !['publicado', 'cerrado'].includes(estadoEval);
 
     const puedeAbrirCiclo = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
         && !['pendiente_aprobacion', 'aprobado', 'publicado', 'cerrado'].includes(estadoEval);
 
     const puedeCerrarCiclo  = ['abierto', 'en_revision'].includes(ciclo.estado);
     const puedeReenviar     = ['abierto', 'en_revision'].includes(ciclo.estado);
+    const puedeReabrir      = ['cerrado', 'en_revision'].includes(ciclo.estado)
+        && !['publicado', 'cerrado'].includes(estadoEval);
 
     const casos = ciclo.casos || [];
 
@@ -519,6 +643,9 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
                 <th>Descuento</th>
                 <th>Descripción</th>
                 <th>Estado</th>
+                <th>Resp. jurado</th>
+                <th>Dec. analista/comité</th>
+                <th>Desc. final</th>
                 <th></th>
             </tr></thead>
             <tbody>
@@ -526,12 +653,30 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
             </tbody>
           </table></div>`;
 
+    // Aviso cuando el ciclo está abierto y ya tiene respuestas de jurado
+    const tieneRespuestasEnCasos = casos.some(c => (c.respuestas_jurado || []).length > 0);
+    const avisoAbiertoCon = (ciclo.estado === 'abierto' && tieneRespuestasEnCasos)
+        ? `<div class="reapertura-info" style="border-left-color:#2980b9;background:#eaf4fb;color:#1a5276;">
+            Los casos nuevos que se agreguen quedarán visibles para el jurado de inmediato
+            y deberán ser respondidos. Las respuestas existentes se conservan.
+           </div>`
+        : '';
+
+    const reaperturaInfo = ciclo.cantidad_reaperturas > 0 && ciclo.fecha_reapertura
+        ? `<div class="reapertura-info">
+            <strong>Ciclo reabierto</strong> el ${_fmtDT(ciclo.fecha_reapertura)}
+            &nbsp;·&nbsp; Reaperturas: <strong>${ciclo.cantidad_reaperturas}</strong>
+            ${ciclo.motivo_reapertura ? ` &nbsp;·&nbsp; Motivo: <em>${sanitizar(ciclo.motivo_reapertura)}</em>` : ''}
+          </div>`
+        : '';
+
     return `<div class="card ciclo-card">
         <div class="ciclo-header">
             <div>
                 <span style="font-size:14px;font-weight:700;">Ciclo ${ciclo.numero_ciclo}</span>
                 &nbsp;
                 <span class="badge-eval badge-ciclo-${ciclo.estado}">${labelEstadoCiclo(ciclo.estado)}</span>
+                ${ciclo.cantidad_reaperturas > 0 ? '<span class="badge-eval" style="background:#fef9e7;color:#7d6608;margin-left:4px;">Reabierto</span>' : ''}
                 <span style="font-size:12px;color:var(--gris);margin-left:10px;">${casos.length} caso(s) · mín ${ciclo.min_casos} · máx ${ciclo.max_casos}</span>
             </div>
             <div class="tabla-acciones">
@@ -540,11 +685,99 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
                 ${puedeAbrirCiclo  ? `<button class="btn btn-success btn-pequeño"  onclick="abrirCiclo('${ciclo.id}', ${ciclo.numero_ciclo})">Abrir ciclo</button>` : ''}
                 ${puedeCerrarCiclo ? `<button class="btn btn-peligro btn-pequeño"  onclick="abrirModalCerrarCiclo('${ciclo.id}', ${ciclo.numero_ciclo}, ${casos.length})">Cerrar ciclo</button>` : ''}
                 ${puedeReenviar    ? `<button class="btn btn-outline btn-pequeño"   onclick="reenviarNotificacion('${ciclo.id}', ${ciclo.numero_ciclo})">📧 Reenviar notif.</button>` : ''}
+                ${puedeReabrir     ? `<button class="btn btn-outline btn-pequeño"   onclick="abrirModalReabrir('${ciclo.id}', ${ciclo.numero_ciclo})">↩ Reabrir ciclo</button>` : ''}
             </div>
         </div>
         ${renderCicloMeta(ciclo)}
+        ${avisoAbiertoCon}
+        ${reaperturaInfo}
         ${tablaCasos}
     </div>`;
+}
+
+// ── Mapa de respuestas (por id) para modales ─────────────────────
+const _respuestasMap = {};
+
+// ── Preview inline de respuestas jurado ──────────────────────────
+function _renderRespInline(caso, cicloEstado) {
+    const resps = caso.respuestas_jurado || [];
+    if (resps.length === 0) {
+        if (['abierto', 'en_revision'].includes(cicloEstado)) {
+            return '<span class="resp-pendiente">⏳ Pendiente</span>';
+        }
+        return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    }
+    return resps.map(r => {
+        // Registrar en mapa para uso en modales
+        _respuestasMap[r.id] = r;
+        const badgeCls = r.decision === 'acepta' ? 'resp-acepta'
+                       : r.decision === 'rechaza' ? 'resp-rechaza'
+                       : 'resp-pendiente';
+        const label    = r.decision === 'acepta'  ? '✓ Acepta'
+                       : r.decision === 'rechaza' ? '✗ Rechaza'
+                       : sanitizar(r.decision || '?');
+        const nombre   = sanitizar((r.jurado_nombre || '—').split(' ').slice(0, 2).join(' '));
+        const com      = r.comentario
+            ? '<span class="resp-comentario" title="' + sanitizar(r.comentario) + '">'
+              + sanitizar(r.comentario.length > 55 ? r.comentario.slice(0, 55) + '…' : r.comentario)
+              + '</span>'
+            : '';
+        return '<div class="resp-fila">'
+             +   '<span class="resp-nombre">' + nombre + '</span>'
+             +   '<span class="' + badgeCls + '">' + label + '</span>'
+             +   com
+             + '</div>';
+    }).join('');
+}
+
+// ── Render decisión analista/comité por caso ──────────────────────
+function _renderDecisionAdmin(caso) {
+    const resps = caso.respuestas_jurado || [];
+    if (resps.length === 0) return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    return resps.map(r => {
+        let html = '';
+        if (r.decision === 'acepta') {
+            html = '<span class="dec-auto">Auto ✓</span>';
+        } else if (r.decision === 'rechaza') {
+            if (!r.decision_analista) {
+                html = `<button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionAnalista('${r.id}')">Decidir</button>`;
+            } else if (r.decision_analista === 'apelacion_aceptada') {
+                const com = r.comentario_analista ? `<span class="resp-comentario" title="${sanitizar(r.comentario_analista)}">${sanitizar(r.comentario_analista.length > 40 ? r.comentario_analista.slice(0,40)+'…' : r.comentario_analista)}</span>` : '';
+                html = `<span class="dec-badge dec-acept">Apelación acogida</span>${com}`;
+            } else if (r.decision_analista === 'apelacion_rechazada') {
+                const com = r.comentario_analista ? `<span class="resp-comentario" title="${sanitizar(r.comentario_analista)}">${sanitizar(r.comentario_analista.length > 40 ? r.comentario_analista.slice(0,40)+'…' : r.comentario_analista)}</span>` : '';
+                html = `<span class="dec-badge dec-rech">Apelación rechazada</span>${com}`;
+            } else if (r.decision_analista === 'derivada_comite') {
+                if (!r.decision_comite) {
+                    html = `<span class="dec-badge dec-deriv">Deriv. comité</span><br><button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionComite('${r.id}')">Resolver</button>`;
+                } else if (r.decision_comite === 'confirma_falta') {
+                    const com = r.comentario_comite ? `<span class="resp-comentario" title="${sanitizar(r.comentario_comite)}">${sanitizar(r.comentario_comite.length > 40 ? r.comentario_comite.slice(0,40)+'…' : r.comentario_comite)}</span>` : '';
+                    html = `<span class="dec-badge dec-rech">Comité: confirma falta</span>${com}`;
+                } else if (r.decision_comite === 'acoge_apelacion') {
+                    const com = r.comentario_comite ? `<span class="resp-comentario" title="${sanitizar(r.comentario_comite)}">${sanitizar(r.comentario_comite.length > 40 ? r.comentario_comite.slice(0,40)+'…' : r.comentario_comite)}</span>` : '';
+                    html = `<span class="dec-badge dec-acept">Comité: acoge apelación</span>${com}`;
+                }
+            }
+        }
+        return `<div class="resp-fila" style="min-height:20px;">${html}</div>`;
+    }).join('');
+}
+
+// ── Render descuento final por caso ──────────────────────────────
+function _renderDescFinal(caso) {
+    const resps = caso.respuestas_jurado || [];
+    if (resps.length === 0) return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    return resps.map(r => {
+        let html;
+        if (r.descuento_final === null || r.descuento_final === undefined) {
+            html = '<span style="color:var(--gris);font-size:11px;">—</span>';
+        } else if (r.descuento_final === 0) {
+            html = '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>';
+        } else {
+            html = `<span class="descuento-badge">-${r.descuento_final} pt</span>`;
+        }
+        return `<div class="resp-fila" style="min-height:20px;">${html}</div>`;
+    }).join('');
 }
 
 // ── Render fila de caso ───────────────────────────────────────────
@@ -577,6 +810,9 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
             ${sanitizar(caso.descripcion || '—')}
         </td>
         <td><span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span></td>
+        <td class="resp-celda">${_renderRespInline(caso, ciclo.estado)}</td>
+        <td class="dec-celda">${_renderDecisionAdmin(caso)}</td>
+        <td class="dec-celda">${_renderDescFinal(caso)}</td>
         <td><div class="tabla-acciones">${accionesArr.join('')}</div></td>
     </tr>`;
 }
@@ -632,6 +868,26 @@ async function cerrarCiclo() {
     }
 }
 
+let _cicloParaReabrir  = null;
+function abrirModalReabrir(cicloId, numeroCiclo) {
+    _cicloParaReabrir = cicloId;
+    document.getElementById('reabrir-ciclo-titulo').textContent = `Reabrir Ciclo ${numeroCiclo}`;
+    document.getElementById('reabrir-ciclo-motivo').value       = '';
+    document.getElementById('modal-reabrir-ciclo').classList.remove('oculto');
+}
+async function reabrirCiclo() {
+    const motivo = document.getElementById('reabrir-ciclo-motivo').value.trim();
+    if (!motivo) { mostrarToast('El motivo de reapertura es obligatorio', 'error'); return; }
+    try {
+        const res = await api.post(`/admin/ciclos/${_cicloParaReabrir}/reabrir`, { motivo });
+        document.getElementById('modal-reabrir-ciclo').classList.add('oculto');
+        mostrarToast(res.mensaje || 'Ciclo reabierto correctamente', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al reabrir el ciclo', 'error');
+    }
+}
+
 // ── Ver respuestas de jurados ─────────────────────────────────────
 async function verRespuestas(casoId, numeroCaso) {
     const modal = document.getElementById('modal-respuestas');
@@ -658,14 +914,15 @@ async function verRespuestas(casoId, numeroCaso) {
                 <thead><tr><th>Jurado</th><th>Cat.</th><th>Decisión</th><th>Comentario</th><th>Fecha</th></tr></thead>
                 <tbody>
                 ${resp.map(r => {
+                    const jurado = r.asignacion?.usuario || {};
                     const dec = r.decision === 'acepta'   ? '✓ Acepta'
                               : r.decision === 'rechaza'  ? '✗ Rechaza'
                               : sanitizar(r.decision || '—');
                     const decCls = r.decision === 'acepta'  ? 'color:#1e8449'
                                  : r.decision === 'rechaza' ? 'color:#922b21' : '';
                     return `<tr>
-                        <td>${sanitizar(r.jurado?.nombre_completo || '—')}</td>
-                        <td>${sanitizar(r.jurado?.categoria || '—')}</td>
+                        <td>${sanitizar(jurado.nombre_completo || '—')}</td>
+                        <td>${sanitizar(jurado.categoria || '—')}</td>
                         <td style="font-weight:600;${decCls}">${dec}</td>
                         <td style="font-size:12px;max-width:200px;">${sanitizar(r.comentario || '—')}</td>
                         <td style="font-size:12px;white-space:nowrap;">${formatFecha(r.created_at)}</td>
@@ -776,7 +1033,21 @@ function onCasoTipoChange() {
     document.getElementById('caso-descuento').value         = String(pts);
     document.getElementById('caso-descuento-display').value = _DESCUENTO_LABEL[pts];
 }
-function abrirModalAgregar(cicloId, numeroCiclo) {
+// Guarda si el ciclo estaba abierto al agregar (para auditoría y confirmación)
+let _cicloEstabaAbierto = false;
+
+async function abrirModalAgregar(cicloId, numeroCiclo) {
+    // Detectar si ciclo está abierto con respuestas para advertir
+    const cicloData = (_evalData?.ciclos || []).find(c => c.id === cicloId);
+    _cicloEstabaAbierto = cicloData?.estado === 'abierto';
+
+    if (_cicloEstabaAbierto) {
+        const ok = await confirmar(
+            `El ciclo ${numeroCiclo} ya está abierto. El nuevo caso quedará visible para el jurado de inmediato. ¿Deseas continuar?`
+        );
+        if (!ok) return;
+    }
+
     document.getElementById('caso-id-editar').value          = '';
     document.getElementById('caso-ciclo-id').value           = cicloId;
     document.getElementById('caso-ciclo-numero').value       = numeroCiclo;
@@ -841,7 +1112,14 @@ let _importCicloId     = null;
 let _importNumeroCiclo = null;
 let _importFile        = null;
 
-function abrirModalImportar(cicloId, numeroCiclo) {
+async function abrirModalImportar(cicloId, numeroCiclo) {
+    const cicloData = (_evalData?.ciclos || []).find(c => c.id === cicloId);
+    if (cicloData?.estado === 'abierto') {
+        const ok = await confirmar(
+            `El ciclo ${numeroCiclo} ya está abierto. Los casos importados quedarán visibles para el jurado de inmediato. ¿Deseas continuar?`
+        );
+        if (!ok) return;
+    }
     _importCicloId     = cicloId;
     _importNumeroCiclo = numeroCiclo;
     document.getElementById('modal-importar-titulo').textContent = `Importar casos — Ciclo ${numeroCiclo}`;
@@ -953,6 +1231,53 @@ async function confirmarImportar() {
     } catch (e) {
         mostrarToast(e.message || 'Error al importar', 'error');
         btn.disabled = false; btn.textContent = 'Confirmar importación';
+    }
+}
+
+// ── Decisión analista ─────────────────────────────────────────────
+let _decAnalId = null;
+function abrirDecisionAnalista(respId) {
+    _decAnalId = respId;
+    document.querySelector('#modal-decision-analista input[name="dec_anal"]:checked')?.removeAttribute('checked');
+    document.querySelectorAll('#modal-decision-analista input[name="dec_anal"]').forEach(r => r.checked = false);
+    document.getElementById('dec-anal-comentario').value = '';
+    document.getElementById('modal-decision-analista').classList.remove('oculto');
+}
+async function confirmarDecisionAnalista() {
+    const decision = document.querySelector('#modal-decision-analista input[name="dec_anal"]:checked')?.value;
+    const comentario = document.getElementById('dec-anal-comentario').value.trim();
+    if (!decision) { mostrarToast('Selecciona una decisión', 'error'); return; }
+    if (!comentario) { mostrarToast('El comentario es obligatorio', 'error'); return; }
+    try {
+        await api.post(`/admin/respuestas-jurado/${_decAnalId}/decision-analista`, { decision, comentario });
+        document.getElementById('modal-decision-analista').classList.add('oculto');
+        mostrarToast('Decisión registrada', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al registrar decisión', 'error');
+    }
+}
+
+// ── Decisión comité ───────────────────────────────────────────────
+let _decComId = null;
+function abrirDecisionComite(respId) {
+    _decComId = respId;
+    document.querySelectorAll('#modal-decision-comite input[name="dec_com"]').forEach(r => r.checked = false);
+    document.getElementById('dec-com-comentario').value = '';
+    document.getElementById('modal-decision-comite').classList.remove('oculto');
+}
+async function confirmarDecisionComite() {
+    const decision = document.querySelector('#modal-decision-comite input[name="dec_com"]:checked')?.value;
+    const comentario = document.getElementById('dec-com-comentario').value.trim();
+    if (!decision) { mostrarToast('Selecciona una decisión', 'error'); return; }
+    if (!comentario) { mostrarToast('El comentario es obligatorio', 'error'); return; }
+    try {
+        await api.post(`/admin/respuestas-jurado/${_decComId}/decision-comite`, { decision, comentario });
+        document.getElementById('modal-decision-comite').classList.add('oculto');
+        mostrarToast('Decisión de comité registrada', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al registrar decisión', 'error');
     }
 }
 

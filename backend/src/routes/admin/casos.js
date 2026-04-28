@@ -8,14 +8,55 @@ router.get('/', async (req, res) => {
     const { evaluacion_id } = req.query;
     if (!evaluacion_id) return res.status(400).json({ error: 'evaluacion_id requerido' });
 
-    const { data, error } = await supabase
+    const { data: casosRaw, error } = await supabase
         .from('evaluacion_casos')
         .select('*, evaluacion_ciclos!ciclo_id(id)')
         .eq('evaluacion_id', evaluacion_id)
         .order('numero_caso');
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ casos: data || [] });
+
+    const casos = casosRaw || [];
+    if (casos.length === 0) return res.json({ casos: [] });
+
+    // Embeber respuestas_jurado para preview inline en admin
+    const casoIds = casos.map(c => c.id);
+    const { data: respuestas } = await supabase
+        .from('evaluacion_respuestas_jurado')
+        .select(`
+            id, caso_id, decision, comentario, created_at, asignacion_id,
+            decision_analista, comentario_analista, decidido_analista_en,
+            decision_comite, comentario_comite, decidido_comite_en,
+            descuento_final,
+            asignacion:asignaciones(
+                id,
+                usuario:usuarios_pagados(id, nombre_completo, categoria)
+            )
+        `)
+        .in('caso_id', casoIds);
+
+    const respPorCaso = {};
+    for (const r of (respuestas || [])) {
+        if (!respPorCaso[r.caso_id]) respPorCaso[r.caso_id] = [];
+        respPorCaso[r.caso_id].push({
+            id:             r.id,
+            jurado_id:      r.asignacion?.usuario?.id              || null,
+            jurado_nombre:  r.asignacion?.usuario?.nombre_completo || '—',
+            jurado_cat:     r.asignacion?.usuario?.categoria       || null,
+            decision:       r.decision,
+            comentario:     r.comentario                           || null,
+            respondido_en:  r.created_at,
+            decision_analista:   r.decision_analista   || null,
+            comentario_analista: r.comentario_analista || null,
+            decidido_analista_en: r.decidido_analista_en || null,
+            decision_comite:     r.decision_comite     || null,
+            comentario_comite:   r.comentario_comite   || null,
+            decidido_comite_en:  r.decidido_comite_en  || null,
+            descuento_final:     r.descuento_final     ?? null
+        });
+    }
+
+    res.json({ casos: casos.map(c => ({ ...c, respuestas_jurado: respPorCaso[c.id] || [] })) });
 });
 
 // GET /:id/respuestas — respuestas de jurados a un caso

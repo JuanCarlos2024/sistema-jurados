@@ -202,6 +202,84 @@ router.post('/:id/reenviar-notificacion', async (req, res) => {
     });
 });
 
+// POST /:id/reabrir — reabrir ciclo cerrado/en_revision
+router.post('/:id/reabrir', async (req, res) => {
+    const { motivo } = req.body;
+
+    if (!motivo || !motivo.trim()) {
+        return res.status(400).json({ error: 'motivo es obligatorio para reabrir el ciclo' });
+    }
+
+    const { data: ciclo, error: cicloErr } = await supabase
+        .from('evaluacion_ciclos')
+        .select('*, evaluacion:evaluaciones(id, estado, rodeo_id)')
+        .eq('id', req.params.id)
+        .single();
+
+    if (cicloErr) return res.status(404).json({ error: 'Ciclo no encontrado' });
+
+    const ESTADOS_REABRIBLES = ['cerrado', 'en_revision'];
+    if (!ESTADOS_REABRIBLES.includes(ciclo.estado)) {
+        return res.status(409).json({
+            error: `Solo se puede reabrir un ciclo cerrado o en revisión (actual: ${ciclo.estado})`
+        });
+    }
+
+    const ev = ciclo.evaluacion;
+    if (ev && ['publicado', 'cerrado'].includes(ev.estado)) {
+        return res.status(409).json({
+            error: `No se puede reabrir el ciclo porque la evaluación está ${ev.estado}`
+        });
+    }
+
+    const now           = new Date().toISOString();
+    const estadoAnterior = ciclo.estado;
+    const nuevasReaperturas = (ciclo.cantidad_reaperturas || 0) + 1;
+
+    const { data: cicloAct, error: updErr } = await supabase
+        .from('evaluacion_ciclos')
+        .update({
+            estado:               'abierto',
+            fecha_reapertura:     now,
+            reabierto_por:        req.usuario.id,
+            motivo_reapertura:    motivo.trim(),
+            cantidad_reaperturas: nuevasReaperturas,
+            updated_at:           now
+        })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // Si la evaluación estaba en estados bloqueantes, volver a en_proceso
+    if (ev && ['pendiente_aprobacion', 'devuelto'].includes(ev.estado)) {
+        await supabase
+            .from('evaluaciones')
+            .update({ estado: 'en_proceso', updated_at: now })
+            .eq('id', ev.id);
+    }
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: ciclo.evaluacion_id,
+        ciclo_id:      req.params.id,
+        accion:        'reabrir_ciclo',
+        detalle: {
+            numero_ciclo:    ciclo.numero_ciclo,
+            estado_anterior: estadoAnterior,
+            estado_nuevo:    'abierto',
+            motivo:          motivo.trim(),
+            reapertura_n:    nuevasReaperturas
+        },
+        actor_id:     req.usuario.id,
+        actor_tipo:   'administrador',
+        actor_nombre: req.usuario.nombre,
+        ip_address:   req.ip
+    });
+
+    res.json({ ...cicloAct, mensaje: 'Ciclo reabierto correctamente' });
+});
+
 // POST /:id/cerrar — cerrar ciclo manualmente
 router.post('/:id/cerrar', async (req, res) => {
     const { motivo_cierre } = req.body;
@@ -435,7 +513,8 @@ router.post('/:id/importar', uploadExcel.single('archivo'), async (req, res) => 
         .single();
 
     if (cicloErr) return res.status(404).json({ error: 'Ciclo no encontrado' });
-    if (['abierto', 'cerrado', 'en_revision'].includes(ciclo.estado)) {
+    // Permite importar en estado abierto (casos se crean como visible_jurado)
+    if (['cerrado', 'en_revision'].includes(ciclo.estado)) {
         return res.status(409).json({ error: `No se pueden cargar casos en estado: ${ciclo.estado}` });
     }
 
