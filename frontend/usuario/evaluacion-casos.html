@@ -331,8 +331,14 @@ function renderRetroalimentacion(resp, descuento_puntos) {
     const dc = resp.decision_comite;
     const df = resp.descuento_final;
 
-    // Sin decisión aún — mostrar pendiente
+    // Sin decisión aún — distinguir acepta vs rechaza
     if (!da) {
+        if (resp.decision === 'acepta') {
+            return `<div class="retro-bloque">
+                <strong>Retroalimentación</strong>
+                <span style="color:#1a5276;">Respuesta registrada correctamente. Al aceptar la observación técnica, se mantiene el descuento asociado al caso.</span>
+            </div>`;
+        }
         return `<div class="retro-bloque retro-pend-bloque">
             <strong>Retroalimentación</strong>
             <span style="color:#7d6608;">Respuesta recibida. Pendiente revisión del analista.</span>
@@ -344,9 +350,7 @@ function renderRetroalimentacion(resp, descuento_puntos) {
 
     if (da === 'aprobada_auto') {
         analistaHtml = `<div class="retro-item">
-            <span class="retro-dec retro-auto">Analista: mantiene criterio / aprobado automáticamente</span>
-            ${resp.comentario_analista && resp.comentario_analista !== 'Aprobada automáticamente por aceptación del jurado'
-                ? `<span class="retro-com">${sanitizar(resp.comentario_analista)}</span>` : ''}
+            <span class="retro-dec retro-auto">Respuesta registrada correctamente. Al aceptar la observación técnica, se mantiene el descuento asociado al caso.</span>
         </div>`;
     } else if (da === 'apelacion_aceptada') {
         analistaHtml = `<div class="retro-item">
