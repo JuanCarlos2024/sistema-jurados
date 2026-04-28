@@ -769,12 +769,37 @@ function _renderDescFinal(caso) {
     if (resps.length === 0) return '<span style="color:var(--gris);font-size:11px;">—</span>';
     return resps.map(r => {
         let html;
-        if (r.descuento_final === null || r.descuento_final === undefined) {
+        const d = caso.descuento_puntos;
+
+        if (r.descuento_final !== null && r.descuento_final !== undefined) {
+            // Valor guardado: usarlo directamente
+            if (r.descuento_final === 0) {
+                html = '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>';
+            } else {
+                html = `<span class="descuento-badge">-${r.descuento_final} pt</span>`;
+            }
+        } else if (!r.decision) {
+            // Sin respuesta aún
             html = '<span style="color:var(--gris);font-size:11px;">—</span>';
-        } else if (r.descuento_final === 0) {
+        } else if (r.decision === 'acepta' || r.decision_analista === 'aprobada_auto') {
+            // Auto-aprobado: descuento_final debería estar en DB, pero si está null usamos descuento_puntos
+            html = d === 0
+                ? '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>'
+                : `<span class="descuento-badge">-${d} pt</span>`;
+        } else if (r.decision === 'rechaza' && !r.decision_analista) {
+            // Rechaza sin decisión analista aún
+            html = '<span style="color:#7d6608;font-size:11px;font-weight:500;">Pend. analista</span>';
+        } else if (r.decision_analista === 'derivada_comite' && !r.decision_comite) {
+            // Derivado a comité sin resolución
+            html = '<span style="color:#7d6608;font-size:11px;font-weight:500;">Pend. comité</span>';
+        } else if (r.decision_analista === 'apelacion_aceptada') {
             html = '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>';
+        } else if (r.decision_analista === 'apelacion_rechazada') {
+            html = d === 0
+                ? '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>'
+                : `<span class="descuento-badge">-${d} pt</span>`;
         } else {
-            html = `<span class="descuento-badge">-${r.descuento_final} pt</span>`;
+            html = '<span style="color:var(--gris);font-size:11px;">—</span>';
         }
         return `<div class="resp-fila" style="min-height:20px;">${html}</div>`;
     }).join('');

@@ -141,7 +141,12 @@ router.get('/:id/casos', async (req, res) => {
     const casosConRespuesta = await Promise.all((casos || []).map(async (caso) => {
         const { data: respuesta } = await supabase
             .from('evaluacion_respuestas_jurado')
-            .select('id, decision, comentario')
+            .select(`
+                id, decision, comentario,
+                decision_analista, comentario_analista, decidido_analista_en,
+                decision_comite,   comentario_comite,   decidido_comite_en,
+                descuento_final
+            `)
             .eq('caso_id', caso.id)
             .eq('asignacion_id', asignacion.id)
             .single();

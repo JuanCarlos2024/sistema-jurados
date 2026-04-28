@@ -80,6 +80,34 @@
         }
 
         .form-error { color: var(--rojo, #e74c3c); font-size: 12px; margin-top: 4px; }
+
+        /* Retroalimentación analista/comité */
+        .retro-bloque {
+            margin-top: 14px;
+            padding: 12px 14px;
+            border: 1px solid #d5d8dc;
+            border-left: 4px solid #aab7b8;
+            border-radius: 8px;
+            background: #f8f9fa;
+            font-size: 13px;
+        }
+        .retro-bloque > strong { display:block; margin-bottom:8px; color:#555; font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+        .retro-bloque.retro-pend-bloque { border-left-color: #f39c12; background: #fef9e7; }
+        .retro-item { margin-bottom:8px; }
+        .retro-dec  { display:block; font-weight:600; font-size:13px; margin-bottom:2px; }
+        .retro-ok   { color:#1e8449; }
+        .retro-mal  { color:#922b21; }
+        .retro-pend { color:#7d6608; }
+        .retro-auto { color:#1a5276; }
+        .retro-com  { display:block; color:#555; font-style:italic; font-size:12px; margin:3px 0; }
+        .retro-resultado { display:block; font-size:12px; font-weight:500; margin-top:2px; }
+        .retro-final {
+            margin-top:8px;
+            padding-top:8px;
+            border-top:1px solid #d5d8dc;
+            font-size:13px;
+            color:#333;
+        }
         .sin-ciclo {
             text-align: center;
             padding: 40px 20px;
@@ -288,12 +316,92 @@ function renderRespuestaRegistrada(caso, esInformativo) {
             ${resp.comentario ? `<p style="margin:4px 0 0;color:var(--texto);">${sanitizar(resp.comentario)}</p>` : ''}
         </div>`;
     }
-    const esAcepta  = resp.decision === 'acepta';
-    const decLabel  = esAcepta ? '✓ Acepta' : '✗ Rechaza';
-    const decClass  = esAcepta ? '' : 'rechaza-label';
+    const esAcepta = resp.decision === 'acepta';
+    const decLabel = esAcepta ? '✓ Acepta' : '✗ Rechaza';
+    const decClass = esAcepta ? '' : 'rechaza-label';
     return `<div class="respuesta-registrada">
         <div class="dec-label ${decClass}">${decLabel}</div>
         ${resp.comentario ? `<p style="margin:4px 0 0;color:var(--texto);">${sanitizar(resp.comentario)}</p>` : ''}
+    </div>
+    ${renderRetroalimentacion(resp, caso.descuento_puntos)}`;
+}
+
+function renderRetroalimentacion(resp, descuento_puntos) {
+    const da = resp.decision_analista;
+    const dc = resp.decision_comite;
+    const df = resp.descuento_final;
+
+    // Sin decisión aún — mostrar pendiente
+    if (!da) {
+        return `<div class="retro-bloque retro-pend-bloque">
+            <strong>Retroalimentación</strong>
+            <span style="color:#7d6608;">Respuesta recibida. Pendiente revisión del analista.</span>
+        </div>`;
+    }
+
+    let analistaHtml = '';
+    let comiteHtml   = '';
+
+    if (da === 'aprobada_auto') {
+        analistaHtml = `<div class="retro-item">
+            <span class="retro-dec retro-auto">Analista: mantiene criterio / aprobado automáticamente</span>
+            ${resp.comentario_analista && resp.comentario_analista !== 'Aprobada automáticamente por aceptación del jurado'
+                ? `<span class="retro-com">${sanitizar(resp.comentario_analista)}</span>` : ''}
+        </div>`;
+    } else if (da === 'apelacion_aceptada') {
+        analistaHtml = `<div class="retro-item">
+            <span class="retro-dec retro-ok">Analista: apelación acogida</span>
+            ${resp.comentario_analista ? `<span class="retro-com">${sanitizar(resp.comentario_analista)}</span>` : ''}
+            <span class="retro-resultado retro-ok">No se aplicará descuento.</span>
+        </div>`;
+    } else if (da === 'apelacion_rechazada') {
+        analistaHtml = `<div class="retro-item">
+            <span class="retro-dec retro-mal">Analista: apelación rechazada</span>
+            ${resp.comentario_analista ? `<span class="retro-com">${sanitizar(resp.comentario_analista)}</span>` : ''}
+            <span class="retro-resultado retro-mal">Se mantiene el descuento.</span>
+        </div>`;
+    } else if (da === 'derivada_comite') {
+        analistaHtml = `<div class="retro-item">
+            <span class="retro-dec retro-pend">Analista: derivado a Comité Técnico</span>
+            ${resp.comentario_analista ? `<span class="retro-com">${sanitizar(resp.comentario_analista)}</span>` : ''}
+            ${!dc ? '<span class="retro-resultado retro-pend">Pendiente resolución del Comité.</span>' : ''}
+        </div>`;
+        if (dc === 'confirma_falta') {
+            comiteHtml = `<div class="retro-item">
+                <span class="retro-dec retro-mal">Comité: confirma falta</span>
+                ${resp.comentario_comite ? `<span class="retro-com">${sanitizar(resp.comentario_comite)}</span>` : ''}
+                <span class="retro-resultado retro-mal">Se mantiene el descuento.</span>
+            </div>`;
+        } else if (dc === 'acoge_apelacion') {
+            comiteHtml = `<div class="retro-item">
+                <span class="retro-dec retro-ok">Comité: acoge apelación</span>
+                ${resp.comentario_comite ? `<span class="retro-com">${sanitizar(resp.comentario_comite)}</span>` : ''}
+                <span class="retro-resultado retro-ok">No se aplicará descuento.</span>
+            </div>`;
+        }
+    }
+
+    // Etiqueta descuento final
+    let descLabel;
+    if (df !== null && df !== undefined) {
+        descLabel = df === 0 ? 'Sin descuento' : `-${df} pt`;
+    } else if (da === 'aprobada_auto' || da === 'apelacion_aceptada' || dc === 'acoge_apelacion') {
+        descLabel = 'Sin descuento';
+    } else if (da === 'apelacion_rechazada' || dc === 'confirma_falta') {
+        descLabel = descuento_puntos === 0 ? 'Sin descuento' : `-${descuento_puntos} pt`;
+    } else if (da === 'derivada_comite' && !dc) {
+        descLabel = 'Pendiente comité';
+    } else {
+        descLabel = 'Pendiente analista';
+    }
+
+    const finalHtml = `<div class="retro-final">Descuento final: <strong>${sanitizar(descLabel)}</strong></div>`;
+
+    return `<div class="retro-bloque">
+        <strong>Retroalimentación</strong>
+        ${analistaHtml}
+        ${comiteHtml}
+        ${finalHtml}
     </div>`;
 }
 
