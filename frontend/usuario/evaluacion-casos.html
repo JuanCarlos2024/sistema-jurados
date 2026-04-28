@@ -233,28 +233,56 @@ function render(data) {
 
     document.getElementById('titulo-pagina').textContent = `Ciclo ${ciclo.numero_ciclo} — Casos`;
 
-    let html = `
-    <div class="ciclo-info">
-        <strong>Ciclo ${ciclo.numero_ciclo}</strong>
-        · ${casos.length} caso(s)
-        · Responde cada caso usando los botones de abajo.
-        Los casos informativos no requieren decisión, solo reconocimiento opcional.
-    </div>`;
+    const estaAbierto = ciclo.estado === 'abierto';
+
+    // Banner según estado del ciclo
+    let bannerHtml = '';
+    if (estaAbierto) {
+        bannerHtml = `
+        <div class="ciclo-info">
+            <strong>Ciclo ${ciclo.numero_ciclo} — Abierto</strong>
+            · ${casos.length} caso(s)
+            · Responde cada caso usando los botones de abajo.
+            Los casos informativos no requieren decisión, solo reconocimiento opcional.
+        </div>`;
+    } else if (ciclo.estado === 'en_revision') {
+        bannerHtml = `
+        <div class="ciclo-info" style="background:#fef9e7;border-color:#f9e79f;">
+            <strong>Ciclo ${ciclo.numero_ciclo} — En revisión</strong>
+            · El ciclo ha sido cerrado para revisión. Ya no puedes modificar tus respuestas.
+            A continuación puedes ver la retroalimentación del analista y comité técnico.
+        </div>`;
+    } else if (ciclo.estado === 'cerrado') {
+        bannerHtml = `
+        <div class="ciclo-info" style="background:#f8f9fa;border-color:#d5d8dc;">
+            <strong>Ciclo ${ciclo.numero_ciclo} — Cerrado</strong>
+            · Este ciclo ya fue cerrado. A continuación puedes ver tus respuestas y retroalimentación.
+        </div>`;
+    } else {
+        bannerHtml = `
+        <div class="ciclo-info">
+            <strong>Ciclo ${ciclo.numero_ciclo}</strong>
+            · ${casos.length} caso(s)
+        </div>`;
+    }
+
+    let html = bannerHtml;
 
     if (casos.length === 0) {
         html += '<div class="alerta alerta-info">No hay casos cargados en este ciclo aún.</div>';
     } else {
         casos.forEach(caso => {
-            html += renderCasoCard(caso);
+            html += renderCasoCard(caso, estaAbierto);
         });
     }
 
     document.getElementById('contenido').innerHTML = html;
 }
 
-function renderCasoCard(caso) {
-    const esInformativo = caso.tipo_caso === 'informativo';
-    const yaRespondio   = !!caso.mi_respuesta;
+function renderCasoCard(caso, cicloAbierto) {
+    const esInformativo  = caso.tipo_caso === 'informativo';
+    const yaRespondio    = !!caso.mi_respuesta;
+    const puedeResponder = !!caso.puede_responder;
 
     const tipoBadge = {
         interpretativa: '<span class="badge-tipo-interpretativa">Interpretativa</span>',
@@ -270,10 +298,15 @@ function renderCasoCard(caso) {
 
     if (yaRespondio) {
         cuerpo = renderRespuestaRegistrada(caso, esInformativo);
-    } else if (esInformativo) {
+    } else if (puedeResponder && esInformativo) {
         cuerpo = renderFormInformativo(caso);
-    } else {
+    } else if (puedeResponder) {
         cuerpo = renderFormDecision(caso);
+    } else {
+        // No respondido y ciclo ya no está abierto para este caso
+        cuerpo = `<div class="informativo-aviso" style="background:#f8f9fa;border-color:#d5d8dc;color:#666;">
+            Este caso no fue respondido durante el período de evaluación.
+        </div>`;
     }
 
     const descripcionHtml = caso.descripcion
@@ -298,7 +331,9 @@ function renderCasoCard(caso) {
                 ${tipoBadge}
                 ${descuentoHtml}
             </div>
-            ${yaRespondio ? '<span style="font-size:12px;color:#27ae60;font-weight:600;">&#10003; Respondido</span>' : ''}
+            ${yaRespondio
+                ? '<span style="font-size:12px;color:#27ae60;font-weight:600;">&#10003; Respondido</span>'
+                : (!puedeResponder ? '<span style="font-size:12px;color:#aaa;font-weight:600;">Sin respuesta</span>' : '')}
         </div>
         <div class="caso-card-body">
             ${descripcionHtml}

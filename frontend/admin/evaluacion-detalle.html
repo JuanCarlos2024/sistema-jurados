@@ -95,17 +95,24 @@
         .resp-acepta   { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#d5f5e3; color:#1e8449; }
         .resp-rechaza  { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#fadbd8; color:#922b21; }
         .resp-pendiente{ display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; background:#fef9e7; color:#7d6608; }
-        .resp-celda    { font-size:12px; min-width:120px; max-width:200px; }
-        .resp-fila     { margin-bottom:5px; line-height:1.5; }
+        .resp-celda    { font-size:12px; min-width:140px; width:160px; vertical-align:top; }
+        .resp-fila     { margin-bottom:6px; line-height:1.4; }
         .resp-nombre   { font-size:11px; color:var(--gris); display:block; }
-        .resp-comentario { font-size:11px; color:var(--gris); font-style:italic; display:block; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .resp-comentario {
+            font-size:11px; color:#555; font-style:italic; display:block;
+            white-space:normal; overflow:visible; word-break:break-word; margin-top:2px; line-height:1.4;
+        }
+        .resp-fecha    { font-size:10px; color:var(--gris); display:block; margin-top:1px; }
         .dec-auto        { font-size:11px; font-weight:600; color:#1e8449; }
         .dec-badge       { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; }
         .dec-acept       { background:#d5f5e3; color:#1e8449; }
         .dec-rech        { background:#fadbd8; color:#922b21; }
         .dec-deriv       { background:#fef9e7; color:#7d6608; }
-        .dec-celda       { font-size:12px; min-width:140px; max-width:200px; vertical-align:top; }
-        .dec-btn         { margin-top:2px; }
+        .dec-celda       { font-size:12px; min-width:160px; width:190px; vertical-align:top; }
+        .dec-btn         { margin-top:3px; }
+        .tabla-casos td  { vertical-align:top; word-break:break-word; line-height:1.35; }
+        .col-desc        { min-width:160px; width:200px; font-size:12px; white-space:normal; word-break:break-word; vertical-align:top; }
+        .col-compact     { width:70px; text-align:center; vertical-align:top; }
         .reapertura-info {
             background: #fef9e7;
             border: 1px solid #f9e79f;
@@ -374,6 +381,17 @@
     </div>
 </div>
 
+<!-- MODAL: Video del caso -->
+<div class="modal-overlay oculto" id="modal-video-admin">
+    <div class="modal" style="max-width:740px;padding:0;">
+        <div class="modal-header" style="padding:12px 16px;">
+            <h3 class="modal-titulo">Video del caso</h3>
+            <button class="modal-cerrar" onclick="cerrarVideoAdmin()">✕</button>
+        </div>
+        <div id="modal-video-admin-wrap" style="min-height:80px;"></div>
+    </div>
+</div>
+
 <!-- MODAL: Decisión analista -->
 <div class="modal-overlay oculto" id="modal-decision-analista">
     <div class="modal" style="max-width:460px;">
@@ -567,9 +585,6 @@ function renderAccionesEval(ev) {
     const items = [];
 
     // Acceso a bandejas de trabajo
-    if (['en_proceso', 'pendiente_comision'].includes(ev.estado) && esAnalista) {
-        items.push(`<a href="/admin/evaluacion-revision.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">📋 Bandeja de revisión</a>`);
-    }
     if (ev.estado === 'pendiente_comision' && esComision) {
         items.push(`<a href="/admin/evaluacion-comision.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">⚖️ Bandeja de comisión</a>`);
     }
@@ -636,17 +651,19 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
 
     const tablaCasos = casos.length === 0
         ? '<p class="texto-gris" style="font-size:13px;padding:8px 0;">Sin casos cargados.</p>'
-        : `<div class="tabla-wrap"><table>
+        : `<div class="tabla-wrap" style="overflow-x:auto;"><table class="tabla-casos" style="min-width:900px;">
             <thead><tr>
-                <th style="width:46px;">#</th>
-                <th>Tipo</th>
-                <th>Descuento</th>
-                <th>Descripción</th>
-                <th>Estado</th>
-                <th>Resp. jurado</th>
-                <th>Dec. analista/comité</th>
-                <th>Desc. final</th>
-                <th></th>
+                <th style="width:32px;">#</th>
+                <th style="width:100px;">Tipo</th>
+                <th style="width:80px;">Desc. inicial</th>
+                <th style="min-width:150px;">Descripción</th>
+                <th style="width:55px;">Video</th>
+                <th style="width:90px;">Estado</th>
+                <th style="min-width:130px;">Resp. jurado</th>
+                <th style="min-width:160px;">Resp. analista</th>
+                <th style="min-width:150px;">Resp. comité</th>
+                <th style="width:80px;">Desc. final</th>
+                <th style="width:80px;"></th>
             </tr></thead>
             <tbody>
                 ${casos.map(c => renderFilaCaso(c, ciclo, estadoEval)).join('')}
@@ -718,49 +735,125 @@ function _renderRespInline(caso, cicloEstado) {
                        : sanitizar(r.decision || '?');
         const nombre   = sanitizar((r.jurado_nombre || '—').split(' ').slice(0, 2).join(' '));
         const com      = r.comentario
-            ? '<span class="resp-comentario" title="' + sanitizar(r.comentario) + '">'
-              + sanitizar(r.comentario.length > 55 ? r.comentario.slice(0, 55) + '…' : r.comentario)
-              + '</span>'
+            ? '<span class="resp-comentario">' + sanitizar(r.comentario) + '</span>'
+            : '';
+        const fecha    = r.respondido_en
+            ? '<span class="resp-fecha">' + _fmtDT(r.respondido_en) + '</span>'
             : '';
         return '<div class="resp-fila">'
              +   '<span class="resp-nombre">' + nombre + '</span>'
              +   '<span class="' + badgeCls + '">' + label + '</span>'
-             +   com
+             +   com + fecha
              + '</div>';
     }).join('');
 }
 
-// ── Render decisión analista/comité por caso ──────────────────────
-function _renderDecisionAdmin(caso) {
+// ── Columna: Resp. analista ───────────────────────────────────────
+function _renderAnalista(caso) {
     const resps = caso.respuestas_jurado || [];
     if (resps.length === 0) return '<span style="color:var(--gris);font-size:11px;">—</span>';
     return resps.map(r => {
         let html = '';
-        if (r.decision === 'acepta') {
+        const _com  = (txt) => txt ? `<span class="resp-comentario">${sanitizar(txt)}</span>` : '';
+        const _date = (iso) => iso ? `<span class="resp-fecha">${_fmtDT(iso)}</span>` : '';
+        if (r.decision === 'acepta' || r.decision_analista === 'aprobada_auto') {
             html = '<span class="dec-auto">Auto ✓</span>';
-        } else if (r.decision === 'rechaza') {
-            if (!r.decision_analista) {
-                html = `<button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionAnalista('${r.id}')">Decidir</button>`;
-            } else if (r.decision_analista === 'apelacion_aceptada') {
-                const com = r.comentario_analista ? `<span class="resp-comentario" title="${sanitizar(r.comentario_analista)}">${sanitizar(r.comentario_analista.length > 40 ? r.comentario_analista.slice(0,40)+'…' : r.comentario_analista)}</span>` : '';
-                html = `<span class="dec-badge dec-acept">Apelación acogida</span>${com}`;
-            } else if (r.decision_analista === 'apelacion_rechazada') {
-                const com = r.comentario_analista ? `<span class="resp-comentario" title="${sanitizar(r.comentario_analista)}">${sanitizar(r.comentario_analista.length > 40 ? r.comentario_analista.slice(0,40)+'…' : r.comentario_analista)}</span>` : '';
-                html = `<span class="dec-badge dec-rech">Apelación rechazada</span>${com}`;
-            } else if (r.decision_analista === 'derivada_comite') {
-                if (!r.decision_comite) {
-                    html = `<span class="dec-badge dec-deriv">Deriv. comité</span><br><button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionComite('${r.id}')">Resolver</button>`;
-                } else if (r.decision_comite === 'confirma_falta') {
-                    const com = r.comentario_comite ? `<span class="resp-comentario" title="${sanitizar(r.comentario_comite)}">${sanitizar(r.comentario_comite.length > 40 ? r.comentario_comite.slice(0,40)+'…' : r.comentario_comite)}</span>` : '';
-                    html = `<span class="dec-badge dec-rech">Comité: confirma falta</span>${com}`;
-                } else if (r.decision_comite === 'acoge_apelacion') {
-                    const com = r.comentario_comite ? `<span class="resp-comentario" title="${sanitizar(r.comentario_comite)}">${sanitizar(r.comentario_comite.length > 40 ? r.comentario_comite.slice(0,40)+'…' : r.comentario_comite)}</span>` : '';
-                    html = `<span class="dec-badge dec-acept">Comité: acoge apelación</span>${com}`;
-                }
+        } else if (r.decision === 'rechaza' && !r.decision_analista) {
+            html = `<button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionAnalista('${r.id}')">Decidir</button>`;
+        } else if (r.decision_analista === 'apelacion_aceptada') {
+            html = `<span class="dec-badge dec-acept">Apelación acogida</span>${_com(r.comentario_analista)}${_date(r.decidido_analista_en)}`;
+        } else if (r.decision_analista === 'apelacion_rechazada') {
+            html = `<span class="dec-badge dec-rech">Apelación rechazada</span>${_com(r.comentario_analista)}${_date(r.decidido_analista_en)}`;
+        } else if (r.decision_analista === 'derivada_comite') {
+            html = `<span class="dec-badge dec-deriv">Derivado a Comité</span>${_com(r.comentario_analista)}${_date(r.decidido_analista_en)}`;
+        }
+        return `<div class="resp-fila">${html || '<span style="color:var(--gris);font-size:11px;">—</span>'}</div>`;
+    }).join('');
+}
+
+// ── Columna: Resp. comité ─────────────────────────────────────────
+function _renderComite(caso) {
+    const resps = caso.respuestas_jurado || [];
+    if (resps.length === 0) return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    return resps.map(r => {
+        let html = '';
+        const _com  = (txt) => txt ? `<span class="resp-comentario">${sanitizar(txt)}</span>` : '';
+        const _date = (iso) => iso ? `<span class="resp-fecha">${_fmtDT(iso)}</span>` : '';
+        if (r.decision_analista !== 'derivada_comite') {
+            html = '<span style="color:var(--gris);font-size:11px;">—</span>';
+        } else if (!r.decision_comite) {
+            html = `<span class="dec-badge dec-deriv">Pendiente comité</span><br>`
+                 + `<button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionComite('${r.id}')">Resolver</button>`;
+        } else if (r.decision_comite === 'confirma_falta') {
+            html = `<span class="dec-badge dec-rech">Confirma falta</span>${_com(r.comentario_comite)}${_date(r.decidido_comite_en)}`;
+        } else if (r.decision_comite === 'acoge_apelacion') {
+            html = `<span class="dec-badge dec-acept">Acoge apelación</span>${_com(r.comentario_comite)}${_date(r.decidido_comite_en)}`;
+        }
+        return `<div class="resp-fila">${html}</div>`;
+    }).join('');
+}
+
+// ── Columna: Video ────────────────────────────────────────────────
+const _videoUrlMap = {};
+function _renderVideoCelda(caso) {
+    if (!caso.video_url) return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    _videoUrlMap[caso.id] = caso.video_url;
+    return `<button class="btn btn-secundario btn-pequeño" style="white-space:nowrap;" onclick="abrirVideoAdmin('${caso.id}')">▶ Ver</button>`;
+}
+
+function normalizarVideoUrlAdmin(url) {
+    if (!url || !/^https?:\/\//i.test(url)) return null;
+    try {
+        const u = new URL(url);
+        let videoId = null, start = null;
+        if (u.hostname === 'youtu.be') {
+            videoId = u.pathname.slice(1).split('/')[0] || null;
+            start   = u.searchParams.get('t') || u.searchParams.get('start') || null;
+        } else if (/youtube\.com$/.test(u.hostname)) {
+            if (u.pathname.startsWith('/embed/')) {
+                videoId = u.pathname.split('/embed/')[1].split('/')[0] || null;
+                start   = u.searchParams.get('start') || u.searchParams.get('t') || null;
+            } else {
+                videoId = u.searchParams.get('v') || null;
+                start   = u.searchParams.get('t') || u.searchParams.get('start') || null;
             }
         }
-        return `<div class="resp-fila" style="min-height:20px;">${html}</div>`;
-    }).join('');
+        if (!videoId) return null;
+        videoId = videoId.split('?')[0].split('&')[0];
+        let embed = 'https://www.youtube.com/embed/' + videoId + '?autoplay=0&rel=0';
+        if (start) embed += '&start=' + encodeURIComponent(start);
+        return embed;
+    } catch(_) { return null; }
+}
+
+function abrirVideoAdmin(casoId) {
+    const url  = _videoUrlMap[casoId];
+    const wrap = document.getElementById('modal-video-admin-wrap');
+    wrap.innerHTML = '';
+    const embed = normalizarVideoUrlAdmin(url);
+    if (embed) {
+        const iframe = document.createElement('iframe');
+        iframe.src = embed;
+        iframe.style.cssText = 'width:100%;height:420px;border:none;border-radius:0 0 8px 8px;';
+        iframe.allowFullscreen = true;
+        iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
+        wrap.appendChild(iframe);
+    } else {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.textContent = 'Abrir video en nueva pestaña ↗';
+        a.style.cssText = 'display:block;padding:28px;text-align:center;font-size:14px;';
+        wrap.appendChild(a);
+    }
+    document.getElementById('modal-video-admin').classList.remove('oculto');
+}
+
+function cerrarVideoAdmin() {
+    const wrap = document.getElementById('modal-video-admin-wrap');
+    const iframe = wrap.querySelector('iframe');
+    if (iframe) iframe.src = '';
+    wrap.innerHTML = '';
+    document.getElementById('modal-video-admin').classList.add('oculto');
 }
 
 // ── Render descuento final por caso ──────────────────────────────
@@ -830,13 +923,12 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
         <td>${caso.numero_caso}</td>
         <td><span class="badge-eval badge-tipo-${caso.tipo_caso}">${labelTipo(caso.tipo_caso)}</span></td>
         <td>${descBadge}</td>
-        <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-            title="${sanitizar(caso.descripcion || '')}">
-            ${sanitizar(caso.descripcion || '—')}
-        </td>
+        <td class="col-desc">${sanitizar(caso.descripcion || '—')}</td>
+        <td style="text-align:center;">${_renderVideoCelda(caso)}</td>
         <td><span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span></td>
         <td class="resp-celda">${_renderRespInline(caso, ciclo.estado)}</td>
-        <td class="dec-celda">${_renderDecisionAdmin(caso)}</td>
+        <td class="dec-celda">${_renderAnalista(caso)}</td>
+        <td class="dec-celda">${_renderComite(caso)}</td>
         <td class="dec-celda">${_renderDescFinal(caso)}</td>
         <td><div class="tabla-acciones">${accionesArr.join('')}</div></td>
     </tr>`;

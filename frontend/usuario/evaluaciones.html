@@ -101,25 +101,31 @@ if (api.getUsuario()?.tipo_persona !== 'jurado') {
 async function cargar() {
     try {
         const data = await api.get('/usuario/evaluaciones');
-        const activas    = data.activas    || [];
-        const resultados = data.resultados || [];
-        renderLista(activas, resultados);
+        renderLista(
+            data.para_responder || [],
+            data.en_revision    || [],
+            data.resultados     || []
+        );
     } catch(e) {
         document.getElementById('contenido').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar evaluaciones')}</div>`;
     }
 }
 
-function renderLista(activas, resultados) {
+function renderLista(paraResponder, enRevision, resultados) {
     let html = '';
 
+    // ── PARA RESPONDER ──────────────────────────────────────────────────────
     html += '<div class="seccion-titulo">Para responder</div>';
-    if (activas.length === 0) {
+    if (paraResponder.length === 0) {
         html += '<div class="sin-items">No hay evaluaciones con casos disponibles en este momento.</div>';
     } else {
-        activas.forEach(e => {
+        paraResponder.forEach(e => {
             const rodeo = e.rodeo || {};
             const ciclo = e.ciclo_abierto;
+            const pendientes = e.total_pendientes > 0
+                ? `<strong style="color:#e74c3c;">${e.total_pendientes} pendiente(s)</strong>`
+                : `<span style="color:#27ae60;">Todos respondidos</span>`;
             html += `
             <div class="eval-card">
                 <div class="eval-card-info">
@@ -128,6 +134,7 @@ function renderLista(activas, resultados) {
                         ${sanitizar(rodeo.fecha || '')}
                         ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
                         ${ciclo ? ' · Ciclo ' + ciclo.numero_ciclo + ' abierto' : ''}
+                        · ${pendientes}
                     </p>
                 </div>
                 <a href="/usuario/evaluacion-casos.html?id=${e.id}" class="btn btn-primario btn-pequeño" style="text-decoration:none;">
@@ -137,6 +144,39 @@ function renderLista(activas, resultados) {
         });
     }
 
+    // ── EN REVISIÓN ─────────────────────────────────────────────────────────
+    html += '<div class="seccion-titulo">En revisión / Retroalimentación</div>';
+    if (enRevision.length === 0) {
+        html += '<div class="sin-items">No hay evaluaciones en revisión en este momento.</div>';
+    } else {
+        enRevision.forEach(e => {
+            const rodeo = e.rodeo || {};
+            const ciclo = e.ciclo_relevante;
+            const pendAnal = e.pendientes_analista || 0;
+            const pendCom  = e.pendientes_comite   || 0;
+            let estadoDetalle = '';
+            if (pendAnal > 0) estadoDetalle += `${pendAnal} pend. analista`;
+            if (pendCom  > 0) estadoDetalle += (estadoDetalle ? ' · ' : '') + `${pendCom} pend. comité`;
+            if (!estadoDetalle) estadoDetalle = 'Revisión completa';
+            html += `
+            <div class="eval-card" style="border-left:4px solid #f39c12;">
+                <div class="eval-card-info">
+                    <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
+                    <p>
+                        ${sanitizar(rodeo.fecha || '')}
+                        ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
+                        ${ciclo ? ' · Ciclo ' + ciclo.numero_ciclo : ''}
+                        · <span style="color:#7d6608;">${sanitizar(estadoDetalle)}</span>
+                    </p>
+                </div>
+                <a href="/usuario/evaluacion-casos.html?id=${e.id}" class="btn btn-pequeño" style="text-decoration:none;background:#fef9e7;color:#7d6608;border:1px solid #f9e79f;">
+                    Ver retroalimentación →
+                </a>
+            </div>`;
+        });
+    }
+
+    // ── RESULTADOS PUBLICADOS ────────────────────────────────────────────────
     html += '<div class="seccion-titulo">Resultados publicados</div>';
     if (resultados.length === 0) {
         html += '<div class="sin-items">No hay resultados publicados aún.</div>';
