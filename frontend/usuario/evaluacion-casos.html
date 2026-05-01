@@ -324,7 +324,7 @@ function render(data) {
     let html = `
     <div class="eval-header-jurado">
         <h2>${sanitizar(club)}${asoc ? ' — ' + sanitizar(asoc) : ''}</h2>
-        <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}</p>
+        <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}${ev.analista?.nombre_completo ? ' · Analista: ' + sanitizar(ev.analista.nombre_completo) : ''}</p>
     </div>
     ${renderCicloAccordion(ciclo1, 1, autoExpand === 1)}
     ${renderCicloAccordion(ciclo2, 2, autoExpand === 2)}`;
@@ -337,7 +337,7 @@ function renderCicloAccordion(ciclo, num, expanded) {
         return `
         <div class="ciclo-accordion">
             <div class="ciclo-acc-header" style="cursor:default;opacity:.6;">
-                <span class="ciclo-acc-titulo">Ciclo ${num}</span>
+                <span class="ciclo-acc-titulo">${labelCiclo(num)}</span>
                 <span class="ciclo-acc-estado" style="background:#eaecee;color:#888;">Sin configurar</span>
             </div>
         </div>`;
@@ -371,7 +371,7 @@ function renderCicloAccordion(ciclo, num, expanded) {
     return `
     <div class="ciclo-accordion">
         <button class="ciclo-acc-header ${headerClass}" onclick="toggleAcc(${num})" id="acc-btn-${num}">
-            <span class="ciclo-acc-titulo">Ciclo ${num}</span>
+            <span class="ciclo-acc-titulo">${labelCiclo(num)}</span>
             <span class="ciclo-acc-estado" style="${estadoStyle}">${sanitizar(estadoLabel)}</span>
             <span class="ciclo-acc-stats">${sanitizar(stats)}</span>
             <span class="acc-arrow" id="acc-arrow-${num}">${arrowIcon}</span>
@@ -401,9 +401,9 @@ function renderCasoCard(caso, ciclo) {
     const esSinRespuesta = yaRespondio && caso.mi_respuesta.decision === 'sin_respuesta';
 
     const tipoBadge = {
-        interpretativa: '<span class="badge-tipo-interpretativa">Interpretativa</span>',
+        interpretativa: '<span class="badge-tipo-interpretativa">Apreciación</span>',
         reglamentaria:  '<span class="badge-tipo-reglamentaria">Reglamentaria</span>',
-        informativo:    '<span class="badge-tipo-informativo">Informativo</span>'
+        informativo:    '<span class="badge-tipo-informativo">Conceptual</span>'
     }[caso.tipo_caso] || '';
 
     const descuentoHtml = caso.descuento_puntos > 0

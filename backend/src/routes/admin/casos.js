@@ -86,7 +86,7 @@ async function getDescuentos() {
     return {
         interpretativa: data?.descuento_interpretativa ?? 1,
         reglamentaria:  data?.descuento_reglamentaria  ?? 2,
-        informativo:    data?.descuento_informativo    ?? 0
+        informativo:    0   // siempre 0, no descuenta puntos
     };
 }
 

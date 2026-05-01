@@ -206,7 +206,7 @@ function renderCicloBox(ev, ciclo, num) {
         return `
         <div class="ciclo-resumen-box ciclo-box-vacio">
             <span style="font-size:20px;opacity:.4;">○</span>
-            <span style="font-size:12px;">Ciclo ${num} — sin casos</span>
+            <span style="font-size:12px;">${labelCiclo(num)} — sin casos</span>
         </div>`;
     }
 
@@ -257,7 +257,7 @@ function renderCicloBox(ev, ciclo, num) {
     return `
     <div class="ciclo-resumen-box">
         <div class="ciclo-resumen-titulo">
-            <span>Ciclo ${num}</span>
+            <span>${labelCiclo(num)}</span>
             <span class="ciclo-estado-badge" style="${estadoStyle}">${sanitizar(estadoLabel)}</span>
         </div>
         ${statsHtml}

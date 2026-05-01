@@ -158,7 +158,8 @@ router.get('/:id/casos', async (req, res) => {
         .from('evaluaciones')
         .select(`
             id, estado, rodeo_id,
-            rodeo:rodeos(club, fecha, asociacion, tipo_rodeo_nombre)
+            rodeo:rodeos(club, fecha, asociacion, tipo_rodeo_nombre),
+            analista:analista_id(id, nombre_completo)
         `)
         .eq('id', evalId)
         .single();
@@ -237,7 +238,7 @@ router.get('/:id/casos', async (req, res) => {
     }
 
     res.json({
-        evaluacion: { id: ev.id, estado: ev.estado, rodeo: ev.rodeo || {} },
+        evaluacion: { id: ev.id, estado: ev.estado, rodeo: ev.rodeo || {}, analista: ev.analista || null },
         ciclo1: buildCicloConCasos(ciclosMap[1] || null),
         ciclo2: buildCicloConCasos(ciclosMap[2] || null)
     });

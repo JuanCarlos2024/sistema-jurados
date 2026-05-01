@@ -5,7 +5,7 @@ const { soloRolEvaluacion } = require('../../middleware/auth');
 
 // GET / — lista paginada con filtros, jurados y resumen de faltas
 router.get('/', async (req, res) => {
-    const { estado, analista_id, buscar, respuesta_estado, page = 1, limit = 20 } = req.query;
+    const { estado, analista_id, buscar, respuesta_estado, fecha_desde, fecha_hasta, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     // Pre-queries para búsqueda textual cruzada
@@ -34,6 +34,17 @@ router.get('/', async (req, res) => {
         analistaIdsFiltro = (analistasMatch || []).map(a => a.id);
     }
 
+    // Filtro por rango de fecha del rodeo
+    let rodeoIdsFecha = null;
+    if (fecha_desde || fecha_hasta) {
+        let fq = supabase.from('rodeos').select('id');
+        if (fecha_desde) fq = fq.gte('fecha', fecha_desde);
+        if (fecha_hasta) fq = fq.lte('fecha', fecha_hasta);
+        const { data: rodeosF } = await fq;
+        rodeoIdsFecha = (rodeosF || []).map(r => r.id);
+        if (rodeoIdsFecha.length === 0) return res.json({ evaluaciones: [], total: 0 });
+    }
+
     // Cuando hay filtro por respuesta_estado, cargamos un lote amplio y filtramos en memoria
     const hasRespFiltro = !!respuesta_estado;
 
@@ -53,8 +64,9 @@ router.get('/', async (req, res) => {
         query = query.limit(300);
     }
 
-    if (estado)      query = query.eq('estado', estado);
-    if (analista_id) query = query.eq('analista_id', analista_id);
+    if (estado)             query = query.eq('estado', estado);
+    if (analista_id)        query = query.eq('analista_id', analista_id);
+    if (rodeoIdsFecha !== null) query = query.in('rodeo_id', rodeoIdsFecha);
 
     if (buscar) {
         const b = buscar.trim();
@@ -391,7 +403,24 @@ router.get('/:id', async (req, res) => {
         .single();
 
     if (error) return res.status(error.code === 'PGRST116' ? 404 : 500).json({ error: error.message });
-    res.json(ev);
+
+    const { data: asigs } = await supabase
+        .from('asignaciones')
+        .select('estado_designacion, nombre_importado, usuarios_pagados(id, nombre_completo, categoria)')
+        .eq('rodeo_id', ev.rodeo_id)
+        .eq('tipo_persona', 'jurado')
+        .eq('estado', 'activo');
+
+    const jurados = (asigs || [])
+        .filter(a => a.estado_designacion !== 'rechazado')
+        .map(a => ({
+            id:              a.usuarios_pagados?.id              || null,
+            nombre_completo: a.usuarios_pagados?.nombre_completo || a.nombre_importado || null,
+            categoria:       a.usuarios_pagados?.categoria       || null
+        }))
+        .filter(j => j.nombre_completo);
+
+    res.json({ ...ev, jurados });
 });
 
 // PATCH /:id/analista — reasignar analista (solo jefe_area o admin pleno)

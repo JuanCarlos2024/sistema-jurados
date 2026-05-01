@@ -197,7 +197,7 @@
             <div class="form-group" style="margin-bottom:14px;">
                 <label class="form-label">Tipo de caso</label>
                 <select id="caso-tipo" class="form-control" onchange="onCasoTipoChange()">
-                    <option value="interpretativa">Interpretativa</option>
+                    <option value="interpretativa">Apreciación</option>
                     <option value="reglamentaria">Reglamentaria</option>
                 </select>
             </div>
@@ -281,7 +281,7 @@
             <div id="import-step-1">
                 <div class="alerta alerta-info" style="margin-bottom:14px;">
                     Columnas requeridas: <strong>ciclo · numero_caso · tipo_caso · descripcion · url_video</strong><br>
-                    <small>tipo_caso: interpretativa · reglamentaria · informativo (solo ciclo 2)</small>
+                    <small>tipo_caso: interpretativa (Apreciación) · reglamentaria · informativo (Conceptual, solo ciclo 2)</small>
                 </div>
                 <div style="margin-bottom:14px;">
                     <button class="btn btn-secundario btn-pequeño" onclick="descargarPlantillaCasos()">Descargar plantilla Excel</button>
@@ -540,7 +540,7 @@ function labelEstadoCaso(e) {
     return M[e] || e;
 }
 function labelTipo(t) {
-    const M = { interpretativa: 'Interpretativa', reglamentaria: 'Reglamentaria', informativo: 'Informativo' };
+    const M = { interpretativa: 'Apreciación', reglamentaria: 'Reglamentaria', informativo: 'Conceptual' };
     return M[t] || t;
 }
 
@@ -559,6 +559,12 @@ async function cargarEvaluacion() {
         const analista    = ev.analista || {};
         const rodeoNombre = rodeo.club || ev.rodeo_id || '—';
         const rodeoFecha  = rodeo.fecha ? formatFecha(rodeo.fecha) : '—';
+        const rodeoAsoc   = rodeo.asociacion || '';
+        const rodeoTipo   = rodeo.tipo_rodeo_nombre || '';
+        const jurados     = ev.jurados || [];
+        const juradosTexto = jurados.length > 0
+            ? jurados.map(j => sanitizar(j.nombre_completo)).join(', ')
+            : '—';
 
         document.getElementById('titulo-pagina').textContent = rodeoNombre;
 
@@ -573,8 +579,9 @@ async function cargarEvaluacion() {
 
             <div class="card header-eval">
                 <div class="header-eval-info">
-                    <h2>${sanitizar(rodeoNombre)}</h2>
-                    <p>Fecha rodeo: ${rodeoFecha} &nbsp;·&nbsp; Analista: ${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</p>
+                    <h2>${sanitizar(rodeoNombre)}${rodeoAsoc ? ' — ' + sanitizar(rodeoAsoc) : ''}</h2>
+                    <p>Fecha: ${rodeoFecha}${rodeoTipo ? ' &nbsp;·&nbsp; ' + sanitizar(rodeoTipo) : ''} &nbsp;·&nbsp; Analista: ${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</p>
+                    ${jurados.length > 0 ? `<p style="margin-top:3px;font-size:12px;color:var(--gris);">Jurado(s): ${juradosTexto}</p>` : ''}
                 </div>
                 <div>
                     <span class="badge-eval badge-${ev.estado}">${labelEstadoEval(ev.estado)}</span>
@@ -714,7 +721,7 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
     return `<div class="card ciclo-card">
         <div class="ciclo-header">
             <div>
-                <span style="font-size:14px;font-weight:700;">Ciclo ${ciclo.numero_ciclo}</span>
+                <span style="font-size:14px;font-weight:700;">${labelCiclo(ciclo.numero_ciclo)}</span>
                 &nbsp;
                 <span class="badge-eval badge-ciclo-${ciclo.estado}">${labelEstadoCiclo(ciclo.estado)}</span>
                 ${ciclo.cantidad_reaperturas > 0 ? '<span class="badge-eval" style="background:#fef9e7;color:#7d6608;margin-left:4px;">Reabierto</span>' : ''}
@@ -1166,7 +1173,7 @@ function configurarSelectTipo(numeroCiclo) {
     const optInfo = sel.querySelector('option[value="informativo"]');
     if (optInfo) optInfo.remove();
     if (numeroCiclo === 2) {
-        sel.insertAdjacentHTML('beforeend', '<option value="informativo">Informativo</option>');
+        sel.insertAdjacentHTML('beforeend', '<option value="informativo">Conceptual</option>');
     }
 }
 const _DESCUENTO_POR_TIPO = { interpretativa: 1, reglamentaria: 2, informativo: 0 };
@@ -1373,7 +1380,7 @@ function _mostrarPreviewImportar(res) {
     }
 
     if (hayValidas) {
-        const LABEL = { interpretativa: 'Interpretativa', reglamentaria: 'Reglamentaria', informativo: 'Informativo' };
+        const LABEL = { interpretativa: 'Apreciación', reglamentaria: 'Reglamentaria', informativo: 'Conceptual' };
         document.getElementById('import-preview-tabla').innerHTML = `
             <div class="tabla-wrap" style="max-height:240px;overflow-y:auto;">
             <table>

@@ -110,6 +110,14 @@
                     <option value="pendiente_respuesta">Pendientes de respuesta</option>
                     <option value="con_rechazos">Con rechazos</option>
                 </select>
+                <div>
+                    <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--gris);">Fecha desde</label>
+                    <input type="date" id="fil-fecha-desde" onchange="cargarEvaluaciones(1)">
+                </div>
+                <div>
+                    <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--gris);">Fecha hasta</label>
+                    <input type="date" id="fil-fecha-hasta" onchange="cargarEvaluaciones(1)">
+                </div>
                 <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
             </div>
 
@@ -126,8 +134,8 @@
                                 <th>Jurado(s)</th>
                                 <th>Faltas</th>
                                 <th>Nota final</th>
-                                <th>Ciclo 1</th>
-                                <th>Ciclo 2</th>
+                                <th>Ciclo 1 — Primeros 3</th>
+                                <th>Ciclo 2 — Campeones</th>
                                 <th>Estado</th>
                                 <th>Creada</th>
                                 <th></th>
@@ -389,16 +397,20 @@ async function cargarEvaluaciones(pagina) {
     pagina = pagina || 1;
     paginaActual = pagina;
 
-    const estado    = document.getElementById('fil-estado').value;
-    const analista  = document.getElementById('fil-analista').value;
-    const respuesta = document.getElementById('fil-respuesta').value;
+    const estado      = document.getElementById('fil-estado').value;
+    const analista    = document.getElementById('fil-analista').value;
+    const respuesta   = document.getElementById('fil-respuesta').value;
+    const fechaDesde  = document.getElementById('fil-fecha-desde').value;
+    const fechaHasta  = document.getElementById('fil-fecha-hasta').value;
 
     const buscar = document.getElementById('fil-buscar').value.trim();
     let url = `/admin/evaluaciones?page=${pagina}&limit=20`;
-    if (estado)    url += `&estado=${estado}`;
-    if (analista)  url += `&analista_id=${analista}`;
-    if (buscar)    url += `&buscar=${encodeURIComponent(buscar)}`;
-    if (respuesta) url += `&respuesta_estado=${respuesta}`;
+    if (estado)      url += `&estado=${estado}`;
+    if (analista)    url += `&analista_id=${analista}`;
+    if (buscar)      url += `&buscar=${encodeURIComponent(buscar)}`;
+    if (respuesta)   url += `&respuesta_estado=${respuesta}`;
+    if (fechaDesde)  url += `&fecha_desde=${fechaDesde}`;
+    if (fechaHasta)  url += `&fecha_hasta=${fechaHasta}`;
 
     const tbody = document.getElementById('tbody-evaluaciones');
     tbody.innerHTML = '<tr><td colspan="10" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
@@ -425,7 +437,7 @@ async function cargarEvaluaciones(pagina) {
                 const rf = ev.resumen_faltas;
                 const hayFaltas = rf && (rf.reglamentarias > 0 || rf.interpretativas > 0 || rf.informativos > 0);
                 const faltasTexto = hayFaltas
-                    ? `Reglamentarias: ${rf.reglamentarias}<br>Interpretativas: ${rf.interpretativas}<br>Informativas: ${rf.informativos}<br><strong>Puntos descontados: ${rf.puntos_descontados}</strong>`
+                    ? `Reglamentarias: ${rf.reglamentarias}<br>Apreciación: ${rf.interpretativas}<br>Conceptual: ${rf.informativos}<br><strong>Puntos descontados: ${rf.puntos_descontados}</strong>`
                     : '<span class="texto-gris">Sin casos</span>';
 
                 const notaFinal = ev.nota_final != null
@@ -536,6 +548,8 @@ function limpiarFiltros() {
     document.getElementById('fil-estado').value = '';
     document.getElementById('fil-analista').value = '';
     document.getElementById('fil-respuesta').value = '';
+    document.getElementById('fil-fecha-desde').value = '';
+    document.getElementById('fil-fecha-hasta').value = '';
     cargarEvaluaciones(1);
 }
 

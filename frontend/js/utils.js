@@ -136,6 +136,21 @@ function getQueryParams() {
     return params;
 }
 
+// Etiqueta visible de ciclo con nombre oficial
+function labelCiclo(num) {
+    return num === 1 ? 'Ciclo 1 — Primeros 3 lugares'
+         : num === 2 ? 'Ciclo 2 — 8 Carreras series de Campeones'
+         : 'Ciclo ' + num;
+}
+
+// Etiqueta visible de tipo de caso (no cambiar valores en BD)
+function formatTipoCaso(tipo) {
+    const M = { interpretativa: 'Apreciación', reglamentaria: 'Reglamentaria', informativo: 'Conceptual' };
+    return M[tipo] || tipo;
+}
+
+window.labelCiclo = labelCiclo;
+window.formatTipoCaso = formatTipoCaso;
 window.formatCLP = formatCLP;
 window.formatFecha = formatFecha;
 window.nombreMes = nombreMes;
