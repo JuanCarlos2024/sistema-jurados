@@ -556,6 +556,57 @@ router.post('/:id/devolver', soloRolEvaluacion('jefe_area'), async (req, res) =>
     res.json(data);
 });
 
+// PATCH /:id/datos-deportivos — guardar puntajes, comentarios deportivos y análisis
+router.patch('/:id/datos-deportivos', async (req, res) => {
+    const {
+        comentario_monitor,
+        puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er,
+        puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
+        observacion_general,
+        resultados_alterados,
+        comentario_resultados_alterados
+    } = req.body;
+
+    if (resultados_alterados === true && !comentario_resultados_alterados?.trim()) {
+        return res.status(400).json({ error: 'El comentario de alteración es obligatorio cuando resultados_alterados = sí' });
+    }
+
+    const toNum = (v) => (v === null || v === '' || v === undefined) ? null : (isNaN(Number(v)) ? null : Number(v));
+
+    const cambios = { updated_at: new Date().toISOString() };
+
+    if (comentario_monitor !== undefined)
+        cambios.comentario_monitor = comentario_monitor || null;
+    if (puntaje_oficial_1er !== undefined)
+        cambios.puntaje_oficial_1er = toNum(puntaje_oficial_1er);
+    if (puntaje_oficial_2do !== undefined)
+        cambios.puntaje_oficial_2do = toNum(puntaje_oficial_2do);
+    if (puntaje_oficial_3er !== undefined)
+        cambios.puntaje_oficial_3er = toNum(puntaje_oficial_3er);
+    if (puntaje_analista_1er !== undefined)
+        cambios.puntaje_analista_1er = toNum(puntaje_analista_1er);
+    if (puntaje_analista_2do !== undefined)
+        cambios.puntaje_analista_2do = toNum(puntaje_analista_2do);
+    if (puntaje_analista_3er !== undefined)
+        cambios.puntaje_analista_3er = toNum(puntaje_analista_3er);
+    if (observacion_general !== undefined)
+        cambios.observacion_general = observacion_general || null;
+    if (resultados_alterados !== undefined)
+        cambios.resultados_alterados = !!resultados_alterados;
+    if (comentario_resultados_alterados !== undefined)
+        cambios.comentario_resultados_alterados = comentario_resultados_alterados || null;
+
+    const { data, error } = await supabase
+        .from('evaluaciones')
+        .update(cambios)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
 // GET /:id/revision?estado= — bandeja de revisión del analista
 router.get('/:id/revision', async (req, res) => {
     const { estado = 'pendiente_analista' } = req.query;

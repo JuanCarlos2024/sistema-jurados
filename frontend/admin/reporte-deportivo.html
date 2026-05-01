@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporte Deportivo — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .filtros-barra { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+        .filtros-barra select,
+        .filtros-barra input { padding: 6px 10px; border: 1px solid var(--gris-borde); border-radius: 6px; font-size: 13px; background: #fff; }
+        .fila-alterada td { background: #fdebd0 !important; }
+        .badge-alt { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#fadbd8; color:#922b21; }
+        .badge-no-eval { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; background:#eaecee; color:#666; }
+        .badge-eval-estado { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; }
+        .badge-publicado  { background:#d1f2eb; color:#148f77; }
+        .badge-aprobado   { background:#d5f5e3; color:#1e8449; }
+        .badge-cerrado    { background:#eaecee; color:#555; }
+        .badge-borrador   { background:#f0f0f0; color:#666; }
+        .badge-en_proceso { background:#d6eaf8; color:#1a5276; }
+        .badge-pendiente_aprobacion { background:#fef9e7; color:#7d6608; }
+        .badge-pendiente_comision   { background:#fdebd0; color:#784212; }
+        .badge-devuelto   { background:#fadbd8; color:#922b21; }
+        .num-col { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+        .dif-pos { color:#27ae60; font-weight:600; }
+        .dif-neg { color:#c0392b; font-weight:600; }
+        .dif-cero { color:#aaa; }
+        th.grupo-label { background:#f5f5f5; border-bottom:2px solid #1e3a5f; font-size:10px; text-transform:uppercase; letter-spacing:.5px; text-align:center; color:#555; padding:4px 6px; }
+        .tabla-reporte th { font-size:11px; padding:6px 8px; white-space:nowrap; vertical-align:bottom; }
+        .tabla-reporte td { font-size:12px; padding:5px 8px; vertical-align:top; }
+        .card-titulo-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-seccion">Principal</div>
+            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
+            <div class="nav-seccion">Personas</div>
+            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
+            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
+            <div class="nav-seccion">Rodeos</div>
+            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
+            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
+            <div class="nav-seccion">Pagos</div>
+            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
+            <div class="nav-seccion">Reportes</div>
+            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
+            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
+            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
+            <a href="/admin/reporte-deportivo.html" class="nav-item activo"><span class="icon">🏇</span> Reporte Deportivo</a>
+            <div class="nav-seccion">Sistema</div>
+            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
+            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
+            <div class="nav-seccion">Evaluación Técnica</div>
+            <a href="/admin/evaluaciones.html" class="nav-item"><span class="icon">📝</span> Análisis de Casos</a>
+            <a href="/admin/evaluacion-dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard Eval.</a>
+            <a href="/admin/evaluacion-reportes.html" class="nav-item"><span class="icon">📌</span> Reportes Eval.</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <!-- CONTENIDO -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Reporte Deportivo</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Filtros -->
+            <div class="filtros-barra">
+                <input type="text" id="fil-buscar" class="form-control" placeholder="Buscar club o asociación..." style="width:240px;" oninput="debounceCargar()">
+                <div>
+                    <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--gris);">Fecha desde</label>
+                    <input type="date" id="fil-fecha-desde" onchange="cargar(1)">
+                </div>
+                <div>
+                    <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--gris);">Fecha hasta</label>
+                    <input type="date" id="fil-fecha-hasta" onchange="cargar(1)">
+                </div>
+                <select id="fil-estado-eval" onchange="cargar(1)">
+                    <option value="">Todos los estados eval.</option>
+                    <option value="borrador">Borrador</option>
+                    <option value="en_proceso">En proceso</option>
+                    <option value="pendiente_comision">Pend. comisión</option>
+                    <option value="pendiente_aprobacion">Pend. aprobación</option>
+                    <option value="devuelto">Devuelto</option>
+                    <option value="aprobado">Aprobado</option>
+                    <option value="publicado">Publicado</option>
+                    <option value="cerrado">Cerrado</option>
+                </select>
+                <select id="fil-alterados" onchange="cargar(1)">
+                    <option value="">Resultados alterados: Todos</option>
+                    <option value="si">Resultados alterados: Sí</option>
+                    <option value="no">Resultados alterados: No</option>
+                </select>
+                <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
+                <button class="btn btn-success btn-pequeño" onclick="exportarExcel()" id="btn-exportar" style="margin-left:auto;">Exportar Excel</button>
+            </div>
+
+            <!-- Tabla -->
+            <div class="card" style="padding:0;overflow:hidden;">
+                <div class="card-titulo-row" style="padding:14px 16px 10px;">
+                    <span id="lbl-total" style="font-size:13px;color:var(--gris);">Cargando...</span>
+                </div>
+                <div class="tabla-wrap" style="overflow-x:auto;">
+                    <table class="tabla-reporte" id="tabla-reporte">
+                        <thead>
+                            <tr>
+                                <th rowspan="2">Fecha</th>
+                                <th rowspan="2">Club</th>
+                                <th rowspan="2">Asociación</th>
+                                <th rowspan="2">Tipo Rodeo</th>
+                                <th rowspan="2">Jurado(s)</th>
+                                <th rowspan="2">Analista</th>
+                                <th rowspan="2">Estado Eval.</th>
+                                <th rowspan="2">Nota Final</th>
+                                <th colspan="3" class="grupo-label">Puntaje Oficial</th>
+                                <th colspan="3" class="grupo-label">Puntaje Revisado</th>
+                                <th colspan="3" class="grupo-label">Diferencia</th>
+                                <th rowspan="2" style="min-width:80px;">Res. Alterado</th>
+                                <th colspan="2" class="grupo-label">Ciclo 1 — Primeros 3</th>
+                                <th colspan="2" class="grupo-label">Ciclo 2 — Campeones</th>
+                                <th rowspan="2">Total Desc.</th>
+                                <th colspan="3" class="grupo-label">Tipo de falta</th>
+                                <th colspan="3" class="grupo-label">Apelaciones</th>
+                                <th rowspan="2">Cartilla</th>
+                                <th rowspan="2"></th>
+                            </tr>
+                            <tr>
+                                <!-- Oficial -->
+                                <th class="num-col">1er</th><th class="num-col">2do</th><th class="num-col">3er</th>
+                                <!-- Revisado -->
+                                <th class="num-col">1er</th><th class="num-col">2do</th><th class="num-col">3er</th>
+                                <!-- Diferencia -->
+                                <th class="num-col">1er</th><th class="num-col">2do</th><th class="num-col">3er</th>
+                                <!-- Ciclo 1 -->
+                                <th class="num-col">Sit.</th><th class="num-col">Desc.</th>
+                                <!-- Ciclo 2 -->
+                                <th class="num-col">Sit.</th><th class="num-col">Desc.</th>
+                                <!-- Tipo falta -->
+                                <th>Aprec.</th><th>Regl.</th><th>Concept.</th>
+                                <!-- Apelaciones -->
+                                <th>Acogidas</th><th>Rechaz.</th><th>Comité</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-reporte">
+                            <tr><td colspan="30" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="paginacion" class="paginacion" style="margin:10px 16px 14px;"></div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let _timer = null;
+function debounceCargar() { clearTimeout(_timer); _timer = setTimeout(() => cargar(1), 350); }
+
+function limpiarFiltros() {
+    ['fil-buscar','fil-estado-eval','fil-alterados'].forEach(id => document.getElementById(id).value = '');
+    ['fil-fecha-desde','fil-fecha-hasta'].forEach(id => document.getElementById(id).value = '');
+    cargar(1);
+}
+
+function buildParams(page) {
+    const p = new URLSearchParams();
+    const v = (id) => document.getElementById(id).value.trim();
+    if (v('fil-buscar'))       p.set('buscar', v('fil-buscar'));
+    if (v('fil-fecha-desde'))  p.set('fecha_desde', v('fil-fecha-desde'));
+    if (v('fil-fecha-hasta'))  p.set('fecha_hasta', v('fil-fecha-hasta'));
+    if (v('fil-estado-eval'))  p.set('estado_evaluacion', v('fil-estado-eval'));
+    if (v('fil-alterados'))    p.set('resultados_alterados', v('fil-alterados'));
+    p.set('page', page);
+    p.set('limit', 50);
+    return p;
+}
+
+const ESTADO_EVAL_LABEL = {
+    borrador: 'Borrador', en_proceso: 'En proceso', pendiente_comision: 'Pend. comisión',
+    pendiente_aprobacion: 'Pend. aprobación', devuelto: 'Devuelto', aprobado: 'Aprobado',
+    publicado: 'Publicado', cerrado: 'Cerrado'
+};
+const CARTILLA_LABEL = { enviada: 'Enviada', reabierta: 'Reabierta', borrador: 'Borrador', sin_cartilla: '—' };
+
+function fmtNum(v) { return (v !== null && v !== undefined && v !== '') ? v : '—'; }
+function fmtDif(v) {
+    if (v === null || v === undefined) return '<span style="color:var(--gris)">—</span>';
+    const n = Number(v);
+    if (n === 0) return '<span class="dif-cero">0</span>';
+    return n > 0
+        ? `<span class="dif-pos">+${n}</span>`
+        : `<span class="dif-neg">${n}</span>`;
+}
+
+function renderFila(f) {
+    const estadoBadge = f.estado_evaluacion
+        ? `<span class="badge-eval-estado badge-${f.estado_evaluacion}">${ESTADO_EVAL_LABEL[f.estado_evaluacion] || f.estado_evaluacion}</span>`
+        : '<span class="badge-no-eval">Sin eval.</span>';
+
+    const altBadge = f.resultados_alterados
+        ? '<span class="badge-alt">⚠ Sí</span>'
+        : '<span style="color:var(--gris);font-size:11px;">No</span>';
+
+    const cartillaBadge = f.estado_cartilla === 'enviada'
+        ? '<span style="color:#148f77;font-weight:600;font-size:11px;">Enviada</span>'
+        : `<span style="color:var(--gris);font-size:11px;">${CARTILLA_LABEL[f.estado_cartilla] || f.estado_cartilla}</span>`;
+
+    const enlaceEval = f.eval_id
+        ? `<a href="/admin/evaluacion-detalle.html?id=${f.eval_id}" class="btn btn-secundario btn-pequeño" style="white-space:nowrap;">Ver evaluación</a>`
+        : '';
+
+    const trClass = f.resultados_alterados ? ' class="fila-alterada"' : '';
+
+    return `<tr${trClass}>
+        <td style="white-space:nowrap;">${formatFecha(f.fecha)}</td>
+        <td style="max-width:180px;">${sanitizar(f.club)}</td>
+        <td style="max-width:140px;">${sanitizar(f.asociacion)}</td>
+        <td style="max-width:140px;font-size:11px;">${sanitizar(f.tipo_rodeo || '—')}</td>
+        <td style="max-width:180px;font-size:11px;">${sanitizar(f.jurados || '—')}</td>
+        <td style="white-space:nowrap;font-size:11px;">${sanitizar(f.analista || '—')}</td>
+        <td>${estadoBadge}</td>
+        <td class="num-col">${fmtNum(f.nota_final)}</td>
+        <td class="num-col">${fmtNum(f.puntaje_oficial_1er)}</td>
+        <td class="num-col">${fmtNum(f.puntaje_oficial_2do)}</td>
+        <td class="num-col">${fmtNum(f.puntaje_oficial_3er)}</td>
+        <td class="num-col">${fmtNum(f.puntaje_analista_1er)}</td>
+        <td class="num-col">${fmtNum(f.puntaje_analista_2do)}</td>
+        <td class="num-col">${fmtNum(f.puntaje_analista_3er)}</td>
+        <td class="num-col">${fmtDif(f.diferencia_1er)}</td>
+        <td class="num-col">${fmtDif(f.diferencia_2do)}</td>
+        <td class="num-col">${fmtDif(f.diferencia_3er)}</td>
+        <td style="text-align:center;">${altBadge}</td>
+        <td class="num-col">${f.c1_total}</td>
+        <td class="num-col">${f.c1_desc}</td>
+        <td class="num-col">${f.c2_total}</td>
+        <td class="num-col">${f.c2_desc}</td>
+        <td class="num-col"><strong>${f.total_desc}</strong></td>
+        <td class="num-col">${f.interpretativas}</td>
+        <td class="num-col">${f.reglamentarias}</td>
+        <td class="num-col">${f.informativos}</td>
+        <td class="num-col">${f.apelaciones_acogidas}</td>
+        <td class="num-col">${f.apelaciones_rechazadas}</td>
+        <td class="num-col">${f.derivadas_comision}</td>
+        <td>${cartillaBadge}</td>
+        <td>${enlaceEval}</td>
+    </tr>`;
+}
+
+async function cargar(page) {
+    const tbody = document.getElementById('tbody-reporte');
+    tbody.innerHTML = '<tr><td colspan="30" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+    document.getElementById('lbl-total').textContent = 'Cargando...';
+    try {
+        const res = await api.get('/admin/reporte-deportivo?' + buildParams(page).toString());
+        const filas = res.data || [];
+        const total = res.total || 0;
+        document.getElementById('lbl-total').textContent = `${total} rodeo(s) encontrado(s)`;
+        if (filas.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="30" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
+        } else {
+            tbody.innerHTML = filas.map(renderFila).join('');
+        }
+        renderPaginacion(page, total, 50);
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="30"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+        document.getElementById('lbl-total').textContent = '';
+    }
+}
+
+function renderPaginacion(page, total, limit) {
+    const totalPag = Math.ceil(total / limit);
+    const el = document.getElementById('paginacion');
+    if (totalPag <= 1) { el.innerHTML = ''; return; }
+    const items = [];
+    if (page > 1) items.push(`<button class="btn btn-secundario btn-pequeño" onclick="cargar(${page-1})">← Anterior</button>`);
+    items.push(`<span style="font-size:13px;color:var(--gris);">Pág. ${page} de ${totalPag}</span>`);
+    if (page < totalPag) items.push(`<button class="btn btn-secundario btn-pequeño" onclick="cargar(${page+1})">Siguiente →</button>`);
+    el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;">${items.join('')}</div>`;
+}
+
+async function exportarExcel() {
+    const btn = document.getElementById('btn-exportar');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        const params = buildParams(1);
+        params.delete('page'); params.delete('limit');
+        await api.descargar('/admin/reporte-deportivo/export?' + params.toString(), `reporte_deportivo_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Exportar Excel';
+    }
+}
+
+cargar(1);
+</script>
+</body>
+</html>

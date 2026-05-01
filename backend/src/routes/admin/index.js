@@ -24,5 +24,6 @@ router.use('/evaluaciones', require('./evaluaciones'));
 router.use('/ciclos', require('./ciclos'));
 router.use('/casos', require('./casos'));
 router.use('/respuestas-jurado', require('./respuestas-jurado'));
+router.use('/reporte-deportivo', require('./reporte-deportivo'));
 
 module.exports = router;

@@ -185,7 +185,7 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
     const datosEnvio = req.body.datos || cartilla?.datos || {};
 
     // Validación campos siempre requeridos
-    const siempre = ['hora_inicio', 'serie_campeones_2_vueltas', 'hubo_faltas', 'hubo_ganado_fuera_peso', 'hubo_movimiento_rienda', 'caseta_adecuada'];
+    const siempre = ['hora_inicio', 'serie_campeones_2_vueltas', 'hubo_faltas', 'hubo_ganado_fuera_peso', 'hubo_movimiento_rienda', 'caseta_adecuada', 'observaciones_finales'];
     const faltantes = siempre.filter(k => datosEnvio[k] === undefined || datosEnvio[k] === null || datosEnvio[k] === '');
     if (faltantes.length > 0) {
         return res.status(422).json({ error: `Faltan campos requeridos: ${faltantes.join(', ')}`, faltantes });

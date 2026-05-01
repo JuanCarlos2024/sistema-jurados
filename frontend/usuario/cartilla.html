@@ -322,7 +322,7 @@ function renderCartilla(r) {
     html += `<div class="bloque">
         <div class="bloque-header">Bloque 7 — Observaciones finales / Varios</div>
         <div class="bloque-body">
-            <label class="form-label" for="observaciones_finales">Otros antecedentes / varios <span class="yn-label">(opcional)</span></label>
+            <label class="form-label" for="observaciones_finales">Otros antecedentes / varios <span style="color:var(--rojo,#c0392b);font-weight:600;">*</span> <span class="yn-label">(obligatorio)</span></label>
             ${ya
                 ? `<div class="campo-readonly" style="white-space:pre-wrap; min-height:50px;">${sanitizar(d.observaciones_finales || 'Sin observaciones.')}</div>`
                 : `<textarea id="observaciones_finales" class="form-control" rows="4" placeholder="Cualquier otro antecedente relevante..." oninput="autoguardar()">${sanitizar(d.observaciones_finales || '')}</textarea>`}

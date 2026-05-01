@@ -263,18 +263,32 @@ router.get('/:id', async (req, res) => {
         }
     }
 
-    const { data: asignaciones } = await supabase
-        .from('asignaciones')
-        .select(`
-            id, tipo_persona, nombre_importado, categoria_aplicada,
-            valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
-            estado, estado_designacion, distancia_km, aceptado_en, observacion, comentario_admin, created_at,
-            usuarios_pagados(id, codigo_interno, nombre_completo, tipo_persona, categoria)
-        `)
-        .eq('rodeo_id', req.params.id)
-        .neq('estado', 'anulado');
+    const [{ data: asignaciones }, { data: evaluacion }] = await Promise.all([
+        supabase
+            .from('asignaciones')
+            .select(`
+                id, tipo_persona, nombre_importado, categoria_aplicada,
+                valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
+                estado, estado_designacion, distancia_km, aceptado_en, observacion, comentario_admin, created_at,
+                usuarios_pagados(id, codigo_interno, nombre_completo, tipo_persona, categoria)
+            `)
+            .eq('rodeo_id', req.params.id)
+            .neq('estado', 'anulado'),
+        supabase
+            .from('evaluaciones')
+            .select(`
+                id, estado, nota_final, anulada,
+                puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er,
+                puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
+                observacion_general, comentario_monitor,
+                resultados_alterados, comentario_resultados_alterados
+            `)
+            .eq('rodeo_id', req.params.id)
+            .eq('anulada', false)
+            .maybeSingle()
+    ]);
 
-    res.json({ ...rodeo, asignaciones: asignaciones || [] });
+    res.json({ ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null });
 });
 
 // POST /api/admin/rodeos

@@ -151,6 +151,7 @@
             <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
             <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
             <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
+            <a href="/admin/reporte-deportivo.html" class="nav-item"><span class="icon">🏇</span> Reporte Deportivo</a>
             <div class="nav-seccion">Sistema</div>
             <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
             <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
@@ -587,6 +588,8 @@ async function cargarEvaluacion() {
                     <span class="badge-eval badge-${ev.estado}">${labelEstadoEval(ev.estado)}</span>
                 </div>
             </div>
+
+            ${renderAnalisisDeportivo(ev)}
 
             ${renderAccionesEval(ev)}
 
@@ -1468,6 +1471,114 @@ async function confirmarDecisionComite() {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al registrar decisión', 'error');
+    }
+}
+
+// ── Análisis deportivo ────────────────────────────────────────────
+function renderAnalisisDeportivo(ev) {
+    const fmtNum = (v) => (v !== null && v !== undefined) ? String(v) : '';
+    const fmtNumDisplay = (v) => (v !== null && v !== undefined) ? sanitizar(String(v)) : '<span style="color:var(--gris)">—</span>';
+
+    function campoText(key, placeholder, rows) {
+        const val = ev[key] !== null && ev[key] !== undefined ? ev[key] : '';
+        if (!esAnalista) return `<div class="campo-readonly" style="white-space:pre-wrap;min-height:34px;">${val ? sanitizar(String(val)) : '<span style="color:var(--gris)">—</span>'}</div>`;
+        return `<textarea id="ad-${key}" class="form-control" rows="${rows||3}" placeholder="${placeholder}">${sanitizar(String(val))}</textarea>`;
+    }
+
+    function filasPuntajes(label, kOfi, kAnal) {
+        const ofi = fmtNumDisplay(ev[kOfi]);
+        const anal = fmtNum(ev[kAnal]);
+        const analInput = esAnalista
+            ? `<input type="number" id="ad-${kAnal}" class="form-control" value="${sanitizar(anal)}" placeholder="—" step="0.01" min="0" style="width:110px;">`
+            : `<div class="campo-readonly" style="min-height:32px;">${fmtNumDisplay(ev[kAnal])}</div>`;
+        return `<tr>
+            <td style="font-size:13px;padding:5px 12px 5px 0;white-space:nowrap;">${label}</td>
+            <td style="padding:3px 12px 3px 0;"><div class="campo-readonly" style="min-height:32px;width:110px;">${ofi}</div></td>
+            <td style="padding:3px 0;">${analInput}</td>
+        </tr>`;
+    }
+
+    const altChecked = ev.resultados_alterados ? 'checked' : '';
+    const altVisible = ev.resultados_alterados ? '' : 'display:none;';
+
+    const chkHtml = esAnalista
+        ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+               <input type="checkbox" id="ad-resultados_alterados" ${altChecked} onchange="document.getElementById('ad-wrap-alt').style.display=this.checked?'':'none'">
+               <span>¿Hay indicios de que los resultados fueron alterados?</span>
+           </label>`
+        : `<span style="font-size:13px;">Resultados alterados: <strong>${ev.resultados_alterados ? '⚠️ Sí' : 'No'}</strong></span>`;
+
+    return `<div class="card" style="margin-bottom:16px;">
+        <div style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--primario,#1e3a5f);">Análisis deportivo</div>
+
+        <div style="margin-bottom:16px;">
+            <div style="font-size:11px;font-weight:600;color:var(--gris);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Puntajes</div>
+            <table style="border-collapse:collapse;">
+                <thead><tr>
+                    <th style="font-size:11px;font-weight:600;color:var(--gris);text-align:left;padding:3px 12px 6px 0;"></th>
+                    <th style="font-size:11px;font-weight:600;color:var(--gris);text-align:left;padding:3px 12px 6px 0;">Oficial (monitor)</th>
+                    <th style="font-size:11px;font-weight:600;color:var(--gris);text-align:left;padding:3px 0 6px;">Revisado (analista)</th>
+                </tr></thead>
+                <tbody>
+                    ${filasPuntajes('1er lugar', 'puntaje_oficial_1er', 'puntaje_analista_1er')}
+                    ${filasPuntajes('2do lugar', 'puntaje_oficial_2do', 'puntaje_analista_2do')}
+                    ${filasPuntajes('3er lugar', 'puntaje_oficial_3er', 'puntaje_analista_3er')}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label">Observación general del análisis</label>
+            ${campoText('observacion_general', 'Observaciones del analista sobre la evaluación...')}
+        </div>
+
+        <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label">Comentario del monitor</label>
+            ${campoText('comentario_monitor', 'Comentario del monitor del rodeo...')}
+        </div>
+
+        <div style="margin-bottom:12px;">${chkHtml}</div>
+
+        <div id="ad-wrap-alt" style="${altVisible}margin-bottom:12px;">
+            <div class="form-group">
+                <label class="form-label">Comentario sobre la alteración <span style="color:#c0392b;">*</span></label>
+                ${campoText('comentario_resultados_alterados', 'Describe los indicios de alteración...')}
+            </div>
+        </div>
+
+        ${esAnalista ? `<button class="btn btn-primario btn-pequeño" onclick="guardarAnalisisDeportivo()">Guardar análisis deportivo</button>` : ''}
+    </div>`;
+}
+
+async function guardarAnalisisDeportivo() {
+    const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
+    const getNum = (id) => { const v = getVal(id); if (v === undefined || v === '') return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+
+    const altEl = document.getElementById('ad-resultados_alterados');
+    const resultados_alterados = altEl ? altEl.checked : false;
+    const comentario_resultados_alterados = getVal('ad-comentario_resultados_alterados') || null;
+
+    if (resultados_alterados && !comentario_resultados_alterados) {
+        mostrarToast('El comentario de alteración es obligatorio cuando se indica que los resultados fueron alterados.', 'error');
+        return;
+    }
+
+    const body = {
+        puntaje_analista_1er:             getNum('ad-puntaje_analista_1er'),
+        puntaje_analista_2do:             getNum('ad-puntaje_analista_2do'),
+        puntaje_analista_3er:             getNum('ad-puntaje_analista_3er'),
+        observacion_general:              getVal('ad-observacion_general') || null,
+        comentario_monitor:               getVal('ad-comentario_monitor')  || null,
+        resultados_alterados,
+        comentario_resultados_alterados
+    };
+
+    try {
+        await api.patch(`/admin/evaluaciones/${evalId}/datos-deportivos`, body);
+        mostrarToast('Análisis deportivo guardado correctamente', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al guardar', 'error');
     }
 }
 
