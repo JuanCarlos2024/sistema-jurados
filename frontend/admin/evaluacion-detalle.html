@@ -95,6 +95,7 @@
         .resp-acepta   { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#d5f5e3; color:#1e8449; }
         .resp-rechaza  { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700; background:#fadbd8; color:#922b21; }
         .resp-pendiente{ display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; background:#fef9e7; color:#7d6608; }
+        .resp-sin-resp { display:inline-block; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:600; background:#eaecee; color:#666; }
         .resp-celda    { font-size:12px; min-width:140px; width:160px; vertical-align:top; }
         .resp-fila     { margin-bottom:6px; line-height:1.4; }
         .resp-nombre   { font-size:11px; color:var(--gris); display:block; }
@@ -727,16 +728,18 @@ function _renderRespInline(caso, cicloEstado) {
     return resps.map(r => {
         // Registrar en mapa para uso en modales
         _respuestasMap[r.id] = r;
-        const badgeCls = r.decision === 'acepta' ? 'resp-acepta'
-                       : r.decision === 'rechaza' ? 'resp-rechaza'
+        const badgeCls = r.decision === 'acepta'        ? 'resp-acepta'
+                       : r.decision === 'rechaza'       ? 'resp-rechaza'
+                       : r.decision === 'sin_respuesta' ? 'resp-sin-resp'
                        : 'resp-pendiente';
-        const label    = r.decision === 'acepta'  ? '✓ Acepta'
-                       : r.decision === 'rechaza' ? '✗ Rechaza'
+        const label    = r.decision === 'acepta'        ? '✓ Acepta'
+                       : r.decision === 'rechaza'       ? '✗ Rechaza'
+                       : r.decision === 'sin_respuesta' ? '— Sin respuesta'
                        : sanitizar(r.decision || '?');
         const nombre   = sanitizar((r.jurado_nombre || '—').split(' ').slice(0, 2).join(' '));
-        const com      = r.comentario
-            ? '<span class="resp-comentario">' + sanitizar(r.comentario) + '</span>'
-            : '';
+        const com = r.decision === 'sin_respuesta'
+            ? '<span class="resp-comentario" style="color:#888;font-style:italic;">No respondió al cierre del ciclo</span>'
+            : (r.comentario ? '<span class="resp-comentario">' + sanitizar(r.comentario) + '</span>' : '');
         const fecha    = r.respondido_en
             ? '<span class="resp-fecha">' + _fmtDT(r.respondido_en) + '</span>'
             : '';
@@ -758,6 +761,8 @@ function _renderAnalista(caso) {
         const _date = (iso) => iso ? `<span class="resp-fecha">${_fmtDT(iso)}</span>` : '';
         if (r.decision === 'acepta' || r.decision_analista === 'aprobada_auto') {
             html = '<span class="dec-auto">Auto ✓</span>';
+        } else if (r.decision === 'sin_respuesta') {
+            html = '<span style="color:#aaa;font-size:11px;font-style:italic;">Cierre automático</span>';
         } else if (r.decision === 'rechaza' && !r.decision_analista) {
             html = `<button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionAnalista('${r.id}')">Decidir</button>`;
         } else if (r.decision_analista === 'apelacion_aceptada') {

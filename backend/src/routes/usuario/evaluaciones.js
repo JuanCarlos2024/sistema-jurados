@@ -2,13 +2,16 @@ const express = require('express');
 const router  = express.Router();
 const supabase = require('../../config/supabase');
 
+const ESTADOS_VISIBLES_CASO = ['visible_jurado','pendiente_analista','derivado_comision','resuelto','consolidado'];
+
 // GET / — tres grupos: para_responder | en_revision | resultados
+// Retorna por cada evaluación activa: { id, estado, rodeo, ciclo1, ciclo2 }
 router.get('/', async (req, res) => {
     const uid = req.usuario.id;
 
     const { data: usuario } = await supabase
         .from('usuarios_pagados')
-        .select('tipo_persona, nombre_completo')
+        .select('tipo_persona')
         .eq('id', uid)
         .single();
 
@@ -27,8 +30,8 @@ router.get('/', async (req, res) => {
         return res.json({ para_responder: [], en_revision: [], resultados: [] });
     }
 
-    const rodeoIds    = [...new Set(asignaciones.map(a => a.rodeo_id))];
-    const asigIds     = asignaciones.map(a => a.id);
+    const rodeoIds = [...new Set(asignaciones.map(a => a.rodeo_id))];
+    const asigIds  = asignaciones.map(a => a.id);
 
     const { data: evaluaciones } = await supabase
         .from('evaluaciones')
@@ -39,129 +42,123 @@ router.get('/', async (req, res) => {
         .in('rodeo_id', rodeoIds)
         .order('created_at', { ascending: false });
 
-    const evs          = evaluaciones || [];
-    const resultados   = evs.filter(e => ['publicado', 'cerrado'].includes(e.estado));
-    const noPublicadas = evs.filter(e => !['publicado', 'cerrado'].includes(e.estado));
+    const evs        = evaluaciones || [];
+    const resultados = evs.filter(e => ['publicado', 'cerrado'].includes(e.estado));
+    const activas    = evs.filter(e => !['publicado', 'cerrado'].includes(e.estado));
 
-    if (!noPublicadas.length) {
+    if (!activas.length) {
         return res.json({ para_responder: [], en_revision: [], resultados });
     }
 
-    const evalIds = noPublicadas.map(e => e.id);
+    const evalIds = activas.map(e => e.id);
 
-    // Batch: ciclos + casos de todas las evaluaciones no publicadas
+    // Batch: ciclos y casos
     const [{ data: ciclosData }, { data: casosData }] = await Promise.all([
         supabase.from('evaluacion_ciclos')
             .select('id, evaluacion_id, numero_ciclo, estado')
             .in('evaluacion_id', evalIds)
             .order('numero_ciclo'),
         supabase.from('evaluacion_casos')
-            .select('id, ciclo_id, evaluacion_id, estado')
+            .select('id, ciclo_id, evaluacion_id, estado, descuento_puntos')
             .in('evaluacion_id', evalIds)
     ]);
 
-    // Mapas auxiliares
-    const ciclosPorEval = {};
-    (ciclosData || []).forEach(c => {
-        (ciclosPorEval[c.evaluacion_id] = ciclosPorEval[c.evaluacion_id] || []).push(c);
-    });
-
-    const casosPorCiclo = {};
-    (casosData || []).forEach(c => {
-        (casosPorCiclo[c.ciclo_id] = casosPorCiclo[c.ciclo_id] || []).push(c);
-    });
-
-    // Respuestas del jurado para todos los casos
     const casoIds = (casosData || []).map(c => c.id);
-    const respMap = {}; // caso_id → respuesta
+    const casosPorCiclo = {};
+    for (const c of (casosData || [])) {
+        (casosPorCiclo[c.ciclo_id] = casosPorCiclo[c.ciclo_id] || []).push(c);
+    }
+
+    // Respuestas del jurado en batch
+    const respMap = {};
     if (casoIds.length) {
         const { data: respuestas } = await supabase
             .from('evaluacion_respuestas_jurado')
-            .select('id, caso_id, decision, decision_analista, decision_comite')
+            .select('caso_id, decision, decision_analista, decision_comite, descuento_final')
             .in('caso_id', casoIds)
             .in('asignacion_id', asigIds);
-        (respuestas || []).forEach(r => { respMap[r.caso_id] = r; });
+        for (const r of (respuestas || [])) respMap[r.caso_id] = r;
     }
 
-    const ORDEN_CICLO = ['abierto', 'en_revision', 'cerrado', 'cargado', 'sin_casos', 'pendiente_carga'];
-    const para_responder = [];
-    const en_revision    = [];
+    // Agrupar ciclos por eval y numero
+    const ciclosPorEval = {};
+    for (const c of (ciclosData || [])) {
+        if (!ciclosPorEval[c.evaluacion_id]) ciclosPorEval[c.evaluacion_id] = {};
+        ciclosPorEval[c.evaluacion_id][c.numero_ciclo] = c;
+    }
 
-    for (const ev of noPublicadas) {
-        const ciclos = ciclosPorEval[ev.id] || [];
-        const rodeo  = ev.rodeo || {};
+    function buildResumen(ciclo) {
+        if (!ciclo || ciclo.estado === 'pendiente_carga') return null;
+        const casos = (casosPorCiclo[ciclo.id] || []).filter(c => ESTADOS_VISIBLES_CASO.includes(c.estado));
 
-        // ¿Hay ciclo abierto con casos pendientes del jurado?
-        const cicloAbierto = ciclos.find(c => c.estado === 'abierto');
-        let addedToParaResponder = false;
+        let respondidos = 0, sinRespAuto = 0, pendientes = 0;
+        let pendientesAnalista = 0, pendientesComite = 0, descuentoAcumulado = 0;
 
-        if (cicloAbierto) {
-            const casos     = casosPorCiclo[cicloAbierto.id] || [];
-            const visibles  = casos.filter(c => c.estado === 'visible_jurado');
-            const pendientes = visibles.filter(c => !respMap[c.id]);
-
-            if (pendientes.length > 0) {
-                para_responder.push({
-                    id:                ev.id,
-                    estado:            ev.estado,
-                    rodeo,
-                    ciclo_abierto:     cicloAbierto,
-                    total_casos:       visibles.length,
-                    total_respondidos: visibles.length - pendientes.length,
-                    total_pendientes:  pendientes.length
-                });
-                addedToParaResponder = true;
+        for (const caso of casos) {
+            const r = respMap[caso.id];
+            if (!r) {
+                if (ciclo.estado === 'abierto') pendientes++;
+            } else if (r.decision === 'sin_respuesta') {
+                sinRespAuto++;
+                descuentoAcumulado += (r.descuento_final ?? caso.descuento_puntos ?? 0);
+            } else {
+                respondidos++;
+                if (r.decision === 'rechaza' && !r.decision_analista) pendientesAnalista++;
+                if (r.decision_analista === 'derivada_comite' && !r.decision_comite) pendientesComite++;
+                if (r.descuento_final !== null && r.descuento_final !== undefined) {
+                    descuentoAcumulado += r.descuento_final;
+                }
             }
         }
 
-        if (!addedToParaResponder) {
-            // ¿El jurado respondió al menos un caso en cualquier ciclo?
-            let tieneRespuestas     = false;
-            let totalRespondidos    = 0;
-            let pendientesAnalista  = 0;
-            let pendientesComite    = 0;
+        return {
+            id:                  ciclo.id,
+            numero_ciclo:        ciclo.numero_ciclo,
+            estado:              ciclo.estado,
+            total_casos:         casos.length,
+            respondidos,
+            sin_respuesta:       sinRespAuto,
+            pendientes,
+            descuento_acumulado: descuentoAcumulado,
+            pendientes_analista: pendientesAnalista,
+            pendientes_comite:   pendientesComite,
+            puede_responder:     ciclo.estado === 'abierto' && pendientes > 0
+        };
+    }
 
-            for (const ciclo of ciclos) {
-                const casos = casosPorCiclo[ciclo.id] || [];
-                for (const caso of casos) {
-                    const r = respMap[caso.id];
-                    if (r) {
-                        tieneRespuestas = true;
-                        totalRespondidos++;
-                        if (r.decision === 'rechaza' && !r.decision_analista) pendientesAnalista++;
-                        if (r.decision_analista === 'derivada_comite' && !r.decision_comite) pendientesComite++;
-                    }
-                }
-            }
+    const para_responder = [];
+    const en_revision    = [];
 
-            if (tieneRespuestas) {
-                const cicloRelevante = [...ciclos].sort((a, b) =>
-                    (ORDEN_CICLO.indexOf(a.estado) + 1 || 99) - (ORDEN_CICLO.indexOf(b.estado) + 1 || 99)
-                )[0];
+    for (const ev of activas) {
+        const cm     = ciclosPorEval[ev.id] || {};
+        const ciclo1 = buildResumen(cm[1]);
+        const ciclo2 = buildResumen(cm[2]);
 
-                en_revision.push({
-                    id:                  ev.id,
-                    estado:              ev.estado,
-                    rodeo,
-                    ciclo_relevante:     cicloRelevante,
-                    total_respondidos:   totalRespondidos,
-                    pendientes_analista: pendientesAnalista,
-                    pendientes_comite:   pendientesComite
-                });
-            }
+        const card = { id: ev.id, estado: ev.estado, rodeo: ev.rodeo || {}, ciclo1, ciclo2 };
+
+        const tienePendientes = [ciclo1, ciclo2].some(c => c?.puede_responder);
+        const tieneRespuestas = [ciclo1, ciclo2].some(c => c && (c.respondidos > 0 || c.sin_respuesta > 0));
+
+        if (tienePendientes) {
+            para_responder.push(card);
+        } else if (tieneRespuestas) {
+            en_revision.push(card);
         }
     }
 
     res.json({ para_responder, en_revision, resultados });
 });
 
-// GET /:id/casos — casos del ciclo más relevante con mi respuesta y retroalimentación
+// GET /:id/casos — ambos ciclos con casos y mi_respuesta por caso
 router.get('/:id/casos', async (req, res) => {
     const evalId = req.params.id;
 
     const { data: ev } = await supabase
         .from('evaluaciones')
-        .select('id, rodeo_id')
+        .select(`
+            id, estado, rodeo_id,
+            rodeo:rodeos(club, fecha, asociacion, tipo_rodeo_nombre)
+        `)
         .eq('id', evalId)
         .single();
 
@@ -179,63 +176,70 @@ router.get('/:id/casos', async (req, res) => {
 
     if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
 
-    // Ciclo más relevante: abierto > en_revision > cerrado > otros
     const { data: ciclos } = await supabase
         .from('evaluacion_ciclos')
         .select('*')
         .eq('evaluacion_id', evalId)
         .order('numero_ciclo');
 
-    const ORDEN = ['abierto', 'en_revision', 'cerrado', 'cargado', 'sin_casos', 'pendiente_carga'];
-    const cicloRelevante = (ciclos || [])
-        .filter(c => c.estado !== 'pendiente_carga')
-        .sort((a, b) =>
-            (ORDEN.indexOf(a.estado) + 1 || 99) - (ORDEN.indexOf(b.estado) + 1 || 99)
-        )[0] || null;
+    const ciclosMap = {};
+    for (const c of (ciclos || [])) ciclosMap[c.numero_ciclo] = c;
 
-    if (!cicloRelevante) {
-        return res.json({ ciclo: null, casos: [], mensaje: 'No hay ciclo disponible en este momento' });
-    }
+    const ciclosValidos = (ciclos || []).filter(c => c.estado !== 'pendiente_carga');
+    const cicloIds = ciclosValidos.map(c => c.id);
 
-    // Casos del ciclo — todos los estados relevantes
-    const ESTADOS_CASO = ['visible_jurado', 'pendiente_analista', 'derivado_comision', 'resuelto', 'consolidado'];
+    // Casos de todos los ciclos válidos en batch
+    const casosPorCiclo = {};
+    let casoIds = [];
 
-    const { data: casos } = await supabase
-        .from('evaluacion_casos')
-        .select('id, numero_caso, tipo_caso, estado, descripcion, video_url, descuento_puntos')
-        .eq('ciclo_id', cicloRelevante.id)
-        .in('estado', ESTADOS_CASO)
-        .order('numero_caso');
+    if (cicloIds.length) {
+        const { data: casosData } = await supabase
+            .from('evaluacion_casos')
+            .select('id, numero_caso, tipo_caso, estado, descripcion, video_url, descuento_puntos, ciclo_id')
+            .in('ciclo_id', cicloIds)
+            .in('estado', ESTADOS_VISIBLES_CASO)
+            .order('numero_caso');
 
-    if (!casos?.length) {
-        return res.json({ ciclo: cicloRelevante, casos: [], mensaje: 'No hay casos en este ciclo' });
+        for (const c of (casosData || [])) {
+            (casosPorCiclo[c.ciclo_id] = casosPorCiclo[c.ciclo_id] || []).push(c);
+        }
+        casoIds = (casosData || []).map(c => c.id);
     }
 
     // Respuestas del jurado en batch
-    const casoIds = casos.map(c => c.id);
-    const { data: respuestasArr } = await supabase
-        .from('evaluacion_respuestas_jurado')
-        .select(`
-            id, caso_id, decision, comentario,
-            decision_analista, comentario_analista, decidido_analista_en,
-            decision_comite,   comentario_comite,   decidido_comite_en,
-            descuento_final
-        `)
-        .in('caso_id', casoIds)
-        .eq('asignacion_id', asignacion.id);
+    const respMap = {};
+    if (casoIds.length) {
+        const { data: respuestasArr } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select(`
+                id, caso_id, decision, comentario,
+                decision_analista, comentario_analista, decidido_analista_en,
+                decision_comite, comentario_comite, decidido_comite_en,
+                descuento_final
+            `)
+            .in('caso_id', casoIds)
+            .eq('asignacion_id', asignacion.id);
+        for (const r of (respuestasArr || [])) respMap[r.caso_id] = r;
+    }
 
-    const respuestasMap = {};
-    (respuestasArr || []).forEach(r => { respuestasMap[r.caso_id] = r; });
+    function buildCicloConCasos(ciclo) {
+        if (!ciclo) return null;
+        if (ciclo.estado === 'pendiente_carga') return { ...ciclo, casos: [] };
+        const casos = (casosPorCiclo[ciclo.id] || []).map(caso => {
+            const resp = respMap[caso.id] || null;
+            const puede_responder = ciclo.estado === 'abierto'
+                && caso.estado === 'visible_jurado'
+                && !resp;
+            return { ...caso, mi_respuesta: resp, puede_responder };
+        });
+        return { ...ciclo, casos };
+    }
 
-    const casosConRespuesta = casos.map(caso => {
-        const respuesta = respuestasMap[caso.id] || null;
-        const puede_responder = cicloRelevante.estado === 'abierto'
-            && caso.estado === 'visible_jurado'
-            && !respuesta;
-        return { ...caso, mi_respuesta: respuesta, puede_responder };
+    res.json({
+        evaluacion: { id: ev.id, estado: ev.estado, rodeo: ev.rodeo || {} },
+        ciclo1: buildCicloConCasos(ciclosMap[1] || null),
+        ciclo2: buildCicloConCasos(ciclosMap[2] || null)
     });
-
-    res.json({ ciclo: cicloRelevante, casos: casosConRespuesta });
 });
 
 // GET /:id/resultado
@@ -254,119 +258,64 @@ router.get('/:id/resultado', async (req, res) => {
         return res.status(403).json({ error: 'La evaluación aún no ha sido publicada' });
     }
 
+    // Asignación activa del jurado
     const { data: asignacion } = await supabase
         .from('asignaciones')
         .select('id')
         .eq('usuario_pagado_id', req.usuario.id)
-        .eq('rodeo_id', ev.rodeo?.id || '')
+        .eq('rodeo_id', ev.rodeo.id)
+        .eq('estado', 'activo')
         .limit(1)
         .single();
 
-    let nota_personal = null;
-    let mi_comentario = null;
-
+    // Detalle de descuentos del jurado
+    let descuentos = [];
     if (asignacion) {
-        const { data: nota } = await supabase
-            .from('notas_rodeo')
-            .select('nota, puntaje_evaluacion, calificacion_cualitativa, fuente')
-            .eq('asignacion_id', asignacion.id)
-            .single();
-        nota_personal = nota || null;
-
-        const { data: cf } = await supabase
-            .from('evaluacion_comentarios_finales')
-            .select('comentario, created_at')
+        const { data: casos } = await supabase
+            .from('evaluacion_casos')
+            .select('id, numero_caso, tipo_caso, descripcion, descuento_puntos, resolucion_final')
             .eq('evaluacion_id', req.params.id)
-            .eq('asignacion_id', asignacion.id)
-            .single();
-        mi_comentario = cf || null;
+            .in('estado', ['resuelto', 'consolidado'])
+            .order('numero_caso');
+
+        if (casos?.length) {
+            const casoIds = casos.map(c => c.id);
+            const { data: resps } = await supabase
+                .from('evaluacion_respuestas_jurado')
+                .select('caso_id, decision, descuento_final')
+                .in('caso_id', casoIds)
+                .eq('asignacion_id', asignacion.id);
+
+            const respMap = {};
+            for (const r of (resps || [])) respMap[r.caso_id] = r;
+
+            descuentos = casos.map(c => ({
+                numero_caso:     c.numero_caso,
+                tipo_caso:       c.tipo_caso,
+                descripcion:     c.descripcion,
+                descuento_puntos: c.descuento_puntos,
+                descuento_final: respMap[c.id]?.descuento_final ?? null,
+                decision:        respMap[c.id]?.decision ?? null,
+                resolucion_final: c.resolucion_final
+            }));
+        }
     }
 
-    res.json({ ...ev, nota_personal, mi_comentario });
-});
-
-// POST /:id/comentario-final
-router.post('/:id/comentario-final', async (req, res) => {
-    const { comentario } = req.body;
-    if (!comentario || !comentario.trim()) {
-        return res.status(400).json({ error: 'comentario es requerido' });
-    }
-
-    const { data: ev } = await supabase
-        .from('evaluaciones')
-        .select('id, estado, rodeo_id')
-        .eq('id', req.params.id)
-        .single();
-
-    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
-    if (!['publicado', 'cerrado'].includes(ev.estado)) {
-        return res.status(403).json({ error: 'Solo se puede comentar evaluaciones publicadas o cerradas' });
-    }
-
-    const { data: asignacion } = await supabase
-        .from('asignaciones')
-        .select('id')
-        .eq('usuario_pagado_id', req.usuario.id)
-        .eq('rodeo_id', ev.rodeo_id)
-        .limit(1)
-        .single();
-
-    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación en este rodeo' });
-
-    const { data, error } = await supabase
-        .from('evaluacion_comentarios_finales')
-        .upsert(
-            { evaluacion_id: req.params.id, asignacion_id: asignacion.id, comentario: comentario.trim() },
-            { onConflict: 'evaluacion_id,asignacion_id' }
-        )
-        .select()
-        .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-
-    await supabase.from('evaluacion_auditoria').insert({
-        evaluacion_id: req.params.id,
-        accion:        'comentario_final',
-        detalle:       { asignacion_id: asignacion.id },
-        actor_id:      req.usuario.id,
-        actor_tipo:    'usuario_pagado',
-        actor_nombre:  req.usuario.nombre,
-        ip_address:    req.ip
-    });
-
-    res.json(data);
+    res.json({ ...ev, descuentos });
 });
 
 // POST /:id/casos/:casoId/responder
 router.post('/:id/casos/:casoId/responder', async (req, res) => {
     const { decision, comentario } = req.body;
-    const evalId = req.params.id;
-    const casoId = req.params.casoId;
+    const evalId  = req.params.id;
+    const casoId  = req.params.casoId;
 
-    if (!decision || !['acepta', 'rechaza'].includes(decision)) {
-        return res.status(400).json({ error: 'decision debe ser acepta o rechaza' });
-    }
-    if (decision === 'rechaza' && (!comentario || !comentario.trim())) {
-        return res.status(400).json({ error: 'comentario es obligatorio cuando se rechaza' });
-    }
-
-    const { data: caso } = await supabase
-        .from('evaluacion_casos')
-        .select('id, tipo_caso, estado, evaluacion_id, descuento_puntos')
-        .eq('id', casoId)
-        .single();
-
-    if (!caso) return res.status(404).json({ error: 'Caso no encontrado' });
-    if (caso.estado !== 'visible_jurado') {
-        return res.status(409).json({ error: 'El caso no está disponible para responder' });
-    }
-
+    // Verificar asignación activa
     const { data: ev } = await supabase
         .from('evaluaciones')
-        .select('rodeo_id')
+        .select('id, rodeo_id')
         .eq('id', evalId)
         .single();
-
     if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
 
     const { data: asignacion } = await supabase
@@ -378,48 +327,68 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
         .neq('estado_designacion', 'rechazado')
         .limit(1)
         .single();
+    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa' });
 
-    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
+    // Verificar caso
+    const { data: caso } = await supabase
+        .from('evaluacion_casos')
+        .select('id, tipo_caso, estado, ciclo_id, descuento_puntos')
+        .eq('id', casoId)
+        .eq('evaluacion_id', evalId)
+        .single();
+    if (!caso) return res.status(404).json({ error: 'Caso no encontrado' });
+    if (caso.estado !== 'visible_jurado') return res.status(409).json({ error: 'El caso no está disponible para responder' });
 
-    // Casos informativos siempre acepta
-    const decisionFinal   = caso.tipo_caso === 'informativo' ? 'acepta' : decision;
-    const comentarioFinal = decisionFinal === 'rechaza' ? (comentario || '').trim() : (comentario || null);
-    const now = new Date().toISOString();
+    // Verificar ciclo abierto
+    const { data: ciclo } = await supabase
+        .from('evaluacion_ciclos')
+        .select('estado')
+        .eq('id', caso.ciclo_id)
+        .single();
+    if (!ciclo || ciclo.estado !== 'abierto') return res.status(409).json({ error: 'El ciclo ya no está abierto' });
 
-    const upsertPayload = {
-        caso_id:        casoId,
-        asignacion_id:  asignacion.id,
-        decision:       decisionFinal,
-        comentario:     comentarioFinal,
-        updated_at:     now,
-        decision_comite:     null,
-        comentario_comite:   null,
-        decidido_comite_por: null,
-        decidido_comite_en:  null
+    const esInformativo = caso.tipo_caso === 'informativo';
+
+    if (!esInformativo) {
+        if (!decision || !['acepta', 'rechaza'].includes(decision)) {
+            return res.status(400).json({ error: 'decision debe ser acepta o rechaza' });
+        }
+        if (decision === 'rechaza' && (!comentario || !comentario.trim())) {
+            return res.status(400).json({ error: 'comentario es obligatorio cuando rechazas' });
+        }
+    }
+
+    // Auto-aprobación si acepta
+    const decisionAnalista = (!esInformativo && decision === 'acepta') ? 'aprobada_auto' : null;
+    const descuentoFinal   = decisionAnalista === 'aprobada_auto' ? caso.descuento_puntos : null;
+
+    const payload = {
+        caso_id:          casoId,
+        asignacion_id:    asignacion.id,
+        decision:         esInformativo ? 'acepta' : decision,
+        comentario:       comentario?.trim() || null,
+        decision_analista: decisionAnalista,
+        descuento_final:  descuentoFinal
     };
 
-    if (decisionFinal === 'acepta') {
-        upsertPayload.decision_analista     = 'aprobada_auto';
-        upsertPayload.comentario_analista   = 'Aprobada automáticamente por aceptación del jurado';
-        upsertPayload.decidido_analista_en  = now;
-        upsertPayload.decidido_analista_por = null;
-        upsertPayload.descuento_final       = caso.descuento_puntos ?? 0;
-    } else {
-        upsertPayload.decision_analista     = null;
-        upsertPayload.comentario_analista   = null;
-        upsertPayload.decidido_analista_en  = null;
-        upsertPayload.decidido_analista_por = null;
-        upsertPayload.descuento_final       = null;
-    }
+    const { data: existing } = await supabase
+        .from('evaluacion_respuestas_jurado')
+        .select('id')
+        .eq('caso_id', casoId)
+        .eq('asignacion_id', asignacion.id)
+        .single();
+
+    if (existing) return res.status(409).json({ error: 'Ya respondiste este caso' });
 
     const { data, error } = await supabase
         .from('evaluacion_respuestas_jurado')
-        .upsert(upsertPayload, { onConflict: 'caso_id,asignacion_id' })
+        .insert(payload)
         .select()
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+
+    res.status(201).json(data);
 });
 
 module.exports = router;

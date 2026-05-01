@@ -303,15 +303,15 @@ router.post('/:id/cerrar', async (req, res) => {
         .select('id', { count: 'exact', head: true })
         .eq('ciclo_id', req.params.id);
 
-    // Obtener casos aún visible_jurado
+    // Obtener casos aún visible_jurado (incluye descuento_puntos para sin_respuesta)
     const { data: casosVisibles } = await supabase
         .from('evaluacion_casos')
-        .select('id, tipo_caso')
+        .select('id, tipo_caso, descuento_puntos')
         .eq('ciclo_id', req.params.id)
         .eq('estado', 'visible_jurado');
 
     if (casosVisibles && casosVisibles.length > 0) {
-        // Contar jurados activos del rodeo
+        // Jurados activos del rodeo
         const { data: juradoAsigs } = await supabase
             .from('asignaciones')
             .select('id, usuarios_pagados!inner(tipo_persona)')
@@ -320,23 +320,71 @@ router.post('/:id/cerrar', async (req, res) => {
             .neq('estado_designacion', 'rechazado')
             .eq('usuarios_pagados.tipo_persona', 'jurado');
 
-        const juradoIds = (juradoAsigs || []).map(a => a.id);
+        const juradoIds    = (juradoAsigs || []).map(a => a.id);
         const totalJurados = juradoIds.length;
+        const casoIds      = casosVisibles.map(c => c.id);
 
+        // Batch: todas las respuestas existentes para estos casos
+        const { data: todasRespuestas } = juradoIds.length > 0
+            ? await supabase
+                .from('evaluacion_respuestas_jurado')
+                .select('caso_id, asignacion_id, decision')
+                .in('caso_id', casoIds)
+                .in('asignacion_id', juradoIds)
+            : { data: [] };
+
+        const respPorCaso = {};
+        for (const r of (todasRespuestas || [])) {
+            (respPorCaso[r.caso_id] = respPorCaso[r.caso_id] || []).push(r);
+        }
+
+        // Insertar sin_respuesta para jurados que no respondieron
+        const sinRespInserts = [];
         for (const caso of casosVisibles) {
+            const resps = respPorCaso[caso.id] || [];
+            const yaRespondieron = new Set(resps.map(r => r.asignacion_id));
+            for (const asig_id of juradoIds) {
+                if (!yaRespondieron.has(asig_id)) {
+                    sinRespInserts.push({
+                        caso_id:         caso.id,
+                        asignacion_id:   asig_id,
+                        decision:        'sin_respuesta',
+                        descuento_final: caso.descuento_puntos ?? 0,
+                        created_at:      now
+                    });
+                }
+            }
+        }
+        if (sinRespInserts.length > 0) {
+            await supabase.from('evaluacion_respuestas_jurado').insert(sinRespInserts);
+        }
+
+        // Actualizar estado de cada caso
+        for (const caso of casosVisibles) {
+            const resps  = respPorCaso[caso.id] || [];
+            const acepta  = resps.filter(x => x.decision === 'acepta').length;
+            const rechaza = resps.filter(x => x.decision === 'rechaza').length;
+
+            // Si no hubo ninguna respuesta real (todos sin_respuesta) → auto-resolver
+            if (acepta === 0 && rechaza === 0 && totalJurados > 0) {
+                let resolucion_final;
+                if (caso.descuento_puntos === 0 || caso.tipo_caso === 'informativo') {
+                    resolucion_final = 'sin_descuento';
+                } else {
+                    resolucion_final = caso.tipo_caso === 'interpretativa'
+                        ? 'interpretativa_confirmada'
+                        : 'reglamentaria_confirmada';
+                }
+                await supabase
+                    .from('evaluacion_casos')
+                    .update({ estado: 'resuelto', estado_consolidado: 'incompleto', resolucion_final, updated_at: now })
+                    .eq('id', caso.id);
+                continue;
+            }
+
+            // Caso con al menos una respuesta real → pendiente_analista
             let estado_consolidado = 'pendiente';
-
             if (totalJurados > 0) {
-                const { data: respuestas } = await supabase
-                    .from('evaluacion_respuestas_jurado')
-                    .select('decision')
-                    .eq('caso_id', caso.id)
-                    .in('asignacion_id', juradoIds);
-
-                const r = respuestas || [];
-                const acepta  = r.filter(x => x.decision === 'acepta').length;
-                const rechaza = r.filter(x => x.decision === 'rechaza').length;
-
                 if (acepta + rechaza < totalJurados) {
                     estado_consolidado = 'incompleto';
                 } else if (rechaza > acepta) {
@@ -353,8 +401,14 @@ router.post('/:id/cerrar', async (req, res) => {
         }
     }
 
-    // Sin casos → cerrar directamente (evaluación sin faltas, descuento = 0)
-    const estadoCiclo = (totalCasos === 0) ? 'cerrado' : 'en_revision';
+    // Cerrar directamente si no quedan casos en pendiente_analista
+    const { count: pendientesAnalista } = await supabase
+        .from('evaluacion_casos')
+        .select('id', { count: 'exact', head: true })
+        .eq('ciclo_id', req.params.id)
+        .eq('estado', 'pendiente_analista');
+
+    const estadoCiclo = (totalCasos === 0 || pendientesAnalista === 0) ? 'cerrado' : 'en_revision';
 
     const { data: cicloAct, error: updErr } = await supabase
         .from('evaluacion_ciclos')

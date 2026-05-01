@@ -7,38 +7,16 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .eval-card {
-            border: 1px solid var(--gris-borde);
-            border-radius: 10px;
-            background: #fff;
-            padding: 16px 18px;
-            margin-bottom: 12px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 14px;
-            flex-wrap: wrap;
-        }
-        .eval-card-info h3 { margin: 0 0 4px; font-size: 15px; }
-        .eval-card-info p  { margin: 0; font-size: 13px; color: var(--gris); }
         .seccion-titulo {
             font-size: 13px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: .5px;
             color: var(--gris);
-            margin: 20px 0 10px;
+            margin: 24px 0 10px;
         }
         .seccion-titulo:first-child { margin-top: 0; }
-        .nota-badge {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 8px;
-            font-weight: 700;
-            font-size: 15px;
-            background: #d5f5e3;
-            color: #1e8449;
-        }
+
         .sin-items {
             text-align: center;
             color: var(--gris);
@@ -47,6 +25,99 @@
             background: #f8f9fa;
             border-radius: 8px;
             margin-bottom: 12px;
+        }
+
+        /* Tarjeta de evaluación grande */
+        .eval-card-grande {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            padding: 16px 18px;
+            margin-bottom: 16px;
+        }
+        .eval-rodeo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+        .eval-rodeo-header h3 { margin: 0 0 3px; font-size: 15px; }
+        .eval-rodeo-header p  { margin: 0; font-size: 13px; color: var(--gris); }
+
+        /* Grid de ciclos */
+        .ciclos-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        @media (max-width: 560px) { .ciclos-grid { grid-template-columns: 1fr; } }
+
+        .ciclo-resumen-box {
+            border: 1px solid #e8ecf0;
+            border-radius: 8px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .ciclo-resumen-box.ciclo-box-vacio {
+            background: #f8f9fa;
+            border-style: dashed;
+            color: var(--gris);
+            justify-content: center;
+            align-items: center;
+            min-height: 80px;
+        }
+        .ciclo-resumen-titulo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+        .ciclo-estado-badge {
+            padding: 1px 8px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .ciclo-box-stats { font-size: 12px; }
+        .ciclo-stat-fila {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1px 0;
+        }
+        .ciclo-stat-label { color: var(--gris); }
+        .ciclo-stat-val   { font-weight: 600; }
+
+        /* Tarjeta simple (resultados publicados) */
+        .eval-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            padding: 14px 18px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        .eval-card-info h3 { margin: 0 0 3px; font-size: 15px; }
+        .eval-card-info p  { margin: 0; font-size: 13px; color: var(--gris); }
+
+        .nota-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 15px;
+            background: #d5f5e3;
+            color: #1e8449;
         }
     </style>
 </head>
@@ -112,71 +183,125 @@ async function cargar() {
     }
 }
 
+// Etiquetas y estilos de estado de ciclo
+const CICLO_ESTADO_LABEL = {
+    abierto:        'Abierto',
+    en_revision:    'En revisión',
+    cerrado:        'Cerrado',
+    cargado:        'Por abrir',
+    sin_casos:      'Sin casos',
+    pendiente_carga:'—'
+};
+const CICLO_ESTADO_STYLE = {
+    abierto:        'background:#d5f5e3;color:#1e8449',
+    en_revision:    'background:#fdebd0;color:#784212',
+    cerrado:        'background:#f0f0f0;color:#666',
+    cargado:        'background:#d6eaf8;color:#1a5276',
+    sin_casos:      'background:#eaecee;color:#888',
+    pendiente_carga:'background:#eaecee;color:#888'
+};
+
+function renderCicloBox(ev, ciclo, num) {
+    if (!ciclo) {
+        return `
+        <div class="ciclo-resumen-box ciclo-box-vacio">
+            <span style="font-size:20px;opacity:.4;">○</span>
+            <span style="font-size:12px;">Ciclo ${num} — sin casos</span>
+        </div>`;
+    }
+
+    const estadoStyle = CICLO_ESTADO_STYLE[ciclo.estado] || 'background:#eaecee;color:#555';
+    const estadoLabel = CICLO_ESTADO_LABEL[ciclo.estado] || ciclo.estado;
+
+    let statsHtml = '<div class="ciclo-box-stats">';
+    statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Total casos</span><span class="ciclo-stat-val">${ciclo.total_casos}</span></div>`;
+
+    if (ciclo.respondidos > 0) {
+        statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Respondidos</span><span class="ciclo-stat-val" style="color:#27ae60;">${ciclo.respondidos}</span></div>`;
+    }
+    if (ciclo.pendientes > 0) {
+        statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Pendientes</span><span class="ciclo-stat-val" style="color:#e74c3c;font-weight:700;">${ciclo.pendientes}</span></div>`;
+    }
+    if (ciclo.sin_respuesta > 0) {
+        statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Sin respuesta</span><span class="ciclo-stat-val" style="color:#7d6608;">${ciclo.sin_respuesta}</span></div>`;
+    }
+    if (ciclo.descuento_acumulado > 0) {
+        statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Desc. acumulado</span><span class="ciclo-stat-val" style="color:#922b21;">-${ciclo.descuento_acumulado} pt</span></div>`;
+    }
+    if (ciclo.pendientes_analista > 0) {
+        statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Pend. analista</span><span class="ciclo-stat-val" style="color:#7d6608;">${ciclo.pendientes_analista}</span></div>`;
+    }
+    if (ciclo.pendientes_comite > 0) {
+        statsHtml += `<div class="ciclo-stat-fila"><span class="ciclo-stat-label">Pend. comité</span><span class="ciclo-stat-val" style="color:#7d6608;">${ciclo.pendientes_comite}</span></div>`;
+    }
+    statsHtml += '</div>';
+
+    let btnHtml = '';
+    if (ciclo.puede_responder) {
+        btnHtml = `<a href="/usuario/evaluacion-casos.html?id=${ev.id}&ciclo=${num}"
+            class="btn btn-primario btn-pequeño" style="text-decoration:none;margin-top:4px;">
+            Responder casos →
+        </a>`;
+    } else if (ciclo.respondidos > 0 || ciclo.sin_respuesta > 0) {
+        btnHtml = `<a href="/usuario/evaluacion-casos.html?id=${ev.id}&ciclo=${num}"
+            class="btn btn-pequeño" style="text-decoration:none;margin-top:4px;background:#fef9e7;color:#7d6608;border:1px solid #f9e79f;">
+            Ver retroalimentación →
+        </a>`;
+    } else if (ciclo.total_casos > 0) {
+        btnHtml = `<a href="/usuario/evaluacion-casos.html?id=${ev.id}&ciclo=${num}"
+            class="btn btn-secundario btn-pequeño" style="text-decoration:none;margin-top:4px;">
+            Ver ciclo →
+        </a>`;
+    }
+
+    return `
+    <div class="ciclo-resumen-box">
+        <div class="ciclo-resumen-titulo">
+            <span>Ciclo ${num}</span>
+            <span class="ciclo-estado-badge" style="${estadoStyle}">${sanitizar(estadoLabel)}</span>
+        </div>
+        ${statsHtml}
+        ${btnHtml}
+    </div>`;
+}
+
+function renderEvalCard(ev) {
+    const rodeo = ev.rodeo || {};
+    return `
+    <div class="eval-card-grande">
+        <div class="eval-rodeo-header">
+            <div>
+                <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
+                <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}</p>
+            </div>
+        </div>
+        <div class="ciclos-grid">
+            ${renderCicloBox(ev, ev.ciclo1, 1)}
+            ${renderCicloBox(ev, ev.ciclo2, 2)}
+        </div>
+    </div>`;
+}
+
 function renderLista(paraResponder, enRevision, resultados) {
     let html = '';
 
-    // ── PARA RESPONDER ──────────────────────────────────────────────────────
+    // ── PARA RESPONDER ──────────────────────────────────────
     html += '<div class="seccion-titulo">Para responder</div>';
     if (paraResponder.length === 0) {
-        html += '<div class="sin-items">No hay evaluaciones con casos disponibles en este momento.</div>';
+        html += '<div class="sin-items">No hay evaluaciones con casos pendientes en este momento.</div>';
     } else {
-        paraResponder.forEach(e => {
-            const rodeo = e.rodeo || {};
-            const ciclo = e.ciclo_abierto;
-            const pendientes = e.total_pendientes > 0
-                ? `<strong style="color:#e74c3c;">${e.total_pendientes} pendiente(s)</strong>`
-                : `<span style="color:#27ae60;">Todos respondidos</span>`;
-            html += `
-            <div class="eval-card">
-                <div class="eval-card-info">
-                    <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
-                    <p>
-                        ${sanitizar(rodeo.fecha || '')}
-                        ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
-                        ${ciclo ? ' · Ciclo ' + ciclo.numero_ciclo + ' abierto' : ''}
-                        · ${pendientes}
-                    </p>
-                </div>
-                <a href="/usuario/evaluacion-casos.html?id=${e.id}" class="btn btn-primario btn-pequeño" style="text-decoration:none;">
-                    Responder casos →
-                </a>
-            </div>`;
-        });
+        paraResponder.forEach(e => { html += renderEvalCard(e); });
     }
 
-    // ── EN REVISIÓN ─────────────────────────────────────────────────────────
+    // ── EN REVISIÓN ─────────────────────────────────────────
     html += '<div class="seccion-titulo">En revisión / Retroalimentación</div>';
     if (enRevision.length === 0) {
         html += '<div class="sin-items">No hay evaluaciones en revisión en este momento.</div>';
     } else {
-        enRevision.forEach(e => {
-            const rodeo = e.rodeo || {};
-            const ciclo = e.ciclo_relevante;
-            const pendAnal = e.pendientes_analista || 0;
-            const pendCom  = e.pendientes_comite   || 0;
-            let estadoDetalle = '';
-            if (pendAnal > 0) estadoDetalle += `${pendAnal} pend. analista`;
-            if (pendCom  > 0) estadoDetalle += (estadoDetalle ? ' · ' : '') + `${pendCom} pend. comité`;
-            if (!estadoDetalle) estadoDetalle = 'Revisión completa';
-            html += `
-            <div class="eval-card" style="border-left:4px solid #f39c12;">
-                <div class="eval-card-info">
-                    <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
-                    <p>
-                        ${sanitizar(rodeo.fecha || '')}
-                        ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
-                        ${ciclo ? ' · Ciclo ' + ciclo.numero_ciclo : ''}
-                        · <span style="color:#7d6608;">${sanitizar(estadoDetalle)}</span>
-                    </p>
-                </div>
-                <a href="/usuario/evaluacion-casos.html?id=${e.id}" class="btn btn-pequeño" style="text-decoration:none;background:#fef9e7;color:#7d6608;border:1px solid #f9e79f;">
-                    Ver retroalimentación →
-                </a>
-            </div>`;
-        });
+        enRevision.forEach(e => { html += renderEvalCard(e); });
     }
 
-    // ── RESULTADOS PUBLICADOS ────────────────────────────────────────────────
+    // ── RESULTADOS PUBLICADOS ───────────────────────────────
     html += '<div class="seccion-titulo">Resultados publicados</div>';
     if (resultados.length === 0) {
         html += '<div class="sin-items">No hay resultados publicados aún.</div>';

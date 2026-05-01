@@ -7,39 +7,79 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .ciclo-info {
-            padding: 12px 16px;
-            background: #eaf4fb;
-            border: 1px solid #aed6f1;
-            border-radius: 8px;
-            margin-bottom: 18px;
-            font-size: 13px;
+        /* Header de la evaluación */
+        .eval-header-jurado {
+            background: #fff;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 16px;
         }
-        .ciclo-info strong { font-size: 14px; }
+        .eval-header-jurado h2 { margin: 0 0 3px; font-size: 16px; }
+        .eval-header-jurado p  { margin: 0; font-size: 13px; color: var(--gris); }
 
+        /* Acordeón de ciclo */
+        .ciclo-accordion {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            margin-bottom: 14px;
+            overflow: hidden;
+        }
+        .ciclo-acc-header {
+            width: 100%;
+            background: #f8f9fa;
+            border: none;
+            padding: 14px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            text-align: left;
+            border-bottom: 1px solid transparent;
+            transition: background .12s;
+        }
+        .ciclo-acc-header:hover { background: #f0f2f5; }
+        .ciclo-acc-header.expandido { border-bottom-color: var(--gris-borde); }
+        .ciclo-acc-titulo { font-weight: 700; white-space: nowrap; }
+        .ciclo-acc-estado {
+            padding: 1px 8px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .ciclo-acc-stats { font-size: 12px; color: var(--gris); flex: 1; }
+        .acc-arrow { font-size: 11px; color: var(--gris); margin-left: auto; }
+        .ciclo-acc-body { padding: 16px; }
+        .acc-collapsed { display: none; }
+
+        /* Caso card */
         .caso-card {
             border: 1px solid var(--gris-borde);
             border-radius: 10px;
             background: #fff;
-            margin-bottom: 16px;
+            margin-bottom: 14px;
             overflow: hidden;
         }
+        .caso-card:last-child { margin-bottom: 0; }
         .caso-card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
             gap: 8px;
-            padding: 12px 16px;
+            padding: 10px 14px;
             background: #f8f9fa;
             border-bottom: 1px solid var(--gris-borde);
         }
-        .caso-card-body { padding: 16px; }
+        .caso-card-body { padding: 14px 16px; }
 
         .badge-tipo-interpretativa { background:#eaf4fb; color:#1a5276; display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
         .badge-tipo-reglamentaria  { background:#fef9e7; color:#7d6608; display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
         .badge-tipo-informativo    { background:#e9f7ef; color:#1e8449; display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
 
+        /* Formulario de respuesta */
         .opciones-decision { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
         .opcion-radio {
             display: flex;
@@ -68,6 +108,15 @@
         }
         .respuesta-registrada .dec-label { font-weight: 700; color: #1e8449; font-size: 14px; margin-bottom: 4px; }
         .respuesta-registrada .dec-label.rechaza-label { color: #922b21; }
+        .respuesta-sin-resp {
+            background: #fef9e7;
+            border: 1px solid #f9e79f;
+            border-left: 4px solid #f39c12;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+        }
+        .respuesta-sin-resp .dec-label { font-weight: 700; color: #7d6608; font-size: 14px; margin-bottom: 4px; }
 
         .informativo-aviso {
             background: #eaf4fb;
@@ -81,9 +130,9 @@
 
         .form-error { color: var(--rojo, #e74c3c); font-size: 12px; margin-top: 4px; }
 
-        /* Retroalimentación analista/comité */
+        /* Retroalimentación */
         .retro-bloque {
-            margin-top: 14px;
+            margin-top: 12px;
             padding: 12px 14px;
             border: 1px solid #d5d8dc;
             border-left: 4px solid #aab7b8;
@@ -108,6 +157,7 @@
             font-size:13px;
             color:#333;
         }
+
         .sin-ciclo {
             text-align: center;
             padding: 40px 20px;
@@ -117,7 +167,7 @@
 
         /* Video inline */
         .video-inline-contenedor {
-            margin-bottom: 14px;
+            margin-bottom: 12px;
             border-radius: 8px;
             overflow: hidden;
             border: 1px solid #aed6f1;
@@ -170,7 +220,7 @@
             <div class="flex items-center gap-12">
                 <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
                 <a href="/usuario/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-right:8px;">← Volver</a>
-                <h1 id="titulo-pagina">Casos del ciclo</h1>
+                <h1 id="titulo-pagina">Mis Casos</h1>
             </div>
         </div>
 
@@ -182,28 +232,27 @@
     </div>
 </div>
 
-
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
 protegerRuta('usuario_pagado');
 document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
 
-const params = getQueryParams();
-const evalId = params.id;
+const params  = getQueryParams();
+const evalId  = params.id;
+const cicloParam = parseInt(params.ciclo) || 0; // ciclo a auto-expandir
 
 if (api.getUsuario()?.tipo_persona !== 'jurado') {
     document.getElementById('contenido').innerHTML =
         '<div class="alerta alerta-error">Esta sección solo está disponible para jurados.</div>';
 } else if (!evalId) {
     document.getElementById('contenido').innerHTML =
-        '<div class="alerta alerta-error">No se especificó una evaluación. Redirigiendo...</div>';
+        '<div class="alerta alerta-error">No se especificó evaluación.</div>';
     setTimeout(() => { window.location.href = '/usuario/evaluaciones.html'; }, 2000);
 } else {
     cargar();
 }
 
-// IDs de casos respondidos en esta sesión (para deshabilitar doble submit)
 const _respondidos = new Set();
 
 async function cargar() {
@@ -216,73 +265,140 @@ async function cargar() {
     }
 }
 
-function render(data) {
-    const ciclo = data.ciclo;
-    const casos = data.casos || [];
+// ── Etiquetas de estado ciclo ───────────────────────────────────────
+const CICLO_LABEL = {
+    abierto:        'Abierto',
+    en_revision:    'En revisión',
+    cerrado:        'Cerrado',
+    cargado:        'Por abrir',
+    sin_casos:      'Sin casos',
+    pendiente_carga:'—'
+};
+const CICLO_STYLE = {
+    abierto:        'background:#d5f5e3;color:#1e8449',
+    en_revision:    'background:#fdebd0;color:#784212',
+    cerrado:        'background:#f0f0f0;color:#666',
+    cargado:        'background:#d6eaf8;color:#1a5276',
+    sin_casos:      'background:#eaecee;color:#888'
+};
 
-    if (!ciclo) {
+// ── Render principal ────────────────────────────────────────────────
+function render(data) {
+    const ev    = data.evaluacion || {};
+    const rodeo = ev.rodeo || {};
+    const ciclo1 = data.ciclo1;
+    const ciclo2 = data.ciclo2;
+
+    if (!ciclo1 && !ciclo2) {
         document.getElementById('contenido').innerHTML = `
         <div class="sin-ciclo">
             <div style="font-size:40px;">⏳</div>
-            <strong>No hay ciclo disponible en este momento</strong>
-            <p>${sanitizar(data.mensaje || 'Espera a que el administrador abra el ciclo de esta evaluación.')}</p>
-            <a href="/usuario/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-top:16px;text-decoration:none;">← Volver a evaluaciones</a>
+            <strong>Sin ciclos disponibles</strong>
+            <p>Espera a que el administrador configure esta evaluación.</p>
+            <a href="/usuario/evaluaciones.html" class="btn btn-secundario btn-pequeño" style="margin-top:16px;text-decoration:none;">← Volver</a>
         </div>`;
         return;
     }
 
-    document.getElementById('titulo-pagina').textContent = `Ciclo ${ciclo.numero_ciclo} — Casos`;
+    const club = rodeo.club || 'Evaluación';
+    const asoc = rodeo.asociacion || '';
+    document.getElementById('titulo-pagina').textContent = `${club}${asoc ? ' — ' + asoc : ''}`;
 
-    const estaAbierto = ciclo.estado === 'abierto';
-
-    // Banner según estado del ciclo
-    let bannerHtml = '';
-    if (estaAbierto) {
-        bannerHtml = `
-        <div class="ciclo-info">
-            <strong>Ciclo ${ciclo.numero_ciclo} — Abierto</strong>
-            · ${casos.length} caso(s)
-            · Responde cada caso usando los botones de abajo.
-            Los casos informativos no requieren decisión, solo reconocimiento opcional.
-        </div>`;
-    } else if (ciclo.estado === 'en_revision') {
-        bannerHtml = `
-        <div class="ciclo-info" style="background:#fef9e7;border-color:#f9e79f;">
-            <strong>Ciclo ${ciclo.numero_ciclo} — En revisión</strong>
-            · El ciclo ha sido cerrado para revisión. Ya no puedes modificar tus respuestas.
-            A continuación puedes ver la retroalimentación del analista y comité técnico.
-        </div>`;
-    } else if (ciclo.estado === 'cerrado') {
-        bannerHtml = `
-        <div class="ciclo-info" style="background:#f8f9fa;border-color:#d5d8dc;">
-            <strong>Ciclo ${ciclo.numero_ciclo} — Cerrado</strong>
-            · Este ciclo ya fue cerrado. A continuación puedes ver tus respuestas y retroalimentación.
-        </div>`;
-    } else {
-        bannerHtml = `
-        <div class="ciclo-info">
-            <strong>Ciclo ${ciclo.numero_ciclo}</strong>
-            · ${casos.length} caso(s)
-        </div>`;
+    // Determinar ciclo a auto-expandir
+    let autoExpand = cicloParam;
+    if (!autoExpand) {
+        // Expandir el ciclo con pendientes, o el más relevante con casos
+        if (ciclo1?.puede_responder || (ciclo1?.casos?.length > 0 && ciclo1.estado === 'abierto')) {
+            autoExpand = 1;
+        } else if (ciclo2?.puede_responder || (ciclo2?.casos?.length > 0 && ciclo2.estado === 'abierto')) {
+            autoExpand = 2;
+        } else if (ciclo1?.casos?.length > 0) {
+            autoExpand = 1;
+        } else if (ciclo2?.casos?.length > 0) {
+            autoExpand = 2;
+        } else {
+            autoExpand = 1;
+        }
     }
 
-    let html = bannerHtml;
-
-    if (casos.length === 0) {
-        html += '<div class="alerta alerta-info">No hay casos cargados en este ciclo aún.</div>';
-    } else {
-        casos.forEach(caso => {
-            html += renderCasoCard(caso, estaAbierto);
-        });
-    }
+    let html = `
+    <div class="eval-header-jurado">
+        <h2>${sanitizar(club)}${asoc ? ' — ' + sanitizar(asoc) : ''}</h2>
+        <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}</p>
+    </div>
+    ${renderCicloAccordion(ciclo1, 1, autoExpand === 1)}
+    ${renderCicloAccordion(ciclo2, 2, autoExpand === 2)}`;
 
     document.getElementById('contenido').innerHTML = html;
 }
 
-function renderCasoCard(caso, cicloAbierto) {
+function renderCicloAccordion(ciclo, num, expanded) {
+    if (!ciclo) {
+        return `
+        <div class="ciclo-accordion">
+            <div class="ciclo-acc-header" style="cursor:default;opacity:.6;">
+                <span class="ciclo-acc-titulo">Ciclo ${num}</span>
+                <span class="ciclo-acc-estado" style="background:#eaecee;color:#888;">Sin configurar</span>
+            </div>
+        </div>`;
+    }
+
+    const estadoStyle = CICLO_STYLE[ciclo.estado] || 'background:#eaecee;color:#555';
+    const estadoLabel = CICLO_LABEL[ciclo.estado] || ciclo.estado;
+    const casos       = ciclo.casos || [];
+
+    const respondidos = casos.filter(c => c.mi_respuesta && c.mi_respuesta.decision !== 'sin_respuesta').length;
+    const sinResp     = casos.filter(c => c.mi_respuesta && c.mi_respuesta.decision === 'sin_respuesta').length;
+    const pendientes  = casos.filter(c => c.puede_responder).length;
+
+    let stats = `${casos.length} caso(s)`;
+    if (respondidos > 0) stats += ` · ${respondidos} respondido(s)`;
+    if (pendientes  > 0) stats += ` · ${pendientes} pendiente(s)`;
+    if (sinResp     > 0) stats += ` · ${sinResp} sin respuesta`;
+
+    const isExpanded  = expanded;
+    const arrowIcon   = isExpanded ? '▼' : '▶';
+    const bodyClass   = isExpanded ? '' : 'acc-collapsed';
+    const headerClass = isExpanded ? 'expandido' : '';
+
+    let bodyHtml;
+    if (casos.length === 0) {
+        bodyHtml = '<div style="text-align:center;padding:28px 16px;color:var(--gris);font-size:14px;">Sin casos cargados en este ciclo.</div>';
+    } else {
+        bodyHtml = casos.map(caso => renderCasoCard(caso, ciclo)).join('');
+    }
+
+    return `
+    <div class="ciclo-accordion">
+        <button class="ciclo-acc-header ${headerClass}" onclick="toggleAcc(${num})" id="acc-btn-${num}">
+            <span class="ciclo-acc-titulo">Ciclo ${num}</span>
+            <span class="ciclo-acc-estado" style="${estadoStyle}">${sanitizar(estadoLabel)}</span>
+            <span class="ciclo-acc-stats">${sanitizar(stats)}</span>
+            <span class="acc-arrow" id="acc-arrow-${num}">${arrowIcon}</span>
+        </button>
+        <div class="ciclo-acc-body ${bodyClass}" id="acc-body-${num}">
+            ${bodyHtml}
+        </div>
+    </div>`;
+}
+
+function toggleAcc(num) {
+    const body   = document.getElementById('acc-body-' + num);
+    const arrow  = document.getElementById('acc-arrow-' + num);
+    const btn    = document.getElementById('acc-btn-' + num);
+    if (!body) return;
+    const isOpen = !body.classList.contains('acc-collapsed');
+    body.classList.toggle('acc-collapsed', isOpen);
+    if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+    if (btn)   btn.classList.toggle('expandido', !isOpen);
+}
+
+// ── Render caso card ────────────────────────────────────────────────
+function renderCasoCard(caso, ciclo) {
     const esInformativo  = caso.tipo_caso === 'informativo';
     const yaRespondio    = !!caso.mi_respuesta;
     const puedeResponder = !!caso.puede_responder;
+    const esSinRespuesta = yaRespondio && caso.mi_respuesta.decision === 'sin_respuesta';
 
     const tipoBadge = {
         interpretativa: '<span class="badge-tipo-interpretativa">Interpretativa</span>',
@@ -294,33 +410,42 @@ function renderCasoCard(caso, cicloAbierto) {
         ? `<span style="background:#fdebd0;color:#784212;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600;">-${caso.descuento_puntos} pt</span>`
         : '';
 
-    let cuerpo = '';
+    let estadoBadge = '';
+    if (esSinRespuesta) {
+        estadoBadge = '<span style="font-size:12px;color:#7d6608;font-weight:600;">Sin respuesta</span>';
+    } else if (yaRespondio) {
+        estadoBadge = '<span style="font-size:12px;color:#27ae60;font-weight:600;">&#10003; Respondido</span>';
+    } else if (!puedeResponder) {
+        estadoBadge = '<span style="font-size:12px;color:#aaa;">Sin respuesta</span>';
+    }
 
-    if (yaRespondio) {
+    let cuerpo = '';
+    if (esSinRespuesta) {
+        cuerpo = renderSinRespuesta(caso);
+    } else if (yaRespondio) {
         cuerpo = renderRespuestaRegistrada(caso, esInformativo);
     } else if (puedeResponder && esInformativo) {
         cuerpo = renderFormInformativo(caso);
     } else if (puedeResponder) {
         cuerpo = renderFormDecision(caso);
     } else {
-        // No respondido y ciclo ya no está abierto para este caso
         cuerpo = `<div class="informativo-aviso" style="background:#f8f9fa;border-color:#d5d8dc;color:#666;">
             Este caso no fue respondido durante el período de evaluación.
         </div>`;
     }
 
     const descripcionHtml = caso.descripcion
-        ? '<p style="margin:0 0 12px;font-size:14px;">' + sanitizar(caso.descripcion) + '</p>'
+        ? `<p style="margin:0 0 12px;font-size:14px;">${sanitizar(caso.descripcion)}</p>`
         : '';
 
     const videoHtml = caso.video_url
-        ? '<div style="margin-bottom:12px;">'
-            + '<button id="btn-video-' + caso.id + '" class="btn btn-pequeño" '
-            + 'style="background:#eaf4fb;color:#1a5276;border:1px solid #aed6f1;" '
-            + 'onclick="toggleVideo(\'' + caso.id + '\')">&#9654; Ver video</button>'
-            + '<div id="video-' + caso.id + '" class="video-inline-contenedor oculto" '
-            + 'data-url="' + sanitizar(caso.video_url) + '"></div>'
-            + '</div>'
+        ? `<div style="margin-bottom:12px;">
+            <button id="btn-video-${caso.id}" class="btn btn-pequeño"
+                style="background:#eaf4fb;color:#1a5276;border:1px solid #aed6f1;"
+                onclick="toggleVideo('${caso.id}')">&#9654; Ver video</button>
+            <div id="video-${caso.id}" class="video-inline-contenedor oculto"
+                data-url="${sanitizar(caso.video_url)}"></div>
+           </div>`
         : '';
 
     return `
@@ -331,9 +456,7 @@ function renderCasoCard(caso, cicloAbierto) {
                 ${tipoBadge}
                 ${descuentoHtml}
             </div>
-            ${yaRespondio
-                ? '<span style="font-size:12px;color:#27ae60;font-weight:600;">&#10003; Respondido</span>'
-                : (!puedeResponder ? '<span style="font-size:12px;color:#aaa;font-weight:600;">Sin respuesta</span>' : '')}
+            ${estadoBadge}
         </div>
         <div class="caso-card-body">
             ${descripcionHtml}
@@ -343,6 +466,16 @@ function renderCasoCard(caso, cicloAbierto) {
     </div>`;
 }
 
+// ── Sin respuesta al cierre ─────────────────────────────────────────
+function renderSinRespuesta(caso) {
+    return `<div class="respuesta-sin-resp">
+        <div class="dec-label">Sin respuesta registrada</div>
+        <p style="margin:4px 0 0;color:var(--texto);font-size:13px;">No se registró respuesta antes del cierre del ciclo.</p>
+    </div>
+    ${renderRetroalimentacion(caso.mi_respuesta, caso.descuento_puntos)}`;
+}
+
+// ── Respuesta registrada (acepta / rechaza / informativo) ───────────
 function renderRespuestaRegistrada(caso, esInformativo) {
     const resp = caso.mi_respuesta;
     if (esInformativo) {
@@ -352,21 +485,35 @@ function renderRespuestaRegistrada(caso, esInformativo) {
         </div>`;
     }
     const esAcepta = resp.decision === 'acepta';
-    const decLabel = esAcepta ? '✓ Acepta' : '✗ Rechaza';
-    const decClass = esAcepta ? '' : 'rechaza-label';
     return `<div class="respuesta-registrada">
-        <div class="dec-label ${decClass}">${decLabel}</div>
+        <div class="dec-label ${esAcepta ? '' : 'rechaza-label'}">${esAcepta ? '✓ Acepta' : '✗ Rechaza'}</div>
         ${resp.comentario ? `<p style="margin:4px 0 0;color:var(--texto);">${sanitizar(resp.comentario)}</p>` : ''}
     </div>
     ${renderRetroalimentacion(resp, caso.descuento_puntos)}`;
 }
 
+// ── Retroalimentación analista / comité ────────────────────────────
 function renderRetroalimentacion(resp, descuento_puntos) {
+    // Caso especial: sin respuesta al cierre de ciclo
+    if (resp.decision === 'sin_respuesta') {
+        const df = resp.descuento_final !== null && resp.descuento_final !== undefined
+            ? resp.descuento_final : (descuento_puntos ?? 0);
+        const descLabel = df === 0 ? 'Sin descuento' : `-${df} pt`;
+        return `<div class="retro-bloque retro-pend-bloque">
+            <strong>Retroalimentación</strong>
+            <div class="retro-item">
+                <span class="retro-dec retro-pend">No se registró respuesta antes del cierre del ciclo.</span>
+                <span class="retro-resultado retro-mal">Se mantuvo el descuento asociado a este caso por falta de respuesta.</span>
+            </div>
+            <div class="retro-final">Descuento final: <strong>${sanitizar(descLabel)}</strong></div>
+        </div>`;
+    }
+
     const da = resp.decision_analista;
     const dc = resp.decision_comite;
     const df = resp.descuento_final;
 
-    // Sin decisión aún — distinguir acepta vs rechaza
+    // Sin decisión analista aún
     if (!da) {
         if (resp.decision === 'acepta') {
             return `<div class="retro-bloque">
@@ -420,7 +567,7 @@ function renderRetroalimentacion(resp, descuento_puntos) {
         }
     }
 
-    // Etiqueta descuento final
+    // Descuento final
     let descLabel;
     if (df !== null && df !== undefined) {
         descLabel = df === 0 ? 'Sin descuento' : `-${df} pt`;
@@ -434,16 +581,15 @@ function renderRetroalimentacion(resp, descuento_puntos) {
         descLabel = 'Pendiente analista';
     }
 
-    const finalHtml = `<div class="retro-final">Descuento final: <strong>${sanitizar(descLabel)}</strong></div>`;
-
     return `<div class="retro-bloque">
         <strong>Retroalimentación</strong>
         ${analistaHtml}
         ${comiteHtml}
-        ${finalHtml}
+        <div class="retro-final">Descuento final: <strong>${sanitizar(descLabel)}</strong></div>
     </div>`;
 }
 
+// ── Formulario informativo ─────────────────────────────────────────
 function renderFormInformativo(caso) {
     return `
     <div class="informativo-aviso">
@@ -452,54 +598,52 @@ function renderFormInformativo(caso) {
     </div>
     <div class="form-group" style="margin-bottom:12px;">
         <label class="form-label">Comentario <span style="color:var(--gris);font-weight:400;">(opcional)</span></label>
-        <textarea id="comentario-${caso.id}" class="form-control" rows="3"
-            maxlength="1000" placeholder="Observación sobre este caso..."></textarea>
+        <textarea id="comentario-${caso.id}" class="form-control" rows="3" maxlength="1000"
+            placeholder="Observación sobre este caso..."></textarea>
     </div>
     <button class="btn btn-primario btn-pequeño" onclick="enviarInformativo('${caso.id}')">Reconocer caso</button>
     <div id="error-${caso.id}" class="form-error oculto"></div>`;
 }
 
+// ── Formulario decisión ────────────────────────────────────────────
 function renderFormDecision(caso) {
     return `
     <div class="opciones-decision">
         <label class="opcion-radio acepta">
-            <input type="radio" name="dec-${caso.id}" value="acepta">
-            ✓ Acepta
+            <input type="radio" name="dec-${caso.id}" value="acepta"> ✓ Acepta
         </label>
         <label class="opcion-radio rechaza">
-            <input type="radio" name="dec-${caso.id}" value="rechaza">
-            ✗ Rechaza
+            <input type="radio" name="dec-${caso.id}" value="rechaza"> ✗ Rechaza
         </label>
     </div>
     <div class="form-group" style="margin-bottom:12px;">
         <label class="form-label">Comentario
             <span id="req-label-${caso.id}" style="color:var(--rojo);font-weight:400;display:none;"> * obligatorio si rechaza</span>
         </label>
-        <textarea id="comentario-${caso.id}" class="form-control" rows="3"
-            maxlength="1000" placeholder="Comentario sobre su decisión..."></textarea>
+        <textarea id="comentario-${caso.id}" class="form-control" rows="3" maxlength="1000"
+            placeholder="Comentario sobre su decisión..."></textarea>
     </div>
     <button class="btn btn-primario btn-pequeño" onclick="enviarDecision('${caso.id}')">Enviar respuesta</button>
     <div id="error-${caso.id}" class="form-error oculto"></div>`;
 }
 
-// Mostrar hint de "obligatorio" al seleccionar rechaza
+// ── Hint obligatorio al seleccionar rechaza ─────────────────────────
 document.addEventListener('change', function(e) {
     if (e.target.type !== 'radio' || !e.target.name.startsWith('dec-')) return;
-    const casoId = e.target.name.replace('dec-', '');
+    const casoId  = e.target.name.replace('dec-', '');
     const reqLabel = document.getElementById(`req-label-${casoId}`);
     if (reqLabel) reqLabel.style.display = e.target.value === 'rechaza' ? '' : 'none';
 });
 
+// ── Enviar decisión ────────────────────────────────────────────────
 async function enviarDecision(casoId) {
     if (_respondidos.has(casoId)) return;
-
-    const radios    = document.querySelectorAll(`input[name="dec-${casoId}"]`);
-    const decision  = [...radios].find(r => r.checked)?.value || null;
+    const radios   = document.querySelectorAll(`input[name="dec-${casoId}"]`);
+    const decision = [...radios].find(r => r.checked)?.value || null;
     const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
-    const errEl     = document.getElementById(`error-${casoId}`);
+    const errEl    = document.getElementById(`error-${casoId}`);
 
     errEl.classList.add('oculto');
-
     if (!decision) {
         errEl.textContent = 'Selecciona Acepta o Rechaza.';
         errEl.classList.remove('oculto');
@@ -516,17 +660,14 @@ async function enviarDecision(casoId) {
 
     try {
         await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
-            decision,
-            comentario: comentario || undefined
+            decision, comentario: comentario || undefined
         });
         _respondidos.add(casoId);
         mostrarToast('Respuesta registrada', 'exito');
         cargar();
     } catch(e) {
-        if (e.status === 409) {
-            mostrarToast('Ya habías respondido este caso', 'warning');
-            cargar();
-        } else {
+        if (e.status === 409) { mostrarToast('Ya respondiste este caso', 'warning'); cargar(); }
+        else {
             errEl.textContent = e.message || 'Error al enviar. Intenta de nuevo.';
             errEl.classList.remove('oculto');
             if (btn) { btn.disabled = false; btn.textContent = 'Enviar respuesta'; }
@@ -534,13 +675,39 @@ async function enviarDecision(casoId) {
     }
 }
 
+// ── Enviar informativo ─────────────────────────────────────────────
+async function enviarInformativo(casoId) {
+    if (_respondidos.has(casoId)) return;
+    const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
+    const errEl      = document.getElementById(`error-${casoId}`);
+    errEl.classList.add('oculto');
+
+    const btn = document.querySelector(`#card-${casoId} .btn-primario`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+
+    try {
+        await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
+            comentario: comentario || undefined
+        });
+        _respondidos.add(casoId);
+        mostrarToast('Caso informativo reconocido', 'exito');
+        cargar();
+    } catch(e) {
+        if (e.status === 409) { mostrarToast('Ya reconociste este caso', 'warning'); cargar(); }
+        else {
+            errEl.textContent = e.message || 'Error al enviar.';
+            errEl.classList.remove('oculto');
+            if (btn) { btn.disabled = false; btn.textContent = 'Reconocer caso'; }
+        }
+    }
+}
+
+// ── Video inline ───────────────────────────────────────────────────
 function normalizarVideoUrl(url) {
     if (!url || !/^https?:\/\//i.test(url)) return null;
     try {
         const u = new URL(url);
-        let videoId = null;
-        let start   = null;
-
+        let videoId = null, start = null;
         if (u.hostname === 'youtu.be') {
             videoId = u.pathname.slice(1).split('/')[0] || null;
             start   = u.searchParams.get('t') || u.searchParams.get('start') || null;
@@ -553,26 +720,20 @@ function normalizarVideoUrl(url) {
                 start   = u.searchParams.get('t') || u.searchParams.get('start') || null;
             }
         }
-
         if (!videoId) return null;
         videoId = videoId.split('?')[0].split('&')[0];
-
         let embed = 'https://www.youtube.com/embed/' + videoId + '?autoplay=0&rel=0';
         if (start) embed += '&start=' + encodeURIComponent(start);
         return embed;
-    } catch (_) {
-        return null;
-    }
+    } catch (_) { return null; }
 }
 
 function toggleVideo(casoId) {
     const wrap = document.getElementById('video-' + casoId);
     const btn  = document.getElementById('btn-video-' + casoId);
     if (!wrap || !btn) return;
-
     const url     = wrap.dataset.url || '';
     const visible = !wrap.classList.contains('oculto');
-
     if (visible) {
         const iframe = wrap.querySelector('iframe');
         if (iframe) iframe.src = '';
@@ -594,44 +755,13 @@ function toggleVideo(casoId) {
             const fb = document.createElement('div');
             fb.className = 'video-inline-fallback';
             const a = document.createElement('a');
-            a.href    = url;
-            a.target  = '_blank';
-            a.rel     = 'noopener';
+            a.href = url; a.target = '_blank'; a.rel = 'noopener';
             a.textContent = 'Abrir video en nueva pestaña ↗';
             fb.appendChild(a);
             wrap.appendChild(fb);
         }
         wrap.classList.remove('oculto');
         btn.textContent = '▼ Ocultar video';
-    }
-}
-
-async function enviarInformativo(casoId) {
-    if (_respondidos.has(casoId)) return;
-
-    const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
-    const errEl      = document.getElementById(`error-${casoId}`);
-    errEl.classList.add('oculto');
-
-    const btn = document.querySelector(`#card-${casoId} .btn-primario`);
-    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
-
-    try {
-        await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
-            comentario: comentario || undefined
-        });
-        _respondidos.add(casoId);
-        mostrarToast('Caso informativo reconocido', 'exito');
-        cargar();
-    } catch(e) {
-        if (e.status === 409) {
-            mostrarToast('Ya habías reconocido este caso', 'warning');
-            cargar();
-        } else {
-            errEl.textContent = e.message || 'Error al enviar. Intenta de nuevo.';
-            errEl.classList.remove('oculto');
-            if (btn) { btn.disabled = false; btn.textContent = 'Reconocer caso'; }
-        }
     }
 }
 </script>
