@@ -434,10 +434,10 @@ router.post('/administradores', async (req, res) => {
     if (password.length < 8) {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
     }
-    const ROLES_EVAL = ['jefe_area', 'analista', 'comision_tecnica'];
+    const ROLES_EVAL = ['jefe_area', 'analista', 'comision_tecnica', 'monitor'];
     const rolEval = rol_evaluacion || null;
     if (rolEval && !ROLES_EVAL.includes(rolEval)) {
-        return res.status(400).json({ error: 'rol_evaluacion debe ser jefe_area, analista o comision_tecnica' });
+        return res.status(400).json({ error: 'rol_evaluacion debe ser jefe_area, analista, comision_tecnica o monitor' });
     }
 
     const bcrypt = require('bcryptjs');
@@ -483,10 +483,10 @@ router.patch('/administradores/:id', async (req, res) => {
     if (activo !== undefined) cambios.activo = !!activo;
 
     if ('rol_evaluacion' in req.body) {
-        const ROLES_EVAL = ['jefe_area', 'analista', 'comision_tecnica'];
+        const ROLES_EVAL = ['jefe_area', 'analista', 'comision_tecnica', 'monitor'];
         const rolEval = rol_evaluacion || null;
         if (rolEval && !ROLES_EVAL.includes(rolEval)) {
-            return res.status(400).json({ error: 'rol_evaluacion debe ser jefe_area, analista o comision_tecnica' });
+            return res.status(400).json({ error: 'rol_evaluacion debe ser jefe_area, analista, comision_tecnica o monitor' });
         }
         cambios.rol_evaluacion = rolEval;
     }

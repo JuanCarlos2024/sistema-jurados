@@ -99,6 +99,79 @@ function mostrarSpinner(contenedor) {
     contenedor.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
 }
 
+// ── Control de acceso por rol admin ───────────────────────────────
+
+// Etiqueta visible de rol administrativo
+function labelRolAdmin(rol) {
+    const M = {
+        jefe_area:        'Jefe Área Deportiva',
+        analista:         'Analista',
+        comision_tecnica: 'Comisión Técnica',
+        monitor:          'Monitor'
+    };
+    return M[rol] || 'Admin pleno';
+}
+
+// Páginas permitidas por rol (monitor: acceso muy restringido)
+const _PAGINAS_MONITOR    = ['/admin/dashboard.html', '/admin/rodeos.html', '/admin/reporte-deportivo.html'];
+// Páginas bloqueadas para roles de evaluación (analista/jefe/comision)
+const _PAGINAS_BLOQUEADAS_EVAL = [
+    '/admin/configuracion.html', '/admin/bonos.html', '/admin/exportacion-pagos.html',
+    '/admin/reportes.html', '/admin/usuarios.html', '/admin/disponibilidad.html',
+    '/admin/importacion.html', '/admin/auditoria.html'
+];
+
+function _ajustarMenuPorRol(rol) {
+    if (!rol) return; // admin pleno: muestra todo
+    const nav = document.querySelector('.sidebar-nav') || document.querySelector('nav');
+    if (!nav) return;
+    nav.querySelectorAll('a.nav-item').forEach(a => {
+        const href = a.getAttribute('href') || '';
+        if (rol === 'monitor') {
+            // Monitor solo ve dashboard, rodeos y reporte-deportivo
+            const permitida = _PAGINAS_MONITOR.some(p => href.endsWith(p.split('/').pop()));
+            a.style.display = permitida ? '' : 'none';
+            // Ocultar también separadores de sección sin items visibles
+        } else {
+            // Analista, jefe, comision: ocultar páginas de pagos/config/admin
+            const bloqueada = _PAGINAS_BLOQUEADAS_EVAL.some(p => href.endsWith(p.split('/').pop()));
+            if (bloqueada) a.style.display = 'none';
+        }
+    });
+    // Ocultar nav-seccion vacías (sin items visibles debajo)
+    nav.querySelectorAll('.nav-seccion').forEach(sec => {
+        let sib = sec.nextElementSibling;
+        let tieneVisible = false;
+        while (sib && !sib.classList.contains('nav-seccion')) {
+            if (sib.classList.contains('nav-item') && sib.style.display !== 'none') {
+                tieneVisible = true; break;
+            }
+            sib = sib.nextElementSibling;
+        }
+        sec.style.display = tieneVisible ? '' : 'none';
+    });
+}
+
+function _aplicarControlAccesoAdmin(usuario) {
+    const rol = usuario.rol_evaluacion || null;
+    if (!rol) return; // admin pleno: acceso total
+    const path = window.location.pathname;
+    if (rol === 'monitor') {
+        const permitida = _PAGINAS_MONITOR.some(p => path.endsWith(p.split('/').pop()) || path === p);
+        if (!permitida) { window.location.href = '/admin/rodeos.html'; return; }
+    } else {
+        // analista / jefe_area / comision_tecnica: bloquear páginas de admin general
+        const bloqueada = _PAGINAS_BLOQUEADAS_EVAL.some(p => path.endsWith(p.split('/').pop()));
+        if (bloqueada) { window.location.href = '/admin/evaluaciones.html'; return; }
+    }
+    // Ajustar menú lateral según rol
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => _ajustarMenuPorRol(rol));
+    } else {
+        _ajustarMenuPorRol(rol);
+    }
+}
+
 // Proteger ruta: redirigir si no hay token del tipo correcto
 function protegerRuta(tipoRequerido) {
     const usuario = api.getUsuario();
@@ -116,6 +189,11 @@ function protegerRuta(tipoRequerido) {
             window.location.href = '/usuario/dashboard.html';
         }
         return false;
+    }
+
+    // Para páginas admin: aplicar control de acceso por rol
+    if (tipoRequerido === 'administrador') {
+        _aplicarControlAccesoAdmin(usuario);
     }
 
     return true;
@@ -163,3 +241,4 @@ window.mostrarSpinner = mostrarSpinner;
 window.protegerRuta = protegerRuta;
 window.toQueryString = toQueryString;
 window.getQueryParams = getQueryParams;
+window.labelRolAdmin = labelRolAdmin;
