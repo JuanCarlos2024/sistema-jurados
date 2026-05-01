@@ -134,23 +134,38 @@ router.patch('/:id', async (req, res) => {
     res.json(data);
 });
 
-// DELETE /:id — eliminar caso (solo si no tiene respuestas)
+// DELETE /:id — eliminar caso con cascade seguro
 router.delete('/:id', async (req, res) => {
+    const { confirmacion } = req.body || {};
+
+    const { data: caso } = await supabase
+        .from('evaluacion_casos')
+        .select('id, ciclo_id, evaluacion_id')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!caso) return res.status(404).json({ error: 'Caso no encontrado' });
+
     const { count } = await supabase
         .from('evaluacion_respuestas_jurado')
         .select('id', { count: 'exact', head: true })
         .eq('caso_id', req.params.id);
 
-    if (count > 0) {
-        return res.status(409).json({ error: 'No se puede eliminar un caso con respuestas de jurado asociadas' });
+    if (count > 0 && confirmacion !== 'ELIMINAR') {
+        return res.status(409).json({
+            requiere_confirmacion: true,
+            mensaje: 'El caso tiene respuestas de jurado asociadas. Escribe ELIMINAR para confirmar la eliminación definitiva.'
+        });
     }
 
-    const { error } = await supabase
-        .from('evaluacion_casos')
-        .delete()
-        .eq('id', req.params.id);
-
+    // 1. Auditoría (tiene FK a casos — debe ir antes)
+    await supabase.from('evaluacion_auditoria').delete().eq('caso_id', req.params.id);
+    // 2. Respuestas del jurado
+    await supabase.from('evaluacion_respuestas_jurado').delete().eq('caso_id', req.params.id);
+    // 3. Caso
+    const { error } = await supabase.from('evaluacion_casos').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
+
     res.json({ mensaje: 'Caso eliminado' });
 });
 

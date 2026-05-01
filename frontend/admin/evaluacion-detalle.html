@@ -463,6 +463,29 @@
     </div>
 </div>
 
+<!-- MODAL: Eliminar caso con respuestas (confirmación fuerte) -->
+<div class="modal-overlay oculto" id="modal-eliminar-caso">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" style="color:#922b21;">Eliminar situación N° <span id="elim-caso-num"></span></h3>
+            <button class="modal-cerrar" onclick="cerrarModalEliminarCaso()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:#922b21;background:#fadbd8;border:1px solid #f1948a;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
+                Esta situación ya tiene respuestas o decisiones asociadas. Al eliminarla se borrarán también sus respuestas y registros asociados. <strong>Esta acción no se puede deshacer.</strong>
+            </p>
+            <div class="form-group">
+                <label class="form-label">Escribe <strong>ELIMINAR</strong> para confirmar <span style="color:var(--rojo)">*</span></label>
+                <input type="text" id="elim-caso-confirmacion" class="form-control" placeholder="ELIMINAR" autocomplete="off" oninput="_validarBtnEliminarCaso()">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalEliminarCaso()">Cancelar</button>
+            <button class="btn btn-peligro" id="btn-elim-caso-confirmar" disabled onclick="confirmarEliminarCaso()">Eliminar definitivamente</button>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -918,7 +941,7 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
     const accionesArr = [];
     if (puedeEditar) {
         accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="abrirModalEditar(${JSON.stringify(caso).replace(/"/g,'&quot;')}, '${ciclo.id}', ${ciclo.numero_ciclo})">Editar</button>`);
-        accionesArr.push(`<button class="btn btn-peligro btn-pequeño" onclick="eliminarCaso('${caso.id}', ${caso.numero_caso})">Eliminar</button>`);
+        accionesArr.push(`<button class="btn btn-peligro btn-pequeño" onclick="eliminarCaso('${caso.id}', ${caso.numero_caso}, ${(caso.respuestas_jurado||[]).length})">Eliminar</button>`);
     }
     if (puedeVerRespuestas) {
         accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="verRespuestas('${caso.id}', ${caso.numero_caso})">Respuestas</button>`);
@@ -1217,12 +1240,50 @@ async function guardarCaso() {
         mostrarToast(e.message || 'Error al guardar', 'error');
     }
 }
-async function eliminarCaso(casoId, numeroCaso) {
-    const ok = await confirmar(`¿Eliminar el caso N° ${numeroCaso}? Esta acción no se puede deshacer.`);
-    if (!ok) return;
+async function eliminarCaso(casoId, numeroCaso, numRespuestas) {
+    if (!numRespuestas) {
+        // Sin respuestas: confirmación simple
+        const ok = await confirmar(`¿Eliminar la situación N° ${numeroCaso}? Esta acción no se puede deshacer.`);
+        if (!ok) return;
+        try {
+            await api.deleteBody(`/admin/casos/${casoId}`, {});
+            mostrarToast('Caso eliminado correctamente', 'exito');
+            cargarEvaluacion();
+        } catch (e) {
+            mostrarToast(e.message || 'Error al eliminar', 'error');
+        }
+    } else {
+        // Con respuestas: modal de confirmación fuerte
+        _eliminarCasoId = casoId;
+        _eliminarCasoNum = numeroCaso;
+        document.getElementById('elim-caso-num').textContent = numeroCaso;
+        document.getElementById('elim-caso-confirmacion').value = '';
+        document.getElementById('btn-elim-caso-confirmar').disabled = true;
+        document.getElementById('modal-eliminar-caso').classList.remove('oculto');
+    }
+}
+
+let _eliminarCasoId  = null;
+let _eliminarCasoNum = null;
+
+function cerrarModalEliminarCaso() {
+    document.getElementById('modal-eliminar-caso').classList.add('oculto');
+    _eliminarCasoId  = null;
+    _eliminarCasoNum = null;
+}
+
+function _validarBtnEliminarCaso() {
+    const ok = document.getElementById('elim-caso-confirmacion').value === 'ELIMINAR';
+    document.getElementById('btn-elim-caso-confirmar').disabled = !ok;
+}
+
+async function confirmarEliminarCaso() {
+    const confirmacion = document.getElementById('elim-caso-confirmacion').value;
+    if (confirmacion !== 'ELIMINAR') { mostrarToast('Debes escribir ELIMINAR exactamente', 'error'); return; }
     try {
-        await api.delete(`/admin/casos/${casoId}`);
-        mostrarToast('Caso eliminado', 'exito');
+        await api.deleteBody(`/admin/casos/${_eliminarCasoId}`, { confirmacion });
+        cerrarModalEliminarCaso();
+        mostrarToast('Caso eliminado correctamente', 'exito');
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al eliminar', 'error');
