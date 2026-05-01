@@ -231,6 +231,56 @@
     </div>
 </div>
 
+<!-- MODAL: Anular evaluación -->
+<div class="modal-overlay oculto" id="modal-anular">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Anular evaluación</h3>
+            <button class="modal-cerrar" onclick="cerrarModalAnular()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:#664d03;background:#fef3cd;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
+                La evaluación se ocultará del listado principal, pero se conservará su historial técnico para auditoría.
+            </p>
+            <div class="form-group">
+                <label class="form-label">Motivo de anulación <span style="color:var(--rojo)">*</span></label>
+                <textarea id="anular-motivo" class="form-control" rows="3" placeholder="Describe el motivo de la anulación..." style="resize:vertical;"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalAnular()">Cancelar</button>
+            <button class="btn btn-primario" onclick="confirmarAnular()">Confirmar anulación</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Eliminar definitivamente (solo Admin Principal) -->
+<div class="modal-overlay oculto" id="modal-definitivo">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" style="color:#922b21;">Eliminar definitivamente</h3>
+            <button class="modal-cerrar" onclick="cerrarModalDefinitivo()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:#922b21;background:#fadbd8;border:1px solid #f1948a;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
+                Esta acción eliminará definitivamente la evaluación, sus ciclos, casos, respuestas y decisiones asociadas. <strong>No se puede deshacer.</strong>
+            </p>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">Motivo <span style="color:var(--rojo)">*</span></label>
+                <textarea id="def-motivo" class="form-control" rows="2" placeholder="Motivo de la eliminación..." style="resize:vertical;"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Escribe <strong>ELIMINAR</strong> para confirmar <span style="color:var(--rojo)">*</span></label>
+                <input type="text" id="def-confirmacion" class="form-control" placeholder="ELIMINAR" autocomplete="off" oninput="_validarBtnDefinitivo()">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalDefinitivo()">Cancelar</button>
+            <button class="btn btn-peligro" id="btn-def-confirmar" disabled onclick="confirmarDefinitivo()">Eliminar definitivamente</button>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -249,13 +299,63 @@ if (rolEval === null || rolEval === 'jefe_area') {
 let paginaActual = 1;
 let adminsList = [];
 
-// ── Eliminar evaluación ───────────────────────────────────────────
-async function eliminarEvaluacion(id, club) {
-    const ok = await confirmar(`¿Eliminar la evaluación de "${club}"? Se eliminarán todos sus casos y ciclos. Esta acción no se puede deshacer.`);
-    if (!ok) return;
+// ── Anular evaluación (lógico, cualquier admin) ───────────────────
+let _anularId = null;
+
+function abrirModalAnular(id) {
+    _anularId = id;
+    document.getElementById('anular-motivo').value = '';
+    document.getElementById('modal-anular').classList.remove('oculto');
+}
+
+function cerrarModalAnular() {
+    document.getElementById('modal-anular').classList.add('oculto');
+    _anularId = null;
+}
+
+async function confirmarAnular() {
+    const motivo = document.getElementById('anular-motivo').value.trim();
+    if (!motivo) { mostrarToast('Ingresa un motivo de anulación', 'error'); return; }
     try {
-        await api.delete(`/admin/evaluaciones/${id}`);
-        mostrarToast('Evaluación eliminada', 'exito');
+        await api.patch(`/admin/evaluaciones/${_anularId}/anular`, { motivo });
+        cerrarModalAnular();
+        mostrarToast('Evaluación anulada correctamente', 'exito');
+        cargarEvaluaciones(paginaActual);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al anular', 'error');
+    }
+}
+
+// ── Eliminar definitivamente (solo Admin Principal) ───────────────
+let _definitivoId = null;
+
+function abrirModalDefinitivo(id) {
+    _definitivoId = id;
+    document.getElementById('def-motivo').value = '';
+    document.getElementById('def-confirmacion').value = '';
+    document.getElementById('btn-def-confirmar').disabled = true;
+    document.getElementById('modal-definitivo').classList.remove('oculto');
+}
+
+function cerrarModalDefinitivo() {
+    document.getElementById('modal-definitivo').classList.add('oculto');
+    _definitivoId = null;
+}
+
+function _validarBtnDefinitivo() {
+    const ok = document.getElementById('def-confirmacion').value === 'ELIMINAR';
+    document.getElementById('btn-def-confirmar').disabled = !ok;
+}
+
+async function confirmarDefinitivo() {
+    const motivo       = document.getElementById('def-motivo').value.trim();
+    const confirmacion = document.getElementById('def-confirmacion').value;
+    if (!motivo)                    { mostrarToast('Ingresa un motivo', 'error'); return; }
+    if (confirmacion !== 'ELIMINAR') { mostrarToast('Debes escribir ELIMINAR exactamente', 'error'); return; }
+    try {
+        await api.deleteBody(`/admin/evaluaciones/${_definitivoId}/definitivo`, { confirmacion, motivo });
+        cerrarModalDefinitivo();
+        mostrarToast('Evaluación eliminada definitivamente', 'exito');
         cargarEvaluaciones(paginaActual);
     } catch (e) {
         mostrarToast(e.message || 'Error al eliminar', 'error');
@@ -346,8 +446,11 @@ async function cargarEvaluaciones(pagina) {
                     <td>${formatFecha(ev.created_at)}</td>
                     <td><div class="tabla-acciones">
                         <a href="/admin/evaluacion-detalle.html?id=${ev.id}" class="btn btn-secundario btn-pequeño">Ver</a>
-                        ${!['publicado','aprobado','cerrado'].includes(ev.estado) && (rolEval === null || rolEval === 'jefe_area')
-                            ? `<button class="btn btn-pequeño btn-peligro" onclick="eliminarEvaluacion('${ev.id}', '${sanitizar(rodeo.club || '').replace(/'/g,"\\'")}')">Eliminar</button>`
+                        ${(rolEval === null || rolEval === 'jefe_area')
+                            ? `<button class="btn btn-pequeño" style="background:#fef3cd;color:#664d03;border:1px solid #ffe082;" onclick="abrirModalAnular('${ev.id}', '${sanitizar(rodeo.club || '').replace(/'/g,"\\'")}')">Anular</button>`
+                            : ''}
+                        ${rolEval === null
+                            ? `<button class="btn btn-pequeño btn-peligro" onclick="abrirModalDefinitivo('${ev.id}', '${sanitizar(rodeo.club || '').replace(/'/g,"\\'")}')">Elim. definitivo</button>`
                             : ''}
                     </div></td>
                 </tr>`;

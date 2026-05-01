@@ -44,7 +44,8 @@ router.get('/', async (req, res) => {
             rodeo:rodeos(id, club, fecha, asociacion),
             analista:analista_id(id, nombre_completo)
         `, { count: 'exact' })
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .eq('anulada', false);
 
     if (!hasRespFiltro) {
         query = query.range(offset, offset + parseInt(limit) - 1);
@@ -604,49 +605,105 @@ router.get('/:id/comision', async (req, res) => {
     });
 });
 
-// DELETE /:id — eliminar evaluación (bloqueado si publicado/aprobado/cerrado)
-router.delete('/:id', soloRolEvaluacion('jefe_area'), async (req, res) => {
-    const { data: ev, error: evErr } = await supabase
+// PATCH /:id/anular — anulación lógica (cualquier admin)
+router.patch('/:id/anular', async (req, res) => {
+    const { motivo } = req.body;
+    if (!motivo || !motivo.trim()) {
+        return res.status(400).json({ error: 'El motivo de anulación es obligatorio' });
+    }
+
+    const { data: ev } = await supabase
         .from('evaluaciones')
-        .select('id, estado')
+        .select('id, anulada, rodeo:rodeos(club, asociacion, fecha)')
         .eq('id', req.params.id)
         .single();
 
-    if (evErr || !ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (ev.anulada) return res.status(409).json({ error: 'La evaluación ya está anulada' });
 
-    if (['publicado', 'aprobado', 'cerrado'].includes(ev.estado)) {
-        return res.status(409).json({ error: `No se puede eliminar una evaluación en estado "${ev.estado}"` });
+    const { error } = await supabase
+        .from('evaluaciones')
+        .update({
+            anulada:          true,
+            anulada_en:       new Date().toISOString(),
+            anulada_por:      req.usuario.id,
+            motivo_anulacion: motivo.trim()
+        })
+        .eq('id', req.params.id);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: req.params.id,
+        accion:        'anular_evaluacion',
+        detalle:       { motivo: motivo.trim(), rodeo: ev.rodeo },
+        actor_id:      req.usuario.id,
+        actor_tipo:    'administrador',
+        ip_address:    req.ip || null
+    });
+
+    res.json({ mensaje: 'Evaluación anulada correctamente' });
+});
+
+// DELETE /:id/definitivo — eliminación física (solo Administrador Principal)
+router.delete('/:id/definitivo', soloRolEvaluacion(), async (req, res) => {
+    const { confirmacion, motivo } = req.body;
+
+    if (confirmacion !== 'ELIMINAR') {
+        return res.status(400).json({ error: 'Escribe ELIMINAR para confirmar la eliminación definitiva' });
+    }
+    if (!motivo || !motivo.trim()) {
+        return res.status(400).json({ error: 'El motivo es obligatorio' });
     }
 
+    const { data: ev } = await supabase
+        .from('evaluaciones')
+        .select('id, estado, rodeo:rodeos(club, asociacion, fecha)')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+
+    // Obtener ciclos y casos para cascade
     const { data: ciclos } = await supabase
         .from('evaluacion_ciclos')
         .select('id')
         .eq('evaluacion_id', req.params.id);
-
     const cicloIds = (ciclos || []).map(c => c.id);
 
+    let casoIds = [];
     if (cicloIds.length > 0) {
         const { data: casos } = await supabase
             .from('evaluacion_casos')
             .select('id')
             .in('ciclo_id', cicloIds);
-
-        const casoIds = (casos || []).map(c => c.id);
-
-        if (casoIds.length > 0) {
-            await supabase.from('evaluacion_respuestas_jurado').delete().in('caso_id', casoIds);
-            await supabase.from('evaluacion_casos').delete().in('id', casoIds);
-        }
-        await supabase.from('evaluacion_ciclos').delete().in('id', cicloIds);
+        casoIds = (casos || []).map(c => c.id);
     }
 
+    // 1. Respuestas de jurado
+    if (casoIds.length > 0) {
+        await supabase.from('evaluacion_respuestas_jurado').delete().in('caso_id', casoIds);
+    }
+
+    // 2. Auditoría y comentarios ANTES de casos/ciclos (tienen FK a ambos)
     await supabase.from('evaluacion_auditoria').delete().eq('evaluacion_id', req.params.id);
     await supabase.from('evaluacion_comentarios_finales').delete().eq('evaluacion_id', req.params.id);
 
+    // 3. Casos
+    if (casoIds.length > 0) {
+        await supabase.from('evaluacion_casos').delete().in('id', casoIds);
+    }
+
+    // 4. Ciclos
+    if (cicloIds.length > 0) {
+        await supabase.from('evaluacion_ciclos').delete().in('id', cicloIds);
+    }
+
+    // 5. Evaluación
     const { error } = await supabase.from('evaluaciones').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
 
-    res.json({ mensaje: 'Evaluación eliminada' });
+    res.json({ mensaje: 'Evaluación eliminada definitivamente' });
 });
 
 module.exports = router;

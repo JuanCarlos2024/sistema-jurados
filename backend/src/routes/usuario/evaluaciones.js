@@ -40,6 +40,7 @@ router.get('/', async (req, res) => {
             rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .in('rodeo_id', rodeoIds)
+        .eq('anulada', false)
         .order('created_at', { ascending: false });
 
     const evs        = evaluaciones || [];
