@@ -264,7 +264,7 @@ router.get('/:id', async (req, res) => {
         }
     }
 
-    const [{ data: asignaciones }, { data: evaluacion }] = await Promise.all([
+    const [{ data: asignaciones }, { data: evaluacion }, { data: datosMonitor }] = await Promise.all([
         supabase
             .from('asignaciones')
             .select(`
@@ -277,19 +277,51 @@ router.get('/:id', async (req, res) => {
             .neq('estado', 'anulado'),
         supabase
             .from('evaluaciones')
-            .select(`
-                id, estado, nota_final, anulada,
-                puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er,
-                puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
-                observacion_general, comentario_monitor,
-                resultados_alterados, comentario_resultados_alterados
-            `)
+            .select('id, estado, nota_final, anulada, puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er, observacion_general, resultados_alterados, comentario_resultados_alterados')
             .eq('rodeo_id', req.params.id)
             .eq('anulada', false)
+            .maybeSingle(),
+        supabase
+            .from('datos_monitor_rodeo')
+            .select('puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor, updated_at')
+            .eq('rodeo_id', req.params.id)
             .maybeSingle()
     ]);
 
-    res.json({ ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null });
+    res.json({ ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null, datos_monitor: datosMonitor || null });
+});
+
+// PUT /api/admin/rodeos/:id/datos-monitor — upsert datos del monitor por rodeo_id
+// Accesible para Administrador pleno y Monitor
+router.put('/:id/datos-monitor', async (req, res) => {
+    const rolEval = req.usuario.rol_evaluacion || null;
+    const esMonitor = rolEval === 'monitor';
+    const esAdminPleno = !rolEval;
+
+    if (!esMonitor && !esAdminPleno) {
+        return res.status(403).json({ error: 'Solo el Monitor o Administrador pueden guardar datos del monitor' });
+    }
+
+    const toNum = (v) => (v === null || v === '' || v === undefined) ? null : (isNaN(Number(v)) ? null : Number(v));
+    const { puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor } = req.body;
+
+    const payload = {
+        rodeo_id:            req.params.id,
+        puntaje_oficial_1er: toNum(puntaje_oficial_1er),
+        puntaje_oficial_2do: toNum(puntaje_oficial_2do),
+        puntaje_oficial_3er: toNum(puntaje_oficial_3er),
+        comentario_monitor:  comentario_monitor || null,
+        updated_at:          new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+        .from('datos_monitor_rodeo')
+        .upsert(payload, { onConflict: 'rodeo_id' })
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
 });
 
 // POST /api/admin/rodeos

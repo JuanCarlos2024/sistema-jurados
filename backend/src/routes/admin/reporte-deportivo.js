@@ -71,9 +71,8 @@ async function obtenerDatos(q, paginar = true) {
     let eq = supabase.from('evaluaciones')
         .select(`
             id, rodeo_id, estado, nota_final, updated_at,
-            puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er,
             puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
-            observacion_general, comentario_monitor,
+            observacion_general,
             resultados_alterados, comentario_resultados_alterados,
             analista:analista_id(nombre_completo)
         `)
@@ -88,6 +87,14 @@ async function obtenerDatos(q, paginar = true) {
     const evalPorRodeo = {};
     for (const ev of (evaluaciones || [])) evalPorRodeo[ev.rodeo_id] = ev;
     const evalIds = (evaluaciones || []).map(e => e.id);
+
+    // Datos del monitor (fuente de verdad para puntaje_oficial_* y comentario_monitor)
+    const { data: datosMonitorList } = await supabase
+        .from('datos_monitor_rodeo')
+        .select('rodeo_id, puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor')
+        .in('rodeo_id', rodeoIds);
+    const monitorPorRodeo = {};
+    for (const dm of (datosMonitorList || [])) monitorPorRodeo[dm.rodeo_id] = dm;
 
     // Asignaciones
     const { data: asigs } = await supabase.from('asignaciones')
@@ -161,6 +168,7 @@ async function obtenerDatos(q, paginar = true) {
     // Construir filas
     const filas = rodeos.map(rodeo => {
         const ev     = evalPorRodeo[rodeo.id] || null;
+        const dm     = monitorPorRodeo[rodeo.id] || null;
         const stats  = ev ? (statsPorEval[ev.id] || null) : null;
         const carts  = cartillasPorRodeo[rodeo.id] || [];
 
@@ -174,12 +182,16 @@ async function obtenerDatos(q, paginar = true) {
             : 'sin_cartilla';
         const fechaEnvioCartilla = carts.find(c => c.estado === 'enviada')?.enviada_en || null;
 
-        const dif1 = ev?.puntaje_oficial_1er != null && ev?.puntaje_analista_1er != null
-            ? parseFloat((ev.puntaje_oficial_1er - ev.puntaje_analista_1er).toFixed(2)) : null;
-        const dif2 = ev?.puntaje_oficial_2do != null && ev?.puntaje_analista_2do != null
-            ? parseFloat((ev.puntaje_oficial_2do - ev.puntaje_analista_2do).toFixed(2)) : null;
-        const dif3 = ev?.puntaje_oficial_3er != null && ev?.puntaje_analista_3er != null
-            ? parseFloat((ev.puntaje_oficial_3er - ev.puntaje_analista_3er).toFixed(2)) : null;
+        const po1 = dm?.puntaje_oficial_1er ?? null;
+        const po2 = dm?.puntaje_oficial_2do ?? null;
+        const po3 = dm?.puntaje_oficial_3er ?? null;
+
+        const dif1 = po1 != null && ev?.puntaje_analista_1er != null
+            ? parseFloat((po1 - ev.puntaje_analista_1er).toFixed(2)) : null;
+        const dif2 = po2 != null && ev?.puntaje_analista_2do != null
+            ? parseFloat((po2 - ev.puntaje_analista_2do).toFixed(2)) : null;
+        const dif3 = po3 != null && ev?.puntaje_analista_3er != null
+            ? parseFloat((po3 - ev.puntaje_analista_3er).toFixed(2)) : null;
 
         return {
             rodeo_id: rodeo.id,
@@ -194,9 +206,9 @@ async function obtenerDatos(q, paginar = true) {
             analista: ev?.analista?.nombre_completo || '',
             estado_evaluacion: ev?.estado || null,
             nota_final: ev?.nota_final != null ? parseFloat(ev.nota_final).toFixed(2) : null,
-            puntaje_oficial_1er: ev?.puntaje_oficial_1er ?? null,
-            puntaje_oficial_2do: ev?.puntaje_oficial_2do ?? null,
-            puntaje_oficial_3er: ev?.puntaje_oficial_3er ?? null,
+            puntaje_oficial_1er: po1,
+            puntaje_oficial_2do: po2,
+            puntaje_oficial_3er: po3,
             puntaje_analista_1er: ev?.puntaje_analista_1er ?? null,
             puntaje_analista_2do: ev?.puntaje_analista_2do ?? null,
             puntaje_analista_3er: ev?.puntaje_analista_3er ?? null,
@@ -218,7 +230,7 @@ async function obtenerDatos(q, paginar = true) {
             derivadas_comision:     stats?.derivadas_comision || 0,
             obs_jurado:   obsJurado,
             obs_admin:    rodeo.observacion || '',
-            obs_monitor:  ev?.comentario_monitor || '',
+            obs_monitor:  dm?.comentario_monitor || '',
             obs_analista: ev?.observacion_general || '',
             estado_cartilla:      estadoCartilla,
             fecha_envio_cartilla: fechaEnvioCartilla,

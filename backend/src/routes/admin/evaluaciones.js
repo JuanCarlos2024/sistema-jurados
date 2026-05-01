@@ -404,12 +404,19 @@ router.get('/:id', async (req, res) => {
 
     if (error) return res.status(error.code === 'PGRST116' ? 404 : 500).json({ error: error.message });
 
-    const { data: asigs } = await supabase
-        .from('asignaciones')
-        .select('estado_designacion, nombre_importado, usuarios_pagados(id, nombre_completo, categoria)')
-        .eq('rodeo_id', ev.rodeo_id)
-        .eq('tipo_persona', 'jurado')
-        .eq('estado', 'activo');
+    const [{ data: asigs }, { data: datosMonitor }] = await Promise.all([
+        supabase
+            .from('asignaciones')
+            .select('estado_designacion, nombre_importado, usuarios_pagados(id, nombre_completo, categoria)')
+            .eq('rodeo_id', ev.rodeo_id)
+            .eq('tipo_persona', 'jurado')
+            .eq('estado', 'activo'),
+        supabase
+            .from('datos_monitor_rodeo')
+            .select('puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor, updated_at')
+            .eq('rodeo_id', ev.rodeo_id)
+            .maybeSingle()
+    ]);
 
     const jurados = (asigs || [])
         .filter(a => a.estado_designacion !== 'rechazado')
@@ -420,7 +427,7 @@ router.get('/:id', async (req, res) => {
         }))
         .filter(j => j.nombre_completo);
 
-    res.json({ ...ev, jurados });
+    res.json({ ...ev, jurados, datos_monitor: datosMonitor || null });
 });
 
 // PATCH /:id/analista — reasignar analista (solo jefe_area o admin pleno)
@@ -556,32 +563,25 @@ router.post('/:id/devolver', soloRolEvaluacion('jefe_area'), async (req, res) =>
     res.json(data);
 });
 
-// PATCH /:id/datos-deportivos — guardar puntajes, comentarios deportivos y análisis
-// Monitor: solo puede guardar puntaje_oficial_* y comentario_monitor
-// Analista / Jefe / Admin pleno: puede guardar todos los campos
+// PATCH /:id/datos-deportivos — guardar análisis del analista
+// Monitor usa PUT /rodeos/:id/datos-monitor para puntajes oficiales y comentario_monitor
+// Este endpoint es solo para analista / jefe / admin pleno
 router.patch('/:id/datos-deportivos', async (req, res) => {
     const rolEval = req.usuario.rol_evaluacion || null;
     const esMonitor = rolEval === 'monitor';
 
+    if (esMonitor) {
+        return res.status(403).json({ error: 'El Monitor guarda sus datos desde PUT /rodeos/:id/datos-monitor' });
+    }
+
     const {
-        comentario_monitor,
-        puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er,
         puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
         observacion_general,
         resultados_alterados,
         comentario_resultados_alterados
     } = req.body;
 
-    // Monitor no puede guardar campos de análisis técnico
-    if (esMonitor && (
-        puntaje_analista_1er !== undefined || puntaje_analista_2do !== undefined ||
-        puntaje_analista_3er !== undefined || observacion_general !== undefined ||
-        resultados_alterados !== undefined || comentario_resultados_alterados !== undefined
-    )) {
-        return res.status(403).json({ error: 'El rol Monitor solo puede guardar puntajes oficiales y comentario del monitor' });
-    }
-
-    if (!esMonitor && resultados_alterados === true && !comentario_resultados_alterados?.trim()) {
+    if (resultados_alterados === true && !comentario_resultados_alterados?.trim()) {
         return res.status(400).json({ error: 'El comentario de alteración es obligatorio cuando resultados_alterados = sí' });
     }
 
@@ -589,31 +589,13 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
 
     const cambios = { updated_at: new Date().toISOString() };
 
-    // Campos permitidos para todos (monitor incluido)
-    if (comentario_monitor !== undefined)
-        cambios.comentario_monitor = comentario_monitor || null;
-    if (puntaje_oficial_1er !== undefined)
-        cambios.puntaje_oficial_1er = toNum(puntaje_oficial_1er);
-    if (puntaje_oficial_2do !== undefined)
-        cambios.puntaje_oficial_2do = toNum(puntaje_oficial_2do);
-    if (puntaje_oficial_3er !== undefined)
-        cambios.puntaje_oficial_3er = toNum(puntaje_oficial_3er);
-
-    // Campos exclusivos de analista / jefe / admin pleno
-    if (!esMonitor) {
-        if (puntaje_analista_1er !== undefined)
-            cambios.puntaje_analista_1er = toNum(puntaje_analista_1er);
-        if (puntaje_analista_2do !== undefined)
-            cambios.puntaje_analista_2do = toNum(puntaje_analista_2do);
-        if (puntaje_analista_3er !== undefined)
-            cambios.puntaje_analista_3er = toNum(puntaje_analista_3er);
-        if (observacion_general !== undefined)
-            cambios.observacion_general = observacion_general || null;
-        if (resultados_alterados !== undefined)
-            cambios.resultados_alterados = !!resultados_alterados;
-        if (comentario_resultados_alterados !== undefined)
-            cambios.comentario_resultados_alterados = comentario_resultados_alterados || null;
-    }
+    if (puntaje_analista_1er !== undefined) cambios.puntaje_analista_1er = toNum(puntaje_analista_1er);
+    if (puntaje_analista_2do !== undefined) cambios.puntaje_analista_2do = toNum(puntaje_analista_2do);
+    if (puntaje_analista_3er !== undefined) cambios.puntaje_analista_3er = toNum(puntaje_analista_3er);
+    if (observacion_general !== undefined)  cambios.observacion_general  = observacion_general || null;
+    if (resultados_alterados !== undefined) cambios.resultados_alterados = !!resultados_alterados;
+    if (comentario_resultados_alterados !== undefined)
+        cambios.comentario_resultados_alterados = comentario_resultados_alterados || null;
 
     const { data, error } = await supabase
         .from('evaluaciones')

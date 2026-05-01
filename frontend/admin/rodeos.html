@@ -530,34 +530,33 @@ function htmlDetalle(r) {
     </table>
     <div style="text-align:right; padding:8px 0; font-weight:600;">Total pagos base: ${formatCLP(totalBase)}</div>`}
     <div class="divider"></div>
-    <div class="card-titulo">Datos deportivos</div>
+    <div class="card-titulo">Datos del monitor</div>
     ${(() => {
-        const ev = r.evaluacion;
-        if (!ev) return '<p class="texto-gris" style="font-size:12px;margin-bottom:14px;">Sin evaluación técnica registrada para este rodeo.</p>';
+        const dm = r.datos_monitor || {};
         const fv = (v) => (v !== null && v !== undefined) ? String(v) : '';
         return `<div class="form-fila" style="margin-bottom:12px;">
             <div class="form-grupo">
-                <label class="form-label">Puntaje 1er lugar</label>
-                <input type="number" id="dd-p1" class="form-control" value="${sanitizar(fv(ev.puntaje_oficial_1er))}" step="0.01" min="0" placeholder="—">
+                <label class="form-label">Puntaje oficial 1er lugar</label>
+                <input type="number" id="dm-p1" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_1er))}" step="0.01" min="0" placeholder="—">
             </div>
             <div class="form-grupo">
-                <label class="form-label">Puntaje 2do lugar</label>
-                <input type="number" id="dd-p2" class="form-control" value="${sanitizar(fv(ev.puntaje_oficial_2do))}" step="0.01" min="0" placeholder="—">
+                <label class="form-label">Puntaje oficial 2do lugar</label>
+                <input type="number" id="dm-p2" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_2do))}" step="0.01" min="0" placeholder="—">
             </div>
             <div class="form-grupo">
-                <label class="form-label">Puntaje 3er lugar</label>
-                <input type="number" id="dd-p3" class="form-control" value="${sanitizar(fv(ev.puntaje_oficial_3er))}" step="0.01" min="0" placeholder="—">
+                <label class="form-label">Puntaje oficial 3er lugar</label>
+                <input type="number" id="dm-p3" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_3er))}" step="0.01" min="0" placeholder="—">
             </div>
         </div>
         <div class="form-grupo" style="margin-bottom:12px;">
             <label class="form-label">Comentario del monitor</label>
-            <textarea id="dd-monitor" class="form-control" rows="3" placeholder="Comentario del monitor del rodeo...">${sanitizar(ev.comentario_monitor || '')}</textarea>
+            <textarea id="dm-monitor" class="form-control" rows="3" placeholder="Comentario del monitor del rodeo...">${sanitizar(dm.comentario_monitor || '')}</textarea>
         </div>
         ${esMonitor ? '' : `<div class="form-grupo" style="margin-bottom:14px;">
             <label class="form-label">Comentario admin (rodeo)</label>
-            <textarea id="dd-obs" class="form-control" rows="2" placeholder="Observación general del rodeo...">${sanitizar(r.observacion || '')}</textarea>
+            <textarea id="dm-obs" class="form-control" rows="2" placeholder="Observación general del rodeo...">${sanitizar(r.observacion || '')}</textarea>
         </div>`}
-        <button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarDatosDeportivosRodeo('${ev.id}', '${r.id}')">Guardar datos deportivos</button>`;
+        <button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarDatosMonitor('${r.id}')">Guardar datos del monitor</button>`;
     })()}
     <div class="form-acciones">
         ${esMonitor ? '' : `<button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>`}
@@ -635,21 +634,20 @@ async function guardarRodeo(e) {
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }
 
-async function guardarDatosDeportivosRodeo(evalId, rodeoId) {
+async function guardarDatosMonitor(rodeoId) {
     const getNum = (id) => { const v = document.getElementById(id)?.value.trim(); if (!v) return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
-    const getStr = (id) => document.getElementById(id)?.value.trim() || null;
     const body = {
-        puntaje_oficial_1er: getNum('dd-p1'),
-        puntaje_oficial_2do: getNum('dd-p2'),
-        puntaje_oficial_3er: getNum('dd-p3'),
-        comentario_monitor:  getStr('dd-monitor'),
+        puntaje_oficial_1er: getNum('dm-p1'),
+        puntaje_oficial_2do: getNum('dm-p2'),
+        puntaje_oficial_3er: getNum('dm-p3'),
+        comentario_monitor:  document.getElementById('dm-monitor')?.value.trim() || null,
     };
-    const observacion = document.getElementById('dd-obs')?.value.trim() ?? undefined;
     try {
-        const promises = [api.patch(`/admin/evaluaciones/${evalId}/datos-deportivos`, body)];
-        if (observacion !== undefined) promises.push(api.patch(`/admin/rodeos/${rodeoId}`, { observacion: observacion || null }));
+        const promises = [api.put(`/admin/rodeos/${rodeoId}/datos-monitor`, body)];
+        const obsEl = document.getElementById('dm-obs');
+        if (obsEl !== null) promises.push(api.patch(`/admin/rodeos/${rodeoId}`, { observacion: obsEl.value.trim() || null }));
         await Promise.all(promises);
-        mostrarToast('Datos deportivos guardados', 'success');
+        mostrarToast('Datos del monitor guardados', 'success');
     } catch (e) {
         mostrarError(e);
     }
