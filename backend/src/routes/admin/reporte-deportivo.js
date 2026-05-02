@@ -295,7 +295,7 @@ router.get('/export', async (req, res) => {
             { header: 'Estado Cartilla',           key: 'estado_cartilla',  width: 16 },
             { header: 'Cartilla Recibida',         key: 'cartilla_recibida', width: 16 },
             { header: 'Obs. Jurado (Cartilla)',    key: 'obs_jurado',       width: 40 },
-            { header: 'Obs. Administrador',        key: 'obs_admin',        width: 40 },
+            { header: 'Obs. Jefe Deportivo',        key: 'obs_admin',        width: 40 },
             { header: 'Obs. Monitor',              key: 'obs_monitor',      width: 40 },
             { header: 'Obs. Análisis Técnico',     key: 'obs_analista',     width: 40 },
         ];

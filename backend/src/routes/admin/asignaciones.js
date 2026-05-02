@@ -3,6 +3,7 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase, obtenerBonoParaDistancia } = require('../../services/calculo');
+const { soloNoMonitor } = require('../../middleware/auth');
 
 // ─── Helper: crea o actualiza bono de distancia (flujo admin) ──────────────────
 // Lógica idéntica al flujo usuario:
@@ -285,8 +286,8 @@ router.patch('/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PATCH /api/admin/asignaciones/:id/comentario-admin
-router.patch('/:id/comentario-admin', async (req, res) => {
+// PATCH /api/admin/asignaciones/:id/comentario-admin  (Monitor no puede)
+router.patch('/:id/comentario-admin', soloNoMonitor, async (req, res) => {
     const { comentario_admin } = req.body;
 
     const { data: asig } = await supabase

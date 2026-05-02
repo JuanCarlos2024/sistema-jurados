@@ -536,7 +536,7 @@ function htmlDetalle(r) {
             <textarea id="dm-monitor" class="form-control" rows="3" placeholder="Comentario del monitor del rodeo...">${sanitizar(dm.comentario_monitor || '')}</textarea>
         </div>
         ${esMonitor ? '' : `<div class="form-grupo" style="margin-bottom:14px;">
-            <label class="form-label">Comentario admin (rodeo)</label>
+            <label class="form-label">Obs. Jefe Deportivo</label>
             <textarea id="dm-obs" class="form-control" rows="2" placeholder="Observación general del rodeo...">${sanitizar(r.observacion || '')}</textarea>
         </div>`}
         <button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarDatosMonitor('${r.id}')">Guardar datos del monitor</button>`;
@@ -1496,17 +1496,17 @@ function abrirComentarioAdmin(asigId, nombre, rodeoId) {
     const asig = (rodeoActual?.asignaciones || []).find(a => a.id === asigId);
     const texto = asig?.comentario_admin || '';
 
-    document.getElementById('modal-titulo').textContent = 'Comentario administrativo';
+    document.getElementById('modal-titulo').textContent = 'Comentario Jefe Deportivo';
     document.getElementById('modal-body').innerHTML = `
         <p style="font-size:13px; color:var(--gris); margin-bottom:12px;">
             Jurado: <strong>${sanitizar(nombre)}</strong><br>
             ${rodeoActual ? `Rodeo: ${sanitizar(rodeoActual.club)} · ${formatFecha(rodeoActual.fecha)}` : ''}
         </p>
         <div class="form-grupo">
-            <label class="form-label">Comentario del administrador</label>
-            <textarea id="textarea-comentario-admin" class="form-control" rows="5" placeholder="Observaciones internas sobre este jurado en este rodeo…" style="resize:vertical;">${sanitizar(texto)}</textarea>
+            <label class="form-label">Comentario Jefe Deportivo</label>
+            <textarea id="textarea-comentario-admin" class="form-control" rows="5" placeholder="Observaciones sobre este jurado en este rodeo…" style="resize:vertical;">${sanitizar(texto)}</textarea>
         </div>
-        <p style="font-size:11px; color:var(--gris); margin-top:4px;">Este comentario es visible solo para administradores y aparece en la Hoja de Vida del jurado.</p>
+        <p style="font-size:11px; color:var(--gris); margin-top:4px;">Este comentario aparece en la Hoja de Vida del jurado.</p>
         <div class="form-acciones" style="margin-top:16px;">
             <button class="btn btn-primario" onclick="guardarComentarioAdmin()">Guardar</button>
             ${texto ? `<button class="btn btn-outline" style="color:#c0392b;" onclick="guardarComentarioAdmin(true)">Borrar comentario</button>` : ''}

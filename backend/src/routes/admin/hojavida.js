@@ -46,10 +46,29 @@ router.get('/:id', async (req, res) => {
         (notas || []).forEach(n => { notasMap[n.asignacion_id] = n; });
     }
 
-    // Merge notas en historial
+    // 3.5 Evaluaciones — link por rodeo_id para botón "Ver evaluación" en hoja de vida
+    let evalMap = {};
+    if (todasAsigs.length > 0) {
+        const rodeoIds = [...new Set(todasAsigs.map(a => a.rodeos?.id).filter(Boolean))];
+        if (rodeoIds.length > 0) {
+            const { data: evals } = await supabase
+                .from('evaluaciones')
+                .select('id, rodeo_id, estado')
+                .in('rodeo_id', rodeoIds)
+                .eq('anulada', false);
+            (evals || []).forEach(e => { evalMap[e.rodeo_id] = e; });
+        }
+    }
+
+    // Merge notas y evaluaciones en historial
     const historial = todasAsigs
         .filter(a => a.estado === 'activo')
-        .map(a => ({ ...a, notas_rodeo: notasMap[a.id] || null }));
+        .map(a => ({
+            ...a,
+            notas_rodeo: notasMap[a.id] || null,
+            eval_id:     evalMap[a.rodeos?.id]?.id     || null,
+            eval_estado: evalMap[a.rodeos?.id]?.estado || null
+        }));
 
     // 4. Ficha interna
     const { data: ficha } = await supabase
