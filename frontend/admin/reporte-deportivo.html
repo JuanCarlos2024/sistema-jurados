@@ -27,8 +27,6 @@
         .tabla-reporte th { font-size:11px; padding:6px 8px; white-space:nowrap; vertical-align:bottom; }
         .tabla-reporte td { font-size:12px; padding:5px 8px; vertical-align:top; }
         .card-titulo-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px; }
-        .obs-bloque { font-size:11px; max-width:220px; }
-        .obs-bloque div + div { margin-top:3px; }
     </style>
 </head>
 <body>
@@ -137,7 +135,11 @@
                                 <th rowspan="2">Total Desc.</th>
                                 <th colspan="3" class="grupo-label">Tipo de falta</th>
                                 <th rowspan="2">Cartilla</th>
-                                <th rowspan="2" style="min-width:180px;">Observaciones</th>
+                                <th rowspan="2" style="min-width:150px;">Com. Alteración</th>
+                                <th rowspan="2" style="min-width:150px;">Obs. Jurado</th>
+                                <th rowspan="2" style="min-width:150px;">Obs. Admin.</th>
+                                <th rowspan="2" style="min-width:150px;">Obs. Monitor</th>
+                                <th rowspan="2" style="min-width:150px;">Obs. Analista</th>
                                 <th rowspan="2"></th>
                             </tr>
                             <tr>
@@ -148,7 +150,7 @@
                             </tr>
                         </thead>
                         <tbody id="tbody-reporte">
-                            <tr><td colspan="21" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                            <tr><td colspan="25" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -222,14 +224,13 @@ function renderFila(f) {
             ? '<span style="color:#148f77;font-weight:600;font-size:11px;">Enviada</span>'
             : `<span style="color:var(--gris);font-size:11px;">${CARTILLA_LABEL[f.estado_cartilla] || f.estado_cartilla}</span>`;
 
-    const obsLines = [];
-    if (f.obs_jurado)   obsLines.push(`<div><span style="font-size:10px;color:#1a5276;font-weight:600;">Jurado:</span> ${sanitizar(f.obs_jurado)}</div>`);
-    if (f.obs_admin)    obsLines.push(`<div><span style="font-size:10px;color:#6c3483;font-weight:600;">Admin:</span> ${sanitizar(f.obs_admin)}</div>`);
-    if (f.obs_monitor)  obsLines.push(`<div><span style="font-size:10px;color:#148f77;font-weight:600;">Monitor:</span> ${sanitizar(f.obs_monitor)}</div>`);
-    if (f.obs_analista) obsLines.push(`<div><span style="font-size:10px;color:#7d6608;font-weight:600;">Análisis:</span> ${sanitizar(f.obs_analista)}</div>`);
-    const obsCell = obsLines.length > 0
-        ? `<div class="obs-bloque">${obsLines.join('')}</div>`
-        : '<span style="color:var(--gris);font-size:11px;">—</span>';
+    const OBS_STYLE = 'white-space:normal;word-break:break-word;vertical-align:top;font-size:11px;max-width:180px;';
+    function fmtObs(v) { return v ? sanitizar(v) : '<span style="color:var(--gris);">—</span>'; }
+    const celdaAlt     = f.resultados_alterados ? fmtObs(f.comentario_resultados_alterados) : '<span style="color:var(--gris);">—</span>';
+    const celdaJurado  = fmtObs(f.obs_jurado);
+    const celdaAdmin   = fmtObs(f.obs_admin);
+    const celdaMonitor = fmtObs(f.obs_monitor);
+    const celdaAnalista= fmtObs(f.obs_analista);
 
     const enlaceEval = f.eval_id
         ? `<a href="/admin/evaluacion-detalle.html?id=${f.eval_id}" class="btn btn-secundario btn-pequeño" style="white-space:nowrap;">Ver evaluación</a>`
@@ -257,14 +258,18 @@ function renderFila(f) {
         <td class="num-col">${f.reglamentarias}</td>
         <td class="num-col">${f.informativos}</td>
         <td>${cartillaCell}</td>
-        <td>${obsCell}</td>
+        <td style="${OBS_STYLE}">${celdaAlt}</td>
+        <td style="${OBS_STYLE}">${celdaJurado}</td>
+        <td style="${OBS_STYLE}">${celdaAdmin}</td>
+        <td style="${OBS_STYLE}">${celdaMonitor}</td>
+        <td style="${OBS_STYLE}">${celdaAnalista}</td>
         <td>${enlaceEval}</td>
     </tr>`;
 }
 
 async function cargar(page) {
     const tbody = document.getElementById('tbody-reporte');
-    tbody.innerHTML = '<tr><td colspan="21" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="25" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
     document.getElementById('lbl-total').textContent = 'Cargando...';
     try {
         const res = await api.get('/admin/reporte-deportivo?' + buildParams(page).toString());
@@ -272,13 +277,13 @@ async function cargar(page) {
         const total = res.total || 0;
         document.getElementById('lbl-total').textContent = `${total} rodeo(s) encontrado(s)`;
         if (filas.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="21" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="25" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
         } else {
             tbody.innerHTML = filas.map(renderFila).join('');
         }
         renderPaginacion(page, total, 50);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="21"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="25"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
         document.getElementById('lbl-total').textContent = '';
     }
 }
