@@ -577,7 +577,7 @@ async function eliminarBono(id) {
 }
 
 function labelRolEval(rol) {
-    const M = { jefe_area: 'Jefe Área Deportiva', analista: 'Analista', comision_tecnica: 'Comisión Técnica', monitor: 'Monitor' };
+    const M = { jefe_area: 'Jefe Área Deportiva', analista: 'Analista', comision_tecnica: 'Comisión Técnica', monitor: 'Monitor', director: 'Director' };
     return M[rol] || 'Admin pleno';
 }
 
@@ -621,6 +621,7 @@ function editarRolAdmin(id, nombre, rolActual) {
                     <option value="analista" ${rolActual==='analista'?'selected':''}>Analista</option>
                     <option value="comision_tecnica" ${rolActual==='comision_tecnica'?'selected':''}>Comisión Técnica</option>
                     <option value="monitor" ${rolActual==='monitor'?'selected':''}>Monitor</option>
+                    <option value="director" ${rolActual==='director'?'selected':''}>Director</option>
                 </select>
             </div>
             <div class="form-acciones">
@@ -689,6 +690,7 @@ function abrirNuevoAdmin() {
                     <option value="analista">Analista</option>
                     <option value="comision_tecnica">Comisión Técnica</option>
                     <option value="monitor">Monitor</option>
+                    <option value="director">Director</option>
                 </select>
             </div>
             <div class="form-acciones">

@@ -5,6 +5,14 @@ const { soloAdmin } = require('../../middleware/auth');
 // Aplicar middleware de admin a todas las rutas de este grupo
 router.use(soloAdmin);
 
+// El rol Director es solo lectura: bloquear cualquier mutación globalmente
+router.use((req, res, next) => {
+    if (req.usuario.rol_evaluacion === 'director' && req.method !== 'GET') {
+        return res.status(403).json({ error: 'El rol Director solo tiene acceso de lectura' });
+    }
+    next();
+});
+
 router.use('/usuarios', require('./usuarios'));
 router.use('/rodeos', require('./rodeos'));
 router.use('/asignaciones', require('./asignaciones'));

@@ -158,7 +158,7 @@ async function obtenerDatos(q, paginar = true) {
     const cartillasPorRodeo = {};
     if (rodeoIds.length > 0) {
         const { data: cartillas } = await supabase.from('cartillas_jurado')
-            .select('rodeo_id, estado, datos, enviada_en').in('rodeo_id', rodeoIds).eq('es_actual', true);
+            .select('id, rodeo_id, estado, datos, enviada_en, storage_path_pdf').in('rodeo_id', rodeoIds).eq('es_actual', true);
         for (const c of (cartillas || [])) {
             if (!cartillasPorRodeo[c.rodeo_id]) cartillasPorRodeo[c.rodeo_id] = [];
             cartillasPorRodeo[c.rodeo_id].push(c);
@@ -181,6 +181,9 @@ async function obtenerDatos(q, paginar = true) {
                 : carts.some(c => c.estado === 'reabierta') ? 'reabierta' : 'borrador')
             : 'sin_cartilla';
         const fechaEnvioCartilla = carts.find(c => c.estado === 'enviada')?.enviada_en || null;
+        const cartillaEnviada    = carts.find(c => c.estado === 'enviada') || null;
+        const cartilla_id        = cartillaEnviada?.id || null;
+        const cartilla_tiene_pdf = !!(cartillaEnviada?.storage_path_pdf);
 
         const po1 = dm?.puntaje_oficial_1er ?? null;
         const po2 = dm?.puntaje_oficial_2do ?? null;
@@ -233,6 +236,9 @@ async function obtenerDatos(q, paginar = true) {
             obs_monitor:  dm?.comentario_monitor || '',
             obs_analista: ev?.observacion_general || '',
             estado_cartilla:      estadoCartilla,
+            cartilla_recibida:    estadoCartilla === 'enviada',
+            cartilla_id:          cartilla_id,
+            cartilla_tiene_pdf:   cartilla_tiene_pdf,
             fecha_envio_cartilla: fechaEnvioCartilla,
             eval_updated_at: ev?.updated_at || null
         };
@@ -278,23 +284,16 @@ router.get('/export', async (req, res) => {
             { header: 'Revisado 1er Lugar',        key: 'puntaje_analista_1er', width: 14 },
             { header: 'Revisado 2do Lugar',        key: 'puntaje_analista_2do', width: 14 },
             { header: 'Revisado 3er Lugar',        key: 'puntaje_analista_3er', width: 14 },
-            { header: 'Diferencia 1er',            key: 'diferencia_1er',   width: 12 },
-            { header: 'Diferencia 2do',            key: 'diferencia_2do',   width: 12 },
-            { header: 'Diferencia 3er',            key: 'diferencia_3er',   width: 12 },
             { header: 'Resultado Alterado',        key: 'resultados_alterados', width: 16 },
             { header: 'Com. Alteración',           key: 'comentario_resultados_alterados', width: 35 },
+            { header: 'Total Situaciones',         key: 'total_sit',        width: 16 },
             { header: 'Sit. Ciclo 1 - Primeros 3', key: 'c1_total',        width: 20 },
-            { header: 'Desc. Ciclo 1',             key: 'c1_desc',          width: 12 },
             { header: 'Sit. Ciclo 2 - Campeones',  key: 'c2_total',        width: 20 },
-            { header: 'Desc. Ciclo 2',             key: 'c2_desc',          width: 12 },
-            { header: 'Total Puntos Descontados',  key: 'total_desc',       width: 20 },
-            { header: 'Reglamentarias',            key: 'reglamentarias',   width: 14 },
             { header: 'Apreciación',               key: 'interpretativas',  width: 14 },
+            { header: 'Reglamentaria',             key: 'reglamentarias',   width: 14 },
             { header: 'Conceptual',                key: 'informativos',     width: 14 },
-            { header: 'Apelaciones Acogidas',      key: 'apelaciones_acogidas', width: 18 },
-            { header: 'Apelaciones Rechazadas',    key: 'apelaciones_rechazadas', width: 18 },
-            { header: 'Derivadas Comité',          key: 'derivadas_comision', width: 16 },
             { header: 'Estado Cartilla',           key: 'estado_cartilla',  width: 16 },
+            { header: 'Cartilla Recibida',         key: 'cartilla_recibida', width: 16 },
             { header: 'Obs. Jurado (Cartilla)',    key: 'obs_jurado',       width: 40 },
             { header: 'Obs. Administrador',        key: 'obs_admin',        width: 40 },
             { header: 'Obs. Monitor',              key: 'obs_monitor',      width: 40 },
@@ -330,23 +329,16 @@ router.get('/export', async (req, res) => {
                 puntaje_analista_1er: f.puntaje_analista_1er != null ? Number(f.puntaje_analista_1er) : '',
                 puntaje_analista_2do: f.puntaje_analista_2do != null ? Number(f.puntaje_analista_2do) : '',
                 puntaje_analista_3er: f.puntaje_analista_3er != null ? Number(f.puntaje_analista_3er) : '',
-                diferencia_1er:   f.diferencia_1er != null ? Number(f.diferencia_1er) : '',
-                diferencia_2do:   f.diferencia_2do != null ? Number(f.diferencia_2do) : '',
-                diferencia_3er:   f.diferencia_3er != null ? Number(f.diferencia_3er) : '',
                 resultados_alterados: f.resultados_alterados ? 'SÍ' : 'NO',
                 comentario_resultados_alterados: f.comentario_resultados_alterados,
+                total_sit:        f.c1_total + f.c2_total,
                 c1_total:         f.c1_total,
-                c1_desc:          f.c1_desc,
                 c2_total:         f.c2_total,
-                c2_desc:          f.c2_desc,
-                total_desc:       f.total_desc,
-                reglamentarias:         f.reglamentarias,
-                interpretativas:        f.interpretativas,
-                informativos:           f.informativos,
-                apelaciones_acogidas:   f.apelaciones_acogidas,
-                apelaciones_rechazadas: f.apelaciones_rechazadas,
-                derivadas_comision:     f.derivadas_comision,
+                interpretativas:  f.interpretativas,
+                reglamentarias:   f.reglamentarias,
+                informativos:     f.informativos,
                 estado_cartilla:  f.estado_cartilla,
+                cartilla_recibida: f.cartilla_recibida ? 'Sí' : 'No',
                 obs_jurado:       f.obs_jurado,
                 obs_admin:        f.obs_admin,
                 obs_monitor:      f.obs_monitor,

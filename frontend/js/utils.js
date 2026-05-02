@@ -107,13 +107,23 @@ function labelRolAdmin(rol) {
         jefe_area:        'Jefe Área Deportiva',
         analista:         'Analista',
         comision_tecnica: 'Comisión Técnica',
-        monitor:          'Monitor'
+        monitor:          'Monitor',
+        director:         'Director'
     };
     return M[rol] || 'Admin pleno';
 }
 
 // Páginas permitidas por rol (monitor: acceso muy restringido)
-const _PAGINAS_MONITOR    = ['/admin/dashboard.html', '/admin/rodeos.html', '/admin/reporte-deportivo.html'];
+const _PAGINAS_MONITOR = ['/admin/dashboard.html', '/admin/rodeos.html', '/admin/reporte-deportivo.html'];
+// Páginas permitidas para director (solo lectura: reporte deportivo, cartillas, evaluaciones)
+const _PAGINAS_DIRECTOR = [
+    '/admin/reporte-deportivo.html',
+    '/admin/reporte-cartillas.html',
+    '/admin/evaluaciones.html',
+    '/admin/evaluacion-detalle.html',
+    '/admin/evaluacion-dashboard.html',
+    '/admin/evaluacion-reportes.html'
+];
 // Páginas bloqueadas para roles de evaluación (analista/jefe/comision)
 const _PAGINAS_BLOQUEADAS_EVAL = [
     '/admin/configuracion.html', '/admin/bonos.html', '/admin/exportacion-pagos.html',
@@ -131,7 +141,10 @@ function _ajustarMenuPorRol(rol) {
             // Monitor solo ve dashboard, rodeos y reporte-deportivo
             const permitida = _PAGINAS_MONITOR.some(p => href.endsWith(p.split('/').pop()));
             a.style.display = permitida ? '' : 'none';
-            // Ocultar también separadores de sección sin items visibles
+        } else if (rol === 'director') {
+            // Director solo ve páginas de reporte/evaluación (solo lectura)
+            const permitida = _PAGINAS_DIRECTOR.some(p => href.endsWith(p.split('/').pop()));
+            a.style.display = permitida ? '' : 'none';
         } else {
             // Analista, jefe, comision: ocultar páginas de pagos/config/admin
             const bloqueada = _PAGINAS_BLOQUEADAS_EVAL.some(p => href.endsWith(p.split('/').pop()));
@@ -159,6 +172,9 @@ function _aplicarControlAccesoAdmin(usuario) {
     if (rol === 'monitor') {
         const permitida = _PAGINAS_MONITOR.some(p => path.endsWith(p.split('/').pop()) || path === p);
         if (!permitida) { window.location.href = '/admin/rodeos.html'; return; }
+    } else if (rol === 'director') {
+        const permitida = _PAGINAS_DIRECTOR.some(p => path.endsWith(p.split('/').pop()) || path === p);
+        if (!permitida) { window.location.href = '/admin/reporte-deportivo.html'; return; }
     } else {
         // analista / jefe_area / comision_tecnica: bloquear páginas de admin general
         const bloqueada = _PAGINAS_BLOQUEADAS_EVAL.some(p => path.endsWith(p.split('/').pop()));

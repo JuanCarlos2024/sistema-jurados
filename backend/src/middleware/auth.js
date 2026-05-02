@@ -74,7 +74,6 @@ function soloRolEvaluacion(...roles) {
 }
 
 // Middleware: bloquea al rol 'monitor' de operaciones que no le corresponden.
-// Llamar después de soloAdmin en rutas que monitor no puede ejecutar.
 function soloNoMonitor(req, res, next) {
     if (req.usuario.rol_evaluacion === 'monitor') {
         return res.status(403).json({ error: 'El rol Monitor no tiene permiso para esta acción' });
@@ -82,4 +81,12 @@ function soloNoMonitor(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor };
+// Middleware: bloquea al rol 'director' de cualquier mutación.
+function soloNoDirector(req, res, next) {
+    if (req.usuario.rol_evaluacion === 'director') {
+        return res.status(403).json({ error: 'El rol Director solo tiene acceso de lectura' });
+    }
+    next();
+}
+
+module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector };
