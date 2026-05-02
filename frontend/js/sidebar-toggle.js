@@ -10,6 +10,7 @@
     function init() {
         var topbarFlex = document.querySelector('.topbar .flex');
         if (!topbarFlex) return;
+        if (topbarFlex.querySelector('.btn-sidebar-collapse')) return;
 
         var btn = document.createElement('button');
         btn.className = 'btn-sidebar-collapse';

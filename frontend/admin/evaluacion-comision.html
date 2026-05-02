@@ -98,29 +98,7 @@
             <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
             <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
         </div>
-        <nav class="sidebar-nav">
-            <div class="nav-seccion">Principal</div>
-            <a href="/admin/dashboard.html" class="nav-item"><span class="icon">📊</span> Dashboard</a>
-            <div class="nav-seccion">Personas</div>
-            <a href="/admin/usuarios.html" class="nav-item"><span class="icon">👥</span> Jurados y Delegados</a>
-            <a href="/admin/disponibilidad.html" class="nav-item"><span class="icon">📅</span> Disponibilidad</a>
-            <div class="nav-seccion">Rodeos</div>
-            <a href="/admin/rodeos.html" class="nav-item"><span class="icon">🏆</span> Rodeos</a>
-            <a href="/admin/importacion.html" class="nav-item"><span class="icon">📥</span> Importar Excel</a>
-            <div class="nav-seccion">Pagos</div>
-            <a href="/admin/bonos.html" class="nav-item"><span class="icon">💰</span> Bonos</a>
-            <div class="nav-seccion">Reportes</div>
-            <a href="/admin/reportes.html" class="nav-item"><span class="icon">📈</span> Reportes</a>
-            <a href="/admin/exportacion-pagos.html" class="nav-item"><span class="icon">💳</span> Exportación de Pagos</a>
-            <a href="/admin/reporte-cartillas.html" class="nav-item"><span class="icon">📋</span> Reporte Cartillas Jurado</a>
-            <div class="nav-seccion">Sistema</div>
-            <a href="/admin/configuracion.html" class="nav-item"><span class="icon">⚙️</span> Configuración</a>
-            <a href="/admin/auditoria.html" class="nav-item"><span class="icon">📋</span> Auditoría</a>
-            <div class="nav-seccion">Evaluación Técnica</div>
-            <a href="/admin/evaluaciones.html" class="nav-item activo" data-eval-nav><span class="icon">📝</span> Análisis de Casos</a>
-            <a href="/admin/evaluacion-dashboard.html" class="nav-item" data-eval-nav><span class="icon">📊</span> Dashboard Eval.</a>
-            <a href="/admin/evaluacion-reportes.html" class="nav-item" data-eval-nav><span class="icon">📌</span> Reportes Eval.</a>
-        </nav>
+        <nav class="sidebar-nav" data-active="/admin/evaluaciones.html"></nav>
         <div class="sidebar-footer">
             <div class="sidebar-usuario" id="nombre-admin"></div>
             <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
@@ -177,7 +155,9 @@
 </div>
 
 <script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
 <script>
 (async function () {
     protegerRuta();
