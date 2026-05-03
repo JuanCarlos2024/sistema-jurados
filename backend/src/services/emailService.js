@@ -1,57 +1,38 @@
-const https = require('https');
+const sgMail = require('@sendgrid/mail');
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM    = process.env.RESEND_FROM_EMAIL;
-const APP_URL        = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+const SENDGRID_API_KEY  = process.env.SENDGRID_API_KEY;
+const SENDGRID_FROM     = process.env.SENDGRID_FROM_EMAIL;
+const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || 'Sistema de Jurados';
+const APP_URL           = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 
-function enviarEmail({ to, subject, html, text }) {
-    return new Promise((resolve) => {
-        if (!RESEND_API_KEY || !RESEND_FROM) {
-            console.warn('[emailService] RESEND_API_KEY o RESEND_FROM_EMAIL no configurados. Email omitido.');
-            return resolve({ ok: false, motivo: 'sin_configuracion' });
-        }
-        if (!to) return resolve({ ok: false, motivo: 'sin_destinatario' });
+if (SENDGRID_API_KEY) {
+    sgMail.setApiKey(SENDGRID_API_KEY);
+}
 
-        const body = JSON.stringify({
-            from:    RESEND_FROM,
-            to:      Array.isArray(to) ? to : [to],
-            subject,
-            html,
-            text
-        });
+async function enviarEmail({ to, subject, html, text }) {
+    if (!SENDGRID_API_KEY || !SENDGRID_FROM) {
+        console.warn('[emailService] SENDGRID_API_KEY o SENDGRID_FROM_EMAIL no configurados. Email omitido.');
+        return { ok: false, motivo: 'sin_configuracion' };
+    }
+    if (!to) return { ok: false, motivo: 'sin_destinatario' };
 
-        const options = {
-            hostname: 'api.resend.com',
-            path:     '/emails',
-            method:   'POST',
-            headers: {
-                'Content-Type':  'application/json',
-                'Authorization': `Bearer ${RESEND_API_KEY}`,
-                'Content-Length': Buffer.byteLength(body)
-            }
-        };
+    const msg = {
+        to:   Array.isArray(to) ? to : [to],
+        from: { email: SENDGRID_FROM, name: SENDGRID_FROM_NAME },
+        subject,
+        html,
+        text
+    };
 
-        const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', chunk => { data += chunk; });
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve({ ok: true });
-                } else {
-                    console.warn(`[emailService] Error enviando a ${to}: ${res.statusCode} ${data}`);
-                    resolve({ ok: false, motivo: `HTTP ${res.statusCode}` });
-                }
-            });
-        });
-
-        req.on('error', (e) => {
-            console.warn(`[emailService] Error de red enviando a ${to}: ${e.message}`);
-            resolve({ ok: false, motivo: e.message });
-        });
-
-        req.write(body);
-        req.end();
-    });
+    try {
+        await sgMail.send(msg);
+        return { ok: true };
+    } catch (err) {
+        const status = err.response?.status;
+        const detail = err.response?.body?.errors?.[0]?.message || err.message;
+        console.warn(`[emailService] Error enviando a ${to}: ${status} — ${detail}`);
+        return { ok: false, motivo: status ? `HTTP ${status}` : err.message };
+    }
 }
 
 async function notificarJuradosCicloAbierto({ ciclo, rodeo, jurados, configuracion }) {
