@@ -125,6 +125,17 @@
             margin-bottom: 10px;
         }
         .reapertura-info strong { color: #784212; }
+
+        #ad-wrap-alt.ad-visible {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            height: auto !important;
+            overflow: visible !important;
+        }
+        #ad-wrap-alt.ad-hidden {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -576,7 +587,7 @@ async function cargarEvaluacion() {
         `;
 
         document.getElementById('contenido-principal').innerHTML = html;
-        initComentarioAlteracion();
+        setTimeout(initComentarioAlteracion, 0);
     } catch (e) {
         document.getElementById('contenido-principal').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
@@ -1535,29 +1546,47 @@ function initComentarioAlteracion() {
     const wrap     = document.getElementById('ad-wrap-alt');
     const textarea = document.getElementById('ad-comentario_resultados_alterados');
 
-    if (!checkbox || !wrap || !textarea) {
-        console.warn('[initComentarioAlteracion] elementos no encontrados', {
-            checkbox: !!checkbox, wrap: !!wrap, textarea: !!textarea
-        });
-        return;
-    }
+    if (!checkbox || !wrap) return;
 
     const aplicarEstado = () => {
         const marcado = checkbox.checked;
         if (marcado) {
-            wrap.style.display = 'block';
-            wrap.hidden = false;
-            wrap.classList.remove('hidden', 'd-none');
-            textarea.required = true;
+            wrap.style.setProperty('display', 'block', 'important');
+            wrap.classList.add('ad-visible');
+            wrap.classList.remove('ad-hidden');
+            if (textarea) textarea.required = true;
         } else {
-            wrap.style.display = 'none';
-            textarea.required = false;
-            textarea.value = '';
+            wrap.style.setProperty('display', 'none', 'important');
+            wrap.classList.add('ad-hidden');
+            wrap.classList.remove('ad-visible');
+            if (textarea) { textarea.required = false; textarea.value = ''; }
         }
     };
 
     checkbox.addEventListener('change', aplicarEstado);
-    aplicarEstado(); // aplica estado inicial tras cada render
+    aplicarEstado();
+}
+
+// Delegación en document — sobrevive re-renders de innerHTML
+if (!window.__comentarioAlteracionListenerInicializado) {
+    window.__comentarioAlteracionListenerInicializado = true;
+    document.addEventListener('change', function(e) {
+        if (!e.target || e.target.id !== 'ad-resultados_alterados') return;
+        const wrap     = document.getElementById('ad-wrap-alt');
+        const textarea = document.getElementById('ad-comentario_resultados_alterados');
+        if (!wrap) return;
+        if (e.target.checked) {
+            wrap.style.setProperty('display', 'block', 'important');
+            wrap.classList.add('ad-visible');
+            wrap.classList.remove('ad-hidden');
+            if (textarea) textarea.required = true;
+        } else {
+            wrap.style.setProperty('display', 'none', 'important');
+            wrap.classList.add('ad-hidden');
+            wrap.classList.remove('ad-visible');
+            if (textarea) { textarea.required = false; textarea.value = ''; }
+        }
+    });
 }
 
 async function guardarAnalisisDeportivo() {
