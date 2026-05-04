@@ -1,24 +1,36 @@
 const sgMail = require('@sendgrid/mail');
 
-const SENDGRID_API_KEY  = process.env.SENDGRID_API_KEY;
-const SENDGRID_FROM     = process.env.SENDGRID_FROM_EMAIL;
-const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || 'Sistema de Jurados';
-const APP_URL           = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
-
-if (SENDGRID_API_KEY) {
-    sgMail.setApiKey(SENDGRID_API_KEY);
-}
+// APP_URL se lee a nivel de módulo porque no es un secreto y tiene fallback seguro
+const APP_URL = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 
 async function enviarEmail({ to, subject, html, text }) {
-    if (!SENDGRID_API_KEY || !SENDGRID_FROM) {
-        console.warn('[emailService] SENDGRID_API_KEY o SENDGRID_FROM_EMAIL no configurados. Email omitido.');
-        return { ok: false, motivo: 'sin_configuracion' };
+    // Leer en el momento de enviar (no al cargar el módulo) para capturar cambios de entorno
+    const apiKey    = process.env.SENDGRID_API_KEY;
+    const fromEmail = process.env.SENDGRID_FROM_EMAIL;
+    const fromName  = process.env.SENDGRID_FROM_NAME || 'Sistema de Jurados';
+
+    // Log de diagnóstico seguro — muestra presencia, no valores secretos
+    console.log('[emailService] Config SendGrid al enviar:');
+    console.log('  SENDGRID_API_KEY presente:    ', !!apiKey);
+    console.log('  SENDGRID_FROM_EMAIL presente: ', !!fromEmail, fromEmail ? `(${fromEmail})` : '');
+    console.log('  SENDGRID_FROM_NAME presente:  ', !!process.env.SENDGRID_FROM_NAME);
+
+    if (!apiKey || !fromEmail) {
+        const faltantes = [
+            !apiKey    ? 'SENDGRID_API_KEY'    : null,
+            !fromEmail ? 'SENDGRID_FROM_EMAIL'  : null
+        ].filter(Boolean);
+        console.warn('[emailService] Variables faltantes en proceso:', faltantes.join(', '));
+        return { ok: false, motivo: 'sin_configuracion', faltantes };
     }
-    if (!to) return { ok: false, motivo: 'sin_destinatario' };
+
+    if (!to) return { ok: false, motivo: 'sin_destinatario', faltantes: [] };
+
+    sgMail.setApiKey(apiKey);
 
     const msg = {
         to:   Array.isArray(to) ? to : [to],
-        from: { email: SENDGRID_FROM, name: SENDGRID_FROM_NAME },
+        from: { email: fromEmail, name: fromName },
         subject,
         html,
         text
@@ -26,12 +38,13 @@ async function enviarEmail({ to, subject, html, text }) {
 
     try {
         await sgMail.send(msg);
+        console.log(`[emailService] Enviado OK a ${to}`);
         return { ok: true };
     } catch (err) {
         const status = err.response?.status;
         const detail = err.response?.body?.errors?.[0]?.message || err.message;
-        console.warn(`[emailService] Error enviando a ${to}: ${status} — ${detail}`);
-        return { ok: false, motivo: status ? `HTTP ${status}` : err.message };
+        console.warn(`[emailService] Error al enviar a ${to} | statusCode:${status ?? 'network'} | msg:${detail}`);
+        return { ok: false, motivo: status ? `HTTP ${status}` : err.message, faltantes: [] };
     }
 }
 
@@ -47,7 +60,7 @@ async function notificarJuradosCicloAbierto({ ciclo, rodeo, jurados, configuraci
 
     for (const j of (jurados || [])) {
         if (!j.email) {
-            resultados.push({ nombre: j.nombre_completo, ok: false, motivo: 'sin_email' });
+            resultados.push({ nombre: j.nombre_completo, ok: false, motivo: 'sin_email', faltantes: [] });
             continue;
         }
 

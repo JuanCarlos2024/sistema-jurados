@@ -19,7 +19,7 @@ router.post('/test-email', async (req, res) => {
     if (result.ok) {
         res.json({ ok: true, mensaje: `Email enviado a ${to}` });
     } else {
-        res.status(500).json({ ok: false, motivo: result.motivo });
+        res.status(500).json({ ok: false, motivo: result.motivo, faltantes: result.faltantes || [] });
     }
 });
 
