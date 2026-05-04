@@ -576,6 +576,7 @@ async function cargarEvaluacion() {
         `;
 
         document.getElementById('contenido-principal').innerHTML = html;
+        initComentarioAlteracion();
     } catch (e) {
         document.getElementById('contenido-principal').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
@@ -1482,7 +1483,7 @@ function renderAnalisisDeportivo(ev) {
 
     const chkHtml = esAnalista
         ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-               <input type="checkbox" id="ad-resultados_alterados" ${altChecked} onchange="toggleComentarioAlt(this.checked)">
+               <input type="checkbox" id="ad-resultados_alterados" ${altChecked}>
                <span>¿Hay indicios de que los resultados fueron alterados?</span>
            </label>`
         : `<span style="font-size:13px;">Resultados alterados: <strong>${ev.resultados_alterados ? '⚠️ Sí' : 'No'}</strong></span>`;
@@ -1529,14 +1530,34 @@ function renderAnalisisDeportivo(ev) {
     </div>`;
 }
 
-function toggleComentarioAlt(checked) {
-    const wrap = document.getElementById('ad-wrap-alt');
-    if (!wrap) return;
-    wrap.style.display = checked ? '' : 'none';
-    if (!checked) {
-        const ta = document.getElementById('ad-comentario_resultados_alterados');
-        if (ta) ta.value = '';
+function initComentarioAlteracion() {
+    const checkbox = document.getElementById('ad-resultados_alterados');
+    const wrap     = document.getElementById('ad-wrap-alt');
+    const textarea = document.getElementById('ad-comentario_resultados_alterados');
+
+    if (!checkbox || !wrap || !textarea) {
+        console.warn('[initComentarioAlteracion] elementos no encontrados', {
+            checkbox: !!checkbox, wrap: !!wrap, textarea: !!textarea
+        });
+        return;
     }
+
+    const aplicarEstado = () => {
+        const marcado = checkbox.checked;
+        if (marcado) {
+            wrap.style.display = 'block';
+            wrap.hidden = false;
+            wrap.classList.remove('hidden', 'd-none');
+            textarea.required = true;
+        } else {
+            wrap.style.display = 'none';
+            textarea.required = false;
+            textarea.value = '';
+        }
+    };
+
+    checkbox.addEventListener('change', aplicarEstado);
+    aplicarEstado(); // aplica estado inicial tras cada render
 }
 
 async function guardarAnalisisDeportivo() {
