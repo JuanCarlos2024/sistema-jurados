@@ -587,7 +587,7 @@ async function cargarEvaluacion() {
         `;
 
         document.getElementById('contenido-principal').innerHTML = html;
-        setTimeout(initComentarioAlteracion, 0);
+        setTimeout(asegurarComentarioAlteracion, 0);
     } catch (e) {
         document.getElementById('contenido-principal').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
@@ -1490,11 +1490,12 @@ function renderAnalisisDeportivo(ev) {
     }
 
     const altChecked = ev.resultados_alterados ? 'checked' : '';
-    const altVisible = ev.resultados_alterados ? '' : 'display:none;';
+    const altComentarioEscapado = sanitizar(ev.comentario_resultados_alterados || '');
 
     const chkHtml = esAnalista
         ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-               <input type="checkbox" id="ad-resultados_alterados" ${altChecked}>
+               <input type="checkbox" id="ad-resultados_alterados" ${altChecked}
+                      data-comentario-inicial="${altComentarioEscapado}">
                <span>¿Hay indicios de que los resultados fueron alterados?</span>
            </label>`
         : `<span style="font-size:13px;">Resultados alterados: <strong>${ev.resultados_alterados ? '⚠️ Sí' : 'No'}</strong></span>`;
@@ -1530,61 +1531,74 @@ function renderAnalisisDeportivo(ev) {
 
         <div style="margin-bottom:12px;">${chkHtml}</div>
 
-        <div id="ad-wrap-alt" style="${altVisible}margin-bottom:12px;">
-            <div class="form-group">
-                <label class="form-label">Comentario sobre la alteración <span style="color:#c0392b;">*</span></label>
-                ${campoText('comentario_resultados_alterados', 'Describe los indicios de alteración...')}
-            </div>
-        </div>
-
         ${esAnalista ? `<button class="btn btn-primario btn-pequeño" onclick="guardarAnalisisDeportivo()">Guardar análisis deportivo</button>` : ''}
     </div>`;
 }
 
-function initComentarioAlteracion() {
-    const checkbox = document.getElementById('ad-resultados_alterados');
-    const wrap     = document.getElementById('ad-wrap-alt');
-    const textarea = document.getElementById('ad-comentario_resultados_alterados');
+function asegurarComentarioAlteracion() {
+    const checkbox =
+        document.getElementById('ad-resultados_alterados') ||
+        document.querySelector('input[name="resultados_alterados"]') ||
+        Array.from(document.querySelectorAll('input[type="checkbox"]'))
+            .find(cb => (cb.parentElement?.innerText || '').includes('resultados fueron alterados'));
 
-    if (!checkbox || !wrap) return;
+    if (!checkbox) return;
+
+    // Eliminar contenedor anterior si quedó de un render previo
+    const anterior = document.getElementById('ad-comentario-alteracion-visible');
+    if (anterior) anterior.remove();
+
+    const contenedor = document.createElement('div');
+    contenedor.id = 'ad-comentario-alteracion-visible';
+    contenedor.style.marginTop = '12px';
+    contenedor.style.marginBottom = '12px';
+    contenedor.style.display = 'none';
+    contenedor.innerHTML = [
+        '<label for="ad-comentario_resultados_alterados"',
+        ' style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;">',
+        'Comentario sobre la alteración <span style="color:#c0392b;">*</span>',
+        '</label>',
+        '<textarea',
+        ' id="ad-comentario_resultados_alterados"',
+        ' name="comentario_resultados_alterados"',
+        ' class="form-control"',
+        ' rows="3"',
+        ' placeholder="Describe los indicios de alteración..."',
+        '></textarea>'
+    ].join('');
+
+    const filaCheckbox = checkbox.closest('label') || checkbox.parentElement;
+    filaCheckbox.insertAdjacentElement('afterend', contenedor);
+
+    // Precarga: valor guardado en data attribute del checkbox
+    const valorInicial = checkbox.dataset.comentarioInicial || '';
+    const textarea = document.getElementById('ad-comentario_resultados_alterados');
+    if (textarea && valorInicial) textarea.value = valorInicial;
 
     const aplicarEstado = () => {
-        const marcado = checkbox.checked;
-        if (marcado) {
-            wrap.style.setProperty('display', 'block', 'important');
-            wrap.classList.add('ad-visible');
-            wrap.classList.remove('ad-hidden');
+        if (checkbox.checked) {
+            contenedor.style.display = 'block';
+            contenedor.hidden = false;
             if (textarea) textarea.required = true;
         } else {
-            wrap.style.setProperty('display', 'none', 'important');
-            wrap.classList.add('ad-hidden');
-            wrap.classList.remove('ad-visible');
+            contenedor.style.display = 'none';
             if (textarea) { textarea.required = false; textarea.value = ''; }
         }
     };
 
-    checkbox.addEventListener('change', aplicarEstado);
+    checkbox.onchange = aplicarEstado;
     aplicarEstado();
 }
 
-// Delegación en document — sobrevive re-renders de innerHTML
-if (!window.__comentarioAlteracionListenerInicializado) {
-    window.__comentarioAlteracionListenerInicializado = true;
+// Delegación en document — respaldo ante re-renders de innerHTML
+if (!window.__listenerAlteracionVisible) {
+    window.__listenerAlteracionVisible = true;
     document.addEventListener('change', function(e) {
-        if (!e.target || e.target.id !== 'ad-resultados_alterados') return;
-        const wrap     = document.getElementById('ad-wrap-alt');
-        const textarea = document.getElementById('ad-comentario_resultados_alterados');
-        if (!wrap) return;
-        if (e.target.checked) {
-            wrap.style.setProperty('display', 'block', 'important');
-            wrap.classList.add('ad-visible');
-            wrap.classList.remove('ad-hidden');
-            if (textarea) textarea.required = true;
-        } else {
-            wrap.style.setProperty('display', 'none', 'important');
-            wrap.classList.add('ad-hidden');
-            wrap.classList.remove('ad-visible');
-            if (textarea) { textarea.required = false; textarea.value = ''; }
+        const target = e.target;
+        if (!target || target.type !== 'checkbox') return;
+        const textoPadre = target.parentElement?.innerText || '';
+        if (target.id === 'ad-resultados_alterados' || textoPadre.includes('resultados fueron alterados')) {
+            setTimeout(asegurarComentarioAlteracion, 0);
         }
     });
 }
