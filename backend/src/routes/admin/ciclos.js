@@ -447,7 +447,7 @@ async function getDescuentos() {
         .single();
     return {
         interpretativa: data?.descuento_interpretativa ?? 1,
-        reglamentaria:  data?.descuento_reglamentaria  ?? 2,
+        reglamentaria:  data?.descuento_reglamentaria  ?? 1,
         informativo:    data?.descuento_informativo    ?? 0
     };
 }

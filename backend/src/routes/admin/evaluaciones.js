@@ -120,7 +120,7 @@ router.get('/', async (req, res) => {
         if (c.tipo_caso === 'informativo')    casosPorEval[c.evaluacion_id].informativos++;
     }
     for (const rf of Object.values(casosPorEval)) {
-        rf.puntos_descontados = rf.reglamentarias * 2 + rf.interpretativas * 1;
+        rf.puntos_descontados = rf.reglamentarias * 1 + rf.interpretativas * 1;
     }
 
     const juradosPorRodeo = {};
