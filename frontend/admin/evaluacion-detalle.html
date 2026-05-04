@@ -1482,7 +1482,7 @@ function renderAnalisisDeportivo(ev) {
 
     const chkHtml = esAnalista
         ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-               <input type="checkbox" id="ad-resultados_alterados" ${altChecked} onchange="document.getElementById('ad-wrap-alt').style.display=this.checked?'':'none'">
+               <input type="checkbox" id="ad-resultados_alterados" ${altChecked} onchange="toggleComentarioAlt(this.checked)">
                <span>¿Hay indicios de que los resultados fueron alterados?</span>
            </label>`
         : `<span style="font-size:13px;">Resultados alterados: <strong>${ev.resultados_alterados ? '⚠️ Sí' : 'No'}</strong></span>`;
@@ -1527,6 +1527,16 @@ function renderAnalisisDeportivo(ev) {
 
         ${esAnalista ? `<button class="btn btn-primario btn-pequeño" onclick="guardarAnalisisDeportivo()">Guardar análisis deportivo</button>` : ''}
     </div>`;
+}
+
+function toggleComentarioAlt(checked) {
+    const wrap = document.getElementById('ad-wrap-alt');
+    if (!wrap) return;
+    wrap.style.display = checked ? '' : 'none';
+    if (!checked) {
+        const ta = document.getElementById('ad-comentario_resultados_alterados');
+        if (ta) ta.value = '';
+    }
 }
 
 async function guardarAnalisisDeportivo() {
