@@ -101,13 +101,24 @@ router.post('/', async (req, res) => {
 
     const { data: rodeo } = await supabase
         .from('rodeos')
-        .select('id, duracion_dias, estado')
+        .select('id, duracion_dias, estado, fecha')
         .eq('id', rodeo_id)
         .single();
 
     if (!rodeo || rodeo.estado !== 'activo') {
         return res.status(400).json({ error: 'Rodeo no encontrado o anulado' });
     }
+
+    // Generar rango de fechas del rodeo (para validación de disponibilidad)
+    const _duracion    = rodeo.duracion_dias || 1;
+    const _fechasRodeo = [];
+    const _baseDate    = new Date(rodeo.fecha + 'T00:00:00Z');
+    for (let i = 0; i < _duracion; i++) {
+        const d = new Date(_baseDate);
+        d.setUTCDate(_baseDate.getUTCDate() + i);
+        _fechasRodeo.push(d.toISOString().slice(0, 10));
+    }
+    const _fechaRodeoFin = _fechasRodeo[_fechasRodeo.length - 1];
 
     const tarifas = await obtenerTarifas();
     const creadas = [];
@@ -139,6 +150,53 @@ router.post('/', async (req, res) => {
                 usuario_pagado_id
             });
             continue;
+        }
+
+        // Validar disponibilidad solo para jurados
+        if (tipo_persona === 'jurado' && rodeo.fecha) {
+            // 1. Disponibilidad declarada para todas las fechas del rodeo
+            const { data: dispRows } = await supabase
+                .from('disponibilidad_usuarios')
+                .select('fecha')
+                .eq('usuario_pagado_id', usuario_pagado_id)
+                .in('fecha', _fechasRodeo);
+
+            const dispDeclSet = new Set((dispRows || []).map(d => d.fecha));
+            const faltaDisp = !_fechasRodeo.every(f => dispDeclSet.has(f));
+            if (faltaDisp) {
+                erroresCreacion.push({
+                    error: 'El jurado no tiene disponibilidad declarada para todas las fechas del rodeo',
+                    usuario_pagado_id
+                });
+                continue;
+            }
+
+            // 2. Sin asignaciones en otro rodeo que cruce fechas
+            const { data: otrasAsig } = await supabase
+                .from('asignaciones')
+                .select('id, rodeos!inner(fecha, duracion_dias, club)')
+                .eq('usuario_pagado_id', usuario_pagado_id)
+                .neq('rodeo_id', rodeo_id)
+                .neq('estado', 'anulado');
+
+            let hayConflicto = false;
+            for (const a of (otrasAsig || [])) {
+                const rf  = a.rodeos?.fecha;
+                const rd  = a.rodeos?.duracion_dias || 1;
+                if (!rf) continue;
+                const rfFin = new Date(rf + 'T00:00:00Z');
+                rfFin.setUTCDate(rfFin.getUTCDate() + rd - 1);
+                const rfFinStr = rfFin.toISOString().slice(0, 10);
+                if (rfFinStr >= rodeo.fecha && rf <= _fechaRodeoFin) {
+                    hayConflicto = true;
+                    erroresCreacion.push({
+                        error: `El jurado ya está asignado a otro rodeo en fechas que se cruzan (${a.rodeos?.club || ''} — ${rf})`,
+                        usuario_pagado_id
+                    });
+                    break;
+                }
+            }
+            if (hayConflicto) continue;
         }
 
         try {

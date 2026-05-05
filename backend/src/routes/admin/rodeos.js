@@ -587,19 +587,30 @@ router.delete('/tipos/:id', async (req, res) => {
 });
 
 // GET /api/admin/rodeos/:id/jurados-disponibles?q=&categoria=
-// Lista jurados con disponibilidad, conflicto de asociación y últimos rodeos
+// Lista jurados disponibles (con disponibilidad declarada y sin asignaciones cruzadas)
 router.get('/:id/jurados-disponibles', async (req, res) => {
     const { q = '', categoria = '' } = req.query;
 
     const { data: rodeo } = await supabase
         .from('rodeos')
-        .select('id, asociacion, fecha')
+        .select('id, asociacion, fecha, duracion_dias')
         .eq('id', req.params.id)
         .single();
 
     if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
 
-    // Cargar todos los jurados activos
+    // Generar rango de fechas del rodeo
+    const duracion    = rodeo.duracion_dias || 1;
+    const fechasRodeo = [];
+    const baseDate    = new Date(rodeo.fecha + 'T00:00:00Z');
+    for (let i = 0; i < duracion; i++) {
+        const d = new Date(baseDate);
+        d.setUTCDate(baseDate.getUTCDate() + i);
+        fechasRodeo.push(d.toISOString().slice(0, 10));
+    }
+    const fechaRodeoFin = fechasRodeo[fechasRodeo.length - 1];
+
+    // Cargar todos los jurados activos (con filtros de búsqueda)
     let query = supabase
         .from('usuarios_pagados')
         .select('id, nombre_completo, categoria, codigo_interno')
@@ -610,12 +621,61 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
     if (q.trim().length >= 2) query = query.ilike('nombre_completo', `%${q.trim()}%`);
     if (categoria) query = query.eq('categoria', categoria);
 
-    const { data: jurados, error: errJ } = await query.limit(50);
+    const { data: jurados, error: errJ } = await query.limit(200);
     if (errJ) return res.status(500).json({ error: errJ.message });
 
-    if (!jurados || jurados.length === 0) return res.json({ jurados: [] });
+    if (!jurados || jurados.length === 0) return res.json({ jurados: [], asociacion_rodeo: rodeo.asociacion });
 
     const ids = jurados.map(j => j.id);
+
+    // ── Filtro 1: disponibilidad declarada ─────────────────────────
+    // El jurado debe tener fila en disponibilidad_usuarios para CADA fecha del rodeo
+    const { data: dispData } = await supabase
+        .from('disponibilidad_usuarios')
+        .select('usuario_pagado_id, fecha')
+        .in('usuario_pagado_id', ids)
+        .in('fecha', fechasRodeo);
+
+    const dispMap = {};
+    for (const row of (dispData || [])) {
+        if (!dispMap[row.usuario_pagado_id]) dispMap[row.usuario_pagado_id] = new Set();
+        dispMap[row.usuario_pagado_id].add(row.fecha);
+    }
+    const disponiblesSet = new Set(
+        ids.filter(id => fechasRodeo.every(f => dispMap[id]?.has(f)))
+    );
+
+    // ── Filtro 2: sin asignaciones en fechas que se cruzan ─────────
+    // Excluir jurados con otro rodeo activo cuyo rango solapa con este rodeo
+    const { data: otrasAsig } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id, rodeos!inner(fecha, duracion_dias)')
+        .in('usuario_pagado_id', ids)
+        .neq('rodeo_id', req.params.id)
+        .neq('estado', 'anulado');
+
+    const conflictosSet = new Set();
+    for (const a of (otrasAsig || [])) {
+        const rf  = a.rodeos?.fecha;
+        const rd  = a.rodeos?.duracion_dias || 1;
+        if (!rf) continue;
+        const rfFin = new Date(rf + 'T00:00:00Z');
+        rfFin.setUTCDate(rfFin.getUTCDate() + rd - 1);
+        const rfFinStr = rfFin.toISOString().slice(0, 10);
+        // Overlap: otro rodeo termina después de que este empieza Y empieza antes de que este termine
+        if (rfFinStr >= rodeo.fecha && rf <= fechaRodeoFin) {
+            conflictosSet.add(a.usuario_pagado_id);
+        }
+    }
+
+    // Jurados que pasaron ambos filtros
+    const juradosDisp = jurados.filter(j =>
+        disponiblesSet.has(j.id) && !conflictosSet.has(j.id)
+    );
+
+    if (juradosDisp.length === 0) return res.json({ jurados: [], asociacion_rodeo: rodeo.asociacion });
+
+    const idsDisp = juradosDisp.map(j => j.id);
 
     // Asignaciones actuales en este rodeo (para saber si ya está asignado)
     const { data: asigRodeo } = await supabase
@@ -623,7 +683,7 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
         .select('usuario_pagado_id')
         .eq('rodeo_id', req.params.id)
         .neq('estado', 'anulado')
-        .in('usuario_pagado_id', ids);
+        .in('usuario_pagado_id', idsDisp);
 
     const yaAsignadosSet = new Set((asigRodeo || []).map(a => a.usuario_pagado_id));
 
@@ -633,7 +693,7 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
         const { data } = await supabase
             .from('asignaciones')
             .select('usuario_pagado_id, rodeos!inner(asociacion)')
-            .in('usuario_pagado_id', ids)
+            .in('usuario_pagado_id', idsDisp)
             .eq('rodeos.asociacion', rodeo.asociacion)
             .neq('estado', 'anulado');
         asigAsociacion = data || [];
@@ -644,7 +704,7 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
     const { data: ultRodeos } = await supabase
         .from('asignaciones')
         .select('id, usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion), notas_rodeo(nota)')
-        .in('usuario_pagado_id', ids)
+        .in('usuario_pagado_id', idsDisp)
         .neq('estado', 'anulado')
         .order('created_at', { ascending: false });
 
@@ -665,14 +725,14 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
         }
     }
 
-    const resultado = jurados.map(j => ({
-        id:               j.id,
-        nombre_completo:  j.nombre_completo,
-        categoria:        j.categoria,
-        codigo_interno:   j.codigo_interno,
-        ya_asignado:      yaAsignadosSet.has(j.id),
+    const resultado = juradosDisp.map(j => ({
+        id:                j.id,
+        nombre_completo:   j.nombre_completo,
+        categoria:         j.categoria,
+        codigo_interno:    j.codigo_interno,
+        ya_asignado:       yaAsignadosSet.has(j.id),
         repite_asociacion: repiteAsocSet.has(j.id),
-        historial:        historialMap[j.id] || []
+        historial:         historialMap[j.id] || []
     }));
 
     res.json({ jurados: resultado, asociacion_rodeo: rodeo.asociacion });
