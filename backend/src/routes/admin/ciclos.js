@@ -4,6 +4,7 @@ const supabase     = require('../../config/supabase');
 const multer       = require('multer');
 const XLSX         = require('xlsx');
 const emailService = require('../../services/emailService');
+const { intentarAutoPublicar } = require('../../services/publicacion');
 
 // Calcula el próximo día-de-semana a partir de una fecha, con hora específica
 function calcFechaLimite(fechaApertura, diaLimiteStr, horaLimiteStr) {
@@ -435,6 +436,16 @@ router.post('/:id/cerrar', async (req, res) => {
         actor_nombre:  req.usuario.nombre,
         ip_address:    req.ip
     });
+
+    // Si el ciclo quedó completamente cerrado, intentar auto-publicar la evaluación
+    if (estadoCiclo === 'cerrado') {
+        await intentarAutoPublicar(
+            ciclo.evaluacion_id,
+            req.usuario.id,
+            req.usuario.nombre,
+            req.ip
+        );
+    }
 
     res.json(cicloAct);
 });

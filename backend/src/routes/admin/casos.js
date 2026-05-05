@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
 const { soloRolEvaluacion } = require('../../middleware/auth');
+const { intentarAutoPublicar } = require('../../services/publicacion');
 
 // GET / — lista de casos por evaluacion_id (con join a ciclo para el frontend)
 router.get('/', async (req, res) => {
@@ -274,6 +275,19 @@ router.post('/:id/decision-analista', async (req, res) => {
                 .eq('id', caso.ciclo_id)
                 .neq('estado', 'cerrado');
             ciclo_cerrado = true;
+
+            // Intentar auto-publicar si ambos ciclos quedaron cerrados
+            const autoPublicado = await intentarAutoPublicar(
+                caso.evaluacion_id, req.usuario.id, req.usuario.nombre, req.ip
+            );
+            if (autoPublicado && !evaluacion_actualizada) {
+                const { data: evAct } = await supabase
+                    .from('evaluaciones')
+                    .select('id, estado, nota_final, puntaje_final')
+                    .eq('id', caso.evaluacion_id)
+                    .single();
+                evaluacion_actualizada = evAct;
+            }
         }
     }
 
@@ -349,6 +363,19 @@ router.post('/:id/decision-comision', soloRolEvaluacion('comision_tecnica', 'jef
             .eq('id', caso.ciclo_id)
             .neq('estado', 'cerrado');
         ciclo_cerrado = true;
+
+        // Intentar auto-publicar si ambos ciclos quedaron cerrados
+        const autoPublicado = await intentarAutoPublicar(
+            caso.evaluacion_id, req.usuario.id, req.usuario.nombre, req.ip
+        );
+        if (autoPublicado && !evaluacion_actualizada) {
+            const { data: evAct } = await supabase
+                .from('evaluaciones')
+                .select('id, estado, nota_final, puntaje_final')
+                .eq('id', caso.evaluacion_id)
+                .single();
+            evaluacion_actualizada = evAct;
+        }
     }
 
     // Si la evaluacion estaba en pendiente_comision y ya no quedan derivados → volver a en_proceso
