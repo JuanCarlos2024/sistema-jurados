@@ -837,8 +837,13 @@ function renderJuradosDesignacion() {
             ? `<span style="color:var(--gris); font-size:11px; margin-left:6px;">ya asignado</span>`
             : '';
         const histHtml = j.historial.length > 0
-            ? `<div style="font-size:11px; color:var(--gris); margin-top:3px;">
-                Últimos: ${j.historial.map(h => `${h.club} (${h.fecha})`).join(' · ')}
+            ? `<div style="font-size:11px; color:var(--gris); margin-top:4px; line-height:1.6;">
+                <span style="font-weight:600;">Últimos:</span>
+                ${j.historial.map(h => {
+                    const nota = (h.nota !== null && h.nota !== undefined) ? `Nota: ${h.nota}` : 'Sin nota';
+                    const asoc = h.asociacion || '—';
+                    return `<br>· ${sanitizar(h.club||'—')} | ${sanitizar(asoc)} | ${h.fecha} | ${nota}`;
+                }).join('')}
                </div>`
             : '';
         const btnStyle = j.ya_asignado

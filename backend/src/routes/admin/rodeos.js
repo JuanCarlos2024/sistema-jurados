@@ -640,10 +640,10 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
     }
     const repiteAsocSet = new Set(asigAsociacion.map(a => a.usuario_pagado_id));
 
-    // Últimos 3 rodeos de cada jurado
+    // Últimos 3 rodeos de cada jurado (incluye nota vía notas_rodeo)
     const { data: ultRodeos } = await supabase
         .from('asignaciones')
-        .select('usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
+        .select('id, usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion), notas_rodeo(nota)')
         .in('usuario_pagado_id', ids)
         .neq('estado', 'anulado')
         .order('created_at', { ascending: false });
@@ -652,11 +652,15 @@ router.get('/:id/jurados-disponibles', async (req, res) => {
     for (const a of (ultRodeos || [])) {
         if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
         if (historialMap[a.usuario_pagado_id].length < 3) {
+            const notaVal = Array.isArray(a.notas_rodeo) && a.notas_rodeo.length > 0
+                ? a.notas_rodeo[0].nota
+                : null;
             historialMap[a.usuario_pagado_id].push({
                 club:       a.rodeos?.club,
                 fecha:      a.rodeos?.fecha,
                 tipo_rodeo: a.rodeos?.tipo_rodeo_nombre,
-                asociacion: a.rodeos?.asociacion
+                asociacion: a.rodeos?.asociacion || null,
+                nota:       notaVal
             });
         }
     }
