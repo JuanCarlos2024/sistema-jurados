@@ -81,7 +81,7 @@ async function resolverFiltrosComplejos(q) {
 }
 
 // GET /api/admin/rodeos — filtros avanzados
-router.get('/', async (req, res) => {
+router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     const {
         mes, año, buscar, club, asociacion,
         tipo_rodeo_id, tipo, categoria_rodeo_id, origen, estado,
@@ -246,7 +246,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/admin/rodeos/:id (con asignaciones)
-router.get('/:id', async (req, res) => {
+router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     const { data: rodeo, error } = await supabase
         .from('rodeos')
         .select('*, tipos_rodeo(nombre, duracion_dias, categoria_rodeo_id, categorias_rodeo(nombre))')
@@ -588,7 +588,7 @@ router.delete('/tipos/:id', async (req, res) => {
 
 // GET /api/admin/rodeos/:id/jurados-disponibles?q=&categoria=
 // Lista jurados disponibles (con disponibilidad declarada y sin asignaciones cruzadas)
-router.get('/:id/jurados-disponibles', async (req, res) => {
+router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     const { q = '', categoria = '' } = req.query;
 
     const { data: rodeo } = await supabase
