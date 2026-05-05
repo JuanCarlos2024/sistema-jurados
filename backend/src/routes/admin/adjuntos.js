@@ -2,6 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const multer   = require('multer');
 const supabase = require('../../config/supabase');
+const { soloNoAnalista } = require('../../middleware/auth');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -96,7 +97,7 @@ router.get('/:id/url', async (req, res) => {
 });
 
 // ─── POST /api/admin/adjuntos — subir archivo ────────────────
-router.post('/', upload.single('archivo'), async (req, res) => {
+router.post('/', soloNoAnalista, upload.single('archivo'), async (req, res) => {
     const { rodeo_id, tipo_adjunto = 'otro', usuario_pagado_id } = req.body;
     if (!rodeo_id) return res.status(400).json({ error: 'rodeo_id requerido' });
     if (!req.file)  return res.status(400).json({ error: 'archivo requerido' });
@@ -129,7 +130,7 @@ router.post('/', upload.single('archivo'), async (req, res) => {
 });
 
 // ─── POST /api/admin/adjuntos/link — agregar link ────────────
-router.post('/link', async (req, res) => {
+router.post('/link', soloNoAnalista, async (req, res) => {
     const { rodeo_id, url, descripcion, usuario_pagado_id } = req.body;
     if (!rodeo_id) return res.status(400).json({ error: 'rodeo_id requerido' });
     if (!url)      return res.status(400).json({ error: 'url requerida' });
@@ -152,7 +153,7 @@ router.post('/link', async (req, res) => {
 });
 
 // ─── DELETE /api/admin/adjuntos/:id ─────────────────────────
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', soloNoAnalista, async (req, res) => {
     const { data: adj } = await supabase
         .from('rodeo_adjuntos')
         .select('id, storage_path')
@@ -167,7 +168,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ─── DELETE /api/admin/adjuntos/link/:id ────────────────────
-router.delete('/link/:id', async (req, res) => {
+router.delete('/link/:id', soloNoAnalista, async (req, res) => {
     const { data: link } = await supabase
         .from('rodeo_links')
         .select('id')

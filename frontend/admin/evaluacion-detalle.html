@@ -811,8 +811,8 @@ function _renderComite(caso) {
         if (r.decision_analista !== 'derivada_comite') {
             html = '<span style="color:var(--gris);font-size:11px;">—</span>';
         } else if (!r.decision_comite) {
-            html = `<span class="dec-badge dec-deriv">Pendiente comité</span><br>`
-                 + `<button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionComite('${r.id}')">Resolver</button>`;
+            html = `<span class="dec-badge dec-deriv">Pendiente comité</span>`
+                 + (esComision ? `<br><button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionComite('${r.id}')">Resolver</button>` : '');
         } else if (r.decision_comite === 'confirma_falta') {
             html = `<span class="dec-badge dec-rech">Confirma falta</span>${_com(r.comentario_comite)}${_date(r.decidido_comite_en)}`;
         } else if (r.decision_comite === 'acoge_apelacion') {

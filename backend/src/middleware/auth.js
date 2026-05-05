@@ -89,4 +89,12 @@ function soloNoDirector(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector };
+// Middleware: bloquea al rol 'analista' de acciones que no le corresponden.
+function soloNoAnalista(req, res, next) {
+    if (req.usuario.rol_evaluacion === 'analista') {
+        return res.status(403).json({ error: 'El rol Analista no tiene permiso para esta acción' });
+    }
+    next();
+}
+
+module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista };

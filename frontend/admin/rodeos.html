@@ -209,7 +209,8 @@ document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre |
 
 // Rol del usuario actual
 const _rolEvalRodeos = api.getUsuario()?.rol_evaluacion || null;
-const esMonitor = _rolEvalRodeos === 'monitor';
+const esMonitor       = _rolEvalRodeos === 'monitor';
+const esAnalistaRodeos = _rolEvalRodeos === 'analista';
 
 // Monitor: ocultar acciones de admin en el topbar
 if (esMonitor) {
@@ -401,9 +402,9 @@ function renderTabla(rodeos, total, indicadores = {}) {
             <td>
                 <div class="flex gap-8">
                     <button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver</button>
-                    ${esMonitor ? '' : `<button class="btn btn-pequeño btn-secundario" onclick="abrirEditar('${r.id}')">Editar</button>`}
-                    <button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎</button>
-                    ${esMonitor ? '' : `<button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${r.total_asignaciones || 0})">Eliminar</button>`}
+                    ${(esMonitor || esAnalistaRodeos) ? '' : `<button class="btn btn-pequeño btn-secundario" onclick="abrirEditar('${r.id}')">Editar</button>`}
+                    ${esAnalistaRodeos ? '' : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎</button>`}
+                    ${(esMonitor || esAnalistaRodeos) ? '' : `<button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${r.total_asignaciones || 0})">Eliminar</button>`}
                 </div>
             </td>
         </tr>`;}).join('')}
@@ -543,8 +544,8 @@ function htmlDetalle(r) {
     })()}
     <div class="form-acciones">
         ${esMonitor ? '' : `<button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>`}
-        <button class="btn btn-secundario" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎 Adjuntos</button>
-        ${esMonitor ? '' : `<button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${asigs.length})">Eliminar rodeo</button>`}
+        ${esAnalistaRodeos ? '' : `<button class="btn btn-secundario" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎 Adjuntos</button>`}
+        ${(esMonitor || esAnalistaRodeos) ? '' : `<button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${asigs.length})">Eliminar rodeo</button>`}
         <button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
     </div>`;
 }

@@ -3,7 +3,7 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
-const { soloNoMonitor } = require('../../middleware/auth');
+const { soloNoMonitor, soloNoAnalista } = require('../../middleware/auth');
 
 // ─── Helper: intersectar arrays de IDs para filtros complejos ───
 function intersectIds(current, newIds) {
@@ -383,7 +383,7 @@ router.post('/', soloNoMonitor, async (req, res) => {
 });
 
 // PATCH /api/admin/rodeos/:id
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', soloNoAnalista, async (req, res) => {
     const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, estado } = req.body;
 
     const { data: anterior } = await supabase
@@ -450,7 +450,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 // DELETE /api/admin/rodeos/:id (eliminar — soft delete en cascada)
-router.delete('/:id', soloNoMonitor, async (req, res) => {
+router.delete('/:id', soloNoMonitor, soloNoAnalista, async (req, res) => {
     const { data: r } = await supabase
         .from('rodeos')
         .select('club, fecha')

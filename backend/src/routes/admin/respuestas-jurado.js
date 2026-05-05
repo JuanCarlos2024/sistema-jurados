@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
+const { soloRolEvaluacion } = require('../../middleware/auth');
 
 // POST /:id/decision-analista
 router.post('/:id/decision-analista', async (req, res) => {
@@ -51,8 +52,8 @@ router.post('/:id/decision-analista', async (req, res) => {
     res.json({ ok: true });
 });
 
-// POST /:id/decision-comite
-router.post('/:id/decision-comite', async (req, res) => {
+// POST /:id/decision-comite — solo comisión técnica, jefe de área y admin pleno
+router.post('/:id/decision-comite', soloRolEvaluacion('comision_tecnica', 'jefe_area'), async (req, res) => {
     const { decision, comentario } = req.body;
 
     const DECISIONES_VALIDAS = ['confirma_falta', 'acoge_apelacion'];
