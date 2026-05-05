@@ -97,4 +97,12 @@ function soloNoAnalista(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista };
+// Middleware: bloquea al rol 'comision_tecnica' de acciones que no le corresponden.
+function soloNoComisionTecnica(req, res, next) {
+    if (req.usuario.rol_evaluacion === 'comision_tecnica') {
+        return res.status(403).json({ error: 'El rol Comisión Técnica no tiene permiso para esta acción' });
+    }
+    next();
+}
+
+module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };

@@ -149,8 +149,8 @@ function _ajustarMenuPorRol(rol) {
             // Analista, jefe, comision: ocultar páginas de pagos/config/admin
             const bloqueada = _PAGINAS_BLOQUEADAS_EVAL.some(p => href.endsWith(p.split('/').pop()));
             if (bloqueada) a.style.display = 'none';
-            // Analista: además ocultar el Dashboard principal
-            if (rol === 'analista' && href.endsWith('dashboard.html')) a.style.display = 'none';
+            // Analista y Comisión Técnica: además ocultar el Dashboard principal
+            if ((rol === 'analista' || rol === 'comision_tecnica') && href.endsWith('dashboard.html')) a.style.display = 'none';
         }
     });
     // Ocultar nav-seccion vacías (sin items visibles debajo)
@@ -181,8 +181,8 @@ function _aplicarControlAccesoAdmin(usuario) {
         // analista / jefe_area / comision_tecnica: bloquear páginas de admin general
         const bloqueada = _PAGINAS_BLOQUEADAS_EVAL.some(p => path.endsWith(p.split('/').pop()));
         if (bloqueada) { window.location.href = '/admin/evaluaciones.html'; return; }
-        // Analista: además bloquear el Dashboard principal
-        if (rol === 'analista' && (path.endsWith('dashboard.html') || path === '/admin/dashboard.html')) {
+        // Analista y Comisión Técnica: además bloquear el Dashboard principal
+        if ((rol === 'analista' || rol === 'comision_tecnica') && (path.endsWith('dashboard.html') || path === '/admin/dashboard.html')) {
             window.location.href = '/admin/evaluaciones.html'; return;
         }
     }

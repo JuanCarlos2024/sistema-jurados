@@ -403,7 +403,7 @@
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
                         <input type="radio" name="dec_anal" value="derivada_comite">
-                        <span>Derivar al comité técnico</span>
+                        <span>Derivar a Comisión Técnica</span>
                     </label>
                 </div>
             </div>
@@ -423,7 +423,7 @@
 <div class="modal-overlay oculto" id="modal-decision-comite">
     <div class="modal" style="max-width:460px;">
         <div class="modal-header">
-            <h3 class="modal-titulo">Resolución comité técnico</h3>
+            <h3 class="modal-titulo">Resolución Comisión Técnica</h3>
             <button class="modal-cerrar" onclick="document.getElementById('modal-decision-comite').classList.add('oculto')">✕</button>
         </div>
         <div class="modal-body">
@@ -442,7 +442,7 @@
             </div>
             <div class="form-group">
                 <label class="form-label">Comentario <span style="color:#c0392b;">*</span></label>
-                <textarea id="dec-com-comentario" class="form-control" rows="3" maxlength="1000" placeholder="Resolución del comité..."></textarea>
+                <textarea id="dec-com-comentario" class="form-control" rows="3" maxlength="1000" placeholder="Resolución de Comisión Técnica..."></textarea>
             </div>
         </div>
         <div class="modal-footer">
@@ -686,7 +686,7 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
                 <th style="width:90px;">Estado</th>
                 <th style="min-width:130px;">Resp. jurado</th>
                 <th style="min-width:160px;">Resp. analista</th>
-                <th style="min-width:150px;">Resp. comité</th>
+                <th style="min-width:150px;">Resp. Comisión Técnica</th>
                 <th style="width:80px;">Desc. final</th>
                 <th style="width:80px;"></th>
             </tr></thead>
@@ -794,7 +794,7 @@ function _renderAnalista(caso) {
         } else if (r.decision_analista === 'apelacion_rechazada') {
             html = `<span class="dec-badge dec-rech">Apelación rechazada</span>${_com(r.comentario_analista)}${_date(r.decidido_analista_en)}`;
         } else if (r.decision_analista === 'derivada_comite') {
-            html = `<span class="dec-badge dec-deriv">Derivado a Comité</span>${_com(r.comentario_analista)}${_date(r.decidido_analista_en)}`;
+            html = `<span class="dec-badge dec-deriv">Derivado a Comisión Técnica</span>${_com(r.comentario_analista)}${_date(r.decidido_analista_en)}`;
         }
         return `<div class="resp-fila">${html || '<span style="color:var(--gris);font-size:11px;">—</span>'}</div>`;
     }).join('');
@@ -811,7 +811,7 @@ function _renderComite(caso) {
         if (r.decision_analista !== 'derivada_comite') {
             html = '<span style="color:var(--gris);font-size:11px;">—</span>';
         } else if (!r.decision_comite) {
-            html = `<span class="dec-badge dec-deriv">Pendiente comité</span>`
+            html = `<span class="dec-badge dec-deriv">Pendiente Comisión Técnica</span>`
                  + (esComision ? `<br><button class="btn btn-outline btn-pequeño dec-btn" onclick="abrirDecisionComite('${r.id}')">Resolver</button>` : '');
         } else if (r.decision_comite === 'confirma_falta') {
             html = `<span class="dec-badge dec-rech">Confirma falta</span>${_com(r.comentario_comite)}${_date(r.decidido_comite_en)}`;
@@ -913,7 +913,7 @@ function _renderDescFinal(caso) {
             html = '<span style="color:#7d6608;font-size:11px;font-weight:500;">Pend. analista</span>';
         } else if (r.decision_analista === 'derivada_comite' && !r.decision_comite) {
             // Derivado a comité sin resolución
-            html = '<span style="color:#7d6608;font-size:11px;font-weight:500;">Pend. comité</span>';
+            html = '<span style="color:#7d6608;font-size:11px;font-weight:500;">Pend. Com. Técnica</span>';
         } else if (r.decision_analista === 'apelacion_aceptada') {
             html = '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>';
         } else if (r.decision_analista === 'apelacion_rechazada') {
@@ -1458,7 +1458,7 @@ async function confirmarDecisionComite() {
     try {
         await api.post(`/admin/respuestas-jurado/${_decComId}/decision-comite`, { decision, comentario });
         document.getElementById('modal-decision-comite').classList.add('oculto');
-        mostrarToast('Decisión de comité registrada', 'exito');
+        mostrarToast('Decisión de Comisión Técnica registrada', 'exito');
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al registrar decisión', 'error');
