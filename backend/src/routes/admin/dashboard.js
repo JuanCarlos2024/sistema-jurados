@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
+const { soloNoAnalista } = require('../../middleware/auth');
 
 /**
  * Obtiene el mes y año actual en zona horaria de Chile (America/Santiago).
@@ -19,7 +20,7 @@ function fechaChile() {
 }
 
 // GET /api/admin/dashboard?mes=&año=
-router.get('/', async (req, res) => {
+router.get('/', soloNoAnalista, async (req, res) => {
     const hoy = fechaChile();
     const año = req.query.año ? parseInt(req.query.año) : hoy.año;
     const mes = req.query.mes ? parseInt(req.query.mes) : hoy.mes;
