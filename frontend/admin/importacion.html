@@ -31,7 +31,8 @@
             <!-- Instrucciones -->
             <div class="alerta alerta-info" style="margin-bottom:20px;">
                 <div>
-                    <strong>Columnas requeridas en el Excel:</strong> Club, Asociación, Fecha, Tipo Rodeo, Nombre Jurado<br>
+                    <strong>Columnas requeridas en el Excel:</strong> Club, Asociación, Fecha, Tipo Rodeo<br>
+                    <strong>Columna opcional:</strong> Nombre Jurado (si se omite, se crea el rodeo sin asignación de jurado)<br>
                     <strong>Columnas opcionales (serán ignoradas en el cálculo):</strong> CAT, PAGO, BONO, TOTAL<br>
                     <strong>Formato de fecha aceptado:</strong> DD/MM/YYYY o YYYY-MM-DD
                 </div>
@@ -93,6 +94,7 @@
                         <option value="tipo_rodeo_no_encontrado">Tipo de rodeo no encontrado</option>
                         <option value="datos_incompletos">Datos incompletos</option>
                         <option value="duplicado">Duplicado</option>
+                        <option value="jurado_repite_asociacion">Jurado repite asociación</option>
                     </select>
                 </div>
 
@@ -222,7 +224,8 @@ const PROBLEMAS = {
     jurado_no_encontrado:      'Jurado no encontrado',
     tipo_rodeo_no_encontrado:  'Tipo de rodeo no encontrado',
     datos_incompletos:         'Datos incompletos',
-    duplicado:                 'Posible duplicado'
+    duplicado:                 'Posible duplicado',
+    jurado_repite_asociacion:  'Jurado repite asociación'
 };
 
 // Extrae los campos limpios del pendiente, usando _campos como fuente principal.
@@ -358,6 +361,32 @@ async function abrirResolver(id, pendiente) {
                 </div>` : ''}
             </div>
         </div>`;
+
+    // Caso especial: jurado_repite_asociacion — mostrar aviso y botones override/descartar
+    if (prob === 'jurado_repite_asociacion') {
+        const juradoId  = d._campos?.jurado_id || '';
+        const tipoId    = d._campos?.tipo_rodeo_id || '';
+        const fechaNorm = d._campos?.fecha_norm || '';
+        document.getElementById('modal-body').innerHTML = `
+            ${datosExcel}
+            <div class="alerta alerta-advertencia" style="margin-top:0; margin-bottom:14px;">
+                ⚠️ <strong>Este jurado ya fue asignado en la asociación "${sanitizar(c.asociacion)}"</strong><br>
+                <span style="font-size:13px;">${sanitizar(c.motivo||'')}</span>
+            </div>
+            <div class="flex gap-8" style="margin-top:8px;">
+                <button class="btn btn-primario"
+                    onclick="insertarConOverride('${id}', '${juradoId}', '${tipoId}', '${fechaNorm}')">
+                    ✅ Asignar igualmente
+                </button>
+                <button class="btn btn-peligro"
+                    onclick="descartar('${id}'); cerrarModal();">
+                    ✕ No asignar / Descartar
+                </button>
+                <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>`;
+        document.getElementById('modal-overlay').classList.remove('oculto');
+        return;
+    }
 
     // Sección de sugerencias (solo si hay)
     let seccionSugerencias = '';
@@ -556,6 +585,20 @@ async function cargarHistorial() {
 async function exportarPendientes() {
     try {
         await api.descargar('/admin/exportacion/pendientes', 'pendientes_revision.xlsx');
+    } catch(err) { mostrarError(err); }
+}
+
+async function insertarConOverride(id, usuarioPagadoId, tipoRodeoId, fecha) {
+    try {
+        await api.post('/admin/asignaciones/pendientes/' + id + '/resolver', {
+            accion: 'insertar',
+            usuario_pagado_id: usuarioPagadoId,
+            tipo_rodeo_id:     tipoRodeoId,
+            fecha:             fecha || undefined
+        });
+        mostrarToast('Jurado asignado igualmente', 'success');
+        cerrarModal();
+        cargarPendientes();
     } catch(err) { mostrarError(err); }
 }
 

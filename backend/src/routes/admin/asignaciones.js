@@ -566,6 +566,45 @@ router.delete('/:id', async (req, res) => {
     res.json({ mensaje: 'Asignación eliminada y bonos pendientes rechazados' });
 });
 
+// POST /api/admin/asignaciones/validar-historial
+// Verifica si un jurado ya fue asignado en la misma asociación del rodeo.
+// body: { usuario_pagado_id, rodeo_id }
+router.post('/validar-historial', async (req, res) => {
+    const { usuario_pagado_id, rodeo_id } = req.body;
+    if (!usuario_pagado_id || !rodeo_id) {
+        return res.status(400).json({ error: 'usuario_pagado_id y rodeo_id son requeridos' });
+    }
+
+    const { data: rodeo } = await supabase
+        .from('rodeos')
+        .select('id, asociacion')
+        .eq('id', rodeo_id)
+        .single();
+
+    if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
+    if (!rodeo.asociacion) return res.json({ tiene_historial: false, historial: [] });
+
+    const { data: historial } = await supabase
+        .from('asignaciones')
+        .select('id, rodeos!inner(id, club, asociacion, fecha, tipo_rodeo_nombre)')
+        .eq('usuario_pagado_id', usuario_pagado_id)
+        .eq('rodeos.asociacion', rodeo.asociacion)
+        .neq('estado', 'anulado')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+    return res.json({
+        tiene_historial: (historial || []).length > 0,
+        asociacion: rodeo.asociacion,
+        historial: (historial || []).map(a => ({
+            id: a.id,
+            club:        a.rodeos?.club,
+            fecha:       a.rodeos?.fecha,
+            tipo_rodeo:  a.rodeos?.tipo_rodeo_nombre
+        }))
+    });
+});
+
 // GET /api/admin/asignaciones/pendientes/sugerencias?q=texto
 // Búsqueda en tiempo real de jurados por nombre (para el modal de resolver)
 router.get('/pendientes/sugerencias', async (req, res) => {

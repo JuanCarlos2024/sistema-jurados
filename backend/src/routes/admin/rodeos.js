@@ -586,4 +586,92 @@ router.delete('/tipos/:id', async (req, res) => {
     res.json({ mensaje: 'Tipo de rodeo eliminado' });
 });
 
+// GET /api/admin/rodeos/:id/jurados-disponibles?q=&categoria=
+// Lista jurados con disponibilidad, conflicto de asociación y últimos rodeos
+router.get('/:id/jurados-disponibles', async (req, res) => {
+    const { q = '', categoria = '' } = req.query;
+
+    const { data: rodeo } = await supabase
+        .from('rodeos')
+        .select('id, asociacion, fecha')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
+
+    // Cargar todos los jurados activos
+    let query = supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, categoria, codigo_interno')
+        .eq('activo', true)
+        .eq('tipo_persona', 'jurado')
+        .order('nombre_completo');
+
+    if (q.trim().length >= 2) query = query.ilike('nombre_completo', `%${q.trim()}%`);
+    if (categoria) query = query.eq('categoria', categoria);
+
+    const { data: jurados, error: errJ } = await query.limit(50);
+    if (errJ) return res.status(500).json({ error: errJ.message });
+
+    if (!jurados || jurados.length === 0) return res.json({ jurados: [] });
+
+    const ids = jurados.map(j => j.id);
+
+    // Asignaciones actuales en este rodeo (para saber si ya está asignado)
+    const { data: asigRodeo } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id')
+        .eq('rodeo_id', req.params.id)
+        .neq('estado', 'anulado')
+        .in('usuario_pagado_id', ids);
+
+    const yaAsignadosSet = new Set((asigRodeo || []).map(a => a.usuario_pagado_id));
+
+    // Historial previo en la misma asociación
+    let asigAsociacion = [];
+    if (rodeo.asociacion) {
+        const { data } = await supabase
+            .from('asignaciones')
+            .select('usuario_pagado_id, rodeos!inner(asociacion)')
+            .in('usuario_pagado_id', ids)
+            .eq('rodeos.asociacion', rodeo.asociacion)
+            .neq('estado', 'anulado');
+        asigAsociacion = data || [];
+    }
+    const repiteAsocSet = new Set(asigAsociacion.map(a => a.usuario_pagado_id));
+
+    // Últimos 3 rodeos de cada jurado
+    const { data: ultRodeos } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
+        .in('usuario_pagado_id', ids)
+        .neq('estado', 'anulado')
+        .order('created_at', { ascending: false });
+
+    const historialMap = {};
+    for (const a of (ultRodeos || [])) {
+        if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
+        if (historialMap[a.usuario_pagado_id].length < 3) {
+            historialMap[a.usuario_pagado_id].push({
+                club:       a.rodeos?.club,
+                fecha:      a.rodeos?.fecha,
+                tipo_rodeo: a.rodeos?.tipo_rodeo_nombre,
+                asociacion: a.rodeos?.asociacion
+            });
+        }
+    }
+
+    const resultado = jurados.map(j => ({
+        id:               j.id,
+        nombre_completo:  j.nombre_completo,
+        categoria:        j.categoria,
+        codigo_interno:   j.codigo_interno,
+        ya_asignado:      yaAsignadosSet.has(j.id),
+        repite_asociacion: repiteAsocSet.has(j.id),
+        historial:        historialMap[j.id] || []
+    }));
+
+    res.json({ jurados: resultado, asociacion_rodeo: rodeo.asociacion });
+});
+
 module.exports = router;

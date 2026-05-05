@@ -544,6 +544,7 @@ function htmlDetalle(r) {
     })()}
     <div class="form-acciones">
         ${esMonitor ? '' : `<button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>`}
+        ${esMonitor ? '' : `<button class="btn btn-outline" onclick="abrirDesignarJurado('${r.id}')">🔍 Designar jurado</button>`}
         ${esAnalistaRodeos ? '' : `<button class="btn btn-secundario" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎 Adjuntos</button>`}
         ${(esMonitor || esAnalistaRodeos) ? '' : `<button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${asigs.length})">Eliminar rodeo</button>`}
         <button class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
@@ -728,6 +729,28 @@ async function guardarAsignacion(e, rodeoId) {
     const usr = document.getElementById('usr-seleccionado').value;
     const tipo = document.getElementById('tipo-seleccionado').value;
     if (!usr) { mostrarToast('Debe seleccionar una persona', 'error'); return; }
+
+    // Validar historial de asociación (solo para jurados)
+    if (tipo === 'jurado') {
+        try {
+            const valResult = await api.post('/admin/asignaciones/validar-historial', {
+                usuario_pagado_id: usr,
+                rodeo_id: rodeoId
+            });
+            if (valResult.tiene_historial) {
+                const histStr = valResult.historial.slice(0, 3)
+                    .map(h => `• ${h.club} (${h.fecha})`)
+                    .join('\n');
+                const continuar = await confirmar(
+                    `⚠️ Este jurado ya fue asignado en la asociación "${valResult.asociacion}".\n\n` +
+                    `Rodeos anteriores en esa asociación:\n${histStr}\n\n` +
+                    `¿Desea asignarlo igualmente?`
+                );
+                if (!continuar) return;
+            }
+        } catch(_) { /* no bloquear si falla la validación */ }
+    }
+
     try {
         await api.post('/admin/asignaciones', {
             rodeo_id: rodeoId,
@@ -735,6 +758,120 @@ async function guardarAsignacion(e, rodeoId) {
         });
         mostrarToast('Persona asignada correctamente', 'success');
         verDetalle(rodeoId);
+    } catch(err) { mostrarError(err); }
+}
+
+// ── Sistema de designación de jurados ───────────────────────────
+let _designarRodeoId = null;
+let _designarBuscarTimer = null;
+
+async function abrirDesignarJurado(rodeoId) {
+    _designarRodeoId = rodeoId;
+    document.getElementById('modal-titulo').textContent = 'Designar jurado';
+    document.getElementById('modal-body').innerHTML = `
+        <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+            <input type="text" id="dj-buscar" class="form-control" placeholder="Buscar por nombre..."
+                style="flex:1; min-width:160px;" oninput="filtrarJuradosDesignacion()">
+            <select id="dj-cat" class="form-control" style="max-width:140px;" onchange="filtrarJuradosDesignacion()">
+                <option value="">Todas las cat.</option>
+                <option value="A">Cat. A</option>
+                <option value="B">Cat. B</option>
+                <option value="C">Cat. C</option>
+                <option value="D">Cat. D</option>
+            </select>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" id="dj-ocultar-repite" onchange="renderJuradosDesignacion()">
+                Ocultar que repiten
+            </label>
+        </div>
+        <div id="dj-lista" style="max-height:420px; overflow-y:auto; border:1px solid var(--gris-borde); border-radius:6px;">
+            <div class="spinner-wrap"><div class="spinner"></div></div>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+    await cargarJuradosDesignacion();
+}
+
+let _juradosDesignacion = [];
+
+async function cargarJuradosDesignacion() {
+    const q    = document.getElementById('dj-buscar')?.value || '';
+    const cat  = document.getElementById('dj-cat')?.value || '';
+    const qs   = new URLSearchParams();
+    if (q.trim().length >= 2) qs.set('q', q.trim());
+    if (cat) qs.set('categoria', cat);
+    try {
+        const data = await api.get(`/admin/rodeos/${_designarRodeoId}/jurados-disponibles?${qs}`);
+        _juradosDesignacion = data.jurados || [];
+        renderJuradosDesignacion();
+    } catch(err) {
+        document.getElementById('dj-lista').innerHTML = `<div class="alerta alerta-error" style="margin:12px;">${err.message}</div>`;
+    }
+}
+
+function filtrarJuradosDesignacion() {
+    clearTimeout(_designarBuscarTimer);
+    _designarBuscarTimer = setTimeout(cargarJuradosDesignacion, 350);
+}
+
+function renderJuradosDesignacion() {
+    const lista = document.getElementById('dj-lista');
+    if (!lista) return;
+    const ocultarRepite = document.getElementById('dj-ocultar-repite')?.checked;
+    const jurados = ocultarRepite
+        ? _juradosDesignacion.filter(j => !j.repite_asociacion)
+        : _juradosDesignacion;
+
+    if (jurados.length === 0) {
+        lista.innerHTML = '<p class="tabla-vacia" style="padding:16px;">Sin resultados</p>';
+        return;
+    }
+
+    lista.innerHTML = jurados.map(j => {
+        const badgeCat = j.categoria
+            ? `<span class="badge badge-${j.categoria.toLowerCase()}" style="margin-left:4px;">${j.categoria}</span>`
+            : '';
+        const repiteHtml = j.repite_asociacion
+            ? `<span style="color:#c0392b; font-size:11px; margin-left:6px;">⚠ repite asociación</span>`
+            : '';
+        const yaHtml = j.ya_asignado
+            ? `<span style="color:var(--gris); font-size:11px; margin-left:6px;">ya asignado</span>`
+            : '';
+        const histHtml = j.historial.length > 0
+            ? `<div style="font-size:11px; color:var(--gris); margin-top:3px;">
+                Últimos: ${j.historial.map(h => `${h.club} (${h.fecha})`).join(' · ')}
+               </div>`
+            : '';
+        const btnStyle = j.ya_asignado
+            ? `class="btn btn-pequeño btn-outline" disabled`
+            : j.repite_asociacion
+                ? `class="btn btn-pequeño" style="background:#f39c12;color:white;" onclick="designarJurado('${j.id}','${sanitizar(j.nombre_completo)}','${j.repite_asociacion}')"`
+                : `class="btn btn-pequeño btn-primario" onclick="designarJurado('${j.id}','${sanitizar(j.nombre_completo)}',false)"`;
+        return `
+        <div style="padding:10px 14px; border-bottom:1px solid var(--gris-claro); display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+            <div style="flex:1; min-width:0;">
+                <div style="font-weight:600; font-size:14px;">
+                    ${sanitizar(j.nombre_completo)}${badgeCat}${repiteHtml}${yaHtml}
+                </div>
+                ${histHtml}
+            </div>
+            <button ${btnStyle}>${j.ya_asignado ? 'Asignado' : 'Designar'}</button>
+        </div>`;
+    }).join('');
+}
+
+async function designarJurado(usuarioId, nombre, repiteAsociacion) {
+    if (repiteAsociacion) {
+        const ok = await confirmar(`⚠️ ${nombre} ya fue asignado en esta asociación anteriormente.\n¿Desea designarlo igualmente?`);
+        if (!ok) return;
+    }
+    try {
+        await api.post('/admin/asignaciones', {
+            rodeo_id: _designarRodeoId,
+            personas: [{ usuario_pagado_id: usuarioId, tipo_persona: 'jurado' }]
+        });
+        mostrarToast(`${nombre} designado correctamente`, 'success');
+        cerrarModal();
+        verDetalle(_designarRodeoId);
     } catch(err) { mostrarError(err); }
 }
 

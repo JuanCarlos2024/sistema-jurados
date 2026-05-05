@@ -234,21 +234,22 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
     // ── 4. Clasificar filas ───────────────────────────────────
     let insertadas = 0, pendientes = 0, duplicadas = 0, errores = 0;
     const pendientesBatch  = [];
-    const listas           = [];  // filas OK para insertar
+    const listas           = [];  // filas OK para insertar (con jurado)
+    const sinJuradoListas  = [];  // filas sin jurado → solo crear rodeo
 
     for (let i = 0; i < filasRaw.length; i++) {
         const campos = extraerCampos(filasRaw[i]);
         const numFila = i + 2;  // +2 porque la fila 1 es el encabezado
 
-        // ── 4a. Validar campos mínimos ────────────────────────
-        if (!campos.fecha || !campos.tipo_rodeo || !campos.nombre_jurado) {
+        // ── 4a. Validar campos mínimos (jurado es opcional) ──
+        if (!campos.fecha || !campos.tipo_rodeo) {
             pendientesBatch.push({
                 importacion_id:   impId,
                 datos_originales: {
                     ...filasRaw[i],
                     _fila:   numFila,
                     _campos: buildCampos(campos, {
-                        _motivo: `Falta: ${[!campos.fecha&&'fecha', !campos.tipo_rodeo&&'tipo rodeo', !campos.nombre_jurado&&'nombre jurado'].filter(Boolean).join(', ')}`
+                        _motivo: `Falta: ${[!campos.fecha&&'fecha', !campos.tipo_rodeo&&'tipo rodeo'].filter(Boolean).join(', ')}`
                     })
                 },
                 problema: 'datos_incompletos'
@@ -302,7 +303,18 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
             continue;
         }
 
-        // ── 4d. Buscar jurado ─────────────────────────────────
+        // ── 4d. Buscar jurado (si viene en el Excel) ─────────
+        if (!campos.nombre_jurado) {
+            // Fila sin jurado → crear solo el rodeo (sin asignación)
+            sinJuradoListas.push({
+                club:          campos.club || 'Sin club',
+                asociacion:    campos.asociacion || 'Sin asociación',
+                fechaNorm,
+                tipoEncontrado
+            });
+            continue;
+        }
+
         const juradoKey      = normalizar(campos.nombre_jurado);
         const juradoEncontrado = mapaJurados[juradoKey];
 
@@ -321,6 +333,36 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
             });
             pendientes++;
             continue;
+        }
+
+        // ── 4d-bis. Detectar jurado que repite asociación ────
+        if (campos.asociacion) {
+            const { data: asigAnterior } = await supabase
+                .from('asignaciones')
+                .select('id, rodeos!inner(asociacion)')
+                .eq('usuario_pagado_id', juradoEncontrado.id)
+                .eq('rodeos.asociacion', campos.asociacion)
+                .neq('estado', 'anulado')
+                .limit(1);
+
+            if (asigAnterior && asigAnterior.length > 0) {
+                pendientesBatch.push({
+                    importacion_id:   impId,
+                    datos_originales: {
+                        ...filasRaw[i],
+                        _fila:   numFila,
+                        _campos: buildCampos(campos, {
+                            fecha_norm:    fechaNorm,
+                            tipo_rodeo_id: tipoEncontrado.id,
+                            jurado_id:     juradoEncontrado.id,
+                            _motivo:       `${juradoEncontrado.nombre_completo} ya fue asignado en la asociación "${campos.asociacion}"`
+                        })
+                    },
+                    problema: 'jurado_repite_asociacion'
+                });
+                pendientes++;
+                continue;
+            }
         }
 
         // ── 4e. Detectar duplicado ────────────────────────────
@@ -479,6 +521,43 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
         } catch (err) {
             errores++;
             console.error('[IMPORTACION] Error al insertar fila:', err.message);
+        }
+    }
+
+    // ── 5b. Crear rodeos sin jurado ───────────────────────────
+    for (const item of sinJuradoListas) {
+        try {
+            const { club, asociacion, fechaNorm, tipoEncontrado } = item;
+
+            const { data: rodeoExistente } = await supabase
+                .from('rodeos')
+                .select('id')
+                .eq('fecha', fechaNorm)
+                .ilike('club', club)
+                .eq('tipo_rodeo_id', tipoEncontrado.id)
+                .neq('estado', 'anulado')
+                .limit(1);
+
+            if (!rodeoExistente || rodeoExistente.length === 0) {
+                const { error: errR } = await supabase
+                    .from('rodeos')
+                    .insert({
+                        club,
+                        asociacion,
+                        fecha:             fechaNorm,
+                        tipo_rodeo_id:     tipoEncontrado.id,
+                        tipo_rodeo_nombre: tipoEncontrado.nombre,
+                        duracion_dias:     tipoEncontrado.duracion_dias,
+                        origen:            'importado',
+                        importacion_id:    impId,
+                        created_by:        adminId
+                    });
+                if (errR) throw new Error('Error al crear rodeo sin jurado: ' + errR.message);
+            }
+            insertadas++;
+        } catch (err) {
+            errores++;
+            console.error('[IMPORTACION] Error al insertar rodeo sin jurado:', err.message);
         }
     }
 
