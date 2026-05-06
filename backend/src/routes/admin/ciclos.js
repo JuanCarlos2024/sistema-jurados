@@ -383,7 +383,24 @@ router.post('/:id/cerrar', async (req, res) => {
                 continue;
             }
 
-            // Caso con al menos una respuesta real → pendiente_analista
+            // Si solo hay acepta (ningún rechazo) → el fallo fue aceptado por todos → auto-resolver
+            if (rechaza === 0) {
+                let resolucion_final;
+                if (caso.descuento_puntos === 0 || caso.tipo_caso === 'informativo') {
+                    resolucion_final = 'sin_descuento';
+                } else {
+                    resolucion_final = caso.tipo_caso === 'interpretativa'
+                        ? 'interpretativa_confirmada'
+                        : 'reglamentaria_confirmada';
+                }
+                await supabase
+                    .from('evaluacion_casos')
+                    .update({ estado: 'resuelto', estado_consolidado: 'aceptado', resolucion_final, updated_at: now })
+                    .eq('id', caso.id);
+                continue;
+            }
+
+            // Caso con al menos un rechazo → requiere revisión del analista
             let estado_consolidado = 'pendiente';
             if (totalJurados > 0) {
                 if (acepta + rechaza < totalJurados) {

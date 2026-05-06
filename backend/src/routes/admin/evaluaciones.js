@@ -495,9 +495,91 @@ router.post('/:id/enviar-aprobacion', async (req, res) => {
     res.json(data);
 });
 
+// Resuelve casos que ya tienen decisión en evaluacion_respuestas_jurado pero
+// siguen en pendiente_analista/derivado_comision en evaluacion_casos (datos previos al fix).
+async function _sincronizarCasosAntesDePublicar(evalId, now) {
+    const { data: casos } = await supabase
+        .from('evaluacion_casos')
+        .select('id, ciclo_id, tipo_caso, descuento_puntos, estado')
+        .eq('evaluacion_id', evalId)
+        .in('estado', ['pendiente_analista', 'derivado_comision']);
+
+    if (!casos || casos.length === 0) return;
+
+    const casoIds = casos.map(c => c.id);
+    const { data: resps } = await supabase
+        .from('evaluacion_respuestas_jurado')
+        .select('caso_id, decision, decision_analista, decision_comite, descuento_final')
+        .in('caso_id', casoIds);
+
+    const respsPorCaso = {};
+    for (const r of (resps || [])) {
+        if (!respsPorCaso[r.caso_id]) respsPorCaso[r.caso_id] = [];
+        respsPorCaso[r.caso_id].push(r);
+    }
+
+    const ciclosAfectados = new Set();
+
+    for (const caso of casos) {
+        const todasResps = respsPorCaso[caso.id] || [];
+        const rechazas = todasResps.filter(r => r.decision === 'rechaza');
+
+        // Si queda algún rechazo sin decisión final → no resolver este caso
+        const hayPendiente = rechazas.some(r =>
+            !r.decision_analista ||
+            (r.decision_analista === 'derivada_comite' && !r.decision_comite)
+        );
+        if (hayPendiente) continue;
+
+        // Calcular resolucion_final
+        let resolucion_final;
+        if (caso.tipo_caso === 'informativo' || (caso.descuento_puntos ?? 0) === 0) {
+            resolucion_final = 'sin_descuento';
+        } else if (rechazas.length > 0) {
+            const maxDesc = Math.max(0, ...rechazas.map(r => r.descuento_final ?? 0));
+            resolucion_final = maxDesc === 0
+                ? 'sin_descuento'
+                : (caso.tipo_caso === 'interpretativa' ? 'interpretativa_confirmada' : 'reglamentaria_confirmada');
+        } else {
+            // Solo acepta/sin_respuesta → fallo aceptado
+            resolucion_final = caso.tipo_caso === 'interpretativa'
+                ? 'interpretativa_confirmada'
+                : 'reglamentaria_confirmada';
+        }
+
+        await supabase.from('evaluacion_casos').update({
+            estado: 'resuelto',
+            resolucion_final,
+            updated_at: now
+        }).eq('id', caso.id);
+
+        ciclosAfectados.add(caso.ciclo_id);
+    }
+
+    // Cerrar ciclos donde ya no queden casos sin resolver
+    for (const cicloId of ciclosAfectados) {
+        const { data: noResueltos } = await supabase
+            .from('evaluacion_casos')
+            .select('id')
+            .eq('ciclo_id', cicloId)
+            .neq('estado', 'resuelto');
+
+        if (!noResueltos || noResueltos.length === 0) {
+            await supabase.from('evaluacion_ciclos')
+                .update({ estado: 'cerrado', fecha_cierre: now, updated_at: now })
+                .eq('id', cicloId)
+                .neq('estado', 'cerrado');
+        }
+    }
+}
+
 // POST /:id/aprobar — publicar vía RPC (solo jefe_area o admin pleno)
 router.post('/:id/aprobar', soloRolEvaluacion('jefe_area'), async (req, res) => {
     const { comentario_jefe } = req.body;
+    const now = new Date().toISOString();
+
+    // Sincronizar casos que tienen decisión en respuestas_jurado pero siguen como pendientes
+    await _sincronizarCasosAntesDePublicar(req.params.id, now);
 
     const { data, error } = await supabase.rpc('publicar_evaluacion', {
         p_evaluacion_id: req.params.id,

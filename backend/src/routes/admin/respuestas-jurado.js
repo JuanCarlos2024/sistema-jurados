@@ -13,7 +13,7 @@ async function _intentarResolverCaso(caso_id, now) {
         .eq('caso_id', caso_id)
         .eq('decision', 'rechaza');
 
-    // Si no hay rechazos, resolver solo si hay al menos una respuesta real
+    // Si no hay rechazos, resolver solo si hay al menos una respuesta real (acepta)
     if (!respsRechaza || respsRechaza.length === 0) {
         const { count } = await supabase
             .from('evaluacion_respuestas_jurado')
@@ -21,8 +21,22 @@ async function _intentarResolverCaso(caso_id, now) {
             .eq('caso_id', caso_id)
             .neq('decision', 'sin_respuesta');
         if (!count || count === 0) return false;
-        // Solo acepta → sin_descuento
-        return await _marcarCasoResuelto(caso_id, 'sin_descuento', now);
+
+        const { data: casoAcepta } = await supabase
+            .from('evaluacion_casos')
+            .select('tipo_caso, descuento_puntos')
+            .eq('id', caso_id)
+            .single();
+
+        let resolucion_acepta;
+        if (!casoAcepta || casoAcepta.tipo_caso === 'informativo' || (casoAcepta.descuento_puntos ?? 0) === 0) {
+            resolucion_acepta = 'sin_descuento';
+        } else {
+            resolucion_acepta = casoAcepta.tipo_caso === 'interpretativa'
+                ? 'interpretativa_confirmada'
+                : 'reglamentaria_confirmada';
+        }
+        return await _marcarCasoResuelto(caso_id, resolucion_acepta, now);
     }
 
     // Verificar que todos los rechazos tienen decisión final
