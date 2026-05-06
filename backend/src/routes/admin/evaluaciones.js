@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
 const { soloRolEvaluacion } = require('../../middleware/auth');
+const { intentarAutoPublicar } = require('../../services/publicacion');
 
 // GET / — lista paginada con filtros, jurados y resumen de faltas
 router.get('/', async (req, res) => {
@@ -785,6 +786,140 @@ router.delete('/:id/definitivo', soloRolEvaluacion(), async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     res.json({ mensaje: 'Evaluación eliminada definitivamente' });
+});
+
+// POST /:id/finalizar — Jefe fuerza el cierre cuando hay casos trabados (fallback manual)
+router.post('/:id/finalizar', soloRolEvaluacion('jefe_area'), async (req, res) => {
+    const evalId = req.params.id;
+    const now = new Date().toISOString();
+
+    const { data: ev } = await supabase
+        .from('evaluaciones')
+        .select('id, estado')
+        .eq('id', evalId)
+        .single();
+
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (['aprobado', 'publicado', 'cerrado'].includes(ev.estado)) {
+        return res.status(409).json({ error: `La evaluación ya está en estado ${ev.estado}` });
+    }
+
+    // Obtener todos los casos no resueltos
+    const { data: casos } = await supabase
+        .from('evaluacion_casos')
+        .select('id, ciclo_id, tipo_caso, descuento_puntos, estado')
+        .eq('evaluacion_id', evalId)
+        .neq('estado', 'resuelto');
+
+    if (casos && casos.length > 0) {
+        const casoIds = casos.map(c => c.id);
+
+        // Buscar respuestas de rechaza sin decisión final
+        const { data: respsPendientes } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select('id, caso_id, decision_analista, decision_comite')
+            .in('caso_id', casoIds)
+            .eq('decision', 'rechaza');
+
+        const sinDecision = (respsPendientes || []).filter(r =>
+            !r.decision_analista ||
+            (r.decision_analista === 'derivada_comite' && !r.decision_comite)
+        );
+
+        if (sinDecision.length > 0) {
+            return res.status(409).json({
+                error: `Hay ${sinDecision.length} respuesta(s) de jurado sin decisión. Resuelva todas las respuestas del analista antes de finalizar.`
+            });
+        }
+
+        // Todas las respuestas están decididas — sincronizar casos
+        const { data: respsConDesc } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select('caso_id, descuento_final')
+            .in('caso_id', casoIds)
+            .eq('decision', 'rechaza');
+
+        const descPorCaso = {};
+        for (const r of (respsConDesc || [])) {
+            if (!descPorCaso[r.caso_id]) descPorCaso[r.caso_id] = 0;
+            if ((r.descuento_final ?? 0) > descPorCaso[r.caso_id]) {
+                descPorCaso[r.caso_id] = r.descuento_final;
+            }
+        }
+
+        for (const caso of casos) {
+            const maxDesc = descPorCaso[caso.id] ?? 0;
+            let resolucion_final;
+            if (caso.tipo_caso === 'informativo' || maxDesc === 0) {
+                resolucion_final = 'sin_descuento';
+            } else {
+                resolucion_final = caso.tipo_caso === 'interpretativa'
+                    ? 'interpretativa_confirmada'
+                    : 'reglamentaria_confirmada';
+            }
+            await supabase.from('evaluacion_casos').update({
+                estado: 'resuelto',
+                resolucion_final,
+                updated_at: now
+            }).eq('id', caso.id);
+        }
+
+        // Cerrar ciclos donde todos los casos quedaron resueltos
+        const cicloIds = [...new Set(casos.map(c => c.ciclo_id))];
+        for (const cicloId of cicloIds) {
+            const { data: noResueltos } = await supabase
+                .from('evaluacion_casos')
+                .select('id')
+                .eq('ciclo_id', cicloId)
+                .neq('estado', 'resuelto');
+
+            if (!noResueltos || noResueltos.length === 0) {
+                await supabase.from('evaluacion_ciclos')
+                    .update({ estado: 'cerrado', fecha_cierre: now, updated_at: now })
+                    .eq('id', cicloId)
+                    .neq('estado', 'cerrado');
+            }
+        }
+    }
+
+    // Intentar auto-publicar
+    const rpcData = await intentarAutoPublicar(evalId, req.usuario.id, req.usuario.nombre, req.ip);
+
+    if (!rpcData) {
+        const { data: ciclosEv } = await supabase
+            .from('evaluacion_ciclos')
+            .select('numero_ciclo, estado')
+            .eq('evaluacion_id', evalId);
+        const abiertos = (ciclosEv || []).filter(c => c.estado !== 'cerrado');
+        if (abiertos.length > 0) {
+            return res.status(409).json({
+                error: `Ciclo(s) ${abiertos.map(c => c.numero_ciclo).join(', ')} aún no están cerrados.`
+            });
+        }
+        return res.status(409).json({ error: 'No se pudo publicar la evaluación. Verifique el estado de los ciclos y casos.' });
+    }
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: evalId,
+        accion:       'finalizar_manual',
+        detalle:      { nota_final: rpcData?.nota_final, puntaje_final: rpcData?.puntaje_final },
+        actor_id:     req.usuario.id,
+        actor_tipo:   'administrador',
+        actor_nombre: req.usuario.nombre,
+        ip_address:   req.ip
+    });
+
+    const { data: evFinal } = await supabase
+        .from('evaluaciones')
+        .select('id, estado, nota_final, puntaje_final')
+        .eq('id', evalId)
+        .single();
+
+    res.json({
+        nota_final:    evFinal?.nota_final,
+        puntaje_final: evFinal?.puntaje_final,
+        evaluacion:    evFinal
+    });
 });
 
 module.exports = router;
