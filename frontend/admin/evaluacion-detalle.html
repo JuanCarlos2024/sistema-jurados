@@ -524,6 +524,71 @@ function labelRolEval(rol) {
     return M[rol] || rol;
 }
 
+// ── Resumen final de evaluación publicada ─────────────────────────
+function renderResumenFinal(ev, casos) {
+    if (!['publicado', 'cerrado', 'aprobado'].includes(ev.estado)) return '';
+
+    const nota      = ev.nota_final   != null ? parseFloat(ev.nota_final).toFixed(1)  : '—';
+    const puntaje   = ev.puntaje_final != null ? ev.puntaje_final : null;
+    const base      = ev.puntaje_base  || 80;
+    const descuento = puntaje != null ? (base - puntaje) : null;
+
+    const interp = casos.filter(c => c.tipo_caso === 'interpretativa' && c.resolucion_final && c.resolucion_final !== 'sin_descuento').length;
+    const reglam = casos.filter(c => c.tipo_caso === 'reglamentaria'  && c.resolucion_final && c.resolucion_final !== 'sin_descuento').length;
+    const concep = casos.filter(c => c.tipo_caso === 'informativo'    && c.resolucion_final && c.resolucion_final !== 'sin_descuento').length;
+
+    const fechaPub = ev.fecha_decision_jefe || ev.updated_at;
+    const fechaStr = fechaPub ? new Date(fechaPub).toLocaleDateString('es-CL') : null;
+
+    return `
+    <div style="
+        background: linear-gradient(135deg, #f0faf5 0%, #e8f8f2 100%);
+        border: 1.5px solid #a2d9c9;
+        border-radius: 12px;
+        padding: 20px 24px;
+        margin-bottom: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        align-items: flex-start;
+    ">
+        <div style="flex:1;min-width:180px;">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#148f77;font-weight:700;margin-bottom:6px;">Estado final</div>
+            <span class="badge-eval badge-${ev.estado}" style="font-size:13px;">${labelEstadoEval(ev.estado)}</span>
+            ${fechaStr ? `<div style="font-size:11px;color:var(--gris);margin-top:6px;">Publicado el ${fechaStr}</div>` : ''}
+        </div>
+        <div style="flex:1;min-width:140px;text-align:center;">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#148f77;font-weight:700;margin-bottom:4px;">Nota final</div>
+            <div style="font-size:42px;font-weight:800;color:#148f77;line-height:1;">${nota}</div>
+            <div style="font-size:12px;color:var(--gris);">de 7.0</div>
+            ${puntaje != null ? `<div style="font-size:12px;color:var(--gris);margin-top:3px;">${puntaje} / ${base} pts</div>` : ''}
+        </div>
+        <div style="flex:2;min-width:200px;">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#148f77;font-weight:700;margin-bottom:8px;">Resumen de faltas</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;">
+                <div style="background:#fff;border-radius:8px;padding:8px 12px;border:1px solid #d5f0e8;text-align:center;">
+                    <div style="font-size:18px;font-weight:700;color:#c0392b;">${interp}</div>
+                    <div style="font-size:11px;color:var(--gris);">Apreciación</div>
+                </div>
+                <div style="background:#fff;border-radius:8px;padding:8px 12px;border:1px solid #d5f0e8;text-align:center;">
+                    <div style="font-size:18px;font-weight:700;color:#c0392b;">${reglam}</div>
+                    <div style="font-size:11px;color:var(--gris);">Reglamentaria</div>
+                </div>
+                <div style="background:#fff;border-radius:8px;padding:8px 12px;border:1px solid #d5f0e8;text-align:center;">
+                    <div style="font-size:18px;font-weight:700;color:#7f8c8d;">${concep}</div>
+                    <div style="font-size:11px;color:var(--gris);">Conceptual</div>
+                </div>
+                ${descuento != null ? `
+                <div style="background:#fff;border-radius:8px;padding:8px 12px;border:1px solid #d5f0e8;text-align:center;">
+                    <div style="font-size:18px;font-weight:700;color:#c0392b;">-${descuento}</div>
+                    <div style="font-size:11px;color:var(--gris);">Pts descontados</div>
+                </div>` : ''}
+            </div>
+            ${ev.comentario_jefe ? `<div style="margin-top:10px;font-size:12px;color:var(--gris);font-style:italic;">"${sanitizar(ev.comentario_jefe)}"${ev.jefe?.nombre_completo ? ' — ' + sanitizar(ev.jefe.nombre_completo) : ''}</div>` : ''}
+        </div>
+    </div>`;
+}
+
 // ── Helpers de etiquetas ──────────────────────────────────────────
 function labelEstadoEval(e) {
     const M = {
@@ -596,6 +661,8 @@ async function cargarEvaluacion() {
                     <span class="badge-eval badge-${ev.estado}">${labelEstadoEval(ev.estado)}</span>
                 </div>
             </div>
+
+            ${renderResumenFinal(ev, todosLosCasos)}
 
             ${renderAnalisisDeportivo(ev)}
 

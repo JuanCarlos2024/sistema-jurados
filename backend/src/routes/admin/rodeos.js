@@ -700,28 +700,55 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     }
     const repiteAsocSet = new Set(asigAsociacion.map(a => a.usuario_pagado_id));
 
-    // Últimos 3 rodeos de cada jurado (incluye nota vía notas_rodeo)
+    // Últimos rodeos de cada jurado (sin join de notas para evitar problemas con FK UNIQUE)
     const { data: ultRodeos } = await supabase
         .from('asignaciones')
-        .select('id, usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion), notas_rodeo(nota)')
+        .select('id, usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
         .in('usuario_pagado_id', idsDisp)
         .neq('estado', 'anulado')
         .order('created_at', { ascending: false });
 
+    // Construir historial (máx 3 por jurado) y recolectar los asignacion_ids usados
     const historialMap = {};
+    const asigIdsHistorial = [];
     for (const a of (ultRodeos || [])) {
         if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
         if (historialMap[a.usuario_pagado_id].length < 3) {
-            const notaVal = Array.isArray(a.notas_rodeo) && a.notas_rodeo.length > 0
-                ? a.notas_rodeo[0].nota
-                : null;
             historialMap[a.usuario_pagado_id].push({
+                _asig_id:  a.id,
                 club:       a.rodeos?.club,
                 fecha:      a.rodeos?.fecha,
                 tipo_rodeo: a.rodeos?.tipo_rodeo_nombre,
                 asociacion: a.rodeos?.asociacion || null,
-                nota:       notaVal
+                nota:       null
             });
+            asigIdsHistorial.push(a.id);
+        }
+    }
+
+    // Obtener notas en consulta separada (manual y publicadas por evaluación técnica)
+    if (asigIdsHistorial.length > 0) {
+        const { data: notasData } = await supabase
+            .from('notas_rodeo')
+            .select('asignacion_id, nota')
+            .in('asignacion_id', asigIdsHistorial);
+
+        const notasPorAsig = {};
+        for (const n of (notasData || [])) {
+            notasPorAsig[n.asignacion_id] = n.nota;
+        }
+
+        for (const entradas of Object.values(historialMap)) {
+            for (const e of entradas) {
+                if (e._asig_id in notasPorAsig) {
+                    e.nota = notasPorAsig[e._asig_id];
+                }
+                delete e._asig_id;
+            }
+        }
+    } else {
+        for (const entradas of Object.values(historialMap)) {
+            for (const e of entradas) { delete e._asig_id; }
         }
     }
 

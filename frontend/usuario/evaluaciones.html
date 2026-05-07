@@ -309,17 +309,27 @@ function renderLista(paraResponder, enRevision, resultados) {
         resultados.forEach(e => {
             const rodeo = e.rodeo || {};
             const estadoLabel = e.estado === 'cerrado' ? 'Cerrado' : 'Publicado';
+            const nota = e.nota_final != null ? parseFloat(e.nota_final).toFixed(1) : null;
+            const puntaje = e.puntaje_final != null ? e.puntaje_final : null;
+            const descuento = puntaje != null ? (80 - puntaje) : null;
             html += `
             <div class="eval-card">
-                <div class="eval-card-info">
+                <div class="eval-card-info" style="flex:1;">
                     <h3>${sanitizar(rodeo.club || 'Sin club')} — ${sanitizar(rodeo.asociacion || '')}</h3>
                     <p>
                         ${sanitizar(rodeo.fecha || '')}
                         ${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}
-                        · ${estadoLabel}
+                    </p>
+                    <p style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        ${nota
+                            ? `<span style="font-size:15px;font-weight:700;color:var(--primario);">Nota: ${nota}</span>`
+                            : `<span style="font-size:13px;color:var(--gris);">Sin nota</span>`}
+                        ${puntaje != null ? `<span style="font-size:12px;color:var(--gris);">${puntaje}/80 pts</span>` : ''}
+                        ${descuento != null && descuento > 0 ? `<span style="font-size:12px;color:#c0392b;">-${descuento} pts descontados</span>` : ''}
+                        <span class="nota-badge nota-badge-${e.estado}" style="font-size:11px;">${estadoLabel}</span>
                     </p>
                 </div>
-                <a href="/usuario/evaluacion-resultado.html?id=${e.id}" class="btn btn-secundario btn-pequeño" style="text-decoration:none;">
+                <a href="/usuario/evaluacion-resultado.html?id=${e.id}" class="btn btn-secundario btn-pequeño" style="text-decoration:none;white-space:nowrap;">
                     Ver resultado →
                 </a>
             </div>`;
