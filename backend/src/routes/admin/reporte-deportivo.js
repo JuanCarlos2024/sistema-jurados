@@ -74,7 +74,6 @@ async function obtenerDatos(q, paginar = true) {
             puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
             observacion_general,
             resultados_alterados, comentario_resultados_alterados,
-            analista:analista_id(nombre_completo)
         `)
         .in('rodeo_id', rodeoIds)
         .eq('anulada', false);
@@ -206,7 +205,6 @@ async function obtenerDatos(q, paginar = true) {
             categoria_rodeo: rodeo.categoria_rodeo_nombre || '',
             jurados:  (juradosPorRodeo[rodeo.id] || []).join(', '),
             delegados: (delegadosPorRodeo[rodeo.id] || []).join(', '),
-            analista: ev?.analista?.nombre_completo || '',
             estado_evaluacion: ev?.estado || null,
             nota_final: ev?.nota_final != null ? parseFloat(ev.nota_final).toFixed(2) : null,
             puntaje_oficial_1er: po1,
@@ -275,7 +273,6 @@ router.get('/export', async (req, res) => {
             { header: 'Categoría',                 key: 'categoria_rodeo',  width: 16 },
             { header: 'Jurado(s)',                 key: 'jurados',          width: 30 },
             { header: 'Delegado Rentado',          key: 'delegados',        width: 25 },
-            { header: 'Analista',                  key: 'analista',         width: 25 },
             { header: 'Estado Evaluación',         key: 'estado_evaluacion',width: 18 },
             { header: 'Nota Final',                key: 'nota_final',       width: 10 },
             { header: 'Oficial 1er Lugar',         key: 'puntaje_oficial_1er', width: 14 },
@@ -320,7 +317,6 @@ router.get('/export', async (req, res) => {
                 categoria_rodeo:  f.categoria_rodeo,
                 jurados:          f.jurados,
                 delegados:        f.delegados,
-                analista:         f.analista,
                 estado_evaluacion: f.estado_evaluacion || 'Sin evaluación',
                 nota_final:       f.nota_final != null ? Number(f.nota_final) : '',
                 puntaje_oficial_1er: f.puntaje_oficial_1er != null ? Number(f.puntaje_oficial_1er) : '',

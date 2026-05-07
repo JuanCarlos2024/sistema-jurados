@@ -324,7 +324,7 @@ function render(data) {
     let html = `
     <div class="eval-header-jurado">
         <h2>${sanitizar(club)}${asoc ? ' — ' + sanitizar(asoc) : ''}</h2>
-        <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}${ev.analista?.nombre_completo ? ' · Analista: ' + sanitizar(ev.analista.nombre_completo) : ''}</p>
+        <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}</p>
     </div>
     ${renderCicloAccordion(ciclo1, 1, autoExpand === 1)}
     ${renderCicloAccordion(ciclo2, 2, autoExpand === 2)}`;
