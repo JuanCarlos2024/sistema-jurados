@@ -73,7 +73,7 @@ async function obtenerDatos(q, paginar = true) {
             id, rodeo_id, estado, nota_final, updated_at,
             puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
             observacion_general,
-            resultados_alterados, comentario_resultados_alterados,
+            resultados_alterados, comentario_resultados_alterados
         `)
         .in('rodeo_id', rodeoIds)
         .eq('anulada', false);
