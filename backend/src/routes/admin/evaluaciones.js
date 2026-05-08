@@ -282,6 +282,7 @@ router.get('/rodeos-disponibles', async (req, res) => {
     let query = supabase
         .from('rodeos')
         .select('id, club, fecha, asociacion, tipo_rodeo_nombre')
+        .eq('estado', 'activo')
         .order('fecha', { ascending: false })
         .limit(150);
 
