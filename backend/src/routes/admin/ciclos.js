@@ -323,19 +323,19 @@ router.post('/:id/habilitar-respuesta-jurado', soloRolEvaluacion(), async (req, 
     if (casoIds.length > 0) {
         // Eliminar registros sin_respuesta de estos casos
         await supabase
-            .from('evaluacion_respuestas')
+            .from('evaluacion_respuestas_jurado')
             .delete()
             .in('caso_id', casoIds)
-            .eq('tipo_respuesta', 'sin_respuesta');
+            .eq('decision', 'sin_respuesta');
 
         // Para cada caso, verificar si quedan respuestas reales (acepta/rechaza)
         // Si no quedan → resetear a visible_jurado
         for (const casoId of casoIds) {
             const { count } = await supabase
-                .from('evaluacion_respuestas')
+                .from('evaluacion_respuestas_jurado')
                 .select('id', { count: 'exact', head: true })
                 .eq('caso_id', casoId)
-                .in('tipo_respuesta', ['acepta', 'rechaza']);
+                .in('decision', ['acepta', 'rechaza']);
 
             if ((count || 0) === 0) {
                 await supabase
