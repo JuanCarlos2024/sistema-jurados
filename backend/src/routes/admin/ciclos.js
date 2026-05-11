@@ -5,6 +5,7 @@ const multer       = require('multer');
 const XLSX         = require('xlsx');
 const emailService = require('../../services/emailService');
 const { intentarAutoPublicar } = require('../../services/publicacion');
+const { soloRolEvaluacion }    = require('../../middleware/auth');
 
 // Calcula el próximo día-de-semana a partir de una fecha, con hora específica
 function calcFechaLimite(fechaApertura, diaLimiteStr, horaLimiteStr) {
@@ -279,6 +280,120 @@ router.post('/:id/reabrir', async (req, res) => {
     });
 
     res.json({ ...cicloAct, mensaje: 'Ciclo reabierto correctamente' });
+});
+
+// POST /:id/habilitar-respuesta-jurado — solo admin pleno
+// Elimina sin_respuesta del ciclo, resetea casos a visible_jurado y reabre el ciclo
+router.post('/:id/habilitar-respuesta-jurado', soloRolEvaluacion(), async (req, res) => {
+    const { motivo } = req.body;
+
+    const { data: ciclo, error: cicloErr } = await supabase
+        .from('evaluacion_ciclos')
+        .select('*, evaluacion:evaluaciones(id, estado)')
+        .eq('id', req.params.id)
+        .single();
+
+    if (cicloErr || !ciclo) return res.status(404).json({ error: 'Ciclo no encontrado' });
+
+    if (!['cerrado', 'en_revision'].includes(ciclo.estado)) {
+        return res.status(409).json({
+            error: `Solo se puede habilitar respuesta en un ciclo cerrado o en revisión (actual: ${ciclo.estado})`
+        });
+    }
+
+    const ev = ciclo.evaluacion;
+    if (ev && ['publicado', 'cerrado'].includes(ev.estado)) {
+        return res.status(409).json({
+            error: `No se puede modificar el ciclo porque la evaluación está ${ev.estado}`
+        });
+    }
+
+    // Obtener todos los casos del ciclo
+    const { data: casos, error: casosErr } = await supabase
+        .from('evaluacion_casos')
+        .select('id')
+        .eq('ciclo_id', req.params.id);
+
+    if (casosErr) return res.status(500).json({ error: casosErr.message });
+
+    const casoIds = (casos || []).map(c => c.id);
+
+    let casosReseteados = 0;
+
+    if (casoIds.length > 0) {
+        // Eliminar registros sin_respuesta de estos casos
+        await supabase
+            .from('evaluacion_respuestas')
+            .delete()
+            .in('caso_id', casoIds)
+            .eq('tipo_respuesta', 'sin_respuesta');
+
+        // Para cada caso, verificar si quedan respuestas reales (acepta/rechaza)
+        // Si no quedan → resetear a visible_jurado
+        for (const casoId of casoIds) {
+            const { count } = await supabase
+                .from('evaluacion_respuestas')
+                .select('id', { count: 'exact', head: true })
+                .eq('caso_id', casoId)
+                .in('tipo_respuesta', ['acepta', 'rechaza']);
+
+            if ((count || 0) === 0) {
+                await supabase
+                    .from('evaluacion_casos')
+                    .update({
+                        estado:              'visible_jurado',
+                        resolucion_final:    null,
+                        estado_consolidado:  null,
+                        updated_at:          new Date().toISOString()
+                    })
+                    .eq('id', casoId);
+                casosReseteados++;
+            }
+        }
+    }
+
+    const now             = new Date().toISOString();
+    const estadoAnterior  = ciclo.estado;
+
+    const { data: cicloAct, error: updErr } = await supabase
+        .from('evaluacion_ciclos')
+        .update({ estado: 'abierto', updated_at: now })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // Si la evaluación estaba en estados bloqueantes, volver a en_proceso
+    if (ev && ['pendiente_aprobacion', 'devuelto'].includes(ev.estado)) {
+        await supabase
+            .from('evaluaciones')
+            .update({ estado: 'en_proceso', updated_at: now })
+            .eq('id', ev.id);
+    }
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: ciclo.evaluacion_id,
+        ciclo_id:      req.params.id,
+        accion:        'habilitar_respuesta_jurado',
+        detalle: {
+            numero_ciclo:     ciclo.numero_ciclo,
+            estado_anterior:  estadoAnterior,
+            estado_nuevo:     'abierto',
+            casos_reseteados: casosReseteados,
+            motivo:           (motivo || '').trim() || null
+        },
+        actor_id:     req.usuario.id,
+        actor_tipo:   'administrador',
+        actor_nombre: req.usuario.nombre,
+        ip_address:   req.ip
+    });
+
+    res.json({
+        ...cicloAct,
+        mensaje:          `Respuesta del jurado habilitada. ${casosReseteados} caso(s) reseteado(s).`,
+        casos_reseteados: casosReseteados
+    });
 });
 
 // POST /:id/cerrar — cerrar ciclo manualmente

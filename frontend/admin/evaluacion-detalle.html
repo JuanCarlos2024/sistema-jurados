@@ -425,6 +425,27 @@
     </div>
 </div>
 
+<!-- MODAL: Habilitar respuesta jurado -->
+<div class="modal-overlay oculto" id="modal-habilitar-respuesta">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="habilitar-respuesta-titulo">Habilitar respuesta jurado</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-habilitar-respuesta').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div style="background:#fef3e2;border:1px solid #f0a500;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#7d4e00;">
+                <strong>Advertencia:</strong> Esta acción eliminará los registros de "sin respuesta" del ciclo y reseteará los casos a estado <em>visible_jurado</em> para que el jurado pueda volver a responder. Solo usar si el ciclo fue cerrado por error.
+            </div>
+            <label style="display:block;margin-bottom:6px;font-size:13px;font-weight:600;">Motivo (opcional)</label>
+            <textarea id="habilitar-respuesta-motivo" class="input" rows="3" style="width:100%;resize:vertical;" placeholder="Ej: El ciclo fue cerrado por error antes de que el jurado respondiera"></textarea>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-habilitar-respuesta').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-primario" onclick="habilitarRespuestaJurado()" style="background:#e67e22;border-color:#e67e22;">Confirmar</button>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL: Decisión analista -->
 <div class="modal-overlay oculto" id="modal-decision-analista">
     <div class="modal" style="max-width:460px;">
@@ -787,6 +808,10 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
     const puedeReabrir      = ['cerrado', 'en_revision'].includes(ciclo.estado)
         && !['publicado', 'cerrado'].includes(estadoEval);
 
+    const puedeHabilitarRespuesta = (rolEval === null)
+        && ['cerrado', 'en_revision'].includes(ciclo.estado)
+        && !['publicado', 'cerrado'].includes(estadoEval);
+
     const casos = ciclo.casos || [];
 
     const tablaCasos = casos.length === 0
@@ -843,6 +868,7 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
                 ${puedeCerrarCiclo ? `<button class="btn btn-peligro btn-pequeño"  onclick="abrirModalCerrarCiclo('${ciclo.id}', ${ciclo.numero_ciclo}, ${casos.length})">Cerrar ciclo</button>` : ''}
                 ${puedeReenviar    ? `<button class="btn btn-outline btn-pequeño"   onclick="reenviarNotificacion('${ciclo.id}', ${ciclo.numero_ciclo})">📧 Reenviar notif.</button>` : ''}
                 ${puedeReabrir     ? `<button class="btn btn-outline btn-pequeño"   onclick="abrirModalReabrir('${ciclo.id}', ${ciclo.numero_ciclo})">↩ Reabrir ciclo</button>` : ''}
+                ${puedeHabilitarRespuesta ? `<button class="btn btn-outline btn-pequeño" onclick="abrirModalHabilitarRespuesta('${ciclo.id}', ${ciclo.numero_ciclo})" style="border-color:#e67e22;color:#e67e22;">Habilitar respuesta jurado</button>` : ''}
             </div>
         </div>
         ${renderCicloMeta(ciclo)}
@@ -1164,6 +1190,25 @@ async function reabrirCiclo() {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al reabrir el ciclo', 'error');
+    }
+}
+
+let _cicloParaHabilitarRespuesta = null;
+function abrirModalHabilitarRespuesta(cicloId, numeroCiclo) {
+    _cicloParaHabilitarRespuesta = cicloId;
+    document.getElementById('habilitar-respuesta-titulo').textContent = `Habilitar respuesta jurado — Ciclo ${numeroCiclo}`;
+    document.getElementById('habilitar-respuesta-motivo').value = '';
+    document.getElementById('modal-habilitar-respuesta').classList.remove('oculto');
+}
+async function habilitarRespuestaJurado() {
+    const motivo = document.getElementById('habilitar-respuesta-motivo').value.trim();
+    try {
+        const res = await api.post(`/admin/ciclos/${_cicloParaHabilitarRespuesta}/habilitar-respuesta-jurado`, { motivo });
+        document.getElementById('modal-habilitar-respuesta').classList.add('oculto');
+        mostrarToast(res.mensaje || 'Respuesta del jurado habilitada correctamente', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al habilitar respuesta del jurado', 'error');
     }
 }
 
