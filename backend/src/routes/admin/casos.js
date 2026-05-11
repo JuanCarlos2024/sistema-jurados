@@ -91,38 +91,47 @@ async function getDescuentos() {
     };
 }
 
-// PATCH /:id — editar datos del caso
-router.patch('/:id', async (req, res) => {
+// PATCH /:id — editar datos del caso (solo admin pleno, analista, jefe_area)
+router.patch('/:id', soloRolEvaluacion('analista', 'jefe_area'), async (req, res) => {
     const { tipo_caso, descripcion, video_url } = req.body;
+
+    const { data: casoActual, error: fetchErr } = await supabase
+        .from('evaluacion_casos')
+        .select('id, ciclo_id, evaluacion_id, tipo_caso')
+        .eq('id', req.params.id)
+        .single();
+    if (fetchErr || !casoActual) return res.status(404).json({ error: 'Caso no encontrado' });
+
     const cambios = { updated_at: new Date().toISOString() };
+    const auditDetalle = {};
 
     if (tipo_caso !== undefined) {
         if (!['interpretativa', 'reglamentaria', 'informativo'].includes(tipo_caso)) {
             return res.status(400).json({ error: 'tipo_caso inválido' });
         }
         if (tipo_caso === 'informativo') {
-            const { data: casoActual } = await supabase
-                .from('evaluacion_casos')
-                .select('ciclo_id')
-                .eq('id', req.params.id)
+            const { data: ciclo } = await supabase
+                .from('evaluacion_ciclos')
+                .select('numero_ciclo')
+                .eq('id', casoActual.ciclo_id)
                 .single();
-            if (casoActual) {
-                const { data: ciclo } = await supabase
-                    .from('evaluacion_ciclos')
-                    .select('numero_ciclo')
-                    .eq('id', casoActual.ciclo_id)
-                    .single();
-                if (!ciclo || ciclo.numero_ciclo !== 2) {
-                    return res.status(400).json({ error: 'Los casos informativos solo pueden estar en el ciclo 2' });
-                }
+            if (!ciclo || ciclo.numero_ciclo !== 2) {
+                return res.status(400).json({ error: 'Los casos informativos solo pueden estar en el ciclo 2' });
             }
         }
         const desc = await getDescuentos();
         cambios.tipo_caso        = tipo_caso;
         cambios.descuento_puntos = desc[tipo_caso] ?? 0;
+        auditDetalle.tipo_caso   = tipo_caso;
     }
-    if (descripcion !== undefined) cambios.descripcion = descripcion || null;
-    if (video_url   !== undefined) cambios.video_url   = video_url   || null;
+    if (descripcion !== undefined) {
+        cambios.descripcion      = descripcion || null;
+        auditDetalle.descripcion = descripcion || null;
+    }
+    if (video_url !== undefined) {
+        cambios.video_url      = video_url || null;
+        auditDetalle.video_url = video_url || null;
+    }
 
     const { data, error } = await supabase
         .from('evaluacion_casos')
@@ -132,6 +141,19 @@ router.patch('/:id', async (req, res) => {
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: casoActual.evaluacion_id,
+        ciclo_id:      casoActual.ciclo_id,
+        caso_id:       req.params.id,
+        accion:        'editar_caso',
+        detalle:       auditDetalle,
+        actor_id:      req.usuario.id,
+        actor_tipo:    'administrador',
+        actor_nombre:  req.usuario.nombre,
+        ip_address:    req.ip
+    });
+
     res.json(data);
 });
 

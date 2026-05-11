@@ -400,6 +400,31 @@
     </div>
 </div>
 
+<!-- MODAL: Editar video y descripción del caso -->
+<div class="modal-overlay oculto" id="modal-editar-media">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">Editar situación N° <span id="editar-media-num"></span></h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-editar-media').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">URL del video</label>
+                <input type="url" id="editar-media-video" class="form-control" placeholder="https://youtube.com/..." autocomplete="off">
+                <span style="font-size:11px;color:var(--gris);">Dejar vacío para quitar el video.</span>
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">Descripción / Comentario</label>
+                <textarea id="editar-media-desc" class="form-control" rows="4" maxlength="1000" placeholder="Descripción del caso..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-editar-media').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-primario" onclick="guardarEditarMedia()">Guardar cambios</button>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL: Decisión analista -->
 <div class="modal-overlay oculto" id="modal-decision-analista">
     <div class="modal" style="max-width:460px;">
@@ -912,6 +937,9 @@ function _renderComite(caso) {
     }).join('');
 }
 
+// ── Mapa de datos de casos para modal editar ─────────────────────
+const _casoMediaMap = {};
+
 // ── Columna: Video ────────────────────────────────────────────────
 const _videoUrlMap = {};
 function _renderVideoCelda(caso) {
@@ -1023,7 +1051,19 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
         && !['publicado', 'cerrado'].includes(estadoEval)
         && caso.estado === 'cargado';
 
+    // Editar solo video+descripción: disponible aunque el ciclo esté abierto
+    const puedeEditarMedia = !puedeEditar
+        && !['publicado', 'cerrado'].includes(estadoEval)
+        && esAnalista;
+
     const puedeVerRespuestas = !['pendiente_carga', 'cargado'].includes(ciclo.estado);
+
+    // Guardar datos del caso para el modal de edición rápida
+    _casoMediaMap[caso.id] = {
+        numero_caso: caso.numero_caso,
+        video_url:   caso.video_url   || '',
+        descripcion: caso.descripcion || ''
+    };
 
     const descBadge = caso.descuento_puntos > 0
         ? `<span class="descuento-badge">-${caso.descuento_puntos} pt</span>`
@@ -1033,6 +1073,9 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
     if (puedeEditar) {
         accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="abrirModalEditar(${JSON.stringify(caso).replace(/"/g,'&quot;')}, '${ciclo.id}', ${ciclo.numero_ciclo})">Editar</button>`);
         accionesArr.push(`<button class="btn btn-peligro btn-pequeño" onclick="eliminarCaso('${caso.id}', ${caso.numero_caso}, ${(caso.respuestas_jurado||[]).length})">Eliminar</button>`);
+    }
+    if (puedeEditarMedia) {
+        accionesArr.push(`<button class="btn btn-outline btn-pequeño" onclick="abrirEditarMedia('${caso.id}')" title="Editar video y descripción">✎ Editar</button>`);
     }
     if (puedeVerRespuestas) {
         accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="verRespuestas('${caso.id}', ${caso.numero_caso})">Respuestas</button>`);
@@ -1393,6 +1436,33 @@ async function confirmarEliminarCaso() {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ── Editar video y descripción del caso ──────────────────────────
+let _editarMediaCasoId = null;
+
+function abrirEditarMedia(casoId) {
+    const d = _casoMediaMap[casoId] || {};
+    _editarMediaCasoId = casoId;
+    document.getElementById('editar-media-num').textContent    = d.numero_caso || '';
+    document.getElementById('editar-media-video').value        = d.video_url   || '';
+    document.getElementById('editar-media-desc').value         = d.descripcion || '';
+    document.getElementById('modal-editar-media').classList.remove('oculto');
+}
+
+async function guardarEditarMedia() {
+    if (!_editarMediaCasoId) return;
+    const video_url   = document.getElementById('editar-media-video').value.trim() || null;
+    const descripcion = document.getElementById('editar-media-desc').value.trim()  || null;
+    try {
+        await api.patch(`/admin/casos/${_editarMediaCasoId}`, { video_url, descripcion });
+        document.getElementById('modal-editar-media').classList.add('oculto');
+        _editarMediaCasoId = null;
+        mostrarToast('Caso actualizado correctamente', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al guardar', 'error');
     }
 }
 
