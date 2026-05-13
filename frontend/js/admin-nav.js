@@ -23,6 +23,8 @@
         { s: 'Sistema' },
         { href: '/admin/configuracion.html',       icon: '⚙️',  label: 'Configuración' },
         { href: '/admin/auditoria.html',           icon: '📋', label: 'Auditoría' },
+        { s: 'Capacitaciones' },
+        { href: '/admin/capacitaciones.html', icon: '🎓', label: 'Capacitaciones' },
         { s: 'Evaluación Técnica' },
         { href: '/admin/evaluaciones.html',        icon: '📝', label: 'Análisis de Casos' },
         { href: '/admin/evaluacion-dashboard.html',icon: '📊', label: 'Dashboard Eval.' },

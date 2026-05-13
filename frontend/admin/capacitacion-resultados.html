@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultados de Prueba — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .tabs { display:flex; gap:0; border-bottom:2px solid var(--gris-borde); margin-bottom:20px; }
+        .tab-btn {
+            padding:8px 20px; background:none; border:none;
+            font-size:14px; font-weight:600; color:var(--gris);
+            cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px;
+        }
+        .tab-btn.activo { color:var(--primario); border-bottom-color:var(--primario); }
+
+        .estado-pendiente  { color:#888; }
+        .estado-en_curso   { color:#1a5276; font-weight:600; }
+        .estado-completado { color:#555; }
+        .estado-aprobado   { color:#1e8449; font-weight:700; }
+        .estado-reprobado  { color:#922b21; font-weight:700; }
+
+        .resumen-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+        @media (max-width:700px) { .resumen-stats { grid-template-columns: 1fr 1fr; } }
+        .stat-box {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            padding: 14px 16px;
+            text-align: center;
+            background: #fff;
+        }
+        .stat-val { font-size: 28px; font-weight: 800; margin-bottom: 2px; }
+        .stat-lbl { font-size: 12px; color: var(--gris); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+
+        .barra-h {
+            height: 12px;
+            border-radius: 6px;
+            background: var(--gris-borde);
+            overflow: hidden;
+            display: inline-block;
+            width: 120px;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        .barra-h-fill { height: 100%; border-radius: 6px; }
+        .barra-correcta  .barra-h-fill { background: #1e8449; }
+        .barra-incorrecta .barra-h-fill { background: #922b21; }
+
+        .filtros-res { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+        .filtros-res input,
+        .filtros-res select { padding:6px 10px; border:1px solid var(--gris-borde); border-radius:6px; font-size:13px; background:#fff; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav" data-active="/admin/capacitaciones.html"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a id="link-editar" href="#" class="btn btn-outline btn-pequeño">← Editar prueba</a>
+                <h1 id="titulo-pagina" style="font-size:16px;">Cargando…</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-secundario btn-pequeño" onclick="exportar()" id="btn-exportar" disabled>Exportar CSV</button>
+            </div>
+        </div>
+
+        <div class="page-body" id="page-body" style="display:none;">
+            <!-- Resumen -->
+            <div class="resumen-stats" id="resumen-stats"></div>
+
+            <div class="tabs">
+                <button class="tab-btn activo" onclick="cambiarTab('resultados', this)">Resultados</button>
+                <button class="tab-btn" onclick="cambiarTab('estadisticas', this)">Estadísticas por pregunta</button>
+            </div>
+
+            <!-- TAB: Resultados -->
+            <div id="tab-resultados">
+                <div class="filtros-res">
+                    <input type="text" id="res-buscar" placeholder="Buscar jurado…" oninput="filtrarResultados()">
+                    <select id="res-estado" onchange="filtrarResultados()">
+                        <option value="">Todos los estados</option>
+                        <option value="pendiente">Pendiente</option>
+                        <option value="en_curso">En curso</option>
+                        <option value="completado">Completado</option>
+                    </select>
+                    <select id="res-aprobacion" onchange="filtrarResultados()">
+                        <option value="">Todos</option>
+                        <option value="aprobado">Aprobados</option>
+                        <option value="reprobado">Reprobados</option>
+                    </select>
+                </div>
+                <div id="contenido-resultados">
+                    <div class="alerta alerta-info">Cargando…</div>
+                </div>
+            </div>
+
+            <!-- TAB: Estadísticas -->
+            <div id="tab-estadisticas" style="display:none;">
+                <div id="contenido-estadisticas">
+                    <div class="alerta alerta-info">Cargando estadísticas…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal reset -->
+<div id="modal-reset" class="modal" style="display:none;">
+    <div class="modal-overlay" onclick="cerrarModalReset()"></div>
+    <div class="modal-caja" style="max-width:480px;">
+        <div class="modal-cabecera">
+            <h3 class="modal-titulo">Reiniciar intento</h3>
+            <button class="modal-cerrar" onclick="cerrarModalReset()">✕</button>
+        </div>
+        <div class="modal-cuerpo">
+            <div class="alerta alerta-advertencia">El intento del jurado quedará eliminado. Podrá realizar un nuevo intento si tiene disponibles.</div>
+            <p style="font-size:14px;margin:12px 0 0;">Jurado: <strong id="reset-jurado-nombre"></strong></p>
+            <div class="form-grupo" style="margin-top:12px;">
+                <label class="form-label">Motivo del reinicio <span style="color:red">*</span></label>
+                <textarea id="reset-motivo" class="form-control" rows="3" placeholder="Explica por qué se reinicia este intento…"></textarea>
+            </div>
+        </div>
+        <div class="modal-pie">
+            <button class="btn btn-outline" onclick="cerrarModalReset()">Cancelar</button>
+            <button class="btn btn-error" onclick="confirmarReset()">Reiniciar intento</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+var _pruebaId    = null;
+var _resultados  = [];
+var _estadisticas = null;
+var _resetIntentoId = null;
+
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('administrador');
+    var u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    document.getElementById('nombre-admin').textContent = u.nombre_completo || u.email || '';
+
+    var params = new URLSearchParams(window.location.search);
+    _pruebaId = params.get('id');
+    if (!_pruebaId) { window.location.href = '/admin/capacitaciones.html'; return; }
+
+    document.getElementById('link-editar').href = '/admin/capacitacion-detalle.html?id=' + _pruebaId;
+    cargar();
+});
+
+async function cargar() {
+    try {
+        var [resultados, stats] = await Promise.all([
+            api.get('/admin/capacitaciones/pruebas/' + _pruebaId + '/resultados'),
+            api.get('/admin/capacitaciones/pruebas/' + _pruebaId + '/estadisticas')
+        ]);
+        _resultados   = resultados;
+        _estadisticas = stats;
+
+        // Nombre de la prueba desde stats o primera asignación
+        var titulo = (_resultados[0] && _resultados[0].prueba_titulo) || 'Resultados';
+        document.getElementById('titulo-pagina').textContent = 'Resultados';
+        document.title = 'Resultados — Admin';
+
+        renderResumen();
+        filtrarResultados();
+        renderEstadisticas();
+        document.getElementById('page-body').style.display = '';
+        document.getElementById('btn-exportar').disabled = false;
+    } catch (err) {
+        document.getElementById('titulo-pagina').textContent = 'Error';
+        mostrarToast(err.message || 'Error al cargar', 'error');
+    }
+}
+
+function cambiarTab(nombre, btn) {
+    document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('activo'); });
+    btn.classList.add('activo');
+    document.getElementById('tab-resultados').style.display   = nombre === 'resultados' ? '' : 'none';
+    document.getElementById('tab-estadisticas').style.display = nombre === 'estadisticas' ? '' : 'none';
+}
+
+// ─── Resumen ──────────────────────────────────────────────────────────────────
+
+function renderResumen() {
+    var total      = _resultados.length;
+    var completados = _resultados.filter(function (r) { return r.estado === 'completado'; }).length;
+    var aprobados  = _resultados.filter(function (r) { return r.aprobado === true; }).length;
+    var pendientes = _resultados.filter(function (r) { return r.estado === 'pendiente'; }).length;
+    var pctAprobacion = completados > 0 ? Math.round((aprobados / completados) * 100) : 0;
+
+    document.getElementById('resumen-stats').innerHTML = [
+        { val: total,         lbl: 'Asignados',   color: '' },
+        { val: completados,   lbl: 'Completaron',  color: '' },
+        { val: aprobados,     lbl: 'Aprobaron',    color: '#1e8449' },
+        { val: pctAprobacion + '%', lbl: '% Aprobación', color: aprobados >= completados * .5 ? '#1e8449' : '#922b21' }
+    ].map(function (s) {
+        return '<div class="stat-box"><div class="stat-val" ' + (s.color ? 'style="color:' + s.color + '"' : '') + '>' + s.val + '</div><div class="stat-lbl">' + s.lbl + '</div></div>';
+    }).join('');
+}
+
+// ─── Resultados ───────────────────────────────────────────────────────────────
+
+function filtrarResultados() {
+    var buscar  = document.getElementById('res-buscar').value.toLowerCase();
+    var estado  = document.getElementById('res-estado').value;
+    var aprob   = document.getElementById('res-aprobacion').value;
+
+    var lista = _resultados.filter(function (r) {
+        var nombre = (r.jurado?.nombre_completo || '').toLowerCase();
+        var est    = r.estado;
+        var ap     = r.aprobado === true ? 'aprobado' : r.aprobado === false ? 'reprobado' : '';
+        return (!buscar || nombre.includes(buscar))
+            && (!estado || est === estado)
+            && (!aprob  || ap === aprob);
+    });
+
+    renderResultados(lista);
+}
+
+function renderResultados(lista) {
+    var div = document.getElementById('contenido-resultados');
+    if (lista.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Sin resultados que coincidan.</div>';
+        return;
+    }
+
+    var filas = lista.map(function (r) {
+        var est = r.estado;
+        var estadoTxt, estadoCls;
+        if (est === 'pendiente')  { estadoTxt = 'Pendiente';  estadoCls = 'estado-pendiente'; }
+        else if (est === 'en_curso')   { estadoTxt = 'En curso';   estadoCls = 'estado-en_curso'; }
+        else if (est === 'completado') {
+            if (r.aprobado === true)  { estadoTxt = 'Aprobado';   estadoCls = 'estado-aprobado'; }
+            else                       { estadoTxt = 'Reprobado';  estadoCls = 'estado-reprobado'; }
+        } else { estadoTxt = est; estadoCls = ''; }
+
+        var puntaje    = r.puntaje_obtenido != null ? r.puntaje_obtenido + '%' : '—';
+        var fechaFin   = r.finalizado_en ? new Date(r.finalizado_en).toLocaleString('es-CL') : '—';
+        var fechaLimite = r.fecha_limite  ? new Date(r.fecha_limite).toLocaleDateString('es-CL') : '—';
+        var accionReset = (r.total_intentos > 0 && r.estado === 'completado')
+            ? '<button class="btn btn-pequeño" style="background:#fef9e7;color:#7d6608;border:1px solid #f1c40f;" onclick="abrirModalReset(\'' + r.asignacion_id + '\',\'' + sanitizar(r.jurado?.nombre_completo || '').replace(/'/g, "\\'") + '\')">Reiniciar</button>'
+            : '';
+
+        return '<tr>'
+            + '<td>' + sanitizar(r.jurado?.nombre_completo || '—') + '</td>'
+            + '<td style="white-space:nowrap;">' + sanitizar(r.jurado?.categoria || '—') + '</td>'
+            + '<td>' + sanitizar(r.jurado?.asociacion || '—') + '</td>'
+            + '<td><span class="' + estadoCls + '">' + estadoTxt + '</span></td>'
+            + '<td style="text-align:center;">' + r.total_intentos + '</td>'
+            + '<td style="text-align:right;font-weight:600;">' + sanitizar(puntaje) + '</td>'
+            + '<td style="white-space:nowrap;font-size:11px;">' + sanitizar(fechaFin) + '</td>'
+            + '<td style="font-size:11px;">' + sanitizar(fechaLimite) + '</td>'
+            + '<td>' + accionReset + '</td>'
+            + '</tr>';
+    }).join('');
+
+    div.innerHTML = '<div style="overflow-x:auto;"><table class="tabla"><thead><tr>'
+        + '<th>Jurado</th><th>Cat.</th><th>Asociación</th><th>Estado</th>'
+        + '<th>Intentos</th><th>Puntaje</th><th>Finalizado</th><th>Límite</th><th></th>'
+        + '</tr></thead><tbody>' + filas + '</tbody></table></div>';
+}
+
+// ─── Estadísticas ─────────────────────────────────────────────────────────────
+
+function renderEstadisticas() {
+    var div = document.getElementById('contenido-estadisticas');
+    var s = _estadisticas;
+    if (!s || !s.preguntas || s.preguntas.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-info">Sin datos estadísticos aún. Las estadísticas se generan cuando hay intentos completados.</div>';
+        return;
+    }
+
+    var maxTotal = Math.max.apply(null, s.preguntas.map(function (p) { return p.total_respuestas; })) || 1;
+
+    var tabla = s.preguntas.map(function (p, i) {
+        var pct = p.pct_correctas != null ? p.pct_correctas : 0;
+        var color = pct >= 70 ? '#1e8449' : pct >= 40 ? '#e67e22' : '#922b21';
+        var barW  = p.total_respuestas > 0 ? Math.round((p.pct_correctas || 0)) : 0;
+        return '<tr>'
+            + '<td style="font-size:12px;font-weight:700;color:var(--gris);">' + (i + 1) + '</td>'
+            + '<td style="max-width:320px;word-break:break-word;">' + sanitizar(p.enunciado.substring(0,120)) + (p.enunciado.length > 120 ? '…' : '') + '</td>'
+            + '<td style="text-align:center;">' + p.total_respuestas + '</td>'
+            + '<td style="text-align:center;color:#1e8449;">' + p.correctas + '</td>'
+            + '<td style="text-align:center;color:#922b21;">' + p.incorrectas + '</td>'
+            + '<td style="white-space:nowrap;">'
+            + '<span class="barra-h barra-correcta"><span class="barra-h-fill" style="width:' + barW + '%;"></span></span>'
+            + '<strong style="color:' + color + ';">' + (p.pct_correctas != null ? p.pct_correctas + '%' : '—') + '</strong>'
+            + '</td>'
+            + '</tr>';
+    }).join('');
+
+    var tablaHtml = '<div style="overflow-x:auto;"><table class="tabla" style="font-size:13px;"><thead><tr>'
+        + '<th>#</th><th>Pregunta</th><th>Total resp.</th><th>Correctas</th><th>Incorrectas</th><th>% Correcto</th>'
+        + '</tr></thead><tbody>' + tabla + '</tbody></table></div>';
+
+    div.innerHTML = '<div class="card" style="margin-bottom:20px;">'
+        + '<div class="card-titulo">Todas las preguntas — Ordenadas por número</div>'
+        + tablaHtml
+        + '</div>';
+}
+
+// ─── Reset ────────────────────────────────────────────────────────────────────
+
+async function abrirModalReset(asignacionId, nombreJurado) {
+    // Obtener intentos de esta asignación para encontrar el completado
+    try {
+        var asigs = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId + '/asignaciones');
+        var asig  = asigs.find(function (a) { return a.id === asignacionId; });
+        var intento = asig && asig.ultimo_intento;
+        if (!intento) { mostrarToast('No se encontró intento para reiniciar', 'error'); return; }
+        _resetIntentoId = intento.id;
+        document.getElementById('reset-jurado-nombre').textContent = nombreJurado;
+        document.getElementById('reset-motivo').value = '';
+        document.getElementById('modal-reset').style.display = 'flex';
+    } catch (err) {
+        mostrarToast(err.message || 'Error', 'error');
+    }
+}
+
+function cerrarModalReset() {
+    document.getElementById('modal-reset').style.display = 'none';
+    _resetIntentoId = null;
+}
+
+async function confirmarReset() {
+    var motivo = document.getElementById('reset-motivo').value.trim();
+    if (!motivo) { mostrarToast('El motivo es obligatorio', 'error'); return; }
+
+    try {
+        var res = await api.post('/admin/capacitaciones/intentos/' + _resetIntentoId + '/reset', { motivo });
+        mostrarToast(res.mensaje || 'Intento reiniciado', 'exito');
+        cerrarModalReset();
+        cargar();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al reiniciar', 'error');
+    }
+}
+
+// ─── Exportar ─────────────────────────────────────────────────────────────────
+
+function exportar() {
+    var url = '/api/admin/capacitaciones/pruebas/' + _pruebaId + '/exportar';
+    var a   = document.createElement('a');
+    a.href     = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+</script>
+</body>
+</html>

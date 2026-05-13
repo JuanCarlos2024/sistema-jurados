@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capacitaciones — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-activa   { background:#d5f5e3; color:#1e8449; }
+        .badge-inactiva { background:#f0f0f0; color:#888; }
+        .badge-cap {
+            display:inline-block; padding:2px 9px; border-radius:10px;
+            font-size:11px; font-weight:600;
+        }
+        .tabla-acciones { display:flex; gap:6px; flex-wrap:wrap; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Capacitaciones</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-primario btn-pequeño" onclick="abrirModalNueva()">+ Nueva prueba</button>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="card">
+                <div id="contenido-lista">
+                    <div class="alerta alerta-info" style="font-size:13px;">Cargando pruebas…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal nueva prueba -->
+<div id="modal-nueva" class="modal" style="display:none;">
+    <div class="modal-overlay" onclick="cerrarModalNueva()"></div>
+    <div class="modal-caja" style="max-width:540px;">
+        <div class="modal-cabecera">
+            <h3 class="modal-titulo">Nueva prueba de capacitación</h3>
+            <button class="modal-cerrar" onclick="cerrarModalNueva()">✕</button>
+        </div>
+        <div class="modal-cuerpo">
+            <div class="form-grupo">
+                <label class="form-label">Título <span style="color:red">*</span></label>
+                <input type="text" id="nueva-titulo" class="form-control" placeholder="Ej: Capacitación Reglamento 2026">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Descripción</label>
+                <textarea id="nueva-descripcion" class="form-control" rows="2" placeholder="Breve descripción…"></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-grupo">
+                    <label class="form-label">Tiempo límite (min)</label>
+                    <input type="number" id="nueva-tiempo" class="form-control" placeholder="Sin límite" min="1">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">% mínimo aprobación</label>
+                    <input type="number" id="nueva-puntaje" class="form-control" value="60" min="0" max="100" step="1">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Intentos máximos</label>
+                    <input type="number" id="nueva-intentos" class="form-control" value="1" min="1">
+                </div>
+            </div>
+        </div>
+        <div class="modal-pie">
+            <button class="btn btn-outline" onclick="cerrarModalNueva()">Cancelar</button>
+            <button class="btn btn-primario" onclick="crearPrueba()">Crear y continuar editando</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal confirmar eliminar -->
+<div id="modal-eliminar" class="modal" style="display:none;">
+    <div class="modal-overlay" onclick="cerrarModalEliminar()"></div>
+    <div class="modal-caja" style="max-width:420px;">
+        <div class="modal-cabecera">
+            <h3 class="modal-titulo">Eliminar prueba</h3>
+            <button class="modal-cerrar" onclick="cerrarModalEliminar()">✕</button>
+        </div>
+        <div class="modal-cuerpo">
+            <div class="alerta alerta-error">Esta acción eliminará la prueba, todas sus preguntas y asignaciones. No se puede deshacer.</div>
+            <p style="margin:12px 0 0;font-size:14px;">¿Confirmas eliminar <strong id="eliminar-titulo"></strong>?</p>
+        </div>
+        <div class="modal-pie">
+            <button class="btn btn-outline" onclick="cerrarModalEliminar()">Cancelar</button>
+            <button class="btn btn-error" onclick="confirmarEliminar()">Eliminar definitivamente</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('administrador');
+    var u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    document.getElementById('nombre-admin').textContent = u.nombre_completo || u.email || '';
+    cargarLista();
+});
+
+var _pruebas = [];
+var _idEliminar = null;
+
+async function cargarLista() {
+    var div = document.getElementById('contenido-lista');
+    try {
+        _pruebas = await api.get('/admin/capacitaciones/pruebas');
+        renderLista(_pruebas);
+    } catch (err) {
+        div.innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message) + '</div>';
+    }
+}
+
+function renderLista(pruebas) {
+    var div = document.getElementById('contenido-lista');
+    if (!pruebas || pruebas.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Aún no hay pruebas de capacitación. Haz clic en <strong>+ Nueva prueba</strong> para comenzar.</div>';
+        return;
+    }
+    var filas = pruebas.map(function (p) {
+        var badgeCls = p.activa ? 'badge-activa' : 'badge-inactiva';
+        var badgeTxt = p.activa ? 'Activa' : 'Inactiva';
+        var tiempo = p.tiempo_limite_minutos ? p.tiempo_limite_minutos + ' min' : 'Sin límite';
+        return '<tr>'
+            + '<td><strong>' + sanitizar(p.titulo) + '</strong>'
+            + (p.descripcion ? '<br><span style="font-size:11px;color:var(--gris);">' + sanitizar(p.descripcion.substring(0, 80)) + (p.descripcion.length > 80 ? '…' : '') + '</span>' : '')
+            + '</td>'
+            + '<td style="text-align:center;">' + (p.total_preguntas || 0) + '</td>'
+            + '<td style="text-align:center;">' + sanitizar(tiempo) + '</td>'
+            + '<td style="text-align:center;">' + p.puntaje_minimo_aprobacion + '%</td>'
+            + '<td style="text-align:center;">' + p.intentos_maximos + '</td>'
+            + '<td style="text-align:center;"><span class="badge-cap ' + badgeCls + '">' + badgeTxt + '</span></td>'
+            + '<td><div class="tabla-acciones">'
+            + '<a href="/admin/capacitacion-detalle.html?id=' + p.id + '" class="btn btn-outline btn-pequeño">Editar</a>'
+            + '<a href="/admin/capacitacion-resultados.html?id=' + p.id + '" class="btn btn-secundario btn-pequeño">Resultados</a>'
+            + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;" onclick="abrirModalEliminar(\'' + p.id + '\',\'' + sanitizar(p.titulo).replace(/'/g, "\\'") + '\')">Eliminar</button>'
+            + '</div></td>'
+            + '</tr>';
+    }).join('');
+
+    div.innerHTML = '<div style="overflow-x:auto;"><table class="tabla"><thead><tr>'
+        + '<th>Título</th><th>Preguntas</th><th>Tiempo</th><th>% Aprobación</th><th>Intentos máx.</th><th>Estado</th><th>Acciones</th>'
+        + '</tr></thead><tbody>' + filas + '</tbody></table></div>';
+}
+
+// ─── Modal nueva prueba ───────────────────────────────────────────────────────
+
+function abrirModalNueva() {
+    document.getElementById('nueva-titulo').value = '';
+    document.getElementById('nueva-descripcion').value = '';
+    document.getElementById('nueva-tiempo').value = '';
+    document.getElementById('nueva-puntaje').value = '60';
+    document.getElementById('nueva-intentos').value = '1';
+    document.getElementById('modal-nueva').style.display = 'flex';
+    setTimeout(function () { document.getElementById('nueva-titulo').focus(); }, 100);
+}
+
+function cerrarModalNueva() {
+    document.getElementById('modal-nueva').style.display = 'none';
+}
+
+async function crearPrueba() {
+    var titulo = document.getElementById('nueva-titulo').value.trim();
+    if (!titulo) { mostrarToast('El título es obligatorio', 'error'); return; }
+
+    try {
+        var prueba = await api.post('/admin/capacitaciones/pruebas', {
+            titulo,
+            descripcion:              document.getElementById('nueva-descripcion').value.trim() || null,
+            tiempo_limite_minutos:    document.getElementById('nueva-tiempo').value || null,
+            puntaje_minimo_aprobacion: document.getElementById('nueva-puntaje').value || 60,
+            intentos_maximos:         document.getElementById('nueva-intentos').value || 1
+        });
+        window.location.href = '/admin/capacitacion-detalle.html?id=' + prueba.id;
+    } catch (err) {
+        mostrarToast(err.message || 'Error al crear la prueba', 'error');
+    }
+}
+
+// ─── Modal eliminar ───────────────────────────────────────────────────────────
+
+function abrirModalEliminar(id, titulo) {
+    _idEliminar = id;
+    document.getElementById('eliminar-titulo').textContent = titulo;
+    document.getElementById('modal-eliminar').style.display = 'flex';
+}
+
+function cerrarModalEliminar() {
+    document.getElementById('modal-eliminar').style.display = 'none';
+    _idEliminar = null;
+}
+
+async function confirmarEliminar() {
+    if (!_idEliminar) return;
+    try {
+        await api.delete('/admin/capacitaciones/pruebas/' + _idEliminar);
+        mostrarToast('Prueba eliminada', 'exito');
+        cerrarModalEliminar();
+        cargarLista();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al eliminar', 'error');
+    }
+}
+</script>
+</body>
+</html>

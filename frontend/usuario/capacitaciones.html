@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Capacitaciones — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .prueba-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            padding: 16px 18px;
+            margin-bottom: 14px;
+        }
+        .prueba-card:hover { border-color: var(--primario); }
+        .prueba-titulo { font-size: 16px; font-weight: 700; margin: 0 0 4px; }
+        .prueba-desc   { font-size: 13px; color: var(--gris); margin: 0 0 10px; }
+        .prueba-meta   { display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--gris); margin-bottom:12px; }
+        .prueba-meta span { display:flex; align-items:center; gap:4px; }
+        .prueba-acciones { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+        .estado-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .estado-pendiente  { background:#f0f0f0; color:#888; }
+        .estado-en_curso   { background:#d6eaf8; color:#1a5276; }
+        .estado-aprobado   { background:#d5f5e3; color:#1e8449; }
+        .estado-reprobado  { background:#fadbd8; color:#922b21; }
+
+        .sin-pruebas {
+            text-align:center;
+            color:var(--gris);
+            padding:40px 24px;
+            font-size:14px;
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" class="nav-item"><span class="icon">📋</span> Mis Evaluaciones</a>
+            <a href="/usuario/capacitaciones.html" class="nav-item activo"><span class="icon">🎓</span> Capacitaciones</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Mis Capacitaciones</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="contenido">
+                <div class="alerta alerta-info" style="font-size:13px;">Cargando…</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('usuario_pagado');
+    var u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    document.getElementById('nombre-usr').textContent = u.nombre_completo || u.email || '';
+    cargar();
+});
+
+async function cargar() {
+    var div = document.getElementById('contenido');
+    try {
+        var lista = await api.get('/usuario/capacitaciones');
+        render(lista);
+    } catch (err) {
+        div.innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message || 'Error al cargar') + '</div>';
+    }
+}
+
+function render(lista) {
+    var div = document.getElementById('contenido');
+    if (!lista || lista.length === 0) {
+        div.innerHTML = '<div class="sin-pruebas">No tienes pruebas de capacitación asignadas por el momento.</div>';
+        return;
+    }
+
+    div.innerHTML = lista.map(function (item) {
+        var p = item.prueba;
+        var estado = item.estado_jurado;
+        var badgeCls = 'estado-' + estado;
+        var badgeTxt = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
+
+        var metaItems = [];
+        if (p.tiempo_limite_minutos) metaItems.push('⏱ ' + p.tiempo_limite_minutos + ' min');
+        metaItems.push('✔ Aprobación: ' + p.puntaje_minimo_aprobacion + '%');
+        metaItems.push('🔄 Intentos: ' + item.total_intentos + ' / ' + (p.intentos_maximos || '∞'));
+
+        var acciones = '';
+        if (item.intento_en_curso) {
+            acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Continuar prueba</a>';
+        } else if (item.puede_rendir) {
+            acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Iniciar prueba</a>';
+        }
+        if (item.ultimo_completado) {
+            acciones += ' <a href="/usuario/capacitacion-resultado.html?id=' + item.ultimo_completado.id + '" class="btn btn-outline btn-pequeño">Ver resultado</a>';
+        }
+        if (!acciones) {
+            acciones = '<span style="font-size:13px;color:var(--gris);">Sin acciones disponibles</span>';
+        }
+
+        var limiteHtml = item.fecha_limite
+            ? '<div style="font-size:12px;color:#e67e22;margin-bottom:8px;">Fecha límite: ' + sanitizar(new Date(item.fecha_limite).toLocaleDateString('es-CL')) + '</div>'
+            : '';
+
+        return '<div class="prueba-card">'
+            + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
+            + '<h3 class="prueba-titulo">' + sanitizar(p.titulo) + '</h3>'
+            + '<span class="estado-badge ' + badgeCls + '">' + badgeTxt + '</span>'
+            + '</div>'
+            + (p.descripcion ? '<p class="prueba-desc">' + sanitizar(p.descripcion) + '</p>' : '')
+            + '<div class="prueba-meta">' + metaItems.map(function (m) { return '<span>' + sanitizar(m) + '</span>'; }).join('') + '</div>'
+            + limiteHtml
+            + '<div class="prueba-acciones">' + acciones + '</div>'
+            + '</div>';
+    }).join('');
+}
+</script>
+</body>
+</html>

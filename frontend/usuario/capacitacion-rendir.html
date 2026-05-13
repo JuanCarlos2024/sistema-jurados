@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rendir Prueba — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        body.bloqueado { user-select: none; }
+
+        .prueba-header {
+            background: #fff;
+            border-bottom: 1px solid var(--gris-borde);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .prueba-titulo-hdr { font-size: 15px; font-weight: 700; }
+        .timer-box {
+            font-size: 18px;
+            font-weight: 700;
+            padding: 4px 14px;
+            border-radius: 8px;
+            background: #f0f0f0;
+            color: var(--texto);
+            min-width: 80px;
+            text-align: center;
+        }
+        .timer-box.urgente { background: #fadbd8; color: #922b21; animation: parpadeo .7s infinite; }
+
+        @keyframes parpadeo { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+        .progreso-bar {
+            height: 6px;
+            background: var(--gris-borde);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        .progreso-fill { height: 100%; background: var(--primario); transition: width .3s; }
+        .progreso-label { font-size: 12px; color: var(--gris); margin-bottom: 6px; }
+
+        .pregunta-box {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        .pregunta-num-lbl {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--gris);
+            margin-bottom: 8px;
+        }
+        .pregunta-enunciado-lbl {
+            font-size: 18px;
+            font-weight: 600;
+            line-height: 1.5;
+            margin-bottom: 24px;
+        }
+        .alt-btn {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 14px 16px;
+            border: 2px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            cursor: pointer;
+            margin-bottom: 10px;
+            text-align: left;
+            width: 100%;
+            font-size: 14px;
+            transition: border-color .15s, background .15s;
+        }
+        .alt-btn:hover:not([disabled]) { border-color: var(--primario); background: #f0f4ff; }
+        .alt-btn.seleccionada { border-color: var(--primario); background: #e8f0fe; }
+        .alt-btn[disabled]    { cursor: not-allowed; opacity: .7; }
+        .alt-letra {
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            border: 2px solid currentColor;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 13px;
+            flex-shrink: 0;
+            color: var(--gris);
+        }
+        .alt-btn.seleccionada .alt-letra { color: var(--primario); border-color: var(--primario); }
+        .alt-texto { flex: 1; padding-top: 3px; }
+
+        .nav-pregunta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 28px;
+        }
+        .paginacion {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .pag-btn {
+            width: 32px; height: 32px;
+            border-radius: 6px;
+            border: 1px solid var(--gris-borde);
+            background: #fff;
+            font-size: 12px; font-weight: 600;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .pag-btn.respondida  { background: #d5f5e3; border-color: #1e8449; color: #1e8449; }
+        .pag-btn.actual      { border-color: var(--primario); color: var(--primario); font-weight: 700; }
+
+        .aviso-foco {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,.85);
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            text-align: center;
+            padding: 24px;
+        }
+        .aviso-foco h2  { font-size: 22px; margin-bottom: 12px; }
+        .aviso-foco p   { font-size: 15px; color: #ddd; margin-bottom: 20px; }
+    </style>
+</head>
+<body class="bloqueado" oncontextmenu="return false;">
+<!-- Aviso pérdida de foco -->
+<div id="aviso-foco" class="aviso-foco">
+    <h2>⚠ Volviste a la prueba</h2>
+    <p>Cambiar de pestaña o ventana durante la prueba queda registrado.<br>Haz clic para continuar.</p>
+    <button class="btn btn-primario" onclick="reanudar()">Continuar</button>
+</div>
+
+<!-- Sin sidebar: modo full-screen para la prueba -->
+<div id="cargando" style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
+    <div class="alerta alerta-info" style="font-size:14px;">Cargando prueba…</div>
+</div>
+
+<div id="contenedor-prueba" style="display:none;min-height:100vh;background:#f8f9fb;">
+    <div class="prueba-header">
+        <span class="prueba-titulo-hdr" id="hdr-titulo">—</span>
+        <div style="display:flex;align-items:center;gap:14px;">
+            <span style="font-size:13px;color:var(--gris);" id="hdr-progreso"></span>
+            <div id="timer-box" class="timer-box" style="display:none;"></div>
+        </div>
+    </div>
+
+    <div style="padding:24px 20px;max-width:760px;margin:0 auto;">
+        <div class="progreso-label" id="progreso-label"></div>
+        <div class="progreso-bar"><div class="progreso-fill" id="progreso-fill" style="width:0%"></div></div>
+
+        <!-- Paginación de preguntas -->
+        <div class="paginacion" id="paginacion"></div>
+
+        <div class="pregunta-box" id="pregunta-box"></div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+// ─── Estado global ────────────────────────────────────────────────────────────
+var _intentoId     = null;
+var _preguntas     = [];
+var _respuestas    = {};   // pregunta_id → alternativa_id (null si sin respuesta)
+var _actual        = 0;
+var _timerInterval = null;
+var _timerSegRestantes = 0;
+var _enviando      = false;
+var _asigId        = null;
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('usuario_pagado');
+    var u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+
+    var params = new URLSearchParams(window.location.search);
+    _asigId = params.get('id');
+    if (!_asigId) { window.location.href = '/usuario/capacitaciones.html'; return; }
+
+    iniciarPrueba();
+
+    // Anti-copy: track focus loss
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden && _intentoId) {
+            document.getElementById('aviso-foco').style.display = 'flex';
+        }
+    });
+    window.addEventListener('blur', function () {
+        if (_intentoId) document.getElementById('aviso-foco').style.display = 'flex';
+    });
+});
+
+function reanudar() {
+    document.getElementById('aviso-foco').style.display = 'none';
+}
+
+async function iniciarPrueba() {
+    try {
+        var data = await api.get('/usuario/capacitaciones/' + _asigId + '/iniciar');
+        _intentoId = data.intento_id;
+        _preguntas = data.preguntas || [];
+
+        // Inicializar respuestas guardadas
+        _preguntas.forEach(function (p) {
+            _respuestas[p.id] = p.respuesta_guardada || null;
+        });
+
+        document.getElementById('hdr-titulo').textContent = data.prueba.titulo;
+        document.title = data.prueba.titulo;
+
+        // Timer
+        if (data.prueba.tiempo_limite_minutos) {
+            var tMax = data.prueba.tiempo_limite_minutos * 60;
+            var transcurrido = data.iniciado_en
+                ? Math.floor((Date.now() - new Date(data.iniciado_en).getTime()) / 1000)
+                : 0;
+            _timerSegRestantes = Math.max(tMax - transcurrido, 0);
+            document.getElementById('timer-box').style.display = '';
+            iniciarTimer();
+        }
+
+        document.getElementById('cargando').style.display = 'none';
+        document.getElementById('contenedor-prueba').style.display = '';
+        mostrarPregunta(0);
+    } catch (err) {
+        document.getElementById('cargando').innerHTML = '<div class="alerta alerta-error" style="font-size:14px;">' + sanitizar(err.message || 'No se pudo cargar la prueba') + '<br><a href="/usuario/capacitaciones.html">Volver</a></div>';
+    }
+}
+
+// ─── Timer ────────────────────────────────────────────────────────────────────
+
+function iniciarTimer() {
+    actualizarTimer();
+    _timerInterval = setInterval(function () {
+        _timerSegRestantes--;
+        actualizarTimer();
+        if (_timerSegRestantes <= 0) {
+            clearInterval(_timerInterval);
+            finalizarPrueba(true);
+        }
+    }, 1000);
+}
+
+function actualizarTimer() {
+    var seg = Math.max(_timerSegRestantes, 0);
+    var mm  = Math.floor(seg / 60);
+    var ss  = seg % 60;
+    var txt = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+    var box = document.getElementById('timer-box');
+    box.textContent = txt;
+    box.className   = 'timer-box' + (seg <= 60 ? ' urgente' : '');
+}
+
+// ─── Render pregunta ──────────────────────────────────────────────────────────
+
+function mostrarPregunta(idx) {
+    _actual = idx;
+    var total = _preguntas.length;
+    var pct   = total > 0 ? Math.round((respondidas() / total) * 100) : 0;
+
+    document.getElementById('hdr-progreso').textContent = 'Pregunta ' + (idx + 1) + ' de ' + total;
+    document.getElementById('progreso-label').textContent = respondidas() + ' de ' + total + ' respondidas (' + pct + '%)';
+    document.getElementById('progreso-fill').style.width = pct + '%';
+
+    renderPaginacion();
+
+    var p = _preguntas[idx];
+    var letras = ['A','B','C','D','E','F','G','H'];
+    var altsHtml = (p.alternativas || []).map(function (a, i) {
+        var sel = _respuestas[p.id] === a.id;
+        return '<button class="alt-btn' + (sel ? ' seleccionada' : '') + '" onclick="responder(\'' + p.id + '\',\'' + a.id + '\')">'
+            + '<span class="alt-letra">' + (letras[i] || i) + '</span>'
+            + '<span class="alt-texto">' + sanitizar(a.texto) + '</span>'
+            + '</button>';
+    }).join('');
+
+    var esUltima = idx === total - 1;
+    var todasRespondidas = respondidas() === total;
+
+    var navHtml = '<div class="nav-pregunta">'
+        + '<button class="btn btn-outline" onclick="irPregunta(' + (idx - 1) + ')" ' + (idx === 0 ? 'disabled' : '') + '>← Anterior</button>'
+        + '<div>';
+
+    if (!esUltima) {
+        navHtml += '<button class="btn btn-primario" onclick="irPregunta(' + (idx + 1) + ')">Siguiente →</button>';
+    } else {
+        navHtml += '<button class="btn btn-primario" onclick="finalizarPrueba(false)" '
+            + (!todasRespondidas ? '' : '') + ' id="btn-finalizar">'
+            + (todasRespondidas ? 'Finalizar y enviar' : 'Omitir y finalizar')
+            + '</button>';
+    }
+    navHtml += '</div></div>';
+
+    document.getElementById('pregunta-box').innerHTML = '<div class="pregunta-num-lbl">Pregunta ' + (idx + 1) + ' de ' + total + '</div>'
+        + '<div class="pregunta-enunciado-lbl">' + sanitizar(p.enunciado) + '</div>'
+        + '<div>' + altsHtml + '</div>'
+        + navHtml;
+}
+
+function renderPaginacion() {
+    var html = _preguntas.map(function (p, i) {
+        var resp  = _respuestas[p.id] !== null && _respuestas[p.id] !== undefined;
+        var cls   = 'pag-btn' + (resp ? ' respondida' : '') + (i === _actual ? ' actual' : '');
+        return '<button class="' + cls + '" onclick="irPregunta(' + i + ')">' + (i + 1) + '</button>';
+    }).join('');
+    document.getElementById('paginacion').innerHTML = html;
+}
+
+function irPregunta(idx) {
+    if (idx < 0 || idx >= _preguntas.length) return;
+    mostrarPregunta(idx);
+}
+
+function respondidas() {
+    return _preguntas.filter(function (p) { return _respuestas[p.id] != null; }).length;
+}
+
+// ─── Guardar respuesta ────────────────────────────────────────────────────────
+
+async function responder(preguntaId, alternativaId) {
+    // Actualizar UI de inmediato
+    _respuestas[preguntaId] = alternativaId;
+    mostrarPregunta(_actual);
+
+    try {
+        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
+            pregunta_id: preguntaId,
+            alternativa_id: alternativaId
+        });
+    } catch (err) {
+        console.error('[rendir] error guardando respuesta:', err);
+        // No bloquear al usuario por error de red; respuesta queda en estado local
+    }
+}
+
+// ─── Finalizar ────────────────────────────────────────────────────────────────
+
+async function finalizarPrueba(porTiempo) {
+    if (_enviando) return;
+
+    var sinResponder = _preguntas.length - respondidas();
+    if (!porTiempo && sinResponder > 0) {
+        var ok = confirm('Tienes ' + sinResponder + ' pregunta(s) sin responder. ¿Finalizar de todas formas?');
+        if (!ok) return;
+    }
+
+    _enviando = true;
+    clearInterval(_timerInterval);
+
+    var btn = document.getElementById('btn-finalizar');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+
+    try {
+        var resultado = await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar', {});
+        window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+    } catch (err) {
+        _enviando = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Finalizar y enviar'; }
+        mostrarToast(err.message || 'Error al enviar la prueba', 'error');
+    }
+}
+</script>
+</body>
+</html>

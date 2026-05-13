@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor de Prueba — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .pregunta-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+            background: #fff;
+            position: relative;
+        }
+        .pregunta-card:hover { border-color: var(--primario); }
+        .pregunta-num {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--gris);
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: 4px;
+        }
+        .pregunta-enunciado { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+        .alt-lista { list-style: none; padding: 0; margin: 0; }
+        .alt-lista li {
+            padding: 4px 0;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .alt-correcta { color: #1e8449; font-weight: 600; }
+        .alt-incorrecta { color: #555; }
+        .alt-dot {
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .alt-dot.correcta  { background: #1e8449; }
+        .alt-dot.incorrecta { background: #ccc; }
+        .star-btn { background: none; border: none; cursor: pointer; font-size: 16px; padding: 0 2px; }
+        .pregunta-acciones { position:absolute; top:12px; right:12px; display:flex; gap:6px; }
+        .video-preview { border-radius: 8px; overflow: hidden; margin-top: 12px; }
+        .video-preview iframe { display:block; width:100%; height:200px; border:none; }
+
+        /* Alternativas en modal */
+        .alt-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .alt-row input[type="radio"] { cursor:pointer; }
+        .alt-row input[type="text"]  { flex:1; }
+        .alt-row .btn-rm { flex-shrink:0; }
+
+        /* Tabs */
+        .tabs { display:flex; gap:0; border-bottom:2px solid var(--gris-borde); margin-bottom:20px; }
+        .tab-btn {
+            padding: 8px 20px;
+            background: none;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--gris);
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+        .tab-btn.activo { color: var(--primario); border-bottom-color: var(--primario); }
+
+        /* Asignaciones */
+        .asig-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .asig-info { flex: 1; }
+        .asig-nombre { font-size: 14px; font-weight: 600; }
+        .asig-sub    { font-size: 12px; color: var(--gris); }
+        .estado-pendiente  { color: #888; }
+        .estado-en_curso   { color: #1a5276; font-weight:600; }
+        .estado-completado { color: #1e8449; font-weight:600; }
+        .estado-aprobado   { color: #1e8449; font-weight:700; }
+        .estado-reprobado  { color: #922b21; font-weight:700; }
+
+        .filtros-asig { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px; }
+        .filtros-asig input,
+        .filtros-asig select { padding:6px 10px; border:1px solid var(--gris-borde); border-radius:6px; font-size:13px; background:#fff; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav" data-active="/admin/capacitaciones.html"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a href="/admin/capacitaciones.html" class="btn btn-outline btn-pequeño">← Volver</a>
+                <h1 id="titulo-pagina" style="font-size:16px;">Cargando…</h1>
+            </div>
+            <div class="topbar-acciones">
+                <a id="btn-resultados" href="#" class="btn btn-secundario btn-pequeño" style="display:none;">Ver resultados</a>
+            </div>
+        </div>
+
+        <div class="page-body" id="page-body" style="display:none;">
+            <div class="tabs">
+                <button class="tab-btn activo" onclick="cambiarTab('config', this)">Configuración</button>
+                <button class="tab-btn" onclick="cambiarTab('preguntas', this)">Preguntas (<span id="cnt-preguntas">0</span>)</button>
+                <button class="tab-btn" onclick="cambiarTab('asignaciones', this)">Asignaciones (<span id="cnt-asig">0</span>)</button>
+            </div>
+
+            <!-- TAB: Configuración -->
+            <div id="tab-config">
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-titulo">Datos de la prueba</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                        <div class="form-grupo" style="grid-column:1/-1;">
+                            <label class="form-label">Título <span style="color:red">*</span></label>
+                            <input type="text" id="cfg-titulo" class="form-control">
+                        </div>
+                        <div class="form-grupo" style="grid-column:1/-1;">
+                            <label class="form-label">Descripción</label>
+                            <textarea id="cfg-descripcion" class="form-control" rows="2"></textarea>
+                        </div>
+                        <div class="form-grupo" style="grid-column:1/-1;">
+                            <label class="form-label">Instrucciones para el jurado</label>
+                            <textarea id="cfg-instrucciones" class="form-control" rows="3" placeholder="Texto libre que verá el jurado antes de iniciar la prueba…"></textarea>
+                        </div>
+                        <div class="form-grupo" style="grid-column:1/-1;">
+                            <label class="form-label">Video de YouTube (URL)</label>
+                            <input type="url" id="cfg-video" class="form-control" placeholder="https://www.youtube.com/watch?v=…" oninput="actualizarPreviewVideo()">
+                            <div id="video-preview" class="video-preview" style="display:none;">
+                                <iframe id="video-iframe" allowfullscreen></iframe>
+                            </div>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Tiempo límite (minutos)</label>
+                            <input type="number" id="cfg-tiempo" class="form-control" min="1" placeholder="Sin límite">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">% mínimo aprobación</label>
+                            <input type="number" id="cfg-puntaje" class="form-control" min="0" max="100">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Intentos máximos</label>
+                            <input type="number" id="cfg-intentos" class="form-control" min="1">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Estado</label>
+                            <select id="cfg-activa" class="form-control">
+                                <option value="true">Activa (visible para jurados)</option>
+                                <option value="false">Inactiva (oculta para jurados)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="margin-top:16px;">
+                        <button class="btn btn-primario" onclick="guardarConfig()">Guardar cambios</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: Preguntas -->
+            <div id="tab-preguntas" style="display:none;">
+                <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+                    <button class="btn btn-primario" onclick="abrirModalPregunta(null)">+ Agregar pregunta</button>
+                </div>
+                <div id="lista-preguntas">
+                    <div class="alerta alerta-info" style="font-size:13px;">Sin preguntas aún. Haz clic en <strong>+ Agregar pregunta</strong>.</div>
+                </div>
+            </div>
+
+            <!-- TAB: Asignaciones -->
+            <div id="tab-asignaciones" style="display:none;">
+                <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+                    <button class="btn btn-primario" onclick="abrirModalAsignar()">+ Asignar jurados</button>
+                </div>
+                <div class="filtros-asig">
+                    <input type="text" id="asig-buscar" placeholder="Buscar jurado…" oninput="filtrarAsig()">
+                    <select id="asig-estado" onchange="filtrarAsig()">
+                        <option value="">Todos los estados</option>
+                        <option value="pendiente">Pendiente</option>
+                        <option value="en_curso">En curso</option>
+                        <option value="completado">Completado</option>
+                    </select>
+                </div>
+                <div id="lista-asig">
+                    <div class="alerta alerta-info" style="font-size:13px;">Sin asignaciones aún.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal pregunta -->
+<div id="modal-pregunta" class="modal" style="display:none;">
+    <div class="modal-overlay" onclick="cerrarModalPregunta()"></div>
+    <div class="modal-caja" style="max-width:600px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-cabecera">
+            <h3 class="modal-titulo" id="modal-preg-titulo">Agregar pregunta</h3>
+            <button class="modal-cerrar" onclick="cerrarModalPregunta()">✕</button>
+        </div>
+        <div class="modal-cuerpo">
+            <div class="form-grupo">
+                <label class="form-label">Enunciado <span style="color:red">*</span></label>
+                <textarea id="preg-enunciado" class="form-control" rows="3" placeholder="Escribe aquí la pregunta…"></textarea>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Explicación (se muestra al jurado después de responder)</label>
+                <textarea id="preg-explicacion" class="form-control" rows="2" placeholder="Explica por qué la respuesta correcta es correcta (opcional)…"></textarea>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="preg-favorita"> Marcar como pregunta favorita ★
+                </label>
+            </div>
+
+            <div style="margin-top:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <label class="form-label" style="margin:0;">Alternativas <span style="color:red">*</span> <small style="color:var(--gris);font-weight:400;">(marca la correcta)</small></label>
+                    <button class="btn btn-outline btn-pequeño" type="button" onclick="agregarAltRow()">+ Alternativa</button>
+                </div>
+                <div id="alts-container"></div>
+            </div>
+        </div>
+        <div class="modal-pie">
+            <button class="btn btn-outline" onclick="cerrarModalPregunta()">Cancelar</button>
+            <button class="btn btn-primario" onclick="guardarPregunta()">Guardar pregunta</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal asignar jurados -->
+<div id="modal-asignar" class="modal" style="display:none;">
+    <div class="modal-overlay" onclick="cerrarModalAsignar()"></div>
+    <div class="modal-caja" style="max-width:620px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-cabecera">
+            <h3 class="modal-titulo">Asignar jurados</h3>
+            <button class="modal-cerrar" onclick="cerrarModalAsignar()">✕</button>
+        </div>
+        <div class="modal-cuerpo">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                <input type="text" id="asig-modal-buscar" class="form-control" placeholder="Buscar por nombre…" oninput="filtrarUsuariosModal()">
+                <select id="asig-modal-cat" class="form-control" onchange="filtrarUsuariosModal()">
+                    <option value="">Todas las categorías</option>
+                    <option value="A">Categoría A</option>
+                    <option value="B">Categoría B</option>
+                    <option value="C">Categoría C</option>
+                </select>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <small id="asig-modal-cnt" style="color:var(--gris);"></small>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-outline btn-pequeño" onclick="seleccionarTodos()">Seleccionar todos</button>
+                    <button class="btn btn-outline btn-pequeño" onclick="deseleccionarTodos()">Quitar selección</button>
+                </div>
+            </div>
+            <div id="asig-modal-lista" style="max-height:320px;overflow-y:auto;border:1px solid var(--gris-borde);border-radius:6px;"></div>
+            <div class="form-grupo" style="margin-top:14px;">
+                <label class="form-label">Fecha límite (opcional)</label>
+                <input type="datetime-local" id="asig-fecha-limite" class="form-control">
+            </div>
+        </div>
+        <div class="modal-pie">
+            <button class="btn btn-outline" onclick="cerrarModalAsignar()">Cancelar</button>
+            <button class="btn btn-primario" onclick="confirmarAsignar()">Asignar seleccionados</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+// ─── Estado ───────────────────────────────────────────────────────────────────
+
+var _pruebaId   = null;
+var _prueba     = null;
+var _preguntas  = [];
+var _asigAll    = [];
+var _usuariosAll = [];
+var _editPregId = null;
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('administrador');
+    var u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    document.getElementById('nombre-admin').textContent = u.nombre_completo || u.email || '';
+
+    var params = new URLSearchParams(window.location.search);
+    _pruebaId = params.get('id');
+    if (!_pruebaId) { window.location.href = '/admin/capacitaciones.html'; return; }
+
+    document.getElementById('btn-resultados').href = '/admin/capacitacion-resultados.html?id=' + _pruebaId;
+    document.getElementById('btn-resultados').style.display = '';
+    cargarPrueba();
+});
+
+async function cargarPrueba() {
+    try {
+        var data = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId);
+        _prueba    = data;
+        _preguntas = data.preguntas || [];
+        document.getElementById('titulo-pagina').textContent = data.titulo;
+        document.title = data.titulo + ' — Admin';
+        rellenarConfig(data);
+        renderPreguntas();
+        document.getElementById('page-body').style.display = '';
+        cargarAsignaciones();
+    } catch (err) {
+        document.getElementById('titulo-pagina').textContent = 'Error al cargar';
+        mostrarToast(err.message || 'No se pudo cargar la prueba', 'error');
+    }
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+
+function cambiarTab(nombre, btn) {
+    document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('activo'); });
+    btn.classList.add('activo');
+    ['config', 'preguntas', 'asignaciones'].forEach(function (t) {
+        document.getElementById('tab-' + t).style.display = (t === nombre) ? '' : 'none';
+    });
+}
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+function rellenarConfig(p) {
+    document.getElementById('cfg-titulo').value       = p.titulo || '';
+    document.getElementById('cfg-descripcion').value  = p.descripcion || '';
+    document.getElementById('cfg-instrucciones').value = p.instrucciones || '';
+    document.getElementById('cfg-video').value        = p.video_url || '';
+    document.getElementById('cfg-tiempo').value       = p.tiempo_limite_minutos || '';
+    document.getElementById('cfg-puntaje').value      = p.puntaje_minimo_aprobacion || 60;
+    document.getElementById('cfg-intentos').value     = p.intentos_maximos || 1;
+    document.getElementById('cfg-activa').value       = p.activa ? 'true' : 'false';
+    if (p.video_url) actualizarPreviewVideo();
+}
+
+function youtubeEmbed(url) {
+    if (!url) return null;
+    var m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    return m ? 'https://www.youtube-nocookie.com/embed/' + m[1] : null;
+}
+
+function actualizarPreviewVideo() {
+    var url    = document.getElementById('cfg-video').value.trim();
+    var embed  = youtubeEmbed(url);
+    var prev   = document.getElementById('video-preview');
+    var iframe = document.getElementById('video-iframe');
+    if (embed) {
+        iframe.src = embed;
+        prev.style.display = '';
+    } else {
+        iframe.src = '';
+        prev.style.display = 'none';
+    }
+}
+
+async function guardarConfig() {
+    var titulo = document.getElementById('cfg-titulo').value.trim();
+    if (!titulo) { mostrarToast('El título es obligatorio', 'error'); return; }
+
+    try {
+        var data = await api.put('/admin/capacitaciones/pruebas/' + _pruebaId, {
+            titulo,
+            descripcion:               document.getElementById('cfg-descripcion').value.trim() || null,
+            instrucciones:             document.getElementById('cfg-instrucciones').value.trim() || null,
+            video_url:                 document.getElementById('cfg-video').value.trim() || null,
+            tiempo_limite_minutos:     document.getElementById('cfg-tiempo').value || null,
+            puntaje_minimo_aprobacion: document.getElementById('cfg-puntaje').value || 60,
+            intentos_maximos:          document.getElementById('cfg-intentos').value || 1,
+            activa:                    document.getElementById('cfg-activa').value === 'true'
+        });
+        _prueba = data;
+        document.getElementById('titulo-pagina').textContent = data.titulo;
+        mostrarToast('Configuración guardada', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al guardar', 'error');
+    }
+}
+
+// ─── Preguntas ────────────────────────────────────────────────────────────────
+
+function renderPreguntas() {
+    var div = document.getElementById('lista-preguntas');
+    document.getElementById('cnt-preguntas').textContent = _preguntas.length;
+
+    if (_preguntas.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Sin preguntas aún. Haz clic en <strong>+ Agregar pregunta</strong>.</div>';
+        return;
+    }
+
+    div.innerHTML = _preguntas.map(function (p, i) {
+        var alts = (p.alternativas || []).map(function (a) {
+            var cls = a.es_correcta ? 'alt-correcta' : 'alt-incorrecta';
+            var dotCls = a.es_correcta ? 'correcta' : 'incorrecta';
+            return '<li class="' + cls + '"><span class="alt-dot ' + dotCls + '"></span>' + sanitizar(a.texto) + '</li>';
+        }).join('');
+        var star = p.es_favorita ? '★' : '☆';
+        return '<div class="pregunta-card">'
+            + '<div class="pregunta-acciones">'
+            + '<button class="star-btn" title="Favorita" onclick="toggleFavorita(\'' + p.id + '\',' + i + ')">' + star + '</button>'
+            + '<button class="btn btn-outline btn-pequeño" onclick="abrirModalPregunta(\'' + p.id + '\')">Editar</button>'
+            + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;" onclick="eliminarPregunta(\'' + p.id + '\')">✕</button>'
+            + '</div>'
+            + '<div class="pregunta-num">Pregunta ' + (i + 1) + (p.es_favorita ? ' ★' : '') + '</div>'
+            + '<div class="pregunta-enunciado">' + sanitizar(p.enunciado) + '</div>'
+            + (p.explicacion ? '<div style="font-size:12px;color:var(--gris);margin-bottom:6px;font-style:italic;">' + sanitizar(p.explicacion) + '</div>' : '')
+            + '<ul class="alt-lista">' + alts + '</ul>'
+            + '</div>';
+    }).join('');
+}
+
+// ─── Modal pregunta ───────────────────────────────────────────────────────────
+
+function abrirModalPregunta(pregId) {
+    _editPregId = pregId;
+    var preg = pregId ? _preguntas.find(function (p) { return p.id === pregId; }) : null;
+
+    document.getElementById('modal-preg-titulo').textContent = pregId ? 'Editar pregunta' : 'Agregar pregunta';
+    document.getElementById('preg-enunciado').value   = preg ? preg.enunciado : '';
+    document.getElementById('preg-explicacion').value = preg ? (preg.explicacion || '') : '';
+    document.getElementById('preg-favorita').checked  = preg ? !!preg.es_favorita : false;
+
+    var container = document.getElementById('alts-container');
+    container.innerHTML = '';
+
+    var alts = preg ? (preg.alternativas || []) : [];
+    if (alts.length === 0) {
+        agregarAltRow(); agregarAltRow(); agregarAltRow(); agregarAltRow();
+    } else {
+        alts.forEach(function (a) { agregarAltRow(a.texto, a.es_correcta, a.id); });
+    }
+
+    document.getElementById('modal-pregunta').style.display = 'flex';
+    setTimeout(function () { document.getElementById('preg-enunciado').focus(); }, 100);
+}
+
+function cerrarModalPregunta() {
+    document.getElementById('modal-pregunta').style.display = 'none';
+    _editPregId = null;
+}
+
+var _altIdCounter = 0;
+function agregarAltRow(texto, esCorrecta, altId) {
+    _altIdCounter++;
+    var rowId = 'alt-row-' + _altIdCounter;
+    var container = document.getElementById('alts-container');
+    var div = document.createElement('div');
+    div.className = 'alt-row';
+    div.id = rowId;
+    div.innerHTML = '<input type="radio" name="alt-correcta" value="' + rowId + '" ' + (esCorrecta ? 'checked' : '') + ' title="Marcar como correcta">'
+        + '<input type="text" class="form-control" placeholder="Texto de la alternativa…" value="' + sanitizar(texto || '') + '" data-alt-id="' + (altId || '') + '">'
+        + '<button type="button" class="btn btn-pequeño btn-rm" style="background:#fadbd8;color:#922b21;border:none;" onclick="document.getElementById(\'' + rowId + '\').remove()">✕</button>';
+    container.appendChild(div);
+}
+
+async function guardarPregunta() {
+    var enunciado = document.getElementById('preg-enunciado').value.trim();
+    if (!enunciado) { mostrarToast('El enunciado es obligatorio', 'error'); return; }
+
+    var rows = document.querySelectorAll('#alts-container .alt-row');
+    if (rows.length < 2) { mostrarToast('Agrega al menos 2 alternativas', 'error'); return; }
+
+    var checked = document.querySelector('#alts-container input[type="radio"]:checked');
+    if (!checked) { mostrarToast('Debes marcar la alternativa correcta', 'error'); return; }
+    var correctaRowId = checked.value;
+
+    var alts = [];
+    var tieneCorrecta = false;
+    var vacio = false;
+    rows.forEach(function (row) {
+        var input = row.querySelector('input[type="text"]');
+        var texto = input ? input.value.trim() : '';
+        if (!texto) { vacio = true; return; }
+        var radio = row.querySelector('input[type="radio"]');
+        var esCorrecta = radio && radio.value === correctaRowId;
+        if (esCorrecta) tieneCorrecta = true;
+        alts.push({ texto, es_correcta: esCorrecta });
+    });
+
+    if (vacio)        { mostrarToast('Completa o elimina las alternativas vacías', 'error'); return; }
+    if (!tieneCorrecta) { mostrarToast('Debes marcar la alternativa correcta', 'error'); return; }
+
+    try {
+        if (_editPregId) {
+            // Actualizar enunciado/explicacion/favorita
+            var pregActual = await api.put('/admin/capacitaciones/preguntas/' + _editPregId, {
+                enunciado,
+                explicacion: document.getElementById('preg-explicacion').value.trim() || null,
+                es_favorita: document.getElementById('preg-favorita').checked
+            });
+
+            // Obtener alternativas actuales y borrarlas todas, luego reinsertar
+            var pregData = _preguntas.find(function (p) { return p.id === _editPregId; });
+            if (pregData) {
+                for (var altExist of (pregData.alternativas || [])) {
+                    await api.delete('/admin/capacitaciones/alternativas/' + altExist.id);
+                }
+            }
+            for (var a of alts) {
+                await api.post('/admin/capacitaciones/preguntas/' + _editPregId + '/alternativas', a);
+            }
+        } else {
+            // Nueva pregunta
+            var newPreg = await api.post('/admin/capacitaciones/pruebas/' + _pruebaId + '/preguntas', {
+                enunciado,
+                explicacion: document.getElementById('preg-explicacion').value.trim() || null,
+                es_favorita: document.getElementById('preg-favorita').checked
+            });
+            for (var a of alts) {
+                await api.post('/admin/capacitaciones/preguntas/' + newPreg.id + '/alternativas', a);
+            }
+        }
+
+        cerrarModalPregunta();
+        mostrarToast('Pregunta guardada', 'exito');
+        // Recargar
+        var data = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId);
+        _preguntas = data.preguntas || [];
+        renderPreguntas();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al guardar la pregunta', 'error');
+    }
+}
+
+async function eliminarPregunta(id) {
+    if (!confirm('¿Eliminar esta pregunta y sus alternativas?')) return;
+    try {
+        await api.delete('/admin/capacitaciones/preguntas/' + id);
+        var data = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId);
+        _preguntas = data.preguntas || [];
+        renderPreguntas();
+        mostrarToast('Pregunta eliminada', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error', 'error');
+    }
+}
+
+async function toggleFavorita(id, idx) {
+    var preg = _preguntas[idx];
+    if (!preg || preg.id !== id) return;
+    try {
+        await api.put('/admin/capacitaciones/preguntas/' + id, { es_favorita: !preg.es_favorita });
+        _preguntas[idx].es_favorita = !preg.es_favorita;
+        renderPreguntas();
+    } catch (err) {
+        mostrarToast('Error al actualizar', 'error');
+    }
+}
+
+// ─── Asignaciones ─────────────────────────────────────────────────────────────
+
+async function cargarAsignaciones() {
+    try {
+        _asigAll = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId + '/asignaciones');
+        document.getElementById('cnt-asig').textContent = _asigAll.length;
+        renderAsig(_asigAll);
+    } catch (err) {
+        document.getElementById('lista-asig').innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message) + '</div>';
+    }
+}
+
+function filtrarAsig() {
+    var buscar = document.getElementById('asig-buscar').value.toLowerCase();
+    var estado = document.getElementById('asig-estado').value;
+    var lista  = _asigAll.filter(function (a) {
+        var nombre = (a.jurado?.nombre_completo || '').toLowerCase();
+        var ult    = a.ultimo_intento;
+        var est    = ult ? ult.estado : 'pendiente';
+        return (!buscar || nombre.includes(buscar)) && (!estado || est === estado);
+    });
+    renderAsig(lista);
+}
+
+function renderAsig(lista) {
+    var div = document.getElementById('lista-asig');
+    if (lista.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Sin asignaciones que coincidan.</div>';
+        return;
+    }
+    div.innerHTML = lista.map(function (a) {
+        var ult = a.ultimo_intento;
+        var estadoTxt, estadoCls;
+        if (!ult) {
+            estadoTxt = 'Pendiente'; estadoCls = 'estado-pendiente';
+        } else if (ult.estado === 'en_curso') {
+            estadoTxt = 'En curso'; estadoCls = 'estado-en_curso';
+        } else if (ult.estado === 'completado') {
+            estadoTxt = ult.aprobado ? ('Aprobado (' + ult.puntaje_obtenido + '%)') : ('Reprobado (' + ult.puntaje_obtenido + '%)');
+            estadoCls = ult.aprobado ? 'estado-aprobado' : 'estado-reprobado';
+        } else {
+            estadoTxt = 'Pendiente'; estadoCls = 'estado-pendiente';
+        }
+        return '<div class="asig-card">'
+            + '<div class="asig-info">'
+            + '<div class="asig-nombre">' + sanitizar(a.jurado?.nombre_completo || '—') + '</div>'
+            + '<div class="asig-sub">Cat. ' + sanitizar(a.jurado?.categoria || '—') + ' · ' + sanitizar(a.jurado?.asociacion || '—') + '</div>'
+            + '</div>'
+            + '<span class="' + estadoCls + '" style="font-size:13px;">' + estadoTxt + '</span>'
+            + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;flex-shrink:0;" onclick="quitarAsignacion(\'' + a.id + '\')">Quitar</button>'
+            + '</div>';
+    }).join('');
+}
+
+async function quitarAsignacion(id) {
+    if (!confirm('¿Quitar esta asignación? El jurado ya no verá la prueba.')) return;
+    try {
+        await api.delete('/admin/capacitaciones/asignaciones/' + id);
+        mostrarToast('Asignación eliminada', 'exito');
+        cargarAsignaciones();
+    } catch (err) {
+        mostrarToast(err.message || 'Error', 'error');
+    }
+}
+
+// ─── Modal asignar ────────────────────────────────────────────────────────────
+
+async function abrirModalAsignar() {
+    if (_usuariosAll.length === 0) {
+        try {
+            var resp = await api.get('/admin/usuarios?activo=true&limit=500');
+            _usuariosAll = Array.isArray(resp) ? resp : (resp.data || []);
+        } catch (err) {
+            mostrarToast('No se pudo cargar la lista de jurados', 'error');
+            return;
+        }
+    }
+    document.getElementById('asig-modal-buscar').value = '';
+    document.getElementById('asig-modal-cat').value = '';
+    document.getElementById('asig-fecha-limite').value = '';
+    filtrarUsuariosModal();
+    document.getElementById('modal-asignar').style.display = 'flex';
+}
+
+function cerrarModalAsignar() {
+    document.getElementById('modal-asignar').style.display = 'none';
+}
+
+function filtrarUsuariosModal() {
+    var buscar = document.getElementById('asig-modal-buscar').value.toLowerCase();
+    var cat    = document.getElementById('asig-modal-cat').value;
+    var yaAsig = new Set((_asigAll || []).map(function (a) { return a.jurado && a.jurado.id; }));
+
+    var filtrados = _usuariosAll.filter(function (u) {
+        var nombre = (u.nombre_completo || '').toLowerCase();
+        return (!buscar || nombre.includes(buscar))
+            && (!cat || u.categoria === cat);
+    });
+
+    document.getElementById('asig-modal-cnt').textContent = filtrados.length + ' jurado(s) encontrado(s)';
+
+    var lista = document.getElementById('asig-modal-lista');
+    if (filtrados.length === 0) {
+        lista.innerHTML = '<div style="padding:14px;text-align:center;color:var(--gris);font-size:13px;">Sin resultados</div>';
+        return;
+    }
+
+    lista.innerHTML = filtrados.map(function (u) {
+        var asig = yaAsig.has(u.id);
+        return '<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gris-borde);' + (asig ? 'opacity:.5;' : '') + '">'
+            + '<input type="checkbox" name="asig-check" value="' + u.id + '" ' + (asig ? 'checked disabled' : '') + ' style="cursor:pointer;">'
+            + '<span style="flex:1;font-size:13px;">' + sanitizar(u.nombre_completo || '—') + '</span>'
+            + '<span style="font-size:11px;color:var(--gris);">Cat. ' + sanitizar(u.categoria || '—') + '</span>'
+            + (asig ? '<span style="font-size:11px;color:#1e8449;">Ya asignado</span>' : '')
+            + '</label>';
+    }).join('');
+}
+
+function seleccionarTodos() {
+    document.querySelectorAll('#asig-modal-lista input[type="checkbox"]:not([disabled])').forEach(function (cb) { cb.checked = true; });
+}
+function deseleccionarTodos() {
+    document.querySelectorAll('#asig-modal-lista input[type="checkbox"]:not([disabled])').forEach(function (cb) { cb.checked = false; });
+}
+
+async function confirmarAsignar() {
+    var checks = document.querySelectorAll('#asig-modal-lista input[type="checkbox"]:checked:not([disabled])');
+    var ids    = Array.from(checks).map(function (cb) { return cb.value; });
+    if (ids.length === 0) { mostrarToast('Selecciona al menos un jurado', 'error'); return; }
+
+    var fechaLimite = document.getElementById('asig-fecha-limite').value || null;
+
+    try {
+        var res = await api.post('/admin/capacitaciones/pruebas/' + _pruebaId + '/asignar', {
+            usuario_ids: ids,
+            fecha_limite: fechaLimite
+        });
+        mostrarToast(res.asignados + ' jurado(s) asignado(s)', 'exito');
+        cerrarModalAsignar();
+        cargarAsignaciones();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al asignar', 'error');
+    }
+}
+</script>
+</body>
+</html>
