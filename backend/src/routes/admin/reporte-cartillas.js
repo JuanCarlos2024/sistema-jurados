@@ -172,10 +172,21 @@ async function queryCartillas(filtros) {
     return resultado;
 }
 
-function aplicarFiltrosTexto(filas, tipo_respuesta, buscar) {
+function aplicarFiltrosTexto(filas, tipo_respuesta, respuesta_valor, buscar) {
     let resultado = filas;
     if (tipo_respuesta) {
         resultado = resultado.filter(f => f.campo_key === tipo_respuesta);
+    }
+    if (respuesta_valor) {
+        if (respuesta_valor === 'si') {
+            resultado = resultado.filter(f => f.respuesta === 'Sí');
+        } else if (respuesta_valor === 'no') {
+            resultado = resultado.filter(f => f.respuesta === 'No');
+        } else if (respuesta_valor === 'con_respuesta') {
+            resultado = resultado.filter(f => f.respuesta && f.respuesta !== '—');
+        } else if (respuesta_valor === 'sin_respuesta') {
+            resultado = resultado.filter(f => !f.respuesta || f.respuesta === '—');
+        }
     }
     if (buscar) {
         const b = buscar.toLowerCase();
@@ -196,7 +207,7 @@ router.get('/', async (req, res) => {
     try {
         const cartillas = await queryCartillas(req.query);
         const filas     = cartillas.flatMap(expandirCartilla);
-        const resultado = aplicarFiltrosTexto(filas, req.query.tipo_respuesta, req.query.buscar);
+        const resultado = aplicarFiltrosTexto(filas, req.query.tipo_respuesta, req.query.respuesta_valor, req.query.buscar);
         console.log(`[reporte-cartillas] GET / → filas: ${filas.length}, tras filtro texto: ${resultado.length}`);
         res.json(resultado);
     } catch (e) {
@@ -211,7 +222,7 @@ router.get('/exportar', async (req, res) => {
     try {
         const cartillas = await queryCartillas(req.query);
         const filas     = cartillas.flatMap(expandirCartilla);
-        const resultado = aplicarFiltrosTexto(filas, req.query.tipo_respuesta, req.query.buscar);
+        const resultado = aplicarFiltrosTexto(filas, req.query.tipo_respuesta, req.query.respuesta_valor, req.query.buscar);
 
         if (resultado.length === 0) {
             return res.status(404).json({ error: 'No hay datos para exportar con los filtros indicados.' });

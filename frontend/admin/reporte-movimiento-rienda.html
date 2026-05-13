@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reporte Cartillas Jurado — Administrador</title>
+    <title>Reporte Movimiento de Rienda — Administrador</title>
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
@@ -18,21 +18,7 @@
 
         .tabla-reporte { font-size: 12px; }
         .tabla-reporte th { font-size: 11px; white-space: nowrap; }
-        .tabla-reporte td { vertical-align: top; max-width: 260px; word-break: break-word; }
-
-        .campo-tag {
-            display: inline-block;
-            padding: 1px 7px;
-            border-radius: 10px;
-            font-size: 11px;
-            font-weight: 600;
-            background: #eaf4fb;
-            color: #1a5276;
-        }
-        .campo-tag.faltas       { background: #fdebd0; color: #784212; }
-        .campo-tag.ganado       { background: #fef9e7; color: #7d6608; }
-        .campo-tag.rienda       { background: #e9f7ef; color: #1e8449; }
-        .campo-tag.observ       { background: #f0f0f0; color: #555; }
+        .tabla-reporte td { vertical-align: top; max-width: 200px; word-break: break-word; }
 
         .badge-enviada  { background: #d5f5e3; color: #1e8449; }
         .badge-borrador { background: #f0f0f0; color: #666; }
@@ -43,9 +29,6 @@
             font-size: 11px;
             font-weight: 600;
         }
-
-        .respuesta-si  { color: #1e8449; font-weight: 600; }
-        .respuesta-no  { color: #922b21; font-weight: 600; }
 
         .resumen-bar {
             display: flex;
@@ -77,7 +60,7 @@
         <div class="topbar">
             <div class="flex items-center gap-12">
                 <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
-                <h1>Reporte Cartillas Digitales — Jurados</h1>
+                <h1>Reporte Movimiento de Rienda</h1>
             </div>
         </div>
 
@@ -86,7 +69,7 @@
             <!-- Filtros -->
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-titulo">Filtros</div>
-                <form id="form-filtros" onsubmit="window.buscar(event)">
+                <form id="form-filtros" onsubmit="buscar(event)">
                     <div class="filtros-grid">
                         <div class="form-grupo">
                             <label class="form-label">Fecha desde</label>
@@ -121,34 +104,37 @@
                             </select>
                         </div>
                         <div class="form-grupo">
-                            <label class="form-label">Campo / Tipo de respuesta</label>
-                            <select id="f-tipo-respuesta" name="tipo_respuesta" class="form-control" onchange="actualizarFiltroRespuesta()">
-                                <option value="">Todos los campos</option>
-                                <option value="hora_inicio">Hora de inicio</option>
-                                <option value="serie_campeones_2_vueltas">Serie campeones - 2 vueltas</option>
-                                <option value="caseta_adecuada">Caseta adecuada</option>
-                                <option value="hubo_faltas">Faltas disciplinarias/reglamentarias</option>
-                                <option value="hubo_ganado_fuera_peso">Ganado fuera del peso reglamentario</option>
-                                <option value="registro_ganado">Registros de ganado fuera de peso</option>
-                                <option value="hubo_movimiento_rienda">Movimiento a la rienda</option>
-                                <option value="registro_rienda">Registros de movimiento a la rienda</option>
-                                <option value="observaciones_finales">Observaciones finales</option>
-                            </select>
+                            <label class="form-label">Categoría rienda</label>
+                            <input type="text" id="f-categoria-rienda" name="categoria_rienda" class="form-control" placeholder="Ej: Adulto masculino…">
                         </div>
                         <div class="form-grupo">
-                            <label class="form-label">Respuesta</label>
-                            <select id="f-respuesta-valor" name="respuesta_valor" class="form-control" disabled>
-                                <option value="">Todas</option>
-                                <option value="si">Sí</option>
-                                <option value="no">No</option>
-                                <option value="con_respuesta">Con respuesta</option>
-                                <option value="sin_respuesta">Sin respuesta</option>
-                            </select>
+                            <label class="form-label">Sistema</label>
+                            <input type="text" id="f-sistema" name="sistema" class="form-control" placeholder="Ej: Sistema A…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Nombre socio</label>
+                            <input type="text" id="f-nombre-socio" name="nombre_socio" class="form-control" placeholder="Nombre del socio…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">RUT socio</label>
+                            <input type="text" id="f-rut-socio" name="rut_socio" class="form-control" placeholder="Ej: 12345678-9">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Nombre equino</label>
+                            <input type="text" id="f-nombre-equino" name="nombre_equino" class="form-control" placeholder="Nombre del equino…">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Puntaje desde</label>
+                            <input type="number" id="f-puntaje-desde" name="puntaje_desde" class="form-control" placeholder="Ej: 0" min="0" step="0.5">
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Puntaje hasta</label>
+                            <input type="number" id="f-puntaje-hasta" name="puntaje_hasta" class="form-control" placeholder="Ej: 40" min="0" step="0.5">
                         </div>
                     </div>
                     <div class="form-grupo" style="max-width:500px;">
-                        <label class="form-label">Búsqueda libre (en respuesta, comentario, club, jurado)</label>
-                        <input type="text" id="f-buscar" name="buscar" class="form-control" placeholder="Ej: infracción, sin incidentes…">
+                        <label class="form-label">Búsqueda libre (socio, equino, jurado, club, RUT)</label>
+                        <input type="text" id="f-buscar" name="buscar" class="form-control" placeholder="Ej: Agua Turbia, Rojas Cornejo…">
                     </div>
                     <div class="flex gap-8" style="flex-wrap:wrap;">
                         <button type="submit" class="btn btn-primario">Buscar</button>
@@ -188,8 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ─── Estado ───────────────────────────────────────────────────────────────────
 
-let _ultimosFiltros = null;
-let _ultimosResultados = [];
+let _ultimosFiltros   = null;
 
 // ─── Buscar ───────────────────────────────────────────────────────────────────
 
@@ -198,7 +183,7 @@ async function buscar(e) {
     const form = document.getElementById('form-filtros');
     const fd   = new FormData(form);
     const params = {};
-    fd.forEach((v, k) => { if (v.trim()) params[k] = v.trim(); });
+    fd.forEach((v, k) => { if (String(v).trim()) params[k] = String(v).trim(); });
     _ultimosFiltros = params;
 
     const div = document.getElementById('contenido-tabla');
@@ -208,42 +193,24 @@ async function buscar(e) {
 
     try {
         const qs  = new URLSearchParams(params).toString();
-        const url = '/admin/reportes/cartillas-jurado' + (qs ? '?' + qs : '');
-        console.log('[cartillas] GET', url);
+        const url = '/admin/reportes/movimiento-rienda' + (qs ? '?' + qs : '');
         const datos = await api.get(url);
-        console.log('[cartillas] respuesta:', Array.isArray(datos) ? `${datos.length} filas` : datos);
-        _ultimosResultados = datos;
         renderTabla(datos);
     } catch (err) {
-        console.error('[cartillas] error:', err);
-        div.innerHTML = `<div class="alerta alerta-error">${err.message || 'Error al cargar datos'}</div>`;
+        console.error('[reporte-rienda] error:', err);
+        div.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar datos')}</div>`;
     }
 }
 
 // ─── Render tabla ─────────────────────────────────────────────────────────────
 
-function renderCampoTag(campo, key) {
-    let cls = '';
-    if (key === 'hubo_faltas')            cls = 'faltas';
-    else if (key === 'hubo_ganado_fuera_peso' || key === 'registro_ganado') cls = 'ganado';
-    else if (key === 'hubo_movimiento_rienda' || key === 'registro_rienda') cls = 'rienda';
-    else if (key === 'observaciones_finales') cls = 'observ';
-    return `<span class="campo-tag ${cls}">${sanitizar(campo)}</span>`;
-}
-
-function renderRespuesta(resp) {
-    if (resp === 'Sí') return `<span class="respuesta-si">Sí</span>`;
-    if (resp === 'No') return `<span class="respuesta-no">No</span>`;
-    return sanitizar(resp);
+function sanitizar(txt) {
+    return String(txt ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function renderEstado(estado) {
     const cls = estado === 'enviada' ? 'badge-enviada' : 'badge-borrador';
-    return `<span class="badge-estado ${cls}">${estado}</span>`;
-}
-
-function sanitizar(txt) {
-    return String(txt ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<span class="badge-estado ${cls}">${sanitizar(estado)}</span>`;
 }
 
 function renderTabla(datos) {
@@ -257,11 +224,10 @@ function renderTabla(datos) {
         return;
     }
 
-    // Resumen
     const cartillasUnicas = new Set(datos.map(f => f.asignacion_id)).size;
     bar.style.display = 'flex';
     bar.innerHTML = `
-        <span>${datos.length} fila(s)</span>
+        <span>${datos.length} registro(s) de rienda</span>
         <span>·</span>
         <span class="resumen-stat">${cartillasUnicas}</span> cartilla(s) distintas
     `;
@@ -276,12 +242,17 @@ function renderTabla(datos) {
                 <th>Club</th>
                 <th>Asociación</th>
                 <th>Tipo rodeo</th>
-                <th>Jurado</th>
-                <th>Categoría</th>
                 <th>Estado</th>
-                <th>Campo / Pregunta</th>
-                <th>Respuesta</th>
-                <th>Comentario</th>
+                <th>Jurado</th>
+                <th>Cat. Jurado</th>
+                <th>Categoría rienda</th>
+                <th>Sistema</th>
+                <th>Nombre socio</th>
+                <th>RUT socio</th>
+                <th>N° socio</th>
+                <th>Nombre equino</th>
+                <th>N° inscripción</th>
+                <th>Puntaje</th>
                 <th>Fecha envío</th>
             </tr>
         </thead>
@@ -292,12 +263,17 @@ function renderTabla(datos) {
                 <td>${sanitizar(f.club)}</td>
                 <td>${sanitizar(f.asociacion)}</td>
                 <td style="white-space:nowrap;">${sanitizar(f.tipo_rodeo)}</td>
+                <td>${renderEstado(f.estado_cartilla)}</td>
                 <td>${sanitizar(f.jurado)}</td>
                 <td style="white-space:nowrap;">${sanitizar(f.categoria_jurado)}</td>
-                <td>${renderEstado(f.estado_cartilla)}</td>
-                <td>${renderCampoTag(f.campo, f.campo_key)}</td>
-                <td>${renderRespuesta(f.respuesta)}</td>
-                <td style="color:var(--gris);font-size:11px;">${sanitizar(f.comentario)}</td>
+                <td style="white-space:nowrap;font-weight:600;">${sanitizar(f.categoria_rienda)}</td>
+                <td style="white-space:nowrap;">${sanitizar(f.sistema)}</td>
+                <td>${sanitizar(f.nombre_socio)}</td>
+                <td style="white-space:nowrap;font-size:11px;">${sanitizar(f.rut_socio)}</td>
+                <td>${sanitizar(f.nro_socio)}</td>
+                <td>${sanitizar(f.nombre_equino)}</td>
+                <td>${sanitizar(f.nro_inscripcion)}</td>
+                <td style="text-align:right;font-weight:600;">${sanitizar(f.puntaje)}</td>
                 <td style="white-space:nowrap;font-size:11px;">${sanitizar(f.fecha_envio)}</td>
             </tr>`).join('')}
         </tbody>
@@ -312,7 +288,7 @@ function renderTabla(datos) {
 function exportar() {
     if (!_ultimosFiltros) return;
     const qs = new URLSearchParams(_ultimosFiltros).toString();
-    const url = '/api/admin/reportes/cartillas-jurado/exportar' + (qs ? '?' + qs : '');
+    const url = '/api/admin/reportes/movimiento-rienda/exportar' + (qs ? '?' + qs : '');
     const a   = document.createElement('a');
     a.href    = url;
     a.download = '';
@@ -321,23 +297,11 @@ function exportar() {
     document.body.removeChild(a);
 }
 
-// ─── Habilitar/deshabilitar filtro Respuesta ──────────────────────────────────
-
-function actualizarFiltroRespuesta() {
-    const campo = document.getElementById('f-tipo-respuesta').value;
-    const sel   = document.getElementById('f-respuesta-valor');
-    // Deshabilitar solo cuando no hay campo seleccionado
-    sel.disabled = !campo;
-    if (!campo) sel.value = '';
-}
-
 // ─── Limpiar filtros ──────────────────────────────────────────────────────────
 
 function limpiarFiltros() {
     document.getElementById('form-filtros').reset();
-    document.getElementById('f-respuesta-valor').disabled = true;
-    _ultimosFiltros  = null;
-    _ultimosResultados = [];
+    _ultimosFiltros = null;
     document.getElementById('contenido-tabla').innerHTML =
         '<div class="alerta alerta-info" style="font-size:13px;">Usa los filtros y haz clic en <strong>Buscar</strong> para ver resultados.</div>';
     document.getElementById('resumen-bar').style.display = 'none';
