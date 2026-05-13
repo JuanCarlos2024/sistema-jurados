@@ -213,14 +213,13 @@
 </div>
 
 <!-- Modal pregunta -->
-<div id="modal-pregunta" class="modal" style="display:none;">
-    <div class="modal-overlay" onclick="cerrarModalPregunta()"></div>
-    <div class="modal-caja" style="max-width:600px;max-height:90vh;overflow-y:auto;">
-        <div class="modal-cabecera">
-            <h3 class="modal-titulo" id="modal-preg-titulo">Agregar pregunta</h3>
+<div id="modal-pregunta" class="modal-overlay" style="display:none;" onclick="cerrarModalPregunta()">
+    <div class="modal" style="max-width:600px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="modal-preg-titulo">Agregar pregunta</h3>
             <button class="modal-cerrar" onclick="cerrarModalPregunta()">✕</button>
         </div>
-        <div class="modal-cuerpo">
+        <div class="modal-body">
             <div class="form-grupo">
                 <label class="form-label">Enunciado <span style="color:red">*</span></label>
                 <textarea id="preg-enunciado" class="form-control" rows="3" placeholder="Escribe aquí la pregunta…"></textarea>
@@ -243,22 +242,21 @@
                 <div id="alts-container"></div>
             </div>
         </div>
-        <div class="modal-pie">
-            <button class="btn btn-outline" onclick="cerrarModalPregunta()">Cancelar</button>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalPregunta()">Cancelar</button>
             <button class="btn btn-primario" onclick="guardarPregunta()">Guardar pregunta</button>
         </div>
     </div>
 </div>
 
 <!-- Modal asignar jurados -->
-<div id="modal-asignar" class="modal" style="display:none;">
-    <div class="modal-overlay" onclick="cerrarModalAsignar()"></div>
-    <div class="modal-caja" style="max-width:620px;max-height:90vh;overflow-y:auto;">
-        <div class="modal-cabecera">
-            <h3 class="modal-titulo">Asignar jurados</h3>
+<div id="modal-asignar" class="modal-overlay" style="display:none;" onclick="cerrarModalAsignar()">
+    <div class="modal" style="max-width:620px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>Asignar jurados</h3>
             <button class="modal-cerrar" onclick="cerrarModalAsignar()">✕</button>
         </div>
-        <div class="modal-cuerpo">
+        <div class="modal-body">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
                 <input type="text" id="asig-modal-buscar" class="form-control" placeholder="Buscar por nombre…" oninput="filtrarUsuariosModal()">
                 <select id="asig-modal-cat" class="form-control" onchange="filtrarUsuariosModal()">
@@ -281,8 +279,8 @@
                 <input type="datetime-local" id="asig-fecha-limite" class="form-control">
             </div>
         </div>
-        <div class="modal-pie">
-            <button class="btn btn-outline" onclick="cerrarModalAsignar()">Cancelar</button>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalAsignar()">Cancelar</button>
             <button class="btn btn-primario" onclick="confirmarAsignar()">Asignar seleccionados</button>
         </div>
     </div>

@@ -52,14 +52,14 @@
 </div>
 
 <!-- Modal nueva prueba -->
-<div id="modal-nueva" class="modal" style="display:none;">
-    <div class="modal-overlay" onclick="cerrarModalNueva()"></div>
-    <div class="modal-caja" style="max-width:540px;">
-        <div class="modal-cabecera">
-            <h3 class="modal-titulo">Nueva prueba de capacitación</h3>
+<!-- Modal nueva prueba -->
+<div id="modal-nueva" class="modal-overlay" style="display:none;" onclick="cerrarModalNueva()">
+    <div class="modal" style="max-width:540px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>Nueva prueba de capacitación</h3>
             <button class="modal-cerrar" onclick="cerrarModalNueva()">✕</button>
         </div>
-        <div class="modal-cuerpo">
+        <div class="modal-body">
             <div class="form-grupo">
                 <label class="form-label">Título <span style="color:red">*</span></label>
                 <input type="text" id="nueva-titulo" class="form-control" placeholder="Ej: Capacitación Reglamento 2026">
@@ -83,28 +83,27 @@
                 </div>
             </div>
         </div>
-        <div class="modal-pie">
-            <button class="btn btn-outline" onclick="cerrarModalNueva()">Cancelar</button>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalNueva()">Cancelar</button>
             <button class="btn btn-primario" onclick="crearPrueba()">Crear y continuar editando</button>
         </div>
     </div>
 </div>
 
 <!-- Modal confirmar eliminar -->
-<div id="modal-eliminar" class="modal" style="display:none;">
-    <div class="modal-overlay" onclick="cerrarModalEliminar()"></div>
-    <div class="modal-caja" style="max-width:420px;">
-        <div class="modal-cabecera">
-            <h3 class="modal-titulo">Eliminar prueba</h3>
+<div id="modal-eliminar" class="modal-overlay" style="display:none;" onclick="cerrarModalEliminar()">
+    <div class="modal" style="max-width:420px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>Eliminar prueba</h3>
             <button class="modal-cerrar" onclick="cerrarModalEliminar()">✕</button>
         </div>
-        <div class="modal-cuerpo">
+        <div class="modal-body">
             <div class="alerta alerta-error">Esta acción eliminará la prueba, todas sus preguntas y asignaciones. No se puede deshacer.</div>
             <p style="margin:12px 0 0;font-size:14px;">¿Confirmas eliminar <strong id="eliminar-titulo"></strong>?</p>
         </div>
-        <div class="modal-pie">
-            <button class="btn btn-outline" onclick="cerrarModalEliminar()">Cancelar</button>
-            <button class="btn btn-error" onclick="confirmarEliminar()">Eliminar definitivamente</button>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalEliminar()">Cancelar</button>
+            <button class="btn btn-peligro" onclick="confirmarEliminar()">Eliminar definitivamente</button>
         </div>
     </div>
 </div>

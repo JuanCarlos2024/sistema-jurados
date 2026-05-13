@@ -124,14 +124,13 @@
 </div>
 
 <!-- Modal reset -->
-<div id="modal-reset" class="modal" style="display:none;">
-    <div class="modal-overlay" onclick="cerrarModalReset()"></div>
-    <div class="modal-caja" style="max-width:480px;">
-        <div class="modal-cabecera">
-            <h3 class="modal-titulo">Reiniciar intento</h3>
+<div id="modal-reset" class="modal-overlay" style="display:none;" onclick="cerrarModalReset()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>Reiniciar intento</h3>
             <button class="modal-cerrar" onclick="cerrarModalReset()">✕</button>
         </div>
-        <div class="modal-cuerpo">
+        <div class="modal-body">
             <div class="alerta alerta-advertencia">El intento del jurado quedará eliminado. Podrá realizar un nuevo intento si tiene disponibles.</div>
             <p style="font-size:14px;margin:12px 0 0;">Jurado: <strong id="reset-jurado-nombre"></strong></p>
             <div class="form-grupo" style="margin-top:12px;">
@@ -139,9 +138,9 @@
                 <textarea id="reset-motivo" class="form-control" rows="3" placeholder="Explica por qué se reinicia este intento…"></textarea>
             </div>
         </div>
-        <div class="modal-pie">
-            <button class="btn btn-outline" onclick="cerrarModalReset()">Cancelar</button>
-            <button class="btn btn-error" onclick="confirmarReset()">Reiniciar intento</button>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalReset()">Cancelar</button>
+            <button class="btn btn-peligro" onclick="confirmarReset()">Reiniciar intento</button>
         </div>
     </div>
 </div>
