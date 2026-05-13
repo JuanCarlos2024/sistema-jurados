@@ -69,7 +69,7 @@
             <!-- Filtros -->
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-titulo">Filtros</div>
-                <form id="form-filtros" onsubmit="buscar(event)">
+                <form id="form-filtros" onsubmit="window.buscar(event)">
                     <div class="filtros-grid">
                         <div class="form-grupo">
                             <label class="form-label">Fecha desde</label>
@@ -165,132 +165,124 @@
 <script>
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function () {
     protegerRuta('administrador');
-    const u = api.getUsuario();
+    var u = api.getUsuario();
     if (!u) return api.cerrarSesion();
     document.getElementById('nombre-admin').textContent = u.nombre_completo || u.email || '';
 });
 
 // ─── Estado ───────────────────────────────────────────────────────────────────
 
-let _ultimosFiltros   = null;
+var _ultimosFiltrosRienda = null;
 
 // ─── Buscar ───────────────────────────────────────────────────────────────────
 
 async function buscar(e) {
     if (e) e.preventDefault();
-    const form = document.getElementById('form-filtros');
-    const fd   = new FormData(form);
-    const params = {};
-    fd.forEach((v, k) => { if (String(v).trim()) params[k] = String(v).trim(); });
-    _ultimosFiltros = params;
 
-    const div = document.getElementById('contenido-tabla');
-    div.innerHTML = '<div class="alerta alerta-info">Cargando…</div>';
+    var form   = document.getElementById('form-filtros');
+    var fd     = new FormData(form);
+    var params = {};
+    fd.forEach(function (v, k) { if (String(v).trim()) params[k] = String(v).trim(); });
+    _ultimosFiltrosRienda = params;
+
+    var div = document.getElementById('contenido-tabla');
+    div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Cargando registros de movimiento de rienda…</div>';
     document.getElementById('resumen-bar').style.display = 'none';
     document.getElementById('btn-exportar').disabled = true;
 
+    var qs  = new URLSearchParams(params).toString();
+    var url = '/admin/reportes/movimiento-rienda' + (qs ? '?' + qs : '');
+    console.log('[rienda] GET', url);
+
     try {
-        const qs  = new URLSearchParams(params).toString();
-        const url = '/admin/reportes/movimiento-rienda' + (qs ? '?' + qs : '');
-        const datos = await api.get(url);
-        renderTabla(datos);
+        var datos = await api.get(url);
+        console.log('[rienda] respuesta:', Array.isArray(datos) ? (datos.length + ' registros') : datos);
+        renderTablaRienda(datos);
     } catch (err) {
-        console.error('[reporte-rienda] error:', err);
-        div.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar datos')}</div>`;
+        console.error('[rienda] error:', err);
+        div.innerHTML = '<div class="alerta alerta-error">No fue posible cargar el reporte de movimiento de rienda. ' + sanitizar(err.message || 'Error desconocido') + '</div>';
     }
 }
 
 // ─── Render tabla ─────────────────────────────────────────────────────────────
 
-function sanitizar(txt) {
-    return String(txt ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function renderEstadoRienda(estado) {
+    var cls = estado === 'enviada' ? 'badge-enviada' : 'badge-borrador';
+    return '<span class="badge-estado ' + cls + '">' + sanitizar(estado) + '</span>';
 }
 
-function renderEstado(estado) {
-    const cls = estado === 'enviada' ? 'badge-enviada' : 'badge-borrador';
-    return `<span class="badge-estado ${cls}">${sanitizar(estado)}</span>`;
-}
+function renderTablaRienda(datos) {
+    var div = document.getElementById('contenido-tabla');
+    var bar = document.getElementById('resumen-bar');
 
-function renderTabla(datos) {
-    const div = document.getElementById('contenido-tabla');
-    const bar = document.getElementById('resumen-bar');
-
-    if (!datos || datos.length === 0) {
-        div.innerHTML = '<div class="alerta alerta-advertencia">No se encontraron resultados con los filtros aplicados.</div>';
+    if (!datos || !Array.isArray(datos) || datos.length === 0) {
+        div.innerHTML = '<div class="alerta alerta-advertencia">No se encontraron registros de movimiento de rienda para los filtros seleccionados.</div>';
         bar.style.display = 'none';
         document.getElementById('btn-exportar').disabled = true;
         return;
     }
 
-    const cartillasUnicas = new Set(datos.map(f => f.asignacion_id)).size;
+    var cartillasUnicas = new Set(datos.map(function (f) { return f.asignacion_id; })).size;
     bar.style.display = 'flex';
-    bar.innerHTML = `
-        <span>${datos.length} registro(s) de rienda</span>
-        <span>·</span>
-        <span class="resumen-stat">${cartillasUnicas}</span> cartilla(s) distintas
-    `;
+    bar.innerHTML = '<span>' + datos.length + ' registro(s) de rienda</span>'
+        + '<span>·</span>'
+        + '<span class="resumen-stat">' + cartillasUnicas + '</span> cartilla(s) distintas';
     document.getElementById('btn-exportar').disabled = false;
 
-    const html = `
-    <div style="overflow-x:auto;">
-    <table class="tabla tabla-reporte">
-        <thead>
-            <tr>
-                <th>Fecha rodeo</th>
-                <th>Club</th>
-                <th>Asociación</th>
-                <th>Tipo rodeo</th>
-                <th>Estado</th>
-                <th>Jurado</th>
-                <th>Cat. Jurado</th>
-                <th>Categoría rienda</th>
-                <th>Sistema</th>
-                <th>Nombre socio</th>
-                <th>RUT socio</th>
-                <th>N° socio</th>
-                <th>Nombre equino</th>
-                <th>N° inscripción</th>
-                <th>Puntaje</th>
-                <th>Fecha envío</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${datos.map(f => `
-            <tr>
-                <td style="white-space:nowrap;">${sanitizar(f.fecha_rodeo)}</td>
-                <td>${sanitizar(f.club)}</td>
-                <td>${sanitizar(f.asociacion)}</td>
-                <td style="white-space:nowrap;">${sanitizar(f.tipo_rodeo)}</td>
-                <td>${renderEstado(f.estado_cartilla)}</td>
-                <td>${sanitizar(f.jurado)}</td>
-                <td style="white-space:nowrap;">${sanitizar(f.categoria_jurado)}</td>
-                <td style="white-space:nowrap;font-weight:600;">${sanitizar(f.categoria_rienda)}</td>
-                <td style="white-space:nowrap;">${sanitizar(f.sistema)}</td>
-                <td>${sanitizar(f.nombre_socio)}</td>
-                <td style="white-space:nowrap;font-size:11px;">${sanitizar(f.rut_socio)}</td>
-                <td>${sanitizar(f.nro_socio)}</td>
-                <td>${sanitizar(f.nombre_equino)}</td>
-                <td>${sanitizar(f.nro_inscripcion)}</td>
-                <td style="text-align:right;font-weight:600;">${sanitizar(f.puntaje)}</td>
-                <td style="white-space:nowrap;font-size:11px;">${sanitizar(f.fecha_envio)}</td>
-            </tr>`).join('')}
-        </tbody>
-    </table>
-    </div>`;
+    var filas = datos.map(function (f) {
+        return '<tr>'
+            + '<td style="white-space:nowrap;">' + sanitizar(f.fecha_rodeo) + '</td>'
+            + '<td>' + sanitizar(f.club) + '</td>'
+            + '<td>' + sanitizar(f.asociacion) + '</td>'
+            + '<td style="white-space:nowrap;">' + sanitizar(f.tipo_rodeo) + '</td>'
+            + '<td>' + sanitizar(f.jurado) + '</td>'
+            + '<td style="white-space:nowrap;">' + sanitizar(f.categoria_jurado) + '</td>'
+            + '<td>' + renderEstadoRienda(f.estado_cartilla) + '</td>'
+            + '<td style="white-space:nowrap;font-size:11px;">' + sanitizar(f.fecha_envio) + '</td>'
+            + '<td style="white-space:nowrap;font-weight:600;color:#1e8449;">' + sanitizar(f.categoria_rienda) + '</td>'
+            + '<td style="white-space:nowrap;">' + sanitizar(f.sistema) + '</td>'
+            + '<td>' + sanitizar(f.nombre_socio) + '</td>'
+            + '<td style="white-space:nowrap;font-size:11px;">' + sanitizar(f.rut_socio) + '</td>'
+            + '<td>' + sanitizar(f.nro_socio) + '</td>'
+            + '<td>' + sanitizar(f.nombre_equino) + '</td>'
+            + '<td style="font-size:11px;">' + sanitizar(f.nro_inscripcion) + '</td>'
+            + '<td style="text-align:right;font-weight:600;">' + sanitizar(f.puntaje) + '</td>'
+            + '</tr>';
+    }).join('');
 
-    div.innerHTML = html;
+    div.innerHTML = '<div style="overflow-x:auto;">'
+        + '<table class="tabla tabla-reporte"><thead><tr>'
+        + '<th>Fecha rodeo</th>'
+        + '<th>Club</th>'
+        + '<th>Asociación</th>'
+        + '<th>Tipo rodeo</th>'
+        + '<th>Jurado</th>'
+        + '<th>Cat. Jurado</th>'
+        + '<th>Estado</th>'
+        + '<th>Fecha envío</th>'
+        + '<th>Categoría rienda</th>'
+        + '<th>Sistema</th>'
+        + '<th>Nombre socio</th>'
+        + '<th>RUT socio</th>'
+        + '<th>N° socio</th>'
+        + '<th>Nombre equino</th>'
+        + '<th>N° inscripción</th>'
+        + '<th>Puntaje</th>'
+        + '</tr></thead>'
+        + '<tbody>' + filas + '</tbody>'
+        + '</table></div>';
 }
 
 // ─── Exportar ─────────────────────────────────────────────────────────────────
 
 function exportar() {
-    if (!_ultimosFiltros) return;
-    const qs = new URLSearchParams(_ultimosFiltros).toString();
-    const url = '/api/admin/reportes/movimiento-rienda/exportar' + (qs ? '?' + qs : '');
-    const a   = document.createElement('a');
-    a.href    = url;
+    if (!_ultimosFiltrosRienda) return;
+    var qs  = new URLSearchParams(_ultimosFiltrosRienda).toString();
+    var url = '/api/admin/reportes/movimiento-rienda/exportar' + (qs ? '?' + qs : '');
+    var a   = document.createElement('a');
+    a.href  = url;
     a.download = '';
     document.body.appendChild(a);
     a.click();
@@ -301,7 +293,7 @@ function exportar() {
 
 function limpiarFiltros() {
     document.getElementById('form-filtros').reset();
-    _ultimosFiltros = null;
+    _ultimosFiltrosRienda = null;
     document.getElementById('contenido-tabla').innerHTML =
         '<div class="alerta alerta-info" style="font-size:13px;">Usa los filtros y haz clic en <strong>Buscar</strong> para ver resultados.</div>';
     document.getElementById('resumen-bar').style.display = 'none';

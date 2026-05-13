@@ -51,6 +51,8 @@ async function queryRienda(filtros) {
         throw new Error('Error consultando cartillas: ' + error.message);
     }
 
+    console.log(`[reporte-rienda] total cartillas obtenidas: ${(cartillas || []).length}`);
+
     // Solo cartillas con movimiento_rienda = 'si' y registros reales
     let resultado = (cartillas || []).filter(c => {
         const d = c.datos || {};
@@ -58,6 +60,8 @@ async function queryRienda(filtros) {
             && Array.isArray(d.registros_rienda)
             && d.registros_rienda.length > 0;
     });
+
+    console.log(`[reporte-rienda] cartillas con movimiento_rienda='si': ${resultado.length}`);
 
     // Filtros de cartilla en JS
     if (jurado) {
@@ -175,6 +179,7 @@ async function queryRienda(filtros) {
 // ─── GET /api/admin/reportes/movimiento-rienda ────────────────────────────────
 
 router.get('/', async (req, res) => {
+    console.log('[reporte-rienda] GET / query:', req.query);
     try {
         const filas = await queryRienda(req.query);
         console.log(`[reporte-rienda] GET / → ${filas.length} registros`);
