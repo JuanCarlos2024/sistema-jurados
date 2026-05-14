@@ -33,6 +33,11 @@
         .estado-aprobado   { background:#d5f5e3; color:#1e8449; }
         .estado-reprobado  { background:#fadbd8; color:#922b21; }
 
+        .disp-vencida    { background:#fdebd0; color:#784212; }
+        .disp-no_iniciada { background:#eaf0fb; color:#1a3a6c; }
+        .prueba-card.vencida   { border-color:#e5c27a; background:#fffdf6; }
+        .prueba-card.no_iniciada { border-color:#a9c4e8; background:#f4f8fd; }
+
         .sin-pruebas {
             text-align:center;
             color:var(--gris);
@@ -108,18 +113,33 @@ function render(lista) {
     }
 
     div.innerHTML = lista.map(function (item) {
-        var p = item.prueba;
+        var p    = item.prueba;
+        var disp = item.disponibilidad || 'disponible';
         var estado = item.estado_jurado;
         var badgeCls = 'estado-' + estado;
         var badgeTxt = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
+
+        var dispBadge = '';
+        if (disp === 'vencida') {
+            dispBadge = ' <span class="estado-badge disp-vencida">Vencida</span>';
+        } else if (disp === 'no_iniciada') {
+            dispBadge = ' <span class="estado-badge disp-no_iniciada">No disponible aún</span>';
+        }
 
         var metaItems = [];
         if (p.tiempo_por_pregunta_segundos) metaItems.push('⏱ Tiempo por pregunta: ' + p.tiempo_por_pregunta_segundos + ' segundos');
         metaItems.push('✔ Aprobación: ' + p.puntaje_minimo_aprobacion + '%');
         metaItems.push('🔄 Intentos: ' + item.total_intentos + ' / ' + (p.intentos_maximos || '∞'));
+        if (p.fecha_fin)
+            metaItems.push('📅 Hasta: ' + new Date(p.fecha_fin).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }));
 
         var acciones = '';
-        if (item.intento_en_curso) {
+        if (disp === 'vencida') {
+            acciones = '<span style="font-size:13px;color:#784212;">Esta prueba ya no está disponible (plazo vencido).</span>';
+        } else if (disp === 'no_iniciada') {
+            var fIni = p.fecha_inicio ? new Date(p.fecha_inicio).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+            acciones = '<span style="font-size:13px;color:#1a3a6c;">Disponible desde ' + sanitizar(fIni) + '.</span>';
+        } else if (item.intento_en_curso) {
             acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Continuar prueba</a>';
         } else if (item.puede_rendir) {
             acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Iniciar prueba</a>';
@@ -128,17 +148,22 @@ function render(lista) {
             acciones += ' <a href="/usuario/capacitacion-resultado.html?id=' + item.ultimo_completado.id + '" class="btn btn-outline btn-pequeño">Ver resultado</a>';
         }
         if (!acciones) {
-            acciones = '<span style="font-size:13px;color:var(--gris);">Sin acciones disponibles</span>';
+            acciones = '<span style="font-size:13px;color:var(--gris);">Sin intentos disponibles.</span>';
         }
 
         var limiteHtml = item.fecha_limite
             ? '<div style="font-size:12px;color:#e67e22;margin-bottom:8px;">Fecha límite: ' + sanitizar(new Date(item.fecha_limite).toLocaleDateString('es-CL')) + '</div>'
             : '';
 
-        return '<div class="prueba-card">'
-            + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
+        var cardCls = 'prueba-card' + (disp !== 'disponible' ? ' ' + disp : '');
+
+        return '<div class="' + cardCls + '">'
+            + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
             + '<h3 class="prueba-titulo">' + sanitizar(p.titulo) + '</h3>'
+            + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
             + '<span class="estado-badge ' + badgeCls + '">' + badgeTxt + '</span>'
+            + dispBadge
+            + '</div>'
             + '</div>'
             + (p.descripcion ? '<p class="prueba-desc">' + sanitizar(p.descripcion) + '</p>' : '')
             + '<div class="prueba-meta">' + metaItems.map(function (m) { return '<span>' + sanitizar(m) + '</span>'; }).join('') + '</div>'

@@ -71,23 +71,27 @@ router.get('/', async (req, res) => {
     }
 
     const result = (asigs || [])
-        .filter(a => {
-            if (!a.prueba || a.prueba.estado !== 'publicada') return false;
-            if (a.prueba.fecha_inicio && a.prueba.fecha_inicio > now) return false;
-            if (a.prueba.fecha_fin    && a.prueba.fecha_fin    < now) return false;
-            return true;
-        })
+        .filter(a => a.prueba && a.prueba.estado === 'publicada')
         .map(a => {
             const intentos   = intentosMap[a.id] || [];
             const ultimo     = intentos[0] || null;
             const completado = intentos.find(i => i.estado === 'completado');
             const validos    = intentos.filter(i => i.estado !== 'abandonado');
 
+            // Disponibilidad por fecha (no oculta — siempre se muestra al jurado)
+            let disponibilidad = 'disponible';
+            if (a.prueba.fecha_inicio && a.prueba.fecha_inicio > now) {
+                disponibilidad = 'no_iniciada';
+            } else if (a.prueba.fecha_fin && a.prueba.fecha_fin < now) {
+                disponibilidad = 'vencida';
+            }
+
             let estado_jurado = 'pendiente';
-            if (completado)                               estado_jurado = completado.aprobado ? 'aprobado' : 'reprobado';
+            if (completado)                                  estado_jurado = completado.aprobado ? 'aprobado' : 'reprobado';
             else if (ultimo && ultimo.estado === 'en_curso') estado_jurado = 'en_curso';
 
-            const puede_rendir = !completado
+            const puede_rendir = disponibilidad === 'disponible'
+                && !completado
                 && (!a.prueba.intentos_maximos || validos.length < a.prueba.intentos_maximos);
 
             return {
@@ -96,6 +100,7 @@ router.get('/', async (req, res) => {
                 fecha_limite:     a.fecha_limite,
                 asignado_en:      a.asignado_en,
                 estado_jurado,
+                disponibilidad,
                 puede_rendir,
                 intento_en_curso: (ultimo && ultimo.estado === 'en_curso') ? ultimo : null,
                 ultimo_completado: completado || null,

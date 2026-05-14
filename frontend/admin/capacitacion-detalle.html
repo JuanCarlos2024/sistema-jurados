@@ -517,8 +517,10 @@ async function guardarConfig() {
             mezclar_preguntas:             document.getElementById('cfg-mezclar-preguntas').checked,
             mezclar_alternativas:          document.getElementById('cfg-mezclar-alternativas').checked,
             estado:                        document.getElementById('cfg-estado').value,
-            fecha_inicio:                  document.getElementById('cfg-fecha-inicio').value || null,
-            fecha_fin:                     document.getElementById('cfg-fecha-fin').value || null
+            fecha_inicio: document.getElementById('cfg-fecha-inicio').value
+                ? new Date(document.getElementById('cfg-fecha-inicio').value).toISOString() : null,
+            fecha_fin: document.getElementById('cfg-fecha-fin').value
+                ? new Date(document.getElementById('cfg-fecha-fin').value).toISOString() : null
         });
         _prueba = data;
         document.getElementById('titulo-pagina').textContent = data.titulo;
