@@ -53,7 +53,7 @@
             <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
             <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
             <a href="/usuario/evaluaciones.html" class="nav-item"><span class="icon">📋</span> Mis Evaluaciones</a>
-            <a href="/usuario/capacitaciones.html" class="nav-item activo"><span class="icon">🎓</span> Capacitaciones</a>
+            <a href="/usuario/capacitaciones.html" class="nav-item activo"><span class="icon">🎓</span> Mis Capacitaciones</a>
         </nav>
         <div class="sidebar-footer">
             <div class="sidebar-usuario" id="nombre-usr"></div>
@@ -81,23 +81,24 @@
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
-document.addEventListener('DOMContentLoaded', function () {
-    protegerRuta('usuario_pagado');
-    var u = api.getUsuario();
-    if (!u) return api.cerrarSesion();
-    document.getElementById('nombre-usr').textContent = u.nombre_completo || u.email || '';
-    cargar();
-});
+protegerRuta('usuario_pagado');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.nombre || '';
 
 async function cargar() {
     var div = document.getElementById('contenido');
     try {
         var lista = await api.get('/usuario/capacitaciones');
+        if (lista === undefined || lista === null) return; // 401 → cerrarSesion en curso
         render(lista);
     } catch (err) {
-        div.innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message || 'Error al cargar') + '</div>';
+        console.error('[Mis Capacitaciones]', err);
+        div.innerHTML = '<div class="alerta alerta-error">' +
+            sanitizar((err && err.message) || 'No fue posible cargar tus capacitaciones.') +
+            '</div>';
     }
 }
+
+cargar();
 
 function render(lista) {
     var div = document.getElementById('contenido');

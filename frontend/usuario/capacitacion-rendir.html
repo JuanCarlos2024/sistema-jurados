@@ -207,17 +207,15 @@ var _preguntaBloqueada    = false; // impide doble-click durante avance
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', function () {
-    protegerRuta('usuario_pagado');
-    var u = api.getUsuario();
-    if (!u) return api.cerrarSesion();
-
-    var params = new URLSearchParams(window.location.search);
-    _asigId = params.get('id');
-    if (!_asigId) { window.location.href = '/usuario/capacitaciones.html'; return; }
-
-    iniciarPrueba();
-});
+protegerRuta('usuario_pagado');
+if (!api.getUsuario()) {
+    api.cerrarSesion();
+} else {
+    var _params = new URLSearchParams(window.location.search);
+    _asigId = _params.get('id');
+    if (!_asigId) { window.location.href = '/usuario/capacitaciones.html'; }
+    else { iniciarPrueba(); }
+}
 
 async function iniciarPrueba() {
     try {
