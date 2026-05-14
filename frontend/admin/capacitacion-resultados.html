@@ -17,7 +17,6 @@
 
         .estado-pendiente  { color:#888; }
         .estado-en_curso   { color:#1a5276; font-weight:600; }
-        .estado-completado { color:#555; }
         .estado-aprobado   { color:#1e8449; font-weight:700; }
         .estado-reprobado  { color:#922b21; font-weight:700; }
 
@@ -39,22 +38,42 @@
         .stat-lbl { font-size: 12px; color: var(--gris); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
 
         .barra-h {
-            height: 12px;
-            border-radius: 6px;
-            background: var(--gris-borde);
-            overflow: hidden;
-            display: inline-block;
-            width: 120px;
-            vertical-align: middle;
-            margin-right: 6px;
+            height: 12px; border-radius: 6px; background: var(--gris-borde);
+            overflow: hidden; display: inline-block; width: 120px;
+            vertical-align: middle; margin-right: 6px;
         }
         .barra-h-fill { height: 100%; border-radius: 6px; }
         .barra-correcta  .barra-h-fill { background: #1e8449; }
-        .barra-incorrecta .barra-h-fill { background: #922b21; }
 
-        .filtros-res { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
-        .filtros-res input,
-        .filtros-res select { padding:6px 10px; border:1px solid var(--gris-borde); border-radius:6px; font-size:13px; background:#fff; }
+        .filtros-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 8px;
+            margin-bottom: 10px;
+            align-items: flex-end;
+        }
+        .filtros-grid .fg-item { display:flex; flex-direction:column; gap:3px; }
+        .filtros-grid label { font-size:11px; color:var(--gris); font-weight:600; text-transform:uppercase; }
+        .filtros-grid input,
+        .filtros-grid select { padding:6px 10px; border:1px solid var(--gris-borde); border-radius:6px; font-size:13px; background:#fff; width:100%; box-sizing:border-box; }
+        .filtros-acciones { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
+
+        /* Detalle modal */
+        .preg-resultado { border:1px solid var(--gris-borde); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+        .preg-resultado.correcta   { border-left:4px solid #1e8449; }
+        .preg-resultado.incorrecta { border-left:4px solid #922b21; }
+        .preg-resultado.sin-resp   { border-left:4px solid #ccc; }
+        .alt-detalle { padding:6px 10px; border-radius:6px; margin-bottom:4px; font-size:13px; display:flex; align-items:center; gap:8px; }
+        .alt-detalle.correcta          { background:#d5f5e3; }
+        .alt-detalle.elegida-incorrecta { background:#fadbd8; }
+        .alt-detalle.normal            { background:#f8f9fa; }
+
+        .detalle-resumen { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+        .detalle-stat { border:1px solid var(--gris-borde); border-radius:8px; padding:10px 16px; text-align:center; min-width:72px; }
+        .detalle-stat .val { font-size:22px; font-weight:800; }
+        .detalle-stat .lbl { font-size:11px; color:var(--gris); font-weight:600; text-transform:uppercase; }
+
+        .top10-bloque { margin-bottom:20px; }
     </style>
 </head>
 <body>
@@ -84,7 +103,6 @@
         </div>
 
         <div class="page-body" id="page-body" style="display:none;">
-            <!-- Resumen -->
             <div class="resumen-stats" id="resumen-stats"></div>
 
             <div class="tabs">
@@ -94,19 +112,60 @@
 
             <!-- TAB: Resultados -->
             <div id="tab-resultados">
-                <div class="filtros-res">
-                    <input type="text" id="res-buscar" placeholder="Buscar jurado…" oninput="filtrarResultados()">
-                    <select id="res-estado" onchange="filtrarResultados()">
-                        <option value="">Todos los estados</option>
-                        <option value="pendiente">Pendiente</option>
-                        <option value="en_curso">En curso</option>
-                        <option value="completado">Completado</option>
-                    </select>
-                    <select id="res-aprobacion" onchange="filtrarResultados()">
-                        <option value="">Todos</option>
-                        <option value="aprobado">Aprobados</option>
-                        <option value="reprobado">Reprobados</option>
-                    </select>
+                <div class="filtros-grid">
+                    <div class="fg-item" style="grid-column:span 2;">
+                        <label>Buscar jurado o RUT</label>
+                        <input type="text" id="res-buscar" placeholder="Nombre o RUT…" oninput="filtrarResultados()">
+                    </div>
+                    <div class="fg-item">
+                        <label>Categoría</label>
+                        <select id="res-categoria" onchange="filtrarResultados()">
+                            <option value="">Todas</option>
+                        </select>
+                    </div>
+                    <div class="fg-item">
+                        <label>Asociación</label>
+                        <select id="res-asociacion" onchange="filtrarResultados()">
+                            <option value="">Todas</option>
+                        </select>
+                    </div>
+                    <div class="fg-item">
+                        <label>Estado</label>
+                        <select id="res-estado" onchange="filtrarResultados()">
+                            <option value="">Todos</option>
+                            <option value="pendiente">Pendiente</option>
+                            <option value="en_curso">En curso</option>
+                            <option value="completado">Completado</option>
+                        </select>
+                    </div>
+                    <div class="fg-item">
+                        <label>Aprobación</label>
+                        <select id="res-aprobacion" onchange="filtrarResultados()">
+                            <option value="">Todos</option>
+                            <option value="aprobado">Aprobados</option>
+                            <option value="reprobado">Reprobados</option>
+                        </select>
+                    </div>
+                    <div class="fg-item">
+                        <label>Nota desde</label>
+                        <input type="number" id="res-nota-desde" placeholder="ej. 1.0" step="0.1" min="1" max="7" oninput="filtrarResultados()">
+                    </div>
+                    <div class="fg-item">
+                        <label>Nota hasta</label>
+                        <input type="number" id="res-nota-hasta" placeholder="ej. 7.0" step="0.1" min="1" max="7" oninput="filtrarResultados()">
+                    </div>
+                    <div class="fg-item">
+                        <label>Inicio desde</label>
+                        <input type="date" id="res-fecha-desde" onchange="filtrarResultados()">
+                    </div>
+                    <div class="fg-item">
+                        <label>Inicio hasta</label>
+                        <input type="date" id="res-fecha-hasta" onchange="filtrarResultados()">
+                    </div>
+                </div>
+                <div class="filtros-acciones">
+                    <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar filtros</button>
+                    <span id="res-contador" style="font-size:13px;color:var(--gris);"></span>
                 </div>
                 <div id="contenido-resultados">
                     <div class="alerta alerta-info">Cargando…</div>
@@ -131,7 +190,7 @@
             <button class="modal-cerrar" onclick="cerrarModalReset()">✕</button>
         </div>
         <div class="modal-body">
-            <div class="alerta alerta-advertencia">El intento del jurado quedará eliminado. Podrá realizar un nuevo intento si tiene disponibles.</div>
+            <div class="alerta alerta-advertencia">El intento del jurado quedará marcado como abandonado. Podrá realizar un nuevo intento si tiene disponibles.</div>
             <p style="font-size:14px;margin:12px 0 0;">Jurado: <strong id="reset-jurado-nombre"></strong></p>
             <div class="form-grupo" style="margin-top:12px;">
                 <label class="form-label">Motivo del reinicio <span style="color:red">*</span></label>
@@ -145,14 +204,27 @@
     </div>
 </div>
 
+<!-- Modal detalle -->
+<div id="modal-detalle" class="modal-overlay" style="display:none;" onclick="cerrarModalDetalle()">
+    <div class="modal" style="max-width:740px;max-height:90vh;overflow-y:auto;" onclick="event.stopPropagation()">
+        <div class="modal-header" style="position:sticky;top:0;background:#fff;z-index:1;border-bottom:1px solid var(--gris-borde);padding-bottom:12px;">
+            <h3 id="detalle-titulo">Detalle del intento</h3>
+            <button class="modal-cerrar" onclick="cerrarModalDetalle()">✕</button>
+        </div>
+        <div class="modal-body" id="detalle-contenido">
+            <div class="alerta alerta-info">Cargando…</div>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
-var _pruebaId    = null;
-var _resultados  = [];
-var _estadisticas = null;
+var _pruebaId       = null;
+var _resultados     = [];
+var _estadisticas   = null;
 var _resetIntentoId = null;
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -178,11 +250,10 @@ async function cargar() {
         _resultados   = resultados;
         _estadisticas = stats;
 
-        // Nombre de la prueba desde stats o primera asignación
-        var titulo = (_resultados[0] && _resultados[0].prueba_titulo) || 'Resultados';
         document.getElementById('titulo-pagina').textContent = 'Resultados';
         document.title = 'Resultados — Admin';
 
+        poblarFiltros();
         renderResumen();
         filtrarResultados();
         renderEstadisticas();
@@ -197,45 +268,90 @@ async function cargar() {
 function cambiarTab(nombre, btn) {
     document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('activo'); });
     btn.classList.add('activo');
-    document.getElementById('tab-resultados').style.display   = nombre === 'resultados' ? '' : 'none';
+    document.getElementById('tab-resultados').style.display   = nombre === 'resultados'   ? '' : 'none';
     document.getElementById('tab-estadisticas').style.display = nombre === 'estadisticas' ? '' : 'none';
+}
+
+// ─── Filtros ──────────────────────────────────────────────────────────────────
+
+function poblarFiltros() {
+    var cats  = [...new Set(_resultados.map(function (r) { return r.jurado?.categoria  || ''; }).filter(Boolean))].sort();
+    var asocs = [...new Set(_resultados.map(function (r) { return r.jurado?.asociacion || ''; }).filter(Boolean))].sort();
+
+    var selCat  = document.getElementById('res-categoria');
+    var selAsoc = document.getElementById('res-asociacion');
+
+    cats.forEach(function (c) {
+        var o = document.createElement('option'); o.value = c; o.textContent = c; selCat.appendChild(o);
+    });
+    asocs.forEach(function (a) {
+        var o = document.createElement('option'); o.value = a; o.textContent = a; selAsoc.appendChild(o);
+    });
+}
+
+function limpiarFiltros() {
+    ['res-buscar','res-nota-desde','res-nota-hasta','res-fecha-desde','res-fecha-hasta'].forEach(function (id) {
+        document.getElementById(id).value = '';
+    });
+    ['res-categoria','res-asociacion','res-estado','res-aprobacion'].forEach(function (id) {
+        document.getElementById(id).value = '';
+    });
+    filtrarResultados();
 }
 
 // ─── Resumen ──────────────────────────────────────────────────────────────────
 
 function renderResumen() {
-    var total      = _resultados.length;
+    var total       = _resultados.length;
     var completados = _resultados.filter(function (r) { return r.estado === 'completado'; }).length;
-    var aprobados  = _resultados.filter(function (r) { return r.aprobado === true; }).length;
-    var pendientes = _resultados.filter(function (r) { return r.estado === 'pendiente'; }).length;
-    var pctAprobacion = completados > 0 ? Math.round((aprobados / completados) * 100) : 0;
+    var aprobados   = _resultados.filter(function (r) { return r.aprobado === true; }).length;
+    var pctAprob    = completados > 0 ? Math.round((aprobados / completados) * 100) : 0;
 
     document.getElementById('resumen-stats').innerHTML = [
-        { val: total,         lbl: 'Asignados',   color: '' },
-        { val: completados,   lbl: 'Completaron',  color: '' },
-        { val: aprobados,     lbl: 'Aprobaron',    color: '#1e8449' },
-        { val: pctAprobacion + '%', lbl: '% Aprobación', color: aprobados >= completados * .5 ? '#1e8449' : '#922b21' }
+        { val: total,          lbl: 'Asignados',    color: '' },
+        { val: completados,    lbl: 'Completaron',  color: '' },
+        { val: aprobados,      lbl: 'Aprobaron',    color: '#1e8449' },
+        { val: pctAprob + '%', lbl: '% Aprobación', color: aprobados >= completados * .5 ? '#1e8449' : '#922b21' }
     ].map(function (s) {
-        return '<div class="stat-box"><div class="stat-val" ' + (s.color ? 'style="color:' + s.color + '"' : '') + '>' + s.val + '</div><div class="stat-lbl">' + s.lbl + '</div></div>';
+        return '<div class="stat-box"><div class="stat-val"' + (s.color ? ' style="color:' + s.color + '"' : '') + '>' + s.val + '</div><div class="stat-lbl">' + s.lbl + '</div></div>';
     }).join('');
 }
 
 // ─── Resultados ───────────────────────────────────────────────────────────────
 
 function filtrarResultados() {
-    var buscar  = document.getElementById('res-buscar').value.toLowerCase();
-    var estado  = document.getElementById('res-estado').value;
-    var aprob   = document.getElementById('res-aprobacion').value;
+    var buscar     = document.getElementById('res-buscar').value.toLowerCase();
+    var categoria  = document.getElementById('res-categoria').value;
+    var asociacion = document.getElementById('res-asociacion').value;
+    var estado     = document.getElementById('res-estado').value;
+    var aprob      = document.getElementById('res-aprobacion').value;
+    var notaDesde  = parseFloat(document.getElementById('res-nota-desde').value) || null;
+    var notaHasta  = parseFloat(document.getElementById('res-nota-hasta').value) || null;
+    var fechaDesde = document.getElementById('res-fecha-desde').value;
+    var fechaHasta = document.getElementById('res-fecha-hasta').value;
 
     var lista = _resultados.filter(function (r) {
         var nombre = (r.jurado?.nombre_completo || '').toLowerCase();
+        var rut    = (r.jurado?.rut || '').toLowerCase();
+        var cat    = r.jurado?.categoria  || '';
+        var asoc   = r.jurado?.asociacion || '';
         var est    = r.estado;
         var ap     = r.aprobado === true ? 'aprobado' : r.aprobado === false ? 'reprobado' : '';
-        return (!buscar || nombre.includes(buscar))
-            && (!estado || est === estado)
-            && (!aprob  || ap === aprob);
+        var nota   = r.nota;
+        var fecIni = r.iniciado_en ? r.iniciado_en.slice(0, 10) : null;
+
+        return (!buscar     || nombre.includes(buscar) || rut.includes(buscar))
+            && (!categoria  || cat  === categoria)
+            && (!asociacion || asoc === asociacion)
+            && (!estado     || est  === estado)
+            && (!aprob      || ap   === aprob)
+            && (notaDesde  == null || (nota != null && nota >= notaDesde))
+            && (notaHasta  == null || (nota != null && nota <= notaHasta))
+            && (!fechaDesde || (fecIni && fecIni >= fechaDesde))
+            && (!fechaHasta || (fecIni && fecIni <= fechaHasta));
     });
 
+    document.getElementById('res-contador').textContent = lista.length + ' de ' + _resultados.length + ' registros';
     renderResultados(lista);
 }
 
@@ -247,38 +363,58 @@ function renderResultados(lista) {
     }
 
     var filas = lista.map(function (r) {
-        var est = r.estado;
         var estadoTxt, estadoCls;
-        if (est === 'pendiente')  { estadoTxt = 'Pendiente';  estadoCls = 'estado-pendiente'; }
-        else if (est === 'en_curso')   { estadoTxt = 'En curso';   estadoCls = 'estado-en_curso'; }
-        else if (est === 'completado') {
-            if (r.aprobado === true)  { estadoTxt = 'Aprobado';   estadoCls = 'estado-aprobado'; }
-            else                       { estadoTxt = 'Reprobado';  estadoCls = 'estado-reprobado'; }
-        } else { estadoTxt = est; estadoCls = ''; }
+        if (r.estado === 'pendiente') {
+            estadoTxt = 'Pendiente'; estadoCls = 'estado-pendiente';
+        } else if (r.estado === 'en_curso') {
+            estadoTxt = 'En curso'; estadoCls = 'estado-en_curso';
+        } else if (r.estado === 'completado') {
+            if (r.aprobado === true)  { estadoTxt = 'Aprobado';  estadoCls = 'estado-aprobado'; }
+            else                       { estadoTxt = 'Reprobado'; estadoCls = 'estado-reprobado'; }
+        } else { estadoTxt = r.estado; estadoCls = ''; }
 
-        var puntaje    = r.puntaje_obtenido != null ? r.puntaje_obtenido + '%' : '—';
-        var fechaFin   = r.finalizado_en ? new Date(r.finalizado_en).toLocaleString('es-CL') : '—';
-        var fechaLimite = r.fecha_limite  ? new Date(r.fecha_limite).toLocaleDateString('es-CL') : '—';
-        var accionReset = (r.total_intentos > 0 && r.estado === 'completado')
-            ? '<button class="btn btn-pequeño" style="background:#fef9e7;color:#7d6608;border:1px solid #f1c40f;" onclick="abrirModalReset(\'' + r.asignacion_id + '\',\'' + sanitizar(r.jurado?.nombre_completo || '').replace(/'/g, "\\'") + '\')">Reiniciar</button>'
+        var puntaje   = r.puntaje_obtenido != null ? r.puntaje_obtenido + '%' : '—';
+        var notaTxt   = r.nota != null ? String(r.nota) : '—';
+        var notaColor = r.nota != null ? (r.aprobado === true ? '#1e8449' : '#922b21') : '';
+        var fecIni    = r.iniciado_en ? new Date(r.iniciado_en).toLocaleString('es-CL') : '—';
+        var tiempo    = r.tiempo_usado || '—';
+        var correct   = r.correctas   != null ? r.correctas   : '—';
+        var incorrect = r.incorrectas != null ? r.incorrectas : '—';
+        var sinResp   = r.no_respondidas != null ? r.no_respondidas : '—';
+
+        var nombreEsc = sanitizar(r.jurado?.nombre_completo || '').replace(/'/g, "\\'");
+
+        var btnDetalle = r.intento_id
+            ? '<button class="btn btn-pequeño btn-outline" style="white-space:nowrap;" onclick="abrirDetalle(\'' + r.intento_id + '\',\'' + nombreEsc + '\')">Ver detalle</button>'
+            : '';
+        var btnReset = (r.total_intentos > 0 && r.estado === 'completado' && r.intento_id)
+            ? '<button class="btn btn-pequeño" style="background:#fef9e7;color:#7d6608;border:1px solid #f1c40f;white-space:nowrap;" onclick="abrirModalReset(\'' + r.intento_id + '\',\'' + nombreEsc + '\')">Reiniciar</button>'
             : '';
 
         return '<tr>'
             + '<td>' + sanitizar(r.jurado?.nombre_completo || '—') + '</td>'
-            + '<td style="white-space:nowrap;">' + sanitizar(r.jurado?.categoria || '—') + '</td>'
-            + '<td>' + sanitizar(r.jurado?.asociacion || '—') + '</td>'
+            + '<td style="font-size:12px;">' + sanitizar(r.jurado?.rut || '—') + '</td>'
+            + '<td style="white-space:nowrap;font-size:12px;">' + sanitizar(r.jurado?.categoria || '—') + '</td>'
+            + '<td style="font-size:12px;">' + sanitizar(r.jurado?.asociacion || '—') + '</td>'
             + '<td><span class="' + estadoCls + '">' + estadoTxt + '</span></td>'
-            + '<td style="text-align:center;">' + r.total_intentos + '</td>'
-            + '<td style="text-align:right;font-weight:600;">' + sanitizar(puntaje) + '</td>'
-            + '<td style="white-space:nowrap;font-size:11px;">' + sanitizar(fechaFin) + '</td>'
-            + '<td style="font-size:11px;">' + sanitizar(fechaLimite) + '</td>'
-            + '<td>' + accionReset + '</td>'
+            + '<td style="white-space:nowrap;font-size:11px;">' + sanitizar(fecIni) + '</td>'
+            + '<td style="text-align:center;font-size:12px;font-variant-numeric:tabular-nums;">' + sanitizar(tiempo) + '</td>'
+            + '<td style="text-align:center;color:#1e8449;font-weight:700;">' + correct + '</td>'
+            + '<td style="text-align:center;color:#922b21;font-weight:700;">' + incorrect + '</td>'
+            + '<td style="text-align:center;color:#888;font-weight:700;">' + sinResp + '</td>'
+            + '<td style="text-align:right;">' + sanitizar(puntaje) + '</td>'
+            + '<td style="text-align:center;font-size:17px;font-weight:800;' + (notaColor ? 'color:' + notaColor + ';' : '') + '">' + notaTxt + '</td>'
+            + '<td style="white-space:nowrap;">' + btnDetalle + (btnDetalle && btnReset ? ' ' : '') + btnReset + '</td>'
             + '</tr>';
     }).join('');
 
-    div.innerHTML = '<div style="overflow-x:auto;"><table class="tabla"><thead><tr>'
-        + '<th>Jurado</th><th>Cat.</th><th>Asociación</th><th>Estado</th>'
-        + '<th>Intentos</th><th>Puntaje</th><th>Finalizado</th><th>Límite</th><th></th>'
+    div.innerHTML = '<div style="overflow-x:auto;"><table class="tabla" style="font-size:13px;"><thead><tr>'
+        + '<th>Jurado</th><th>RUT</th><th>Cat.</th><th>Asociación</th><th>Estado</th>'
+        + '<th>Inicio</th><th>Tiempo</th>'
+        + '<th title="Correctas" style="color:#1e8449;">✓</th>'
+        + '<th title="Incorrectas" style="color:#922b21;">✗</th>'
+        + '<th title="Sin responder" style="color:#888;">—</th>'
+        + '<th>Puntaje</th><th>Nota</th><th></th>'
         + '</tr></thead><tbody>' + filas + '</tbody></table></div>';
 }
 
@@ -292,51 +428,137 @@ function renderEstadisticas() {
         return;
     }
 
-    var maxTotal = Math.max.apply(null, s.preguntas.map(function (p) { return p.total_respuestas; })) || 1;
+    function tablaPregs(arr) {
+        if (!arr || arr.length === 0) return '<p style="color:var(--gris);font-size:13px;padding:8px 0;">Sin datos.</p>';
+        return '<div style="overflow-x:auto;"><table class="tabla" style="font-size:13px;"><thead><tr>'
+            + '<th>#</th><th>Pregunta</th><th>Resp.</th>'
+            + '<th style="color:#1e8449;">Correctas</th><th style="color:#922b21;">Incorrectas</th><th>% Correcto</th>'
+            + '</tr></thead><tbody>'
+            + arr.map(function (p) {
+                var pct   = p.pct_correctas != null ? p.pct_correctas : 0;
+                var color = pct >= 70 ? '#1e8449' : pct >= 40 ? '#e67e22' : '#922b21';
+                return '<tr>'
+                    + '<td style="font-size:12px;font-weight:700;color:var(--gris);">' + p.orden + '</td>'
+                    + '<td style="max-width:300px;word-break:break-word;">' + sanitizar(p.enunciado.substring(0, 120)) + (p.enunciado.length > 120 ? '…' : '') + '</td>'
+                    + '<td style="text-align:center;">' + p.total_respuestas + '</td>'
+                    + '<td style="text-align:center;color:#1e8449;">' + p.correctas + '</td>'
+                    + '<td style="text-align:center;color:#922b21;">' + p.incorrectas + '</td>'
+                    + '<td style="white-space:nowrap;">'
+                    + '<span class="barra-h barra-correcta"><span class="barra-h-fill" style="width:' + pct + '%;"></span></span>'
+                    + '<strong style="color:' + color + ';">' + (p.pct_correctas != null ? p.pct_correctas + '%' : '—') + '</strong>'
+                    + '</td>'
+                    + '</tr>';
+            }).join('')
+            + '</tbody></table></div>';
+    }
 
-    var tabla = s.preguntas.map(function (p, i) {
-        var pct = p.pct_correctas != null ? p.pct_correctas : 0;
-        var color = pct >= 70 ? '#1e8449' : pct >= 40 ? '#e67e22' : '#922b21';
-        var barW  = p.total_respuestas > 0 ? Math.round((p.pct_correctas || 0)) : 0;
-        return '<tr>'
-            + '<td style="font-size:12px;font-weight:700;color:var(--gris);">' + (i + 1) + '</td>'
-            + '<td style="max-width:320px;word-break:break-word;">' + sanitizar(p.enunciado.substring(0,120)) + (p.enunciado.length > 120 ? '…' : '') + '</td>'
-            + '<td style="text-align:center;">' + p.total_respuestas + '</td>'
-            + '<td style="text-align:center;color:#1e8449;">' + p.correctas + '</td>'
-            + '<td style="text-align:center;color:#922b21;">' + p.incorrectas + '</td>'
-            + '<td style="white-space:nowrap;">'
-            + '<span class="barra-h barra-correcta"><span class="barra-h-fill" style="width:' + barW + '%;"></span></span>'
-            + '<strong style="color:' + color + ';">' + (p.pct_correctas != null ? p.pct_correctas + '%' : '—') + '</strong>'
-            + '</td>'
-            + '</tr>';
+    div.innerHTML = ''
+        + '<div class="card top10-bloque">'
+        + '<div class="card-titulo">Top 10 — Preguntas con más respuestas correctas</div>'
+        + tablaPregs(s.top_correctas)
+        + '</div>'
+        + '<div class="card top10-bloque">'
+        + '<div class="card-titulo">Top 10 — Preguntas con más respuestas incorrectas</div>'
+        + tablaPregs(s.top_incorrectas)
+        + '</div>'
+        + '<div class="card">'
+        + '<div class="card-titulo">Todas las preguntas — Ordenadas por número</div>'
+        + tablaPregs(s.preguntas)
+        + '</div>';
+}
+
+// ─── Detalle del intento ──────────────────────────────────────────────────────
+
+async function abrirDetalle(intentoId, nombreJurado) {
+    document.getElementById('detalle-titulo').textContent = 'Detalle — ' + (nombreJurado || '');
+    document.getElementById('detalle-contenido').innerHTML = '<div class="alerta alerta-info">Cargando…</div>';
+    document.getElementById('modal-detalle').style.display = 'flex';
+    try {
+        var data = await api.get('/admin/capacitaciones/intentos/' + intentoId + '/detalle');
+        renderDetalle(data);
+    } catch (err) {
+        document.getElementById('detalle-contenido').innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message || 'Error') + '</div>';
+    }
+}
+
+function cerrarModalDetalle() {
+    document.getElementById('modal-detalle').style.display = 'none';
+}
+
+function renderDetalle(data) {
+    var div    = document.getElementById('detalle-contenido');
+    var int    = data.intento || {};
+    var jur    = data.jurado  || {};
+    var prueba = data.prueba  || {};
+    var res    = data.resumen || {};
+    var det    = data.detalle || [];
+    var letras = ['A','B','C','D','E','F','G','H'];
+
+    var notaColor = int.nota != null ? (int.aprobado ? '#1e8449' : '#922b21') : 'var(--primario)';
+
+    var infoHtml = '<div style="font-size:13px;margin-bottom:16px;color:var(--gris);">'
+        + '<strong style="color:var(--texto);">' + sanitizar(jur.nombre_completo || '—') + '</strong>'
+        + (jur.rut      ? ' &nbsp;|&nbsp; RUT: ' + sanitizar(jur.rut)       : '')
+        + (jur.categoria ? ' &nbsp;|&nbsp; '      + sanitizar(jur.categoria) : '')
+        + (jur.asociacion ? ' — '                 + sanitizar(jur.asociacion) : '')
+        + '<br>'
+        + sanitizar(prueba.titulo || '') + ' &nbsp;|&nbsp; Intento #' + (int.numero_intento || 1)
+        + '</div>';
+
+    var statsHtml = '<div class="detalle-resumen">'
+        + (int.nota != null
+            ? '<div class="detalle-stat"><div class="val" style="color:' + notaColor + ';">' + int.nota + '</div><div class="lbl">Nota</div></div>'
+            : '')
+        + '<div class="detalle-stat"><div class="val">' + (int.puntaje_obtenido != null ? int.puntaje_obtenido + '%' : '—') + '</div><div class="lbl">Puntaje</div></div>'
+        + '<div class="detalle-stat"><div class="val" style="color:#1e8449;">' + (res.correctas    ?? '—') + '</div><div class="lbl">Correctas</div></div>'
+        + '<div class="detalle-stat"><div class="val" style="color:#922b21;">' + (res.incorrectas  ?? '—') + '</div><div class="lbl">Incorrectas</div></div>'
+        + '<div class="detalle-stat"><div class="val" style="color:#888;">'   + (res.no_respondidas ?? '—') + '</div><div class="lbl">Sin resp.</div></div>'
+        + (int.tiempo_usado
+            ? '<div class="detalle-stat"><div class="val" style="font-size:16px;">' + int.tiempo_usado + '</div><div class="lbl">Tiempo</div></div>'
+            : '')
+        + '</div>';
+
+    var detalleHtml = det.map(function (d) {
+        var clsCard = d.es_correcta === true ? 'correcta' : d.es_correcta === false ? 'incorrecta' : 'sin-resp';
+        var icono   = d.es_correcta === true ? '✔' : d.es_correcta === false ? '✖' : '–';
+        var color   = d.es_correcta === true ? '#1e8449' : d.es_correcta === false ? '#922b21' : '#888';
+
+        var altsHtml = (d.alternativas || []).map(function (a, i) {
+            var elegida = a.id === d.alternativa_elegida;
+            var cls, ico;
+            if (a.es_correcta)  { cls = 'correcta';          ico = '✔'; }
+            else if (elegida)   { cls = 'elegida-incorrecta'; ico = '✖'; }
+            else                { cls = 'normal';             ico = ''; }
+            return '<div class="alt-detalle ' + cls + '">'
+                + (ico ? '<span style="font-size:13px;">' + ico + '</span>' : '<span style="width:13px;display:inline-block;"></span>')
+                + '<strong>' + letras[i] + '.</strong> ' + sanitizar(a.texto)
+                + (elegida && !a.es_correcta ? ' <em style="color:#922b21;font-size:11px;">(respuesta del jurado)</em>' : '')
+                + (a.es_correcta && elegida  ? ' <em style="color:#1e8449;font-size:11px;">(respuesta del jurado)</em>'  : '')
+                + '</div>';
+        }).join('');
+
+        return '<div class="preg-resultado ' + clsCard + '">'
+            + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
+            + '<span style="font-size:18px;color:' + color + ';">' + icono + '</span>'
+            + '<span style="font-size:13px;font-weight:700;color:var(--gris);">Pregunta ' + d.numero + '</span>'
+            + '</div>'
+            + '<div style="font-size:14px;font-weight:600;margin-bottom:12px;">' + sanitizar(d.enunciado) + '</div>'
+            + altsHtml
+            + '</div>';
     }).join('');
 
-    var tablaHtml = '<div style="overflow-x:auto;"><table class="tabla" style="font-size:13px;"><thead><tr>'
-        + '<th>#</th><th>Pregunta</th><th>Total resp.</th><th>Correctas</th><th>Incorrectas</th><th>% Correcto</th>'
-        + '</tr></thead><tbody>' + tabla + '</tbody></table></div>';
-
-    div.innerHTML = '<div class="card" style="margin-bottom:20px;">'
-        + '<div class="card-titulo">Todas las preguntas — Ordenadas por número</div>'
-        + tablaHtml
-        + '</div>';
+    div.innerHTML = infoHtml + statsHtml
+        + '<div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--gris);">Revisión de respuestas</div>'
+        + detalleHtml;
 }
 
 // ─── Reset ────────────────────────────────────────────────────────────────────
 
-async function abrirModalReset(asignacionId, nombreJurado) {
-    // Obtener intentos de esta asignación para encontrar el completado
-    try {
-        var asigs = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId + '/asignaciones');
-        var asig  = asigs.find(function (a) { return a.id === asignacionId; });
-        var intento = asig && asig.ultimo_intento;
-        if (!intento) { mostrarToast('No se encontró intento para reiniciar', 'error'); return; }
-        _resetIntentoId = intento.id;
-        document.getElementById('reset-jurado-nombre').textContent = nombreJurado;
-        document.getElementById('reset-motivo').value = '';
-        document.getElementById('modal-reset').style.display = 'flex';
-    } catch (err) {
-        mostrarToast(err.message || 'Error', 'error');
-    }
+function abrirModalReset(intentoId, nombreJurado) {
+    _resetIntentoId = intentoId;
+    document.getElementById('reset-jurado-nombre').textContent = nombreJurado;
+    document.getElementById('reset-motivo').value = '';
+    document.getElementById('modal-reset').style.display = 'flex';
 }
 
 function cerrarModalReset() {

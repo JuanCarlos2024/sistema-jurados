@@ -18,6 +18,7 @@ desktop.ini
 # Editor
 .vscode/
 .idea/
+.claude/
 
 # Uploads temporales
 backend/uploads/

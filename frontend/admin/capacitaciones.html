@@ -7,8 +7,9 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .badge-activa   { background:#d5f5e3; color:#1e8449; }
-        .badge-inactiva { background:#f0f0f0; color:#888; }
+        .badge-borrador  { background:#fef9e7; color:#7d6608; }
+        .badge-publicada { background:#d5f5e3; color:#1e8449; }
+        .badge-cerrada   { background:#f0f0f0; color:#888; }
         .badge-cap {
             display:inline-block; padding:2px 9px; border-radius:10px;
             font-size:11px; font-weight:600;
@@ -140,10 +141,12 @@ function renderLista(pruebas) {
         div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Aún no hay pruebas de capacitación. Haz clic en <strong>+ Nueva prueba</strong> para comenzar.</div>';
         return;
     }
+    var estadoLabels = { borrador: 'Borrador', publicada: 'Publicada', cerrada: 'Cerrada' };
     var filas = pruebas.map(function (p) {
-        var badgeCls = p.activa ? 'badge-activa' : 'badge-inactiva';
-        var badgeTxt = p.activa ? 'Activa' : 'Inactiva';
-        var tiempo = p.tiempo_limite_minutos ? p.tiempo_limite_minutos + ' min' : 'Sin límite';
+        var est = p.estado || 'borrador';
+        var badgeCls = 'badge-' + est;
+        var badgeTxt = estadoLabels[est] || est;
+        var tiempo = p.tiempo_por_pregunta_segundos ? p.tiempo_por_pregunta_segundos + 's/preg' : 'Sin límite';
         return '<tr>'
             + '<td><strong>' + sanitizar(p.titulo) + '</strong>'
             + (p.descripcion ? '<br><span style="font-size:11px;color:var(--gris);">' + sanitizar(p.descripcion.substring(0, 80)) + (p.descripcion.length > 80 ? '…' : '') + '</span>' : '')
@@ -162,7 +165,7 @@ function renderLista(pruebas) {
     }).join('');
 
     div.innerHTML = '<div style="overflow-x:auto;"><table class="tabla"><thead><tr>'
-        + '<th>Título</th><th>Preguntas</th><th>Tiempo</th><th>% Aprobación</th><th>Intentos máx.</th><th>Estado</th><th>Acciones</th>'
+        + '<th>Título</th><th>Preguntas</th><th>Tiempo/preg.</th><th>% Aprobación</th><th>Intentos máx.</th><th>Estado</th><th>Acciones</th>'
         + '</tr></thead><tbody>' + filas + '</tbody></table></div>';
 }
 

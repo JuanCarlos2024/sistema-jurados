@@ -113,7 +113,7 @@ function render(lista) {
         var badgeTxt = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
 
         var metaItems = [];
-        if (p.tiempo_limite_minutos) metaItems.push('⏱ ' + p.tiempo_limite_minutos + ' min');
+        if (p.tiempo_por_pregunta_segundos) metaItems.push('⏱ Tiempo por pregunta: ' + p.tiempo_por_pregunta_segundos + ' segundos');
         metaItems.push('✔ Aprobación: ' + p.puntaje_minimo_aprobacion + '%');
         metaItems.push('🔄 Intentos: ' + item.total_intentos + ' / ' + (p.intentos_maximos || '∞'));
 

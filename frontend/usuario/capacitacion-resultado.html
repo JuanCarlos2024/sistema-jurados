@@ -9,22 +9,38 @@
     <style>
         .resultado-hero {
             text-align: center;
-            padding: 32px 20px 24px;
+            padding: 28px 20px 20px;
             border-radius: 12px;
             margin-bottom: 24px;
+            background: #f8f9fb;
+            border: 1px solid var(--gris-borde);
         }
-        .resultado-hero.aprobado  { background: #d5f5e3; border: 2px solid #1e8449; }
-        .resultado-hero.reprobado { background: #fadbd8; border: 2px solid #922b21; }
-        .resultado-icono  { font-size: 48px; margin-bottom: 8px; }
         .resultado-puntaje {
             font-size: 52px;
             font-weight: 800;
             line-height: 1;
-            margin: 8px 0;
+            margin: 8px 0 4px;
+            color: var(--primario);
         }
-        .aprobado  .resultado-puntaje { color: #1e8449; }
-        .reprobado .resultado-puntaje { color: #922b21; }
-        .resultado-estado { font-size: 20px; font-weight: 700; margin: 0; }
+        .resultado-titulo-prueba {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .resultado-stats {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+            font-size: 14px;
+        }
+        .resultado-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+        .stat-num { font-size: 22px; font-weight: 800; }
+        .stat-num.correcta   { color: #1e8449; }
+        .stat-num.incorrecta { color: #922b21; }
+        .stat-num.sin-resp   { color: #888; }
+        .stat-lbl { font-size: 11px; color: var(--gris); font-weight: 600; text-transform: uppercase; }
 
         .preg-resultado {
             border: 1px solid var(--gris-borde);
@@ -32,9 +48,9 @@
             padding: 14px 16px;
             margin-bottom: 12px;
         }
-        .preg-resultado.correcta  { border-left: 4px solid #1e8449; }
+        .preg-resultado.correcta   { border-left: 4px solid #1e8449; }
         .preg-resultado.incorrecta { border-left: 4px solid #922b21; }
-        .preg-resultado.sin-resp  { border-left: 4px solid #ccc; }
+        .preg-resultado.sin-resp   { border-left: 4px solid #ccc; }
 
         .alt-detalle {
             padding: 6px 10px;
@@ -45,19 +61,10 @@
             align-items: center;
             gap: 8px;
         }
-        .alt-detalle.correcta  { background: #d5f5e3; }
+        .alt-detalle.correcta          { background: #d5f5e3; }
         .alt-detalle.elegida-incorrecta { background: #fadbd8; }
-        .alt-detalle.normal    { background: #f8f9fa; }
+        .alt-detalle.normal            { background: #f8f9fa; }
         .alt-icono { font-size: 14px; }
-        .explicacion-box {
-            margin-top: 10px;
-            padding: 8px 12px;
-            background: #fef9e7;
-            border-radius: 6px;
-            font-size: 13px;
-            color: #7d6608;
-            border-left: 3px solid #f1c40f;
-        }
     </style>
 </head>
 <body>
@@ -68,10 +75,10 @@
             <h2>Sistema de Jurados</h2>
         </div>
         <nav class="sidebar-nav">
-            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
-            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
-            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
-            <a href="/usuario/evaluaciones.html" class="nav-item"><span class="icon">📋</span> Mis Evaluaciones</a>
+            <a href="/usuario/dashboard.html"     class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html"        class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html"         class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html"   class="nav-item"><span class="icon">📋</span> Mis Evaluaciones</a>
             <a href="/usuario/capacitaciones.html" class="nav-item activo"><span class="icon">🎓</span> Capacitaciones</a>
         </nav>
         <div class="sidebar-footer">
@@ -123,35 +130,51 @@ async function cargar(id) {
 }
 
 function render(data) {
-    var div = document.getElementById('contenido');
-    var aprobado = data.aprobado;
+    var div      = document.getElementById('contenido');
     var puntaje  = data.puntaje_obtenido;
-    var heroClass = aprobado ? 'aprobado' : 'reprobado';
-    var icono     = aprobado ? '🏆' : '📚';
-    var estadoTxt = aprobado ? 'APROBADO' : 'REPROBADO';
+    var nota     = data.nota;
+    var aprobado = data.aprobado;
+    var detalle  = data.detalle || [];
 
-    var correctas  = (data.detalle || []).filter(function (d) { return d.es_correcta === true; }).length;
-    var incorrectas = (data.detalle || []).filter(function (d) { return d.es_correcta === false; }).length;
-    var sinResp     = (data.detalle || []).filter(function (d) { return d.es_correcta === null; }).length;
+    var correctas    = detalle.filter(function (d) { return d.es_correcta === true; }).length;
+    var incorrectas  = detalle.filter(function (d) { return d.es_correcta === false; }).length;
+    var sinResp      = detalle.filter(function (d) { return d.es_correcta === null && !d.alternativa_elegida; }).length;
 
-    var hero = '<div class="resultado-hero ' + heroClass + '">'
-        + '<div class="resultado-icono">' + icono + '</div>'
-        + '<div style="font-size:15px;font-weight:600;margin-bottom:4px;">' + sanitizar(data.prueba?.titulo || '') + '</div>'
-        + '<div class="resultado-puntaje">' + puntaje + '%</div>'
-        + '<div class="resultado-estado">' + estadoTxt + '</div>'
-        + '<div style="margin-top:12px;font-size:13px;color:inherit;opacity:.8;">'
-        + correctas + ' correctas · ' + incorrectas + ' incorrectas' + (sinResp > 0 ? ' · ' + sinResp + ' sin responder' : '')
+    var notaColor = nota != null ? (aprobado ? '#1e8449' : '#922b21') : 'var(--primario)';
+
+    var heroPrimary;
+    if (nota != null) {
+        heroPrimary = '<div class="resultado-puntaje" style="color:' + notaColor + ';">' + nota + '</div>'
+            + '<div style="font-size:13px;color:var(--gris);">Nota obtenida</div>'
+            + '<div style="font-size:15px;font-weight:700;margin-top:6px;color:' + notaColor + ';">'
+            + (aprobado ? 'Aprobado' : 'Reprobado') + '</div>'
+            + '<div style="font-size:13px;color:var(--gris);margin-top:2px;">' + puntaje + '% de respuestas correctas</div>';
+    } else {
+        heroPrimary = '<div class="resultado-puntaje">' + puntaje + '%</div>'
+            + '<div style="font-size:13px;color:var(--gris);">Puntaje obtenido</div>';
+    }
+
+    var hero = '<div class="resultado-hero">'
+        + '<div class="resultado-titulo-prueba">' + sanitizar(data.prueba?.titulo || '') + '</div>'
+        + heroPrimary
+        + '<div class="resultado-stats">'
+        + '<div class="resultado-stat"><span class="stat-num correcta">'   + correctas   + '</span><span class="stat-lbl">Correctas</span></div>'
+        + '<div class="resultado-stat"><span class="stat-num incorrecta">' + incorrectas + '</span><span class="stat-lbl">Incorrectas</span></div>'
+        + (sinResp > 0
+            ? '<div class="resultado-stat"><span class="stat-num sin-resp">' + sinResp + '</span><span class="stat-lbl">Sin responder</span></div>'
+            : '')
+        + '<div class="resultado-stat"><span class="stat-num" style="color:var(--texto);">' + detalle.length + '</span><span class="stat-lbl">Total</span></div>'
         + '</div>'
         + '</div>';
 
     var letras = ['A','B','C','D','E','F','G','H'];
-    var detalle = (data.detalle || []).map(function (d, idx) {
+    var detHtml = detalle.map(function (d, idx) {
         var clsCard = d.es_correcta === true ? 'correcta' : d.es_correcta === false ? 'incorrecta' : 'sin-resp';
-        var icono2  = d.es_correcta === true ? '✔' : d.es_correcta === false ? '✖' : '–';
-        var color2  = d.es_correcta === true ? '#1e8449' : d.es_correcta === false ? '#922b21' : '#888';
+        var icono   = d.es_correcta === true ? '✔' : d.es_correcta === false ? '✖' : '–';
+        var color   = d.es_correcta === true ? '#1e8449' : d.es_correcta === false ? '#922b21' : '#888';
 
         var altsHtml = (d.alternativas || []).map(function (a, i) {
-            var elegida   = a.id === d.alternativa_elegida;
+            var elegida = a.id === d.alternativa_elegida;
             var cls, icono3;
             if (a.es_correcta) {
                 cls = 'correcta'; icono3 = '✔';
@@ -164,25 +187,24 @@ function render(data) {
                 + (icono3 ? '<span class="alt-icono">' + icono3 + '</span>' : '<span class="alt-icono" style="width:14px;"></span>')
                 + '<strong>' + letras[i] + '.</strong> ' + sanitizar(a.texto)
                 + (elegida && !a.es_correcta ? ' <em style="color:#922b21;font-size:11px;">(tu respuesta)</em>' : '')
-                + (a.es_correcta && elegida ? ' <em style="color:#1e8449;font-size:11px;">(tu respuesta)</em>' : '')
+                + (a.es_correcta && elegida   ? ' <em style="color:#1e8449;font-size:11px;">(tu respuesta)</em>' : '')
                 + '</div>';
         }).join('');
 
         return '<div class="preg-resultado ' + clsCard + '">'
             + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
-            + '<span style="font-size:18px;color:' + color2 + ';">' + icono2 + '</span>'
+            + '<span style="font-size:18px;color:' + color + ';">' + icono + '</span>'
             + '<span style="font-size:13px;font-weight:700;color:var(--gris);">Pregunta ' + (idx + 1) + '</span>'
             + '</div>'
             + '<div style="font-size:14px;font-weight:600;margin-bottom:12px;">' + sanitizar(d.enunciado) + '</div>'
             + altsHtml
-            + (d.explicacion ? '<div class="explicacion-box">💡 ' + sanitizar(d.explicacion) + '</div>' : '')
             + '</div>';
     }).join('');
 
     div.innerHTML = hero
         + '<div class="card">'
         + '<div class="card-titulo">Revisión de respuestas</div>'
-        + detalle
+        + detHtml
         + '</div>';
 }
 </script>
