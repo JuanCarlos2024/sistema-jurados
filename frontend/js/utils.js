@@ -253,6 +253,62 @@ function formatTipoCaso(tipo) {
     return M[tipo] || tipo;
 }
 
+// ── Zona horaria Chile (America/Santiago) ────────────────────────────────────
+
+// Devuelve partes de fecha en hora Chile usando Intl (browser-timezone-agnostic)
+function _chilePartes(iso) {
+    if (!iso) return null;
+    try {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return null;
+        var partes = new Intl.DateTimeFormat('es-CL', {
+            timeZone: 'America/Santiago',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+            hour12: false
+        }).formatToParts(d);
+        var p = {};
+        partes.forEach(function(x) { p[x.type] = x.value; });
+        if (p.hour === '24') p.hour = '00'; // medianoche en algunos navegadores
+        return p;
+    } catch(e) { return null; }
+}
+
+// Formatea ISO a texto Chile: "DD-MM-AAAA HH:MM" (24 h, sin AM/PM)
+function fmtFechaChile(iso) {
+    var p = _chilePartes(iso);
+    if (!p) return '';
+    return p.day + '-' + p.month + '-' + p.year + ' ' + p.hour + ':' + p.minute;
+}
+
+// Para input datetime-local: "AAAA-MM-DDTHH:MM" en hora Chile
+function toChileDatetimeInput(iso) {
+    var p = _chilePartes(iso);
+    if (!p) return '';
+    return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+}
+
+// Convierte valor datetime-local (hora Chile) a UTC ISO string para guardar en backend
+function chileLocalToISO(localStr) {
+    if (!localStr) return null;
+    try {
+        // Interpretamos localStr como UTC y calculamos el offset Chile
+        var asUtc = new Date(localStr + ':00.000Z');
+        var cp = new Intl.DateTimeFormat('es-CL', {
+            timeZone: 'America/Santiago',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+            hour12: false
+        }).formatToParts(asUtc);
+        var p = {};
+        cp.forEach(function(x) { p[x.type] = x.value; });
+        if (p.hour === '24') p.hour = '00';
+        var chileDeUtc = p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+        var diff = new Date(localStr + ':00.000Z').getTime() - new Date(chileDeUtc + ':00.000Z').getTime();
+        return new Date(asUtc.getTime() + diff).toISOString();
+    } catch(e) { return null; }
+}
+
 window.labelCiclo = labelCiclo;
 window.formatTipoCaso = formatTipoCaso;
 window.formatCLP = formatCLP;
@@ -268,3 +324,6 @@ window.protegerRuta = protegerRuta;
 window.toQueryString = toQueryString;
 window.getQueryParams = getQueryParams;
 window.labelRolAdmin = labelRolAdmin;
+window.fmtFechaChile = fmtFechaChile;
+window.toChileDatetimeInput = toChileDatetimeInput;
+window.chileLocalToISO = chileLocalToISO;

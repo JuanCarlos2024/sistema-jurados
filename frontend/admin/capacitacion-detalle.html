@@ -268,16 +268,24 @@
 
             <!-- TAB: Asignaciones -->
             <div id="tab-asignaciones" style="display:none;">
-                <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
-                    <button class="btn btn-primario" onclick="abrirModalAsignar()">+ Asignar jurados</button>
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+                    <button class="btn btn-outline btn-pequeño" onclick="asignarTodos('jurado')">+ Todos los jurados</button>
+                    <button class="btn btn-outline btn-pequeño" onclick="asignarTodos('delegado_rentado')">+ Todos los delegados</button>
+                    <button class="btn btn-primario btn-pequeño" onclick="abrirModalAsignar()">+ Asignar manualmente</button>
                 </div>
                 <div class="filtros-asig">
-                    <input type="text" id="asig-buscar" placeholder="Buscar jurado…" oninput="filtrarAsig()">
+                    <input type="text" id="asig-buscar" placeholder="Buscar por nombre o RUT…" oninput="filtrarAsig()">
+                    <select id="asig-tipo" onchange="filtrarAsig()">
+                        <option value="">Todos los tipos</option>
+                        <option value="jurado">Jurado</option>
+                        <option value="delegado_rentado">Delegado</option>
+                    </select>
                     <select id="asig-estado" onchange="filtrarAsig()">
                         <option value="">Todos los estados</option>
                         <option value="pendiente">Pendiente</option>
                         <option value="en_curso">En curso</option>
                         <option value="completado">Completado</option>
+                        <option value="vencida">Vencida sin contestar</option>
                     </select>
                 </div>
                 <div id="lista-asig">
@@ -359,6 +367,15 @@
         </div>
         <div class="modal-body">
 
+            <!-- Filtro tipo -->
+            <div style="margin-bottom:12px;">
+                <select id="asig-modal-tipo" class="form-control" onchange="aplicarFiltroModo()">
+                    <option value="">Todos (jurados y delegados)</option>
+                    <option value="jurado">Solo jurados</option>
+                    <option value="delegado_rentado">Solo delegados rentados</option>
+                </select>
+            </div>
+
             <!-- Modo selector -->
             <div class="modo-tabs">
                 <button class="modo-tab activo" onclick="cambiarModoAsig('todos',this)">Todos los activos</button>
@@ -383,7 +400,7 @@
             </div>
             <div id="asig-filtros-manual" style="display:none;margin-bottom:12px;">
                 <input type="text" id="asig-modal-buscar" class="form-control"
-                    placeholder="Buscar por nombre…" oninput="aplicarFiltroModo()">
+                    placeholder="Buscar por nombre o RUT…" oninput="aplicarFiltroModo()">
             </div>
 
             <!-- Barra selección -->
@@ -424,6 +441,7 @@ var _asigAll     = [];
 var _usuariosAll = [];
 var _editPregId  = null;
 var _modoAsig    = 'todos';
+var _tipoAsig    = '';
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -471,14 +489,6 @@ function cambiarTab(nombre, btn) {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-function toLocalDatetimeInput(iso) {
-    if (!iso) return '';
-    var d = new Date(iso);
-    var pad = n => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
-        + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-}
-
 function rellenarConfig(p) {
     document.getElementById('cfg-titulo').value        = p.titulo || '';
     document.getElementById('cfg-descripcion').value   = p.descripcion || '';
@@ -492,8 +502,8 @@ function rellenarConfig(p) {
     document.getElementById('cfg-mezclar-preguntas').checked    = p.mezclar_preguntas !== false;
     document.getElementById('cfg-mezclar-alternativas').checked = p.mezclar_alternativas !== false;
     document.getElementById('cfg-estado').value        = p.estado || 'borrador';
-    document.getElementById('cfg-fecha-inicio').value  = toLocalDatetimeInput(p.fecha_inicio);
-    document.getElementById('cfg-fecha-fin').value     = toLocalDatetimeInput(p.fecha_fin);
+    document.getElementById('cfg-fecha-inicio').value  = toChileDatetimeInput(p.fecha_inicio);
+    document.getElementById('cfg-fecha-fin').value     = toChileDatetimeInput(p.fecha_fin);
 
     // Mostrar botón Publicar solo si está en borrador
     document.getElementById('btn-publicar').style.display = (p.estado === 'borrador') ? '' : 'none';
@@ -517,10 +527,8 @@ async function guardarConfig() {
             mezclar_preguntas:             document.getElementById('cfg-mezclar-preguntas').checked,
             mezclar_alternativas:          document.getElementById('cfg-mezclar-alternativas').checked,
             estado:                        document.getElementById('cfg-estado').value,
-            fecha_inicio: document.getElementById('cfg-fecha-inicio').value
-                ? new Date(document.getElementById('cfg-fecha-inicio').value).toISOString() : null,
-            fecha_fin: document.getElementById('cfg-fecha-fin').value
-                ? new Date(document.getElementById('cfg-fecha-fin').value).toISOString() : null
+            fecha_inicio: chileLocalToISO(document.getElementById('cfg-fecha-inicio').value),
+            fecha_fin:    chileLocalToISO(document.getElementById('cfg-fecha-fin').value)
         });
         _prueba = data;
         document.getElementById('titulo-pagina').textContent = data.titulo;
@@ -905,12 +913,27 @@ async function cargarAsignaciones() {
 
 function filtrarAsig() {
     var buscar = document.getElementById('asig-buscar').value.toLowerCase();
+    var tipo   = document.getElementById('asig-tipo').value;
     var estado = document.getElementById('asig-estado').value;
+    var now    = new Date().toISOString();
     var lista  = _asigAll.filter(function (a) {
-        var nombre = (a.jurado?.nombre_completo || '').toLowerCase();
-        var ult    = a.ultimo_intento;
-        var est    = ult ? ult.estado : 'pendiente';
-        return (!buscar || nombre.includes(buscar)) && (!estado || est === estado);
+        var nombre    = (a.jurado?.nombre_completo || '').toLowerCase();
+        var rut       = (a.jurado?.rut || '').toLowerCase();
+        var tipoPer   = a.jurado?.tipo_persona || '';
+        var completado = (a.intentos || []).find(function (i) { return i.estado === 'completado'; });
+        var vencida   = _prueba && _prueba.fecha_fin && _prueba.fecha_fin < now && !completado;
+        var ult       = a.ultimo_intento;
+        var est;
+        if (completado) {
+            est = 'completado';
+        } else if (ult && ult.estado === 'en_curso') {
+            est = 'en_curso';
+        } else {
+            est = vencida ? 'vencida' : 'pendiente';
+        }
+        return (!buscar || nombre.includes(buscar) || rut.includes(buscar))
+            && (!tipo   || tipoPer === tipo)
+            && (!estado || est === estado);
     });
     renderAsig(lista);
 }
@@ -921,25 +944,35 @@ function renderAsig(lista) {
         div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Sin asignaciones que coincidan.</div>';
         return;
     }
+    var now = new Date().toISOString();
     div.innerHTML = lista.map(function (a) {
-        var ult = a.ultimo_intento;
-        var estadoTxt, estadoCls;
-        if (!ult) {
-            estadoTxt = 'Pendiente'; estadoCls = 'estado-pendiente';
-        } else if (ult.estado === 'en_curso') {
-            estadoTxt = 'En curso'; estadoCls = 'estado-en_curso';
-        } else if (ult.estado === 'completado') {
-            estadoTxt = ult.aprobado ? ('Aprobado (' + ult.puntaje_obtenido + '%)') : ('Reprobado (' + ult.puntaje_obtenido + '%)');
-            estadoCls = ult.aprobado ? 'estado-aprobado' : 'estado-reprobado';
+        var ult       = a.ultimo_intento;
+        var completado = (a.intentos || []).find(function (i) { return i.estado === 'completado'; });
+        var vencida   = _prueba && _prueba.fecha_fin && _prueba.fecha_fin < now && !completado;
+        var estadoTxt, estadoCls, estadoStyle;
+        if (completado) {
+            estadoTxt   = completado.aprobado ? ('Aprobado (' + completado.puntaje_obtenido + '%)') : ('Reprobado (' + completado.puntaje_obtenido + '%)');
+            estadoCls   = completado.aprobado ? 'estado-aprobado' : 'estado-reprobado';
+            estadoStyle = '';
+        } else if (ult && ult.estado === 'en_curso') {
+            estadoTxt   = 'En curso'; estadoCls = 'estado-en_curso'; estadoStyle = '';
+        } else if (vencida) {
+            estadoTxt   = 'Vencida sin contestar'; estadoCls = ''; estadoStyle = 'color:#784212;font-weight:600;';
         } else {
-            estadoTxt = 'Pendiente'; estadoCls = 'estado-pendiente';
+            estadoTxt   = 'Pendiente'; estadoCls = 'estado-pendiente'; estadoStyle = '';
         }
+        var tipoPer   = a.jurado?.tipo_persona;
+        var tipoLabel = tipoPer === 'delegado_rentado' ? 'Delegado' : tipoPer === 'jurado' ? 'Jurado' : '';
+        var tipoStyle = tipoPer === 'delegado_rentado'
+            ? 'background:#f0f4ff;color:#3949ab;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600;margin-left:6px;'
+            : 'background:#f0fff4;color:#1e8449;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600;margin-left:6px;';
         return '<div class="asig-card">'
             + '<div class="asig-info">'
-            + '<div class="asig-nombre">' + sanitizar(a.jurado?.nombre_completo || '—') + '</div>'
-            + '<div class="asig-sub">Cat. ' + sanitizar(a.jurado?.categoria || '—') + ' · ' + sanitizar(a.jurado?.asociacion || '—') + '</div>'
+            + '<div class="asig-nombre">' + sanitizar(a.jurado?.nombre_completo || '—')
+            + (tipoLabel ? '<span style="' + tipoStyle + '">' + tipoLabel + '</span>' : '') + '</div>'
+            + '<div class="asig-sub">RUT ' + sanitizar(a.jurado?.rut || '—') + ' · Cat. ' + sanitizar(a.jurado?.categoria || '—') + ' · ' + sanitizar(a.jurado?.asociacion || '—') + '</div>'
             + '</div>'
-            + '<span class="' + estadoCls + '" style="font-size:13px;">' + estadoTxt + '</span>'
+            + '<span class="' + estadoCls + '" style="font-size:13px;' + estadoStyle + '">' + estadoTxt + '</span>'
             + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;flex-shrink:0;" onclick="quitarAsignacion(\'' + a.id + '\')">Quitar</button>'
             + '</div>';
     }).join('');
@@ -956,14 +989,33 @@ async function quitarAsignacion(id) {
     }
 }
 
+async function asignarTodos(tipo) {
+    var label = tipo === 'jurado' ? 'jurados' : 'delegados rentados';
+    if (!confirm('¿Asignar esta prueba a todos los ' + label + ' activos del sistema?')) return;
+    try {
+        var resp = await api.get('/admin/usuarios?activo=true&tipo=' + tipo + '&limit=1000');
+        var usuarios = Array.isArray(resp) ? resp : (resp.data || []);
+        if (usuarios.length === 0) {
+            mostrarToast('No hay ' + label + ' activos para asignar', 'info');
+            return;
+        }
+        var ids = usuarios.map(function (u) { return u.id; });
+        var res = await api.post('/admin/capacitaciones/pruebas/' + _pruebaId + '/asignar', { usuario_ids: ids });
+        mostrarToast(res.asignados + ' ' + label + ' asignado(s)', 'exito');
+        cargarAsignaciones();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al asignar', 'error');
+    }
+}
+
 // ─── Modal asignar — nuevo diseño ─────────────────────────────────────────────
 
 var _usuariosFiltrados = [];
 
-async function abrirModalAsignar() {
+async function abrirModalAsignar(tipo) {
     if (_usuariosAll.length === 0) {
         try {
-            var resp = await api.get('/admin/usuarios?activo=true&limit=500');
+            var resp = await api.get('/admin/usuarios?activo=true&limit=1000');
             _usuariosAll = Array.isArray(resp) ? resp : (resp.data || []);
 
             // Poblar dropdown de asociaciones
@@ -982,9 +1034,11 @@ async function abrirModalAsignar() {
 
     // Reset
     _modoAsig = 'todos';
+    _tipoAsig = tipo || '';
     document.querySelectorAll('.modo-tab').forEach(function (b, i) {
         b.classList.toggle('activo', i === 0);
     });
+    document.getElementById('asig-modal-tipo').value  = _tipoAsig;
     document.getElementById('asig-filtros-cat').style.display   = 'none';
     document.getElementById('asig-filtros-asoc').style.display  = 'none';
     document.getElementById('asig-filtros-manual').style.display = 'none';
@@ -1131,43 +1185,54 @@ function cambiarModoAsig(modo, btn) {
 
 function aplicarFiltroModo() {
     var yaAsig = new Set((_asigAll || []).map(function (a) { return a.jurado && a.jurado.id; }));
+    _tipoAsig  = document.getElementById('asig-modal-tipo').value;
 
+    var porModo;
     if (_modoAsig === 'todos') {
-        _usuariosFiltrados = _usuariosAll.slice();
+        porModo = _usuariosAll.slice();
     } else if (_modoAsig === 'categoria') {
         var cat = document.getElementById('asig-sel-cat').value;
-        _usuariosFiltrados = cat ? _usuariosAll.filter(function (u) { return u.categoria === cat; }) : [];
+        porModo = cat ? _usuariosAll.filter(function (u) { return u.categoria === cat; }) : [];
     } else if (_modoAsig === 'asociacion') {
         var asoc = document.getElementById('asig-sel-asoc').value;
-        _usuariosFiltrados = asoc ? _usuariosAll.filter(function (u) { return u.asociacion === asoc; }) : [];
+        porModo = asoc ? _usuariosAll.filter(function (u) { return u.asociacion === asoc; }) : [];
     } else if (_modoAsig === 'manual') {
         var buscar = (document.getElementById('asig-modal-buscar').value || '').toLowerCase();
-        _usuariosFiltrados = buscar.length >= 2
-            ? _usuariosAll.filter(function (u) { return (u.nombre_completo || '').toLowerCase().includes(buscar); })
+        porModo = buscar.length >= 2
+            ? _usuariosAll.filter(function (u) {
+                return (u.nombre_completo || '').toLowerCase().includes(buscar)
+                    || (u.rut || '').toLowerCase().includes(buscar);
+            })
             : [];
     }
 
-    var total = _usuariosFiltrados.length;
+    _usuariosFiltrados = _tipoAsig
+        ? porModo.filter(function (u) { return u.tipo_persona === _tipoAsig; })
+        : porModo;
+
+    var total  = _usuariosFiltrados.length;
     var nuevos = _usuariosFiltrados.filter(function (u) { return !yaAsig.has(u.id); }).length;
-    document.getElementById('asig-modal-cnt').textContent = total + ' jurado(s) · ' + nuevos + ' nuevos';
+    document.getElementById('asig-modal-cnt').textContent = total + ' usuario(s) · ' + nuevos + ' nuevos';
 
     var lista = document.getElementById('asig-modal-lista');
     if (_usuariosFiltrados.length === 0) {
         lista.innerHTML = '<div style="padding:14px;text-align:center;color:var(--gris);font-size:13px;">'
-            + (_modoAsig !== 'todos' ? 'Selecciona un filtro para ver jurados' : 'Sin resultados')
+            + (_modoAsig !== 'todos' ? 'Selecciona un filtro para ver usuarios' : 'Sin resultados')
             + '</div>';
         return;
     }
 
     lista.innerHTML = '<table class="asig-check-tabla"><thead><tr>'
-        + '<th style="width:32px;"></th><th>Nombre</th><th>Cat.</th><th>Asociación</th><th></th>'
+        + '<th style="width:32px;"></th><th>Nombre</th><th>Tipo</th><th>Cat.</th><th>Asociación</th><th></th>'
         + '</tr></thead><tbody>'
         + _usuariosFiltrados.map(function (u) {
-            var asig = yaAsig.has(u.id);
+            var asig      = yaAsig.has(u.id);
+            var tipoLabel = u.tipo_persona === 'delegado_rentado' ? 'Delegado' : u.tipo_persona === 'jurado' ? 'Jurado' : '—';
             return '<tr class="' + (asig ? 'ya-asig' : '') + '">'
                 + '<td><input type="checkbox" name="asig-check" value="' + u.id + '" '
                 + (asig ? 'checked disabled' : '') + '></td>'
                 + '<td>' + sanitizar(u.nombre_completo || '—') + '</td>'
+                + '<td>' + tipoLabel + '</td>'
                 + '<td>' + sanitizar(u.categoria || '—') + '</td>'
                 + '<td>' + sanitizar(u.asociacion || '—') + '</td>'
                 + '<td>' + (asig ? '<span style="font-size:11px;color:#1e8449;">Ya asignado</span>' : '') + '</td>'
@@ -1188,14 +1253,14 @@ async function confirmarAsignar() {
     var ids    = Array.from(checks).map(function (cb) { return cb.value; });
     if (ids.length === 0) { mostrarToast('Selecciona al menos un jurado', 'error'); return; }
 
-    var fechaLimite = document.getElementById('asig-fecha-limite').value || null;
+    var fechaLimite = chileLocalToISO(document.getElementById('asig-fecha-limite').value);
 
     try {
         var res = await api.post('/admin/capacitaciones/pruebas/' + _pruebaId + '/asignar', {
             usuario_ids: ids,
             fecha_limite: fechaLimite
         });
-        mostrarToast(res.asignados + ' jurado(s) asignado(s)', 'exito');
+        mostrarToast(res.asignados + ' usuario(s) asignado(s)', 'exito');
         cerrarModalAsignar();
         cargarAsignaciones();
     } catch (err) {

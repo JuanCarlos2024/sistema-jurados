@@ -120,8 +120,10 @@ function render(lista) {
         var badgeTxt = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
 
         var dispBadge = '';
-        if (disp === 'vencida') {
-            dispBadge = ' <span class="estado-badge disp-vencida">Vencida</span>';
+        if (disp === 'vencida' && !item.ultimo_completado) {
+            dispBadge = ' <span class="estado-badge disp-vencida">No contestada dentro del plazo</span>';
+        } else if (disp === 'vencida' && item.ultimo_completado) {
+            dispBadge = ' <span class="estado-badge disp-vencida">Plazo vencido</span>';
         } else if (disp === 'no_iniciada') {
             dispBadge = ' <span class="estado-badge disp-no_iniciada">No disponible aún</span>';
         }
@@ -130,15 +132,18 @@ function render(lista) {
         if (p.tiempo_por_pregunta_segundos) metaItems.push('⏱ Tiempo por pregunta: ' + p.tiempo_por_pregunta_segundos + ' segundos');
         metaItems.push('✔ Aprobación: ' + p.puntaje_minimo_aprobacion + '%');
         metaItems.push('🔄 Intentos: ' + item.total_intentos + ' / ' + (p.intentos_maximos || '∞'));
-        if (p.fecha_fin)
-            metaItems.push('📅 Hasta: ' + new Date(p.fecha_fin).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }));
+        if (p.fecha_inicio) metaItems.push('📅 Desde: ' + fmtFechaChile(p.fecha_inicio));
+        if (p.fecha_fin)    metaItems.push('📅 Hasta: ' + fmtFechaChile(p.fecha_fin));
+        if (item.ultimo_completado && item.ultimo_completado.nota != null)
+            metaItems.push('🏅 Nota: ' + parseFloat(item.ultimo_completado.nota).toFixed(1));
 
         var acciones = '';
-        if (disp === 'vencida') {
-            acciones = '<span style="font-size:13px;color:#784212;">Esta prueba ya no está disponible (plazo vencido).</span>';
+        if (disp === 'vencida' && !item.ultimo_completado) {
+            var fVen = p.fecha_fin ? ' Venció el: ' + fmtFechaChile(p.fecha_fin) + '.' : '';
+            acciones = '<span style="font-size:13px;color:#784212;">No contestada dentro del plazo.' + fVen + '</span>';
         } else if (disp === 'no_iniciada') {
-            var fIni = p.fecha_inicio ? new Date(p.fecha_inicio).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
-            acciones = '<span style="font-size:13px;color:#1a3a6c;">Disponible desde ' + sanitizar(fIni) + '.</span>';
+            var fIni = p.fecha_inicio ? fmtFechaChile(p.fecha_inicio) : '';
+            acciones = '<span style="font-size:13px;color:#1a3a6c;">Disponible desde: ' + sanitizar(fIni) + '.</span>';
         } else if (item.intento_en_curso) {
             acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Continuar prueba</a>';
         } else if (item.puede_rendir) {
@@ -152,7 +157,7 @@ function render(lista) {
         }
 
         var limiteHtml = item.fecha_limite
-            ? '<div style="font-size:12px;color:#e67e22;margin-bottom:8px;">Fecha límite: ' + sanitizar(new Date(item.fecha_limite).toLocaleDateString('es-CL')) + '</div>'
+            ? '<div style="font-size:12px;color:#e67e22;margin-bottom:8px;">Fecha límite: ' + sanitizar(fmtFechaChile(item.fecha_limite)) + '</div>'
             : '';
 
         var cardCls = 'prueba-card' + (disp !== 'disponible' ? ' ' + disp : '');

@@ -329,7 +329,7 @@ router.get('/pruebas/:id/asignaciones', async (req, res) => {
         .from('capacitacion_asignaciones')
         .select(`
             id, fecha_limite, asignado_en,
-            jurado:usuarios_pagados!capacitacion_asignaciones_usuario_pagado_id_fkey(id, nombre_completo, categoria, asociacion)
+            jurado:usuarios_pagados!capacitacion_asignaciones_usuario_pagado_id_fkey(id, nombre_completo, rut, categoria, asociacion, tipo_persona)
         `)
         .eq('prueba_id', req.params.id)
         .order('asignado_en', { ascending: false });

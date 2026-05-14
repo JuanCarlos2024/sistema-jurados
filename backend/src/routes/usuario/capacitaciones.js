@@ -60,7 +60,7 @@ router.get('/', async (req, res) => {
     if (asigIds.length > 0) {
         const { data: intentos } = await supabase
             .from('capacitacion_intentos')
-            .select('id, asignacion_id, estado, numero_intento, puntaje_obtenido, aprobado, iniciado_en, finalizado_en')
+            .select('id, asignacion_id, estado, numero_intento, puntaje_obtenido, nota, aprobado, iniciado_en, finalizado_en')
             .in('asignacion_id', asigIds)
             .order('numero_intento', { ascending: false });
 
