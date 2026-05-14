@@ -13,6 +13,14 @@ router.use((req, res, next) => {
     next();
 });
 
+// El rol Capacitador solo tiene acceso al módulo de Capacitaciones
+router.use((req, res, next) => {
+    if (req.usuario.rol_evaluacion === 'capacitador' && !req.path.startsWith('/capacitaciones')) {
+        return res.status(403).json({ error: 'El rol Capacitador solo tiene acceso al módulo de Capacitaciones' });
+    }
+    next();
+});
+
 router.use('/usuarios', require('./usuarios'));
 router.use('/rodeos', require('./rodeos'));
 router.use('/asignaciones', require('./asignaciones'));

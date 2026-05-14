@@ -83,6 +83,7 @@
             const u = JSON.parse(usuario);
             if (u.tipo === 'administrador') {
                 if (u.rol_evaluacion === 'analista' || u.rol_evaluacion === 'comision_tecnica') window.location.href = '/admin/evaluaciones.html';
+                else if (u.rol_evaluacion === 'capacitador') window.location.href = '/admin/capacitaciones.html';
                 else window.location.href = '/admin/dashboard.html';
             } else {
                 window.location.href = '/usuario/dashboard.html';
@@ -114,6 +115,8 @@
             api.guardarSesion(data.token, data.usuario);
             if (data.usuario.rol_evaluacion === 'analista' || data.usuario.rol_evaluacion === 'comision_tecnica') {
                 window.location.href = '/admin/evaluaciones.html';
+            } else if (data.usuario.rol_evaluacion === 'capacitador') {
+                window.location.href = '/admin/capacitaciones.html';
             } else {
                 window.location.href = '/admin/dashboard.html';
             }

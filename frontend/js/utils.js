@@ -108,13 +108,21 @@ function labelRolAdmin(rol) {
         analista:         'Analista',
         comision_tecnica: 'Comisión Técnica',
         monitor:          'Monitor',
-        director:         'Director'
+        director:         'Director',
+        capacitador:      'Capacitador'
     };
     return M[rol] || 'Admin pleno';
 }
 
 // Páginas permitidas por rol (monitor: acceso muy restringido)
 const _PAGINAS_MONITOR = ['/admin/dashboard.html', '/admin/rodeos.html', '/admin/reporte-deportivo.html'];
+// Páginas permitidas para capacitador (solo módulo capacitaciones)
+const _PAGINAS_CAPACITADOR = [
+    '/admin/capacitaciones.html',
+    '/admin/capacitacion-detalle.html',
+    '/admin/capacitacion-resultados.html',
+    '/admin/capacitacion-banco-preguntas.html'
+];
 // Páginas permitidas para director (solo lectura: reporte deportivo, cartillas, evaluaciones)
 const _PAGINAS_DIRECTOR = [
     '/admin/reporte-deportivo.html',
@@ -140,6 +148,10 @@ function _ajustarMenuPorRol(rol) {
         if (rol === 'monitor') {
             // Monitor solo ve dashboard, rodeos y reporte-deportivo
             const permitida = _PAGINAS_MONITOR.some(p => href.endsWith(p.split('/').pop()));
+            a.style.display = permitida ? '' : 'none';
+        } else if (rol === 'capacitador') {
+            // Capacitador solo ve páginas del módulo de Capacitaciones
+            const permitida = _PAGINAS_CAPACITADOR.some(p => href.endsWith(p.split('/').pop()));
             a.style.display = permitida ? '' : 'none';
         } else if (rol === 'director') {
             // Director solo ve páginas de reporte/evaluación (solo lectura)
@@ -175,6 +187,9 @@ function _aplicarControlAccesoAdmin(usuario) {
     if (rol === 'monitor') {
         const permitida = _PAGINAS_MONITOR.some(p => path.endsWith(p.split('/').pop()) || path === p);
         if (!permitida) { window.location.href = '/admin/rodeos.html'; return; }
+    } else if (rol === 'capacitador') {
+        const permitida = _PAGINAS_CAPACITADOR.some(p => path.endsWith(p.split('/').pop()) || path === p);
+        if (!permitida) { window.location.href = '/admin/capacitaciones.html'; return; }
     } else if (rol === 'director') {
         const permitida = _PAGINAS_DIRECTOR.some(p => path.endsWith(p.split('/').pop()) || path === p);
         if (!permitida) { window.location.href = '/admin/reporte-deportivo.html'; return; }

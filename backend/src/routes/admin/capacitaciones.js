@@ -6,7 +6,18 @@
 
 const express  = require('express');
 const router   = express.Router();
+const multer   = require('multer');
 const supabase = require('../../config/supabase');
+
+const _uploadImagen = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter(req, file, cb) {
+        const permitidos = ['image/jpeg', 'image/png', 'image/webp'];
+        if (permitidos.includes(file.mimetype)) cb(null, true);
+        else cb(new Error('Solo se permiten imágenes JPG, PNG o WEBP'));
+    }
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -185,7 +196,7 @@ router.delete('/pruebas/:id', async (req, res) => {
 // ─── POST /preguntas ──────────────────────────────────────────────────────────
 
 router.post('/pruebas/:id/preguntas', async (req, res) => {
-    const { enunciado, tipo, video_url, video_sin_audio, es_favorita } = req.body;
+    const { enunciado, tipo, video_url, video_sin_audio, imagen_url, es_favorita } = req.body;
 
     if (!enunciado || !String(enunciado).trim()) {
         return res.status(400).json({ error: 'El enunciado es obligatorio' });
@@ -200,6 +211,9 @@ router.post('/pruebas/:id/preguntas', async (req, res) => {
         .single();
 
     const orden = maxRow ? (maxRow.orden + 1) : 1;
+    const tipoFinal = tipo || 'alternativa_unica';
+    const tieneImagen = tipoFinal === 'imagen_alternativas' || tipoFinal === 'verdadero_falso_imagen';
+    const tieneVideo  = tipoFinal === 'video_alternativas'  || tipoFinal === 'verdadero_falso_video';
 
     const { data, error } = await supabase
         .from('capacitacion_preguntas')
@@ -207,9 +221,10 @@ router.post('/pruebas/:id/preguntas', async (req, res) => {
             prueba_id: req.params.id,
             orden,
             enunciado: enunciado.trim(),
-            tipo: tipo || 'alternativa_unica',
-            video_url: video_url || null,
-            video_sin_audio: video_sin_audio === true || video_sin_audio === 'true',
+            tipo: tipoFinal,
+            video_url:       tieneVideo  ? (video_url  || null) : null,
+            video_sin_audio: tieneVideo  ? (video_sin_audio === true || video_sin_audio === 'true') : false,
+            imagen_url:      tieneImagen ? (imagen_url || null) : null,
             es_favorita: es_favorita === true || es_favorita === 'true'
         })
         .select()
@@ -222,15 +237,16 @@ router.post('/pruebas/:id/preguntas', async (req, res) => {
 // ─── PUT /preguntas/:id ───────────────────────────────────────────────────────
 
 router.put('/preguntas/:id', async (req, res) => {
-    const { enunciado, tipo, video_url, video_sin_audio, es_favorita, orden } = req.body;
+    const { enunciado, tipo, video_url, video_sin_audio, imagen_url, es_favorita, orden } = req.body;
 
     const updates = { updated_at: new Date().toISOString() };
-    if (enunciado !== undefined)     updates.enunciado = enunciado.trim();
-    if (tipo !== undefined)          updates.tipo = tipo;
-    if (video_url !== undefined)     updates.video_url = video_url || null;
+    if (enunciado !== undefined)       updates.enunciado = enunciado.trim();
+    if (tipo !== undefined)            updates.tipo = tipo;
+    if (video_url !== undefined)       updates.video_url = video_url || null;
     if (video_sin_audio !== undefined) updates.video_sin_audio = Boolean(video_sin_audio);
-    if (es_favorita !== undefined)   updates.es_favorita = Boolean(es_favorita);
-    if (orden !== undefined)         updates.orden = parseInt(orden);
+    if (imagen_url !== undefined)      updates.imagen_url = imagen_url || null;
+    if (es_favorita !== undefined)     updates.es_favorita = Boolean(es_favorita);
+    if (orden !== undefined)           updates.orden = parseInt(orden);
 
     const { data, error } = await supabase
         .from('capacitacion_preguntas')
@@ -819,7 +835,7 @@ router.get('/banco-preguntas', async (req, res) => {
 });
 
 router.post('/banco-preguntas', async (req, res) => {
-    const { tipo, enunciado, video_url, video_sin_audio, activa, categoria_tematica, dificultad, etiquetas, comentario_banco, alternativas } = req.body;
+    const { tipo, enunciado, video_url, video_sin_audio, imagen_url, activa, categoria_tematica, dificultad, etiquetas, comentario_banco, alternativas } = req.body;
 
     if (!enunciado || !String(enunciado).trim())
         return res.status(400).json({ error: 'El enunciado es obligatorio' });
@@ -830,13 +846,17 @@ router.post('/banco-preguntas', async (req, res) => {
     if (!alternativas.some(a => a.es_correcta))
         return res.status(400).json({ error: 'Debe marcar una alternativa como correcta' });
 
+    const tieneImagenB = tipo === 'imagen_alternativas' || tipo === 'verdadero_falso_imagen';
+    const tieneVideoB  = tipo === 'video_alternativas'  || tipo === 'verdadero_falso_video';
+
     const { data: preg, error } = await supabase
         .from('capacitacion_banco_preguntas')
         .insert({
             tipo,
             enunciado: enunciado.trim(),
-            video_url: video_url || null,
-            video_sin_audio: Boolean(video_sin_audio),
+            video_url:       tieneVideoB  ? (video_url  || null) : null,
+            video_sin_audio: tieneVideoB  ? Boolean(video_sin_audio) : false,
+            imagen_url:      tieneImagenB ? (imagen_url || null) : null,
             activa: activa !== false,
             categoria_tematica: categoria_tematica || null,
             dificultad: dificultad || null,
@@ -900,16 +920,22 @@ router.get('/banco-preguntas/exportar', async (req, res) => {
 
     const LETRAS = ['A','B','C','D','E'];
     const TIPO_LABELS_CSV = {
-        alternativa_unica: 'Alternativas', video_alternativas: 'Alternativas + video',
-        verdadero_falso: 'Verdadero/Falso', verdadero_falso_video: 'V/F + video',
-        sin_video_alternativas: 'Alternativas', imagen_alternativas: 'Imagen + alternativas'
+        alternativa_unica:      'Alternativas',
+        video_alternativas:     'Alternativas + video',
+        imagen_alternativas:    'Imagen + alternativas',
+        verdadero_falso:        'Verdadero/Falso',
+        verdadero_falso_video:  'V/F + video',
+        verdadero_falso_imagen: 'V/F + imagen',
+        sin_video_alternativas: 'Alternativas'
     };
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
     const COLS = [
         'ID', 'Tipo', 'Enunciado', 'Comentario banco',
         'Categoría temática', 'Dificultad', 'Etiquetas',
-        'Estado', 'Tiene video', 'Link YouTube', 'Video sin audio', 'Fecha creación',
+        'Estado', 'Tiene video', 'Link YouTube', 'Video sin audio',
+        'Tiene imagen', 'Link imagen',
+        'Fecha creación',
         'Alternativa A', 'Alternativa B', 'Alternativa C', 'Alternativa D', 'Alternativa E',
         'Respuesta correcta (letra)', 'Respuesta correcta (texto)'
     ];
@@ -921,6 +947,8 @@ router.get('/banco-preguntas/exportar', async (req, res) => {
         const correctaLetra = correctaIdx >= 0 ? (LETRAS[correctaIdx] || '') : '';
         const correctaTexto = correctaIdx >= 0 ? alts[correctaIdx].texto : '';
         const altsArr = LETRAS.map((_, i) => alts[i] ? alts[i].texto : '');
+        const tieneVideo  = p.tipo === 'video_alternativas' || p.tipo === 'verdadero_falso_video';
+        const tieneImagen = p.tipo === 'imagen_alternativas' || p.tipo === 'verdadero_falso_imagen';
         return [
             p.id,
             TIPO_LABELS_CSV[p.tipo] || p.tipo,
@@ -930,9 +958,11 @@ router.get('/banco-preguntas/exportar', async (req, res) => {
             p.dificultad || '',
             p.etiquetas || '',
             p.activa ? 'Activa' : 'Inactiva',
-            (p.tipo === 'video_alternativas' || p.tipo === 'verdadero_falso_video') ? 'Sí' : 'No',
+            tieneVideo  ? 'Sí' : 'No',
             p.video_url || '',
             p.video_sin_audio ? 'Sí' : 'No',
+            tieneImagen ? 'Sí' : 'No',
+            p.imagen_url || '',
             p.created_at ? new Date(p.created_at).toLocaleDateString('es-CL') : '',
             ...altsArr,
             correctaLetra,
@@ -965,13 +995,14 @@ router.get('/banco-preguntas/:id', async (req, res) => {
 });
 
 router.put('/banco-preguntas/:id', async (req, res) => {
-    const { tipo, enunciado, video_url, video_sin_audio, activa, categoria_tematica, dificultad, etiquetas, comentario_banco, alternativas } = req.body;
+    const { tipo, enunciado, video_url, video_sin_audio, imagen_url, activa, categoria_tematica, dificultad, etiquetas, comentario_banco, alternativas } = req.body;
 
     const updates = { updated_at: new Date().toISOString() };
     if (enunciado !== undefined)          updates.enunciado = enunciado.trim();
     if (tipo !== undefined)               updates.tipo = tipo;
     if (video_url !== undefined)          updates.video_url = video_url || null;
     if (video_sin_audio !== undefined)    updates.video_sin_audio = Boolean(video_sin_audio);
+    if (imagen_url !== undefined)         updates.imagen_url = imagen_url || null;
     if (activa !== undefined)             updates.activa = Boolean(activa);
     if (categoria_tematica !== undefined) updates.categoria_tematica = categoria_tematica || null;
     if (dificultad !== undefined)         updates.dificultad = dificultad || null;
@@ -1057,8 +1088,9 @@ router.post('/preguntas/:id/guardar-en-banco', async (req, res) => {
         .insert({
             tipo:             preg.tipo,
             enunciado:        preg.enunciado,
-            video_url:        preg.video_url || null,
+            video_url:        preg.video_url   || null,
             video_sin_audio:  preg.video_sin_audio || false,
+            imagen_url:       preg.imagen_url  || null,
             activa:           true,
             comentario_banco: String(comentario_banco).trim().slice(0, 500)
         })
@@ -1135,8 +1167,9 @@ router.post('/pruebas/:id/agregar-desde-banco', async (req, res) => {
                 orden:            nextOrden++,
                 enunciado:        bp.enunciado,
                 tipo:             bp.tipo,
-                video_url:        bp.video_url || null,
+                video_url:        bp.video_url   || null,
                 video_sin_audio:  bp.video_sin_audio || false,
+                imagen_url:       bp.imagen_url  || null,
                 es_favorita:      false,
                 banco_pregunta_id: bp.id
             })
@@ -1160,6 +1193,25 @@ router.post('/pruebas/:id/agregar-desde-banco', async (req, res) => {
     }
 
     res.status(201).json({ agregadas: creadas.length, pregunta_ids: creadas });
+});
+
+// ─── POST /upload-imagen ──────────────────────────────────────────────────────
+
+router.post('/upload-imagen', _uploadImagen.single('imagen'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Imagen requerida' });
+
+    const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+    const ext  = extMap[req.file.mimetype] || 'jpg';
+    const path = `preguntas/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${ext}`;
+
+    const { error: storageErr } = await supabase.storage
+        .from('capacitaciones-imagenes')
+        .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+
+    if (storageErr) return res.status(500).json({ error: 'Error al subir imagen: ' + storageErr.message });
+
+    const { data } = supabase.storage.from('capacitaciones-imagenes').getPublicUrl(path);
+    res.json({ ok: true, url: data.publicUrl });
 });
 
 module.exports = router;

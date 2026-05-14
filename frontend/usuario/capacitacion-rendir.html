@@ -75,6 +75,21 @@
         @media (max-width: 900px) {
             .video-preg { max-width: 100%; }
         }
+        .imagen-preg {
+            width: 100%;
+            max-width: 820px;
+            margin: 12px auto 18px auto;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #f3f4f6;
+            border: 1px solid #d9e0e8;
+        }
+        .imagen-preg img {
+            width: 100%;
+            max-height: 480px;
+            object-fit: contain;
+            display: block;
+        }
 
         .alt-btn {
             display: flex; align-items: flex-start; gap: 14px;
@@ -410,6 +425,12 @@ function mostrarPregunta(idx) {
         videoHtml = '<div class="video-preg"><iframe src="' + embedSrc + '" allowfullscreen></iframe></div>';
     }
 
+    // Imagen de la pregunta
+    var imagenHtml = '';
+    if (p.imagen_url && (p.tipo === 'imagen_alternativas' || p.tipo === 'verdadero_falso_imagen')) {
+        imagenHtml = '<div class="imagen-preg"><img src="' + sanitizar(p.imagen_url) + '" alt="Imagen de la pregunta" onerror="this.parentElement.style.display=\'none\'"></div>';
+    }
+
     var altsHtml = (p.alternativas || []).map(function (a, i) {
         var sel = _respuestas[p.id] === a.id;
         return '<button class="alt-btn' + (sel ? ' seleccionada' : '') + '" onclick="responder(\'' + p.id + '\',\'' + a.id + '\')">'
@@ -436,6 +457,7 @@ function mostrarPregunta(idx) {
         + '<div class="pregunta-num-lbl" style="margin-bottom:0;">Pregunta ' + (idx + 1) + ' de ' + total + '</div>'
         + (_tiempoPorPregunta ? '<div id="timer-pregunta" class="timer-pregunta">—</div>' : '')
         + '</div>'
+        + imagenHtml
         + videoHtml
         + '<div class="pregunta-enunciado-lbl">' + sanitizar(p.enunciado) + '</div>'
         + '<div>' + altsHtml + '</div>'

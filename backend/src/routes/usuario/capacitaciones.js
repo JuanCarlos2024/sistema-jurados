@@ -184,7 +184,7 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
     // Preguntas con tipo y video_url — nunca se expone es_correcta
     const { data: preguntas } = await supabase
         .from('capacitacion_preguntas')
-        .select('id, orden, enunciado, tipo, video_url, video_sin_audio')
+        .select('id, orden, enunciado, tipo, video_url, video_sin_audio, imagen_url')
         .eq('prueba_id', asig.prueba_id)
         .order('orden', { ascending: true });
 

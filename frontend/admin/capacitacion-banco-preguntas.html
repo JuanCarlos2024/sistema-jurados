@@ -54,6 +54,14 @@
             margin:12px auto; background:#000; border-radius:8px; overflow:hidden;
         }
         .video-wrapper iframe { width:100%; height:100%; border:0; display:block; }
+        /* Imagen preview */
+        .imagen-wrapper {
+            width:100%; max-width:600px;
+            margin:10px auto 0 auto; text-align:center;
+        }
+        .imagen-wrapper img {
+            max-width:100%; max-height:300px; border-radius:6px; object-fit:contain;
+        }
     </style>
 </head>
 <body>
@@ -92,8 +100,10 @@
                         <option value="">Todos los tipos</option>
                         <option value="alternativa_unica">Alternativas</option>
                         <option value="video_alternativas">Alternativas + video</option>
+                        <option value="imagen_alternativas">Imagen + alternativas</option>
                         <option value="verdadero_falso">Verdadero / Falso</option>
                         <option value="verdadero_falso_video">V/F + video</option>
+                        <option value="verdadero_falso_imagen">V/F + imagen</option>
                     </select>
                     <select id="f-estado" onchange="filtrarBanco()">
                         <option value="">Activas e inactivas</option>
@@ -134,8 +144,10 @@
                 <select id="preg-tipo" class="form-control" onchange="onTipoCambio()">
                     <option value="alternativa_unica">Alternativas</option>
                     <option value="video_alternativas">Alternativas + video</option>
+                    <option value="imagen_alternativas">Imagen + alternativas</option>
                     <option value="verdadero_falso">Verdadero / Falso</option>
                     <option value="verdadero_falso_video">Verdadero / Falso + video</option>
+                    <option value="verdadero_falso_imagen">Verdadero / Falso + imagen</option>
                 </select>
             </div>
 
@@ -154,6 +166,22 @@
                     <input type="checkbox" id="preg-video-sin-audio"> Silenciar video por defecto
                 </label>
                 <small style="color:var(--gris);font-size:11px;margin-left:22px;">El video inicia sin audio (el jurado puede activarlo)</small>
+            </div>
+
+            <div id="preg-imagen-grupo" class="form-grupo" style="display:none;">
+                <label class="form-label">Imagen de la pregunta</label>
+                <input type="hidden" id="preg-imagen">
+                <input type="file" id="preg-imagen-file" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="subirImagenPregunta()">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;">
+                    <button type="button" class="btn btn-outline btn-pequeño" onclick="document.getElementById('preg-imagen-file').click()">📁 Subir imagen</button>
+                    <span id="preg-imagen-estado" style="font-size:12px;color:var(--gris);"></span>
+                </div>
+                <div id="preg-imagen-preview" class="imagen-wrapper" style="display:none;margin-top:10px;">
+                    <div style="display:flex;justify-content:flex-end;margin-bottom:4px;">
+                        <button type="button" class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;font-size:11px;" onclick="quitarImagenPregunta()">✕ Quitar imagen</button>
+                    </div>
+                    <img id="preg-imagen-img" alt="Vista previa" onerror="document.getElementById('preg-imagen-preview').style.display='none'">
+                </div>
             </div>
 
             <div class="form-grupo">
@@ -224,12 +252,13 @@ var _editId     = null;
 var _altCounter = 0;
 
 var TIPO_LABELS = {
-    alternativa_unica:     'Alternativas',
-    video_alternativas:    'Alternativas + video',
-    verdadero_falso:       'Verdadero / Falso',
-    verdadero_falso_video: 'V/F + video',
-    sin_video_alternativas:'Alternativas',
-    imagen_alternativas:   'Imagen + alt.'
+    alternativa_unica:      'Alternativas',
+    video_alternativas:     'Alternativas + video',
+    imagen_alternativas:    'Imagen + alt.',
+    verdadero_falso:        'Verdadero / Falso',
+    verdadero_falso_video:  'V/F + video',
+    verdadero_falso_imagen: 'V/F + imagen',
+    sin_video_alternativas: 'Alternativas'
 };
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -295,14 +324,19 @@ function renderBanco(lista) {
             var dot = a.es_correcta ? 'correcta' : 'incorrecta';
             return '<li class="' + cls + '"><span class="alt-dot ' + dot + '"></span>' + sanitizar(a.texto) + '</li>';
         }).join('');
-        var tipoLabel  = TIPO_LABELS[p.tipo] || p.tipo;
-        var tieneVideo = (p.tipo === 'video_alternativas' || p.tipo === 'verdadero_falso_video');
-        var difLabel   = p.dificultad ? ({ facil:'🟢 Fácil', media:'🟡 Media', dificil:'🔴 Difícil' }[p.dificultad] || '') : '';
+        var tipoLabel   = TIPO_LABELS[p.tipo] || p.tipo;
+        var tieneVideo  = (p.tipo === 'video_alternativas'  || p.tipo === 'verdadero_falso_video');
+        var tieneImagen = (p.tipo === 'imagen_alternativas' || p.tipo === 'verdadero_falso_imagen');
+        var difLabel    = p.dificultad ? ({ facil:'🟢 Fácil', media:'🟡 Media', dificil:'🔴 Difícil' }[p.dificultad] || '') : '';
 
         var comentarioHtml = p.comentario_banco
             ? '<div style="margin:6px 0 4px;padding:6px 10px;background:#f0f4ff;border-left:3px solid #3949ab;border-radius:0 4px 4px 0;font-size:12px;color:#3949ab;">'
               + '💬 ' + sanitizar(p.comentario_banco)
               + '</div>'
+            : '';
+
+        var imagenBancoHtml = (tieneImagen && p.imagen_url)
+            ? '<div style="margin:6px 0 4px;"><img src="' + sanitizar(p.imagen_url) + '" alt="Imagen" style="max-width:100%;max-height:160px;border-radius:6px;object-fit:contain;" onerror="this.style.display=\'none\'"></div>'
             : '';
 
         return '<div class="banco-card">'
@@ -312,9 +346,11 @@ function renderBanco(lista) {
             +   ' onclick="toggleActiva(\'' + p.id + '\',' + p.activa + ')">' + (p.activa ? 'Desactivar' : 'Activar') + '</button>'
             + '</div>'
             + '<span class="tipo-badge">' + sanitizar(tipoLabel) + '</span>'
-            + (tieneVideo ? '<span class="video-badge">🎬 Con video' + (p.video_sin_audio ? ' 🔇' : '') + '</span>' : '')
+            + (tieneVideo  ? '<span class="video-badge">🎬 Con video' + (p.video_sin_audio ? ' 🔇' : '') + '</span>' : '')
+            + (tieneImagen ? '<span class="video-badge" style="background:#e8f5e9;color:#2e7d32;">🖼 Con imagen</span>' : '')
             + (!p.activa ? '<span class="inactiva-badge">Inactiva</span>' : '')
             + '<div style="font-size:14px;font-weight:600;margin:6px 0 4px;">' + sanitizar(p.enunciado) + '</div>'
+            + imagenBancoHtml
             + comentarioHtml
             + '<ul class="alt-lista">' + alts + '</ul>'
             + '<div class="meta-info">'
@@ -361,8 +397,9 @@ function abrirModalPregunta(id) {
     if (tipo === 'sin_video_alternativas') tipo = 'alternativa_unica';
     document.getElementById('preg-tipo').value = tipo;
 
-    var tieneVideo = (tipo === 'video_alternativas' || tipo === 'verdadero_falso_video');
-    var esVF       = (tipo === 'verdadero_falso'    || tipo === 'verdadero_falso_video');
+    var tieneVideo  = (tipo === 'video_alternativas'  || tipo === 'verdadero_falso_video');
+    var tieneImagen = (tipo === 'imagen_alternativas' || tipo === 'verdadero_falso_imagen');
+    var esVF        = (tipo === 'verdadero_falso' || tipo === 'verdadero_falso_video' || tipo === 'verdadero_falso_imagen');
 
     document.getElementById('preg-video').value                = (preg && preg.video_url) ? preg.video_url : '';
     document.getElementById('preg-video-preview').style.display = 'none';
@@ -371,6 +408,16 @@ function abrirModalPregunta(id) {
     document.getElementById('preg-audio-grupo').style.display   = tieneVideo ? '' : 'none';
     document.getElementById('preg-video-sin-audio').checked     = preg ? !!preg.video_sin_audio : tieneVideo;
     if (preg && preg.video_url && tieneVideo) actualizarPreviewVideo();
+
+    document.getElementById('preg-imagen-grupo').style.display = tieneImagen ? '' : 'none';
+    if (tieneImagen && preg && preg.imagen_url) {
+        document.getElementById('preg-imagen').value = preg.imagen_url;
+        document.getElementById('preg-imagen-estado').textContent = 'Imagen cargada';
+        document.getElementById('preg-imagen-img').src = preg.imagen_url;
+        document.getElementById('preg-imagen-preview').style.display = '';
+    } else {
+        quitarImagenPregunta();
+    }
 
     var container = document.getElementById('alts-container');
     container.innerHTML = '';
@@ -405,17 +452,21 @@ function cerrarModalPregunta() {
 }
 
 function onTipoCambio() {
-    var tipo       = document.getElementById('preg-tipo').value;
-    var videoGrupo = document.getElementById('preg-video-grupo');
-    var audioGrupo = document.getElementById('preg-audio-grupo');
-    var btnAlt     = document.getElementById('btn-agregar-alt');
-    var container  = document.getElementById('alts-container');
+    var tipo        = document.getElementById('preg-tipo').value;
+    var videoGrupo  = document.getElementById('preg-video-grupo');
+    var audioGrupo  = document.getElementById('preg-audio-grupo');
+    var imagenGrupo = document.getElementById('preg-imagen-grupo');
+    var btnAlt      = document.getElementById('btn-agregar-alt');
+    var container   = document.getElementById('alts-container');
 
-    var tieneVideo = (tipo === 'video_alternativas' || tipo === 'verdadero_falso_video');
-    var esVF       = (tipo === 'verdadero_falso'    || tipo === 'verdadero_falso_video');
+    var tieneVideo  = (tipo === 'video_alternativas'  || tipo === 'verdadero_falso_video');
+    var tieneImagen = (tipo === 'imagen_alternativas' || tipo === 'verdadero_falso_imagen');
+    var esVF        = (tipo === 'verdadero_falso' || tipo === 'verdadero_falso_video' || tipo === 'verdadero_falso_imagen');
 
-    videoGrupo.style.display = tieneVideo ? '' : 'none';
-    audioGrupo.style.display = tieneVideo ? '' : 'none';
+    videoGrupo.style.display  = tieneVideo  ? '' : 'none';
+    audioGrupo.style.display  = tieneVideo  ? '' : 'none';
+    imagenGrupo.style.display = tieneImagen ? '' : 'none';
+
     if (tieneVideo) {
         document.getElementById('preg-video-sin-audio').checked = true;
     } else {
@@ -423,6 +474,9 @@ function onTipoCambio() {
         document.getElementById('preg-video-preview').style.display = 'none';
         document.getElementById('preg-video-iframe').src = '';
         document.getElementById('preg-video-sin-audio').checked = false;
+    }
+    if (!tieneImagen) {
+        quitarImagenPregunta();
     }
 
     if (esVF) {
@@ -509,21 +563,64 @@ function actualizarPreviewVideo() {
     }
 }
 
+async function subirImagenPregunta() {
+    var file = document.getElementById('preg-imagen-file').files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+        mostrarToast('La imagen no puede superar 5 MB', 'error');
+        document.getElementById('preg-imagen-file').value = '';
+        return;
+    }
+    var estado = document.getElementById('preg-imagen-estado');
+    estado.textContent = 'Subiendo…';
+    var form = new FormData();
+    form.append('imagen', file);
+    try {
+        var resp = await fetch('/api/admin/capacitaciones/upload-imagen', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + api.getToken() },
+            body: form
+        });
+        var data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Error al subir');
+        document.getElementById('preg-imagen').value = data.url;
+        estado.textContent = file.name;
+        document.getElementById('preg-imagen-img').src = data.url;
+        document.getElementById('preg-imagen-preview').style.display = '';
+    } catch (err) {
+        estado.textContent = '';
+        mostrarToast(err.message || 'Error al subir imagen', 'error');
+    }
+    document.getElementById('preg-imagen-file').value = '';
+}
+
+function quitarImagenPregunta() {
+    document.getElementById('preg-imagen').value = '';
+    document.getElementById('preg-imagen-estado').textContent = '';
+    document.getElementById('preg-imagen-preview').style.display = 'none';
+    document.getElementById('preg-imagen-img').src = '';
+}
+
 // ─── Guardar pregunta banco ───────────────────────────────────────────────────
 async function guardarPregunta() {
     var enunciado = document.getElementById('preg-enunciado').value.trim();
     if (!enunciado) { mostrarToast('El enunciado es obligatorio', 'error'); return; }
 
     var tipo          = document.getElementById('preg-tipo').value;
-    var tieneVideo    = (tipo === 'video_alternativas' || tipo === 'verdadero_falso_video');
-    var videoUrl      = tieneVideo ? (document.getElementById('preg-video').value.trim() || null) : null;
-    var videoSinAudio = tieneVideo ? document.getElementById('preg-video-sin-audio').checked : false;
+    var tieneVideo    = (tipo === 'video_alternativas'  || tipo === 'verdadero_falso_video');
+    var tieneImagen   = (tipo === 'imagen_alternativas' || tipo === 'verdadero_falso_imagen');
+    var videoUrl      = tieneVideo  ? (document.getElementById('preg-video').value.trim()  || null) : null;
+    var videoSinAudio = tieneVideo  ? document.getElementById('preg-video-sin-audio').checked : false;
+    var imagenUrl     = tieneImagen ? (document.getElementById('preg-imagen').value.trim() || null) : null;
 
     if (tieneVideo && !videoUrl) {
         mostrarToast('Debes ingresar la URL del video de YouTube', 'error'); return;
     }
     if (tieneVideo && videoUrl && !esUrlYoutubeValida(videoUrl)) {
         mostrarToast('El enlace de YouTube no es válido. Revisa que no esté duplicado o mal copiado.', 'error'); return;
+    }
+    if (tieneImagen && !imagenUrl) {
+        mostrarToast('Debes subir una imagen para este tipo de pregunta', 'error'); return;
     }
 
     var rows = document.querySelectorAll('#alts-container .alt-row');
@@ -559,6 +656,7 @@ async function guardarPregunta() {
         enunciado:          enunciado,
         video_url:          videoUrl,
         video_sin_audio:    videoSinAudio,
+        imagen_url:         imagenUrl,
         activa:             document.getElementById('preg-activa').checked,
         categoria_tematica: document.getElementById('preg-categoria').value.trim() || null,
         dificultad:         document.getElementById('preg-dificultad').value || null,
