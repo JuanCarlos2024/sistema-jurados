@@ -445,7 +445,7 @@ router.post('/:id/resetear-password', async (req, res) => {
         .from('usuarios_pagados')
         .update({
             password_hash: nuevo_hash,
-            primer_login: true,
+            primer_login: false,
             updated_at: new Date().toISOString()
         })
         .eq('id', req.params.id);
