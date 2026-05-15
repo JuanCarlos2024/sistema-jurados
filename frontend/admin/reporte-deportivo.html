@@ -22,11 +22,17 @@
         .badge-pendiente_aprobacion { background:#fef9e7; color:#7d6608; }
         .badge-pendiente_comision   { background:#fdebd0; color:#784212; }
         .badge-devuelto   { background:#fadbd8; color:#922b21; }
+        .badge-modo-da  { display:inline-block; padding:1px 7px; border-radius:8px; font-size:10px; font-weight:600; background:#e9f7ef; color:#1e6444; white-space:nowrap; }
+        .badge-modo-leg { display:inline-block; padding:1px 7px; border-radius:8px; font-size:10px; background:#eaecee; color:#555; white-space:nowrap; }
         .num-col { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
         th.grupo-label { background:#f5f5f5; border-bottom:2px solid #1e3a5f; font-size:10px; text-transform:uppercase; letter-spacing:.5px; text-align:center; color:#555; padding:4px 6px; }
         .tabla-reporte th { font-size:11px; padding:6px 8px; white-space:nowrap; vertical-align:bottom; }
         .tabla-reporte td { font-size:12px; padding:5px 8px; vertical-align:top; }
         .card-titulo-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px; }
+        .ciclo-cell { font-size:11px; line-height:1.5; white-space:nowrap; }
+        .ciclo-cell-sin-casos { color:#1e6444; font-style:italic; font-size:11px; }
+        .ciclo-cell-pendiente { color:#8e44ad; font-size:10px; font-weight:600; }
+        .ciclo-cell-revertido { color:#1e8449; font-size:10px; }
     </style>
 </head>
 <body>
@@ -78,6 +84,11 @@
                     <option value="publicado">Publicado</option>
                     <option value="cerrado">Cerrado</option>
                 </select>
+                <select id="fil-modo-flujo" onchange="cargar(1)">
+                    <option value="">Todos los modos</option>
+                    <option value="apelacion_jurado">Apelación jurado</option>
+                    <option value="descuento_automatico">Descuento automático</option>
+                </select>
                 <select id="fil-alterados" onchange="cargar(1)">
                     <option value="">Resultados alterados: Todos</option>
                     <option value="si">Resultados alterados: Sí</option>
@@ -103,6 +114,7 @@
                                 <th rowspan="2">Jurado(s)</th>
                                 <th rowspan="2">Delegado Rentado</th>
                                 <th rowspan="2">Estado Eval.</th>
+                                <th rowspan="2">Modo Eval.</th>
                                 <th rowspan="2">Nota Final</th>
                                 <th rowspan="2" style="min-width:130px;">Puntaje Oficial</th>
                                 <th rowspan="2" style="min-width:130px;">Puntaje Revisado</th>
@@ -126,7 +138,7 @@
                             </tr>
                         </thead>
                         <tbody id="tbody-reporte">
-                            <tr><td colspan="25" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                            <tr><td colspan="26" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -149,7 +161,7 @@ let _timer = null;
 function debounceCargar() { clearTimeout(_timer); _timer = setTimeout(() => cargar(1), 350); }
 
 function limpiarFiltros() {
-    ['fil-buscar','fil-estado-eval','fil-alterados'].forEach(id => document.getElementById(id).value = '');
+    ['fil-buscar','fil-estado-eval','fil-alterados','fil-modo-flujo'].forEach(id => document.getElementById(id).value = '');
     ['fil-fecha-desde','fil-fecha-hasta'].forEach(id => document.getElementById(id).value = '');
     cargar(1);
 }
@@ -161,6 +173,7 @@ function buildParams(page) {
     if (v('fil-fecha-desde'))  p.set('fecha_desde', v('fil-fecha-desde'));
     if (v('fil-fecha-hasta'))  p.set('fecha_hasta', v('fil-fecha-hasta'));
     if (v('fil-estado-eval'))  p.set('estado_evaluacion', v('fil-estado-eval'));
+    if (v('fil-modo-flujo'))   p.set('modo_flujo', v('fil-modo-flujo'));
     if (v('fil-alterados'))    p.set('resultados_alterados', v('fil-alterados'));
     p.set('page', page);
     p.set('limit', 50);
@@ -184,10 +197,39 @@ async function verPdfCartilla(cartillaId) {
     } catch(e) { mostrarToast(e.message || 'Error al obtener PDF', 'error'); }
 }
 
+// Renderiza celda de ciclo con info contextual
+function renderCicloCell(f, num) {
+    const total    = f[`c${num}_total`]             || 0;
+    const desc     = f[`c${num}_desc`]              || 0;
+    const rev      = f[`c${num}_revertidos`]        || 0;
+    const pend     = f[`c${num}_pendiente_comision`] || 0;
+    const sinCasos = f[`c${num}_sin_casos`]         || false;
+
+    if (sinCasos) {
+        return '<span class="ciclo-cell-sin-casos">Sin casos<br>0 desc.</span>';
+    }
+    if (total === 0) {
+        return '<span style="color:var(--gris);font-size:11px;">—</span>';
+    }
+
+    const partes = [`<strong>${total}</strong> caso${total !== 1 ? 's' : ''}`];
+    if (pend > 0) {
+        partes.push(`<span class="ciclo-cell-pendiente">⏳ Pend. Comisión</span>`);
+    } else {
+        if (rev > 0) partes.push(`<span class="ciclo-cell-revertido">${rev} rev.</span>`);
+        partes.push(`<span style="color:var(--oscuro);font-size:11px;">${desc > 0 ? '-' + desc + ' desc.' : '0 desc.'}</span>`);
+    }
+    return `<div class="ciclo-cell">${partes.join('<br>')}</div>`;
+}
+
 function renderFila(f) {
     const estadoBadge = f.estado_evaluacion
         ? `<span class="badge-eval-estado badge-${f.estado_evaluacion}">${ESTADO_EVAL_LABEL[f.estado_evaluacion] || f.estado_evaluacion}</span>`
         : '<span class="badge-no-eval">Sin eval.</span>';
+
+    const modoBadge = f.modo_flujo === 'descuento_automatico'
+        ? '<span class="badge-modo-da">Desc. Auto.</span>'
+        : '<span class="badge-modo-leg">Apelación</span>';
 
     const altBadge = f.resultados_alterados
         ? '<span class="badge-alt">⚠ Sí</span>'
@@ -201,6 +243,14 @@ function renderFila(f) {
         : f.estado_cartilla === 'enviada'
             ? '<span style="color:#148f77;font-weight:600;font-size:11px;">Enviada</span>'
             : `<span style="color:var(--gris);font-size:11px;">${CARTILLA_LABEL[f.estado_cartilla] || f.estado_cartilla}</span>`;
+
+    // Total Desc. con indicador de pendientes
+    let totalDescCell;
+    if (f.pendiente_comision_total > 0) {
+        totalDescCell = `<strong>${f.total_desc}</strong> <span style="color:#8e44ad;font-size:10px;font-weight:600;">+${f.pendiente_comision_total} pend.</span>`;
+    } else {
+        totalDescCell = `<strong>${f.total_desc}</strong>`;
+    }
 
     const OBS_STYLE = 'white-space:normal;word-break:break-word;vertical-align:top;font-size:11px;max-width:180px;';
     function fmtObs(v) { return v ? sanitizar(v) : '<span style="color:var(--gris);">—</span>'; }
@@ -224,13 +274,14 @@ function renderFila(f) {
         <td style="max-width:160px;font-size:11px;">${sanitizar(f.jurados || '—')}</td>
         <td style="max-width:140px;font-size:11px;">${sanitizar(f.delegados || '—')}</td>
         <td>${estadoBadge}</td>
+        <td>${modoBadge}</td>
         <td class="num-col">${fmtNum(f.nota_final)}</td>
         <td style="font-size:11px;white-space:nowrap;">${ofi}</td>
         <td style="font-size:11px;white-space:nowrap;">${rev}</td>
         <td style="text-align:center;">${altBadge}</td>
-        <td class="num-col" style="font-size:11px;">${f.c1_total} / ${f.c1_desc} desc.</td>
-        <td class="num-col" style="font-size:11px;">${f.c2_total} / ${f.c2_desc} desc.</td>
-        <td class="num-col"><strong>${f.total_desc}</strong></td>
+        <td class="num-col">${renderCicloCell(f, 1)}</td>
+        <td class="num-col">${renderCicloCell(f, 2)}</td>
+        <td class="num-col">${totalDescCell}</td>
         <td class="num-col">${f.interpretativas}</td>
         <td class="num-col">${f.reglamentarias}</td>
         <td class="num-col">${f.informativos}</td>
@@ -246,7 +297,7 @@ function renderFila(f) {
 
 async function cargar(page) {
     const tbody = document.getElementById('tbody-reporte');
-    tbody.innerHTML = '<tr><td colspan="25" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="26" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
     document.getElementById('lbl-total').textContent = 'Cargando...';
     try {
         const res = await api.get('/admin/reporte-deportivo?' + buildParams(page).toString());
@@ -254,13 +305,13 @@ async function cargar(page) {
         const total = res.total || 0;
         document.getElementById('lbl-total').textContent = `${total} rodeo(s) encontrado(s)`;
         if (filas.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="25" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="26" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
         } else {
             tbody.innerHTML = filas.map(renderFila).join('');
         }
         renderPaginacion(page, total, 50);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="25"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="26"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
         document.getElementById('lbl-total').textContent = '';
     }
 }
