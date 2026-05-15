@@ -210,6 +210,7 @@ document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre |
 // Rol del usuario actual
 const _rolEvalRodeos = api.getUsuario()?.rol_evaluacion || null;
 const esMonitor        = _rolEvalRodeos === 'monitor';
+const esDirector       = _rolEvalRodeos === 'director';
 const esAnalistaRodeos = _rolEvalRodeos === 'analista';
 const esComisionRodeos = _rolEvalRodeos === 'comision_tecnica';
 
@@ -543,6 +544,24 @@ function htmlDetalle(r) {
         </div>`}
         <button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarDatosMonitor('${r.id}')">Guardar datos del monitor</button>`;
     })()}
+    ${(() => {
+        const ns = r.notas_secundarias || {};
+        const fv = (v) => (v !== null && v !== undefined) ? String(v) : '';
+        const puedeEditar = !esAnalistaRodeos && !esComisionRodeos;
+        return `<div class="divider"></div>
+        <div class="card-titulo">Notas secundarias</div>
+        <div class="form-fila" style="margin-bottom:12px;">
+            <div class="form-grupo">
+                <label class="form-label">Nota Comisión <span style="color:var(--gris);font-weight:400;">(1.0 – 7.0)</span></label>
+                <input type="number" id="ns-comision" class="form-control" value="${sanitizar(fv(ns.nota_comision))}" step="0.1" min="1" max="7" placeholder="—"${puedeEditar ? '' : ' disabled'}>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Nota Delegado <span style="color:var(--gris);font-weight:400;">(1.0 – 7.0)</span></label>
+                <input type="number" id="ns-delegado" class="form-control" value="${sanitizar(fv(ns.nota_delegado))}" step="0.1" min="1" max="7" placeholder="—"${puedeEditar ? '' : ' disabled'}>
+            </div>
+        </div>
+        ${puedeEditar ? `<button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarNotasSecundarias('${r.id}')">Guardar notas secundarias</button>` : ''}`;
+    })()}
     <div class="form-acciones">
         ${(esMonitor || esComisionRodeos) ? '' : `<button class="btn btn-primario" onclick="abrirAsignarPersona('${r.id}')">+ Asignar persona</button>`}
         ${(esMonitor || esComisionRodeos) ? '' : `<button class="btn btn-outline" onclick="abrirDesignarJurado('${r.id}')">🔍 Designar jurado</button>`}
@@ -634,6 +653,24 @@ async function guardarDatosMonitor(rodeoId) {
         if (obsEl !== null) promises.push(api.patch(`/admin/rodeos/${rodeoId}`, { observacion: obsEl.value.trim() || null }));
         await Promise.all(promises);
         mostrarToast('Datos del monitor guardados', 'success');
+    } catch (e) {
+        mostrarError(e);
+    }
+}
+
+async function guardarNotasSecundarias(rodeoId) {
+    const getNum = (id) => { const v = document.getElementById(id)?.value.trim(); if (!v) return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const nota_comision = getNum('ns-comision');
+    const nota_delegado = getNum('ns-delegado');
+    if (nota_comision !== null && (nota_comision < 1 || nota_comision > 7)) {
+        return mostrarError({ message: 'Nota Comisión debe estar entre 1.0 y 7.0' });
+    }
+    if (nota_delegado !== null && (nota_delegado < 1 || nota_delegado > 7)) {
+        return mostrarError({ message: 'Nota Delegado debe estar entre 1.0 y 7.0' });
+    }
+    try {
+        await api.put(`/admin/rodeos/${rodeoId}/notas-secundarias`, { nota_comision, nota_delegado });
+        mostrarToast('Notas secundarias guardadas', 'success');
     } catch (e) {
         mostrarError(e);
     }

@@ -264,7 +264,7 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
         }
     }
 
-    const [{ data: asignaciones }, { data: evaluacion }, { data: datosMonitor }] = await Promise.all([
+    const [{ data: asignaciones }, { data: evaluacion }, { data: datosMonitor }, { data: notasSecundarias }] = await Promise.all([
         supabase
             .from('asignaciones')
             .select(`
@@ -285,10 +285,15 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             .from('datos_monitor_rodeo')
             .select('puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor, updated_at')
             .eq('rodeo_id', req.params.id)
+            .maybeSingle(),
+        supabase
+            .from('rodeo_notas_secundarias')
+            .select('nota_comision, nota_delegado, actualizado_por, actualizado_en')
+            .eq('rodeo_id', req.params.id)
             .maybeSingle()
     ]);
 
-    res.json({ ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null, datos_monitor: datosMonitor || null });
+    res.json({ ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null, datos_monitor: datosMonitor || null, notas_secundarias: notasSecundarias || null });
 });
 
 // PUT /api/admin/rodeos/:id/datos-monitor — upsert datos del monitor por rodeo_id
@@ -321,6 +326,84 @@ router.put('/:id/datos-monitor', async (req, res) => {
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
+// GET /api/admin/rodeos/:id/notas-secundarias
+router.get('/:id/notas-secundarias', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
+    const { data, error } = await supabase
+        .from('rodeo_notas_secundarias')
+        .select('nota_comision, nota_delegado, actualizado_por, actualizado_en')
+        .eq('rodeo_id', req.params.id)
+        .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || null);
+});
+
+// PUT /api/admin/rodeos/:id/notas-secundarias
+// Accesible para Admin pleno, Monitor y Director (Jefe Deportivo)
+router.put('/:id/notas-secundarias', async (req, res) => {
+    const rolEval    = req.usuario.rol_evaluacion || null;
+    const esAdminPleno = !rolEval;
+    const esMonitor    = rolEval === 'monitor';
+    const esDirector   = rolEval === 'director';
+
+    if (!esAdminPleno && !esMonitor && !esDirector) {
+        return res.status(403).json({ error: 'Solo Admin, Monitor o Jefe Deportivo pueden guardar notas secundarias' });
+    }
+
+    const toNota = (v) => {
+        if (v === null || v === '' || v === undefined) return null;
+        const n = parseFloat(v);
+        if (isNaN(n)) return null;
+        if (n < 1.0 || n > 7.0) throw new Error(`Nota fuera de rango (1.0–7.0): ${n}`);
+        return Math.round(n * 10) / 10;
+    };
+
+    let nota_comision, nota_delegado;
+    try {
+        nota_comision = toNota(req.body.nota_comision);
+        nota_delegado = toNota(req.body.nota_delegado);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
+    const { data: anterior } = await supabase
+        .from('rodeo_notas_secundarias')
+        .select('nota_comision, nota_delegado')
+        .eq('rodeo_id', req.params.id)
+        .maybeSingle();
+
+    const payload = {
+        rodeo_id:        req.params.id,
+        nota_comision,
+        nota_delegado,
+        actualizado_por: String(req.usuario.id),
+        actualizado_en:  new Date().toISOString(),
+        updated_at:      new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+        .from('rodeo_notas_secundarias')
+        .upsert(payload, { onConflict: 'rodeo_id' })
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'rodeo_notas_secundarias',
+        registro_id: req.params.id,
+        accion: anterior ? 'editar' : 'crear',
+        datos_anteriores: anterior || null,
+        datos_nuevos: { nota_comision, nota_delegado },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Notas secundarias rodeo ${req.params.id}: comisión=${nota_comision}, delegado=${nota_delegado}`,
+        ip_address: req.ip
+    });
+
     res.json(data);
 });
 
