@@ -539,6 +539,34 @@
     </div>
 </div>
 
+<!-- MODAL: Guardar en Banco de Situaciones -->
+<div class="modal-overlay oculto" id="modal-banco-situacion">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">⭐ Guardar en Banco de Situaciones</h3>
+            <button class="modal-cerrar" onclick="cerrarModalBanco()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:var(--gris);margin-bottom:12px;">
+                Situación N° <strong id="banco-caso-num"></strong>
+            </p>
+            <div class="form-grupo">
+                <label class="form-label">Comentario <span style="color:var(--rojo)">*</span></label>
+                <textarea id="banco-comentario" class="form-control" rows="4" maxlength="500"
+                    placeholder="Ej: Buen ejemplo para explicar una falta reglamentaria. Caso útil para capacitación de apreciación."></textarea>
+                <div class="form-hint" style="display:flex;justify-content:space-between;">
+                    <span>¿Por qué guardas esta situación como ejemplo?</span>
+                    <span id="banco-char-count" style="color:var(--gris);">0/500</span>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalBanco()">Cancelar</button>
+            <button class="btn btn-primario" id="btn-banco-guardar" onclick="guardarEnBanco()">⭐ Guardar en Banco</button>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
@@ -1106,6 +1134,7 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
     if (puedeVerRespuestas) {
         accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="verRespuestas('${caso.id}', ${caso.numero_caso})">Respuestas</button>`);
     }
+    accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="border-color:#d4ac0d;color:#d4ac0d;" onclick="abrirModalBanco('${caso.id}', ${caso.numero_caso})" title="Guardar en Banco de Situaciones">⭐</button>`);
 
     return `<tr>
         <td>${caso.numero_caso}</td>
@@ -1851,6 +1880,46 @@ async function guardarAnalisisDeportivo() {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al guardar', 'error');
+    }
+}
+
+// ── Banco de Situaciones ─────────────────────────────────────────
+let _bancoCasoId = null;
+
+function abrirModalBanco(casoId, numeroCaso) {
+    _bancoCasoId = casoId;
+    document.getElementById('banco-caso-num').textContent = numeroCaso;
+    document.getElementById('banco-comentario').value = '';
+    document.getElementById('banco-char-count').textContent = '0/500';
+    document.getElementById('btn-banco-guardar').disabled = false;
+    const ta = document.getElementById('banco-comentario');
+    ta.oninput = () => {
+        document.getElementById('banco-char-count').textContent = ta.value.length + '/500';
+    };
+    document.getElementById('modal-banco-situacion').classList.remove('oculto');
+}
+
+function cerrarModalBanco() {
+    _bancoCasoId = null;
+    document.getElementById('modal-banco-situacion').classList.add('oculto');
+}
+
+async function guardarEnBanco() {
+    if (!_bancoCasoId) return;
+    const comentario = document.getElementById('banco-comentario').value.trim();
+    if (!comentario) {
+        mostrarToast('El comentario es obligatorio', 'error');
+        return;
+    }
+    const btn = document.getElementById('btn-banco-guardar');
+    btn.disabled = true;
+    try {
+        await api.post(`/admin/casos/${_bancoCasoId}/guardar-en-banco`, { comentario_banco: comentario });
+        mostrarToast('Situación guardada en el Banco de Situaciones ⭐', 'exito');
+        cerrarModalBanco();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al guardar en banco', 'error');
+        btn.disabled = false;
     }
 }
 

@@ -192,6 +192,61 @@ router.delete('/:id', async (req, res) => {
     res.json({ mensaje: 'Caso eliminado' });
 });
 
+// POST /:id/guardar-en-banco — guardar caso en Banco de Situaciones
+router.post('/:id/guardar-en-banco', async (req, res) => {
+    const { comentario_banco } = req.body;
+    if (!comentario_banco || !comentario_banco.trim()) {
+        return res.status(400).json({ error: 'El comentario es obligatorio para guardar en el Banco de Situaciones' });
+    }
+    if (comentario_banco.trim().length > 500) {
+        return res.status(400).json({ error: 'El comentario no puede superar 500 caracteres' });
+    }
+
+    const { data: caso, error: casoErr } = await supabase
+        .from('evaluacion_casos')
+        .select('id, evaluacion_id, ciclo_id, tipo_caso, descripcion, video_url, estado, resolucion_final')
+        .eq('id', req.params.id)
+        .single();
+
+    if (casoErr || !caso) return res.status(404).json({ error: 'Caso no encontrado' });
+
+    const { data: ciclo } = await supabase
+        .from('evaluacion_ciclos')
+        .select('numero_ciclo')
+        .eq('id', caso.ciclo_id)
+        .single();
+
+    const { data: existente } = await supabase
+        .from('evaluacion_banco_situaciones')
+        .select('id')
+        .eq('caso_id', req.params.id)
+        .maybeSingle();
+
+    if (existente) {
+        return res.status(409).json({ error: 'Esta situación ya existe en el Banco de Situaciones.' });
+    }
+
+    const { data, error } = await supabase
+        .from('evaluacion_banco_situaciones')
+        .insert({
+            caso_id:          req.params.id,
+            evaluacion_id:    caso.evaluacion_id,
+            ciclo_numero:     ciclo?.numero_ciclo ?? null,
+            tipo_caso:        caso.tipo_caso,
+            descripcion_caso: caso.descripcion    ?? null,
+            video_url:        caso.video_url      ?? null,
+            estado_caso:      caso.estado,
+            resolucion_final: caso.resolucion_final ?? null,
+            comentario_banco: comentario_banco.trim(),
+            guardado_por:     req.usuario.id
+        })
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, banco: data });
+});
+
 // POST /:id/decision-analista
 router.post('/:id/decision-analista', async (req, res) => {
     const { decision, comentario_analista } = req.body;

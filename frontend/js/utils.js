@@ -130,7 +130,8 @@ const _PAGINAS_DIRECTOR = [
     '/admin/evaluaciones.html',
     '/admin/evaluacion-detalle.html',
     '/admin/evaluacion-dashboard.html',
-    '/admin/evaluacion-reportes.html'
+    '/admin/evaluacion-reportes.html',
+    '/admin/evaluacion-banco-situaciones.html'
 ];
 // Páginas bloqueadas para roles de evaluación (analista/jefe/comision)
 const _PAGINAS_BLOQUEADAS_EVAL = [

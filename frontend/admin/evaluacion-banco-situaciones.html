@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banco de Situaciones — Evaluación Técnica</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .filtros-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .filtros-acciones { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+        .badge-tipo-interpretativa { background: #d6eaf8; color: #1a5276; }
+        .badge-tipo-reglamentaria  { background: #fadbd8; color: #922b21; }
+        .badge-tipo-informativo    { background: #d5f5e3; color: #1e8449; }
+        .badge-tipo { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-activo   { background: #d5f5e3; color: #1e8449; }
+        .badge-inactivo { background: #f0f0f0; color: #888; }
+        .col-desc { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+        .col-com  { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+        table td { vertical-align: middle; }
+        .tabla-wrap { overflow-x: auto; }
+        .empty-state { text-align: center; color: var(--gris); padding: 40px 20px; font-size: 14px; }
+
+        /* Modal detalle */
+        .detalle-fila { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+        .detalle-label { font-size: 11px; color: var(--gris); font-weight: 600; text-transform: uppercase; margin-bottom: 2px; }
+        .detalle-val   { font-size: 13px; }
+        .detalle-bloque { flex: 1; min-width: 160px; }
+        .detalle-bloque-full { width: 100%; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav" data-active="/admin/evaluacion-banco-situaciones.html"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>⭐ Banco de Situaciones</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- Filtros -->
+            <div class="card">
+                <div class="card-titulo">Filtros</div>
+                <div class="filtros-grid">
+                    <div>
+                        <label class="form-label">Búsqueda libre</label>
+                        <input type="text" id="f-buscar" class="form-control" placeholder="Club, asociación, descripción…" oninput="buscarDebounce()">
+                    </div>
+                    <div>
+                        <label class="form-label">Tipo de caso</label>
+                        <select id="f-tipo" class="form-control" onchange="buscar()">
+                            <option value="">Todos</option>
+                            <option value="interpretativa">Apreciación</option>
+                            <option value="reglamentaria">Reglamentaria</option>
+                            <option value="informativo">Conceptual</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Asociación</label>
+                        <input type="text" id="f-asociacion" class="form-control" placeholder="Nombre asociación" oninput="buscarDebounce()">
+                    </div>
+                    <div>
+                        <label class="form-label">Club</label>
+                        <input type="text" id="f-club" class="form-control" placeholder="Nombre club" oninput="buscarDebounce()">
+                    </div>
+                    <div>
+                        <label class="form-label">Guardado desde</label>
+                        <input type="date" id="f-desde" class="form-control" onchange="buscar()">
+                    </div>
+                    <div>
+                        <label class="form-label">Guardado hasta</label>
+                        <input type="date" id="f-hasta" class="form-control" onchange="buscar()">
+                    </div>
+                    <div>
+                        <label class="form-label">Estado</label>
+                        <select id="f-activo" class="form-control" onchange="buscar()">
+                            <option value="">Todos</option>
+                            <option value="true" selected>Activos</option>
+                            <option value="false">Inactivos</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="filtros-acciones">
+                    <button class="btn btn-primario btn-pequeño" onclick="buscar()">Buscar</button>
+                    <button class="btn btn-outline btn-pequeño"  onclick="limpiarFiltros()">Limpiar filtros</button>
+                    <button class="btn btn-outline btn-pequeño"  onclick="exportarCSV()" style="border-color:#27ae60;color:#27ae60;">⬇ Exportar Excel/CSV</button>
+                    <span id="total-badge" style="font-size:12px;color:var(--gris);margin-left:4px;"></span>
+                </div>
+            </div>
+
+            <!-- Tabla -->
+            <div class="card">
+                <div id="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Detalle situación -->
+<div class="modal-overlay oculto" id="modal-detalle">
+    <div class="modal" style="max-width:680px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="det-titulo">Detalle situación</h3>
+            <button class="modal-cerrar" onclick="cerrarDetalle()">✕</button>
+        </div>
+        <div class="modal-body" id="det-body"></div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarDetalle()">Cerrar</button>
+            <button class="btn btn-peligro btn-pequeño" id="btn-det-desactivar" onclick="toggleActivo()"></button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+if (!protegerRuta('administrador')) throw new Error('no auth');
+
+const u = api.getUsuario();
+if (u) document.getElementById('nombre-admin').textContent = u.nombre || u.email || '';
+
+const TIPO_LABELS = {
+    interpretativa: 'Apreciación',
+    reglamentaria:  'Reglamentaria',
+    informativo:    'Conceptual'
+};
+
+let _datos = [];
+let _detalleActual = null;
+let _debTimer = null;
+
+function buscarDebounce() {
+    clearTimeout(_debTimer);
+    _debTimer = setTimeout(buscar, 350);
+}
+
+function _params() {
+    const p = {};
+    const tipo    = document.getElementById('f-tipo').value;
+    const buscar  = document.getElementById('f-buscar').value.trim();
+    const asoc    = document.getElementById('f-asociacion').value.trim();
+    const club    = document.getElementById('f-club').value.trim();
+    const desde   = document.getElementById('f-desde').value;
+    const hasta   = document.getElementById('f-hasta').value;
+    const activo  = document.getElementById('f-activo').value;
+    if (tipo)   p.tipo_caso  = tipo;
+    if (buscar) p.buscar     = buscar;
+    if (asoc)   p.asociacion = asoc;
+    if (club)   p.club       = club;
+    if (desde)  p.desde      = desde;
+    if (hasta)  p.hasta      = hasta;
+    if (activo !== '') p.activo = activo;
+    return p;
+}
+
+async function buscar() {
+    const wrap = document.getElementById('tabla-wrap');
+    wrap.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const qs = toQueryString(_params());
+        _datos = await api.get('/admin/evaluacion-banco-situaciones' + (qs ? '?' + qs : ''));
+        renderTabla(_datos);
+    } catch (e) {
+        wrap.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
+    }
+}
+
+function limpiarFiltros() {
+    document.getElementById('f-buscar').value    = '';
+    document.getElementById('f-tipo').value      = '';
+    document.getElementById('f-asociacion').value = '';
+    document.getElementById('f-club').value      = '';
+    document.getElementById('f-desde').value     = '';
+    document.getElementById('f-hasta').value     = '';
+    document.getElementById('f-activo').value    = 'true';
+    buscar();
+}
+
+function renderTabla(data) {
+    document.getElementById('total-badge').textContent = data.length + ' resultado(s)';
+    const wrap = document.getElementById('tabla-wrap');
+    if (!data.length) {
+        wrap.innerHTML = '<div class="empty-state">No se encontraron situaciones guardadas.</div>';
+        return;
+    }
+    const filas = data.map(r => {
+        const rodeo   = r.evaluacion?.rodeo;
+        const tipoLabel = TIPO_LABELS[r.tipo_caso] || r.tipo_caso || '—';
+        const tipoClase = r.tipo_caso || 'informativo';
+        const desc    = sanitizar(r.descripcion_caso || '—');
+        const com     = sanitizar(r.comentario_banco || '—');
+        const video   = r.video_url
+            ? `<a href="${sanitizar(r.video_url)}" target="_blank" rel="noopener" class="btn btn-pequeño btn-secundario" style="font-size:11px;">▶ Ver</a>`
+            : '<span style="color:var(--gris);font-size:11px;">Sin video</span>';
+        const estadoBadge = r.activo
+            ? '<span class="badge badge-activo" style="font-size:11px;">Activo</span>'
+            : '<span class="badge badge-inactivo" style="font-size:11px;">Inactivo</span>';
+        const fechaGuardado = r.created_at ? fmtFechaChile(r.created_at).split(' ')[0] : '—';
+        const fechaRodeo    = rodeo?.fecha || '—';
+        return `<tr>
+            <td style="font-size:12px;white-space:nowrap;">${fechaGuardado}</td>
+            <td style="font-size:12px;">${sanitizar(rodeo?.club || '—')}</td>
+            <td style="font-size:12px;">${sanitizar(rodeo?.asociacion || '—')}</td>
+            <td style="font-size:12px;white-space:nowrap;">${fechaRodeo}</td>
+            <td><span class="badge-tipo badge-tipo-${tipoClase}">${tipoLabel}</span></td>
+            <td class="col-desc" title="${desc}">${desc}</td>
+            <td class="col-com"  title="${com}">${com}</td>
+            <td style="text-align:center;">${video}</td>
+            <td style="font-size:12px;">${sanitizar(r.guardado_por_admin?.nombre_completo || '—')}</td>
+            <td>${estadoBadge}</td>
+            <td>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver detalle</button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    wrap.innerHTML = `<div class="tabla-wrap"><table>
+        <thead><tr>
+            <th>Guardado</th><th>Club</th><th>Asociación</th><th>Fecha Rodeo</th>
+            <th>Tipo</th><th>Descripción</th><th>Comentario</th>
+            <th>Video</th><th>Guardado por</th><th>Estado</th><th>Acciones</th>
+        </tr></thead>
+        <tbody>${filas}</tbody>
+    </table></div>`;
+}
+
+function verDetalle(id) {
+    const r = _datos.find(x => x.id === id);
+    if (!r) return;
+    _detalleActual = r;
+    const rodeo     = r.evaluacion?.rodeo;
+    const tipoLabel = TIPO_LABELS[r.tipo_caso] || r.tipo_caso || '—';
+    const videoHtml = r.video_url
+        ? `<a href="${sanitizar(r.video_url)}" target="_blank" rel="noopener" style="color:var(--azul);">${sanitizar(r.video_url)}</a>`
+        : '<span style="color:var(--gris);">Sin video</span>';
+
+    document.getElementById('det-titulo').textContent = 'Situación guardada';
+    document.getElementById('det-body').innerHTML = `
+        <div class="detalle-fila">
+            <div class="detalle-bloque">
+                <div class="detalle-label">Club</div>
+                <div class="detalle-val">${sanitizar(rodeo?.club || '—')}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Asociación</div>
+                <div class="detalle-val">${sanitizar(rodeo?.asociacion || '—')}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Fecha rodeo</div>
+                <div class="detalle-val">${rodeo?.fecha || '—'}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Tipo rodeo</div>
+                <div class="detalle-val">${sanitizar(rodeo?.tipo_rodeo_nombre || '—')}</div>
+            </div>
+        </div>
+        <div class="detalle-fila">
+            <div class="detalle-bloque">
+                <div class="detalle-label">Tipo de caso</div>
+                <div class="detalle-val"><span class="badge-tipo badge-tipo-${r.tipo_caso || 'informativo'}">${tipoLabel}</span></div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Ciclo</div>
+                <div class="detalle-val">${r.ciclo_numero ? 'Ciclo ' + r.ciclo_numero : '—'}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Estado del caso</div>
+                <div class="detalle-val">${sanitizar(r.estado_caso || '—')}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Resolución final</div>
+                <div class="detalle-val">${sanitizar(r.resolucion_final || '—')}</div>
+            </div>
+        </div>
+        <div class="detalle-fila">
+            <div class="detalle-bloque-full">
+                <div class="detalle-label">Descripción del caso</div>
+                <div class="detalle-val" style="white-space:pre-wrap;background:#f9f9f9;padding:8px;border-radius:6px;font-size:13px;">${sanitizar(r.descripcion_caso || '—')}</div>
+            </div>
+        </div>
+        <div class="detalle-fila">
+            <div class="detalle-bloque-full">
+                <div class="detalle-label">Comentario del banco</div>
+                <div class="detalle-val" style="white-space:pre-wrap;background:#fffde7;padding:8px;border-radius:6px;font-size:13px;">${sanitizar(r.comentario_banco)}</div>
+            </div>
+        </div>
+        <div class="detalle-fila">
+            <div class="detalle-bloque-full">
+                <div class="detalle-label">Link del video</div>
+                <div class="detalle-val" style="font-size:13px;word-break:break-all;">${videoHtml}</div>
+            </div>
+        </div>
+        <div class="detalle-fila">
+            <div class="detalle-bloque">
+                <div class="detalle-label">Guardado por</div>
+                <div class="detalle-val">${sanitizar(r.guardado_por_admin?.nombre_completo || '—')}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-label">Fecha guardado</div>
+                <div class="detalle-val">${r.created_at ? fmtFechaChile(r.created_at) : '—'}</div>
+            </div>
+        </div>`;
+
+    const btnDesact = document.getElementById('btn-det-desactivar');
+    btnDesact.textContent = r.activo ? 'Desactivar del banco' : 'Reactivar en banco';
+    btnDesact.className   = r.activo ? 'btn btn-peligro btn-pequeño' : 'btn btn-outline btn-pequeño';
+
+    document.getElementById('modal-detalle').classList.remove('oculto');
+}
+
+function cerrarDetalle() {
+    _detalleActual = null;
+    document.getElementById('modal-detalle').classList.add('oculto');
+}
+
+async function toggleActivo() {
+    if (!_detalleActual) return;
+    const nuevoActivo = !_detalleActual.activo;
+    const ok = await confirmar(nuevoActivo
+        ? '¿Reactivar esta situación en el Banco de Situaciones?'
+        : '¿Desactivar esta situación del Banco de Situaciones?');
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/evaluacion-banco-situaciones/${_detalleActual.id}`, { activo: nuevoActivo });
+        mostrarToast(nuevoActivo ? 'Situación reactivada' : 'Situación desactivada', 'exito');
+        cerrarDetalle();
+        buscar();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al actualizar', 'error');
+    }
+}
+
+async function exportarCSV() {
+    const qs = toQueryString(_params());
+    const endpoint = '/admin/evaluacion-banco-situaciones/exportar' + (qs ? '?' + qs : '');
+    try {
+        await api.descargar(endpoint, 'banco-situaciones.csv');
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    }
+}
+
+// buscar al cargar
+buscar();
+</script>
+</body>
+</html>

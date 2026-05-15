@@ -39,6 +39,7 @@ router.use('/cartillas-jurado', require('./cartillas-jurado'));
 router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/hojavida', require('./hojavida'));
 router.use('/evaluaciones', require('./evaluaciones'));
+router.use('/evaluacion-banco-situaciones', require('./evaluacion-banco-situaciones'));
 router.use('/ciclos', require('./ciclos'));
 router.use('/casos', require('./casos'));
 router.use('/respuestas-jurado', require('./respuestas-jurado'));
