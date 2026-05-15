@@ -282,6 +282,116 @@ router.post('/:id/reabrir', async (req, res) => {
     res.json({ ...cicloAct, mensaje: 'Ciclo reabierto correctamente' });
 });
 
+// POST /:id/abrir-sin-casos — abrir ciclo sin casos (solo modo descuento_automatico)
+router.post('/:id/abrir-sin-casos', async (req, res) => {
+    const { comentario_sin_casos } = req.body;
+
+    if (!comentario_sin_casos || !comentario_sin_casos.trim()) {
+        return res.status(400).json({ error: 'comentario_sin_casos es obligatorio' });
+    }
+    if (comentario_sin_casos.trim().length > 500) {
+        return res.status(400).json({ error: 'El comentario no puede superar 500 caracteres' });
+    }
+
+    const { data: ciclo, error: cicloErr } = await supabase
+        .from('evaluacion_ciclos')
+        .select('*, evaluacion:evaluaciones(id, estado, rodeo_id, modo_flujo, rodeo:rodeos(id, club, fecha, asociacion))')
+        .eq('id', req.params.id)
+        .single();
+
+    if (cicloErr) return res.status(404).json({ error: 'Ciclo no encontrado' });
+
+    if (ciclo.evaluacion?.modo_flujo !== 'descuento_automatico') {
+        return res.status(409).json({ error: 'Esta función solo está disponible en evaluaciones con modo Descuento Automático' });
+    }
+
+    if (ciclo.estado !== 'pendiente_carga') {
+        return res.status(409).json({ error: `Solo se puede abrir sin casos desde estado pendiente_carga (actual: ${ciclo.estado})` });
+    }
+
+    const { count } = await supabase
+        .from('evaluacion_casos')
+        .select('id', { count: 'exact', head: true })
+        .eq('ciclo_id', req.params.id);
+
+    if ((count || 0) > 0) {
+        return res.status(409).json({ error: 'El ciclo ya tiene casos cargados; use el flujo normal de apertura' });
+    }
+
+    const now = new Date().toISOString();
+
+    const { data: cfg } = await supabase
+        .from('evaluacion_configuracion')
+        .select('usar_plazo_respuesta, ciclo1_dia_limite, ciclo1_hora_limite, ciclo2_dia_limite, ciclo2_hora_limite, usar_aceptacion_silencio')
+        .eq('activo', true)
+        .single();
+
+    let fechaLimite = null;
+    if (cfg?.usar_plazo_respuesta) {
+        const diaKey  = ciclo.numero_ciclo === 1 ? cfg.ciclo1_dia_limite  : cfg.ciclo2_dia_limite;
+        const horaKey = ciclo.numero_ciclo === 1 ? cfg.ciclo1_hora_limite : cfg.ciclo2_hora_limite;
+        fechaLimite = calcFechaLimite(now, diaKey, horaKey);
+    }
+
+    const { data: cicloAct, error: updErr } = await supabase
+        .from('evaluacion_ciclos')
+        .update({
+            estado:                 'abierto',
+            es_ciclo_sin_casos:     true,
+            comentario_sin_casos:   comentario_sin_casos.trim(),
+            abierto_sin_casos_por:  req.usuario.id,
+            abierto_sin_casos_en:   now,
+            fecha_apertura:         now,
+            abierto_por:            req.usuario.id,
+            fecha_limite_respuesta: fechaLimite,
+            updated_at:             now
+        })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    const ev = ciclo.evaluacion;
+    if (ev && ev.estado === 'borrador') {
+        await supabase
+            .from('evaluaciones')
+            .update({ estado: 'en_proceso', updated_at: now })
+            .eq('id', ev.id);
+    }
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: ciclo.evaluacion_id,
+        ciclo_id:      req.params.id,
+        accion:        'abrir_ciclo_sin_casos',
+        detalle:       { numero_ciclo: ciclo.numero_ciclo, comentario_sin_casos: comentario_sin_casos.trim() },
+        actor_id:      req.usuario.id,
+        actor_tipo:    'administrador',
+        actor_nombre:  req.usuario.nombre,
+        ip_address:    req.ip
+    });
+
+    try {
+        const jurados = await getJuradosConEmail(ev.rodeo_id);
+        if (jurados.length > 0) {
+            await emailService.notificarJuradosCicloAbierto({
+                ciclo:         { ...cicloAct, numero_ciclo: ciclo.numero_ciclo },
+                rodeo:         ev.rodeo,
+                jurados,
+                configuracion: cfg
+            });
+            await supabase
+                .from('evaluacion_ciclos')
+                .update({ notificacion_enviada_at: new Date().toISOString() })
+                .eq('id', req.params.id);
+        }
+    } catch (emailErr) {
+        console.warn('[ciclos/abrir-sin-casos] Error al enviar notificaciones:', emailErr.message);
+    }
+
+    res.json({ ...cicloAct, mensaje: 'Ciclo abierto sin casos' });
+});
+
 // POST /:id/habilitar-respuesta-jurado — solo admin pleno
 // Elimina sin_respuesta del ciclo, resetea casos a visible_jurado y reabre el ciclo
 router.post('/:id/habilitar-respuesta-jurado', soloRolEvaluacion(), async (req, res) => {
@@ -402,7 +512,7 @@ router.post('/:id/cerrar', async (req, res) => {
 
     const { data: ciclo, error: cicloErr } = await supabase
         .from('evaluacion_ciclos')
-        .select('*, evaluacion:evaluaciones(id, rodeo_id)')
+        .select('*, evaluacion:evaluaciones(id, rodeo_id, modo_flujo)')
         .eq('id', req.params.id)
         .single();
 
@@ -411,8 +521,110 @@ router.post('/:id/cerrar', async (req, res) => {
         return res.status(409).json({ error: `El ciclo debe estar abierto para cerrarlo (actual: ${ciclo.estado})` });
     }
 
-    const now = new Date().toISOString();
+    const now       = new Date().toISOString();
+    const modoFlujo = ciclo.evaluacion?.modo_flujo || 'apelacion_jurado';
 
+    // ── Modo descuento automático: resolver sin votación ─────────────────────
+    if (modoFlujo === 'descuento_automatico') {
+        // Bloquear si hay casos derivados a Comisión Técnica sin resolver
+        const { count: derivadosPendientes } = await supabase
+            .from('evaluacion_casos')
+            .select('id', { count: 'exact', head: true })
+            .eq('ciclo_id', req.params.id)
+            .eq('estado', 'derivado_comision');
+        if (derivadosPendientes > 0) {
+            return res.status(409).json({
+                error: 'No se puede cerrar el ciclo porque existen situaciones derivadas a Comisión Técnica pendientes de resolución.'
+            });
+        }
+
+        const { data: casosVisiblesDA } = await supabase
+            .from('evaluacion_casos')
+            .select('id, tipo_caso, descuento_puntos')
+            .eq('ciclo_id', req.params.id)
+            .eq('estado', 'visible_jurado');
+
+        for (const caso of (casosVisiblesDA || [])) {
+            let resolucion_final;
+            if (caso.descuento_puntos === 0 || caso.tipo_caso === 'informativo') {
+                resolucion_final = 'sin_descuento';
+            } else {
+                resolucion_final = caso.tipo_caso === 'interpretativa'
+                    ? 'interpretativa_confirmada'
+                    : 'reglamentaria_confirmada';
+            }
+            await supabase
+                .from('evaluacion_casos')
+                .update({ estado: 'resuelto', estado_consolidado: null, resolucion_final, updated_at: now })
+                .eq('id', caso.id);
+        }
+
+        // Generar registros de cierre para jurados que no comentaron (solo ciclos con casos)
+        if (!ciclo.es_ciclo_sin_casos) {
+            const { data: juradoAsigsDA } = await supabase
+                .from('asignaciones')
+                .select('id, usuarios_pagados!inner(tipo_persona)')
+                .eq('rodeo_id', ciclo.evaluacion.rodeo_id)
+                .eq('estado', 'activo')
+                .neq('estado_designacion', 'rechazado')
+                .eq('usuarios_pagados.tipo_persona', 'jurado');
+
+            const juradoIdsDA = (juradoAsigsDA || []).map(a => a.id);
+            if (juradoIdsDA.length > 0) {
+                const { data: comentExistentes } = await supabase
+                    .from('evaluacion_comentarios_jurado_ciclo')
+                    .select('asignacion_id')
+                    .eq('ciclo_id', req.params.id);
+
+                const yaComentaron  = new Set((comentExistentes || []).map(c => c.asignacion_id));
+                const sinComentario = juradoIdsDA.filter(id => !yaComentaron.has(id));
+
+                if (sinComentario.length > 0) {
+                    await supabase.from('evaluacion_comentarios_jurado_ciclo').insert(
+                        sinComentario.map(asignacion_id => ({
+                            evaluacion_id: ciclo.evaluacion_id,
+                            ciclo_id:      req.params.id,
+                            asignacion_id,
+                            comentario:    '(Sin comentario al cierre)',
+                            estado:        'generado_por_cierre',
+                            enviado_en:    now
+                        }))
+                    );
+                }
+            }
+        }
+
+        const { data: cicloActDA, error: updErrDA } = await supabase
+            .from('evaluacion_ciclos')
+            .update({
+                estado:        'cerrado',
+                fecha_cierre:  now,
+                cerrado_por:   req.usuario.id,
+                motivo_cierre: motivo_cierre || null,
+                updated_at:    now
+            })
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (updErrDA) return res.status(500).json({ error: updErrDA.message });
+
+        await supabase.from('evaluacion_auditoria').insert({
+            evaluacion_id: ciclo.evaluacion_id,
+            ciclo_id:      req.params.id,
+            accion:        'cerrar_ciclo_manual',
+            detalle:       { numero_ciclo: ciclo.numero_ciclo, motivo_cierre: motivo_cierre || null, modo_flujo: 'descuento_automatico' },
+            actor_id:      req.usuario.id,
+            actor_tipo:    'administrador',
+            actor_nombre:  req.usuario.nombre,
+            ip_address:    req.ip
+        });
+
+        await intentarAutoPublicar(ciclo.evaluacion_id, req.usuario.id, req.usuario.nombre, req.ip);
+        return res.json(cicloActDA);
+    }
+
+    // ── Modo apelación jurado (legacy) ─────────────────────────────────────────
     // Contar total de casos del ciclo
     const { count: totalCasos } = await supabase
         .from('evaluacion_casos')
@@ -843,6 +1055,34 @@ router.post('/:id/importar', uploadExcel.single('archivo'), async (req, res) => 
         insertados: insertados.length,
         errores
     });
+});
+
+// GET /:id/comentarios-jurado — obtener comentarios de jurados por ciclo (modo descuento_automatico)
+router.get('/:id/comentarios-jurado', async (req, res) => {
+    const { data: comentarios, error } = await supabase
+        .from('evaluacion_comentarios_jurado_ciclo')
+        .select(`
+            id, comentario, estado, enviado_en,
+            asignacion:asignaciones!asignacion_id(
+                id,
+                usuarios_pagados(id, nombre_completo, categoria)
+            )
+        `)
+        .eq('ciclo_id', req.params.id)
+        .order('enviado_en');
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const resultado = (comentarios || []).map(c => ({
+        id:             c.id,
+        comentario:     c.comentario,
+        estado:         c.estado,
+        enviado_en:     c.enviado_en,
+        jurado_nombre:  c.asignacion?.usuarios_pagados?.nombre_completo || null,
+        jurado_cat:     c.asignacion?.usuarios_pagados?.categoria || null
+    }));
+
+    res.json(resultado);
 });
 
 // Error handler multer

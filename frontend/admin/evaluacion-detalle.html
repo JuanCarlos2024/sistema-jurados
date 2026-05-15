@@ -28,6 +28,13 @@
         .badge-ciclo-abierto         { background: #d5f5e3; color: #1e8449; }
         .badge-ciclo-en_revision     { background: #fdebd0; color: #784212; }
         .badge-ciclo-cerrado         { background: #f0f0f0; color: #666; }
+        .badge-modo-da { background: #e9f7ef; color: #1e6444; }
+        .bloque-sin-casos { background: #e8f8f2; border:1px solid #a2d9c9; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px; }
+        .comentarios-da { margin-top:12px; background:#f8f9fa; border:1px solid #e0e0e0; border-radius:8px; padding:12px 14px; }
+        .comentarios-da h4 { margin:0 0 10px; font-size:13px; color:var(--gris); font-weight:600; }
+        .coment-item { padding:6px 0; border-bottom:1px solid #eee; font-size:12px; line-height:1.4; }
+        .coment-item:last-child { border-bottom:none; }
+        .coment-auto { color:#aaa; font-style:italic; }
 
         .badge-caso-cargado            { background: #eaecee; color: #555; }
         .badge-caso-visible_jurado     { background: #d6eaf8; color: #1a5276; }
@@ -539,6 +546,31 @@
     </div>
 </div>
 
+<!-- MODAL: Abrir ciclo sin casos (modo descuento_automatico) -->
+<div class="modal-overlay oculto" id="modal-abrir-sin-casos">
+    <div class="modal" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" id="abrir-sin-casos-titulo">Abrir ciclo sin casos</h3>
+            <button class="modal-cerrar" onclick="document.getElementById('modal-abrir-sin-casos').classList.add('oculto')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="alerta alerta-info" style="margin-bottom:14px;font-size:13px;">
+                El ciclo quedará <strong>abierto</strong> para los jurados sin casos a revisar.
+                Ellos verán un aviso informativo y podrán dejar un comentario general.
+            </div>
+            <div class="form-group">
+                <label class="form-label">Motivo / Descripción <span style="color:var(--rojo)">*</span></label>
+                <textarea id="abrir-sin-casos-comentario" class="form-control" rows="3" maxlength="500"
+                    placeholder="Ej: Sin faltas en este ciclo, el rodeo transcurrió sin situaciones a evaluar."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="document.getElementById('modal-abrir-sin-casos').classList.add('oculto')">Cancelar</button>
+            <button class="btn btn-success" onclick="abrirSinCasos()">Confirmar apertura</button>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL: Guardar en Banco de Situaciones -->
 <div class="modal-overlay oculto" id="modal-banco-situacion">
     <div class="modal" style="max-width:500px;">
@@ -563,6 +595,50 @@
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="cerrarModalBanco()">Cancelar</button>
             <button class="btn btn-primario" id="btn-banco-guardar" onclick="guardarEnBanco()">⭐ Guardar en Banco</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Revertir situación (modo DA) -->
+<div class="modal-overlay oculto" id="modal-revertir-da">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">↩ Revertir situación N° <span id="revertir-caso-num"></span></h3>
+            <button class="modal-cerrar" onclick="cerrarModalRevertir()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:var(--gris);margin-bottom:14px;">La situación quedará marcada como <strong>sin descuento</strong>. Esta acción registra auditoría y no puede deshacerse desde esta pantalla.</p>
+            <div class="form-grupo">
+                <label class="form-label">Motivo de la reversión <span style="color:var(--rojo)">*</span></label>
+                <textarea id="revertir-motivo" class="form-control" rows="3" maxlength="500" placeholder="Ej: El comentario del jurado indica que la situación no corresponde a un fallo."></textarea>
+                <div id="revertir-error" class="form-error oculto"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalRevertir()">Cancelar</button>
+            <button class="btn btn-primario" id="btn-revertir-confirmar" onclick="confirmarRevertir()" style="background:#e67e22;border-color:#d35400;">↩ Confirmar reversión</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Derivar a Comisión Técnica (modo DA) -->
+<div class="modal-overlay oculto" id="modal-derivar-da">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo">→ Enviar a Comisión — Situación N° <span id="derivar-caso-num"></span></h3>
+            <button class="modal-cerrar" onclick="cerrarModalDerivar()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:var(--gris);margin-bottom:14px;">La situación quedará <strong>pendiente de resolución por Comisión Técnica</strong>. El ciclo no podrá cerrarse hasta que Comisión responda.</p>
+            <div class="form-grupo">
+                <label class="form-label">Motivo de la derivación <span style="color:var(--rojo)">*</span></label>
+                <textarea id="derivar-motivo" class="form-control" rows="3" maxlength="500" placeholder="Ej: El comentario del jurado genera duda razonable sobre la aplicación del descuento."></textarea>
+                <div id="derivar-error" class="form-error oculto"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalDerivar()">Cancelar</button>
+            <button class="btn btn-primario" id="btn-derivar-confirmar" onclick="confirmarDerivar()" style="background:#8e44ad;border-color:#7d3c98;">→ Enviar a Comisión</button>
         </div>
     </div>
 </div>
@@ -731,8 +807,9 @@ async function cargarEvaluacion() {
                     <p>Fecha: ${rodeoFecha}${rodeoTipo ? ' &nbsp;·&nbsp; ' + sanitizar(rodeoTipo) : ''} &nbsp;·&nbsp; Analista: ${sanitizar(analista.nombre_completo || ev.analista_id || '—')}</p>
                     ${jurados.length > 0 ? `<p style="margin-top:3px;font-size:12px;color:var(--gris);">Jurado(s): ${juradosTexto}</p>` : ''}
                 </div>
-                <div>
+                <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
                     <span class="badge-eval badge-${ev.estado}">${labelEstadoEval(ev.estado)}</span>
+                    ${ev.modo_flujo === 'descuento_automatico' ? '<span class="badge-eval badge-modo-da" style="font-size:10px;">⚡ Descuento Automático</span>' : ''}
                 </div>
             </div>
 
@@ -747,6 +824,7 @@ async function cargarEvaluacion() {
 
         document.getElementById('contenido-principal').innerHTML = html;
         setTimeout(asegurarComentarioAlteracion, 0);
+        if (ev.modo_flujo === 'descuento_automatico') setTimeout(cargarComentariosDA, 0);
     } catch (e) {
         document.getElementById('contenido-principal').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(e.message)}</div>`;
@@ -823,13 +901,16 @@ function renderCicloMeta(ciclo) {
 
 function renderCicloCard(ciclo, estadoEval, evalId) {
     const esCicloRebiertoAbierto = ciclo.estado === 'abierto' && ciclo.cantidad_reaperturas > 0;
+    const casos    = ciclo.casos || [];
+    const esModoDA = _evalData?.modo_flujo === 'descuento_automatico';
 
     const puedeAgregarCaso = (
         ['pendiente_carga', 'cargado', 'abierto'].includes(ciclo.estado)
     ) && !['publicado', 'cerrado'].includes(estadoEval);
 
     const puedeAbrirCiclo = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
-        && !['pendiente_aprobacion', 'aprobado', 'publicado', 'cerrado'].includes(estadoEval);
+        && !['pendiente_aprobacion', 'aprobado', 'publicado', 'cerrado'].includes(estadoEval)
+        && !(esModoDA && casos.length === 0);
 
     const puedeCerrarCiclo  = ['abierto', 'en_revision'].includes(ciclo.estado);
     const puedeReenviar     = ['abierto', 'en_revision'].includes(ciclo.estado);
@@ -839,12 +920,30 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
     const puedeHabilitarRespuesta = (rolEval === null)
         && ['cerrado', 'en_revision'].includes(ciclo.estado)
         && !['publicado', 'cerrado'].includes(estadoEval);
+    const esSinCasos = esModoDA && ciclo.es_ciclo_sin_casos;
 
-    const casos = ciclo.casos || [];
+    const puedeAbrirSinCasos = esModoDA
+        && ciclo.estado === 'pendiente_carga'
+        && !['pendiente_aprobacion','aprobado','publicado','cerrado'].includes(estadoEval);
+
+    const bloqueInfoDA = esModoDA
+        ? `<div class="bloque-sin-casos" style="background:#e8f4fd;border-color:#aed6f1;margin-bottom:10px;">
+            <strong style="color:#1a5276;">⚡ Modo Descuento Automático:</strong>
+            Los casos son resueltos automáticamente al cerrar el ciclo, sin votación individual del jurado.
+           </div>`
+        : '';
+
+    const bloqueSinCasosDA = esSinCasos
+        ? `<div class="bloque-sin-casos">
+            <strong>Ciclo sin casos:</strong> ${sanitizar(ciclo.comentario_sin_casos || '')}
+           </div>`
+        : '';
 
     const tablaCasos = casos.length === 0
-        ? '<p class="texto-gris" style="font-size:13px;padding:8px 0;">Sin casos cargados.</p>'
-        : `<div class="tabla-wrap" style="overflow-x:auto;"><table class="tabla-casos" style="min-width:900px;">
+        ? (esSinCasos
+            ? bloqueSinCasosDA
+            : '<p class="texto-gris" style="font-size:13px;padding:8px 0;">Sin casos cargados.</p>')
+        : `<div class="tabla-wrap" style="overflow-x:auto;"><table class="tabla-casos" style="${esModoDA ? 'min-width:720px' : 'min-width:900px'};">
             <thead><tr>
                 <th style="width:32px;">#</th>
                 <th style="width:100px;">Tipo</th>
@@ -852,16 +951,21 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
                 <th style="min-width:150px;">Descripción</th>
                 <th style="width:55px;">Video</th>
                 <th style="width:90px;">Estado</th>
-                <th style="min-width:130px;">Resp. jurado</th>
-                <th style="min-width:160px;">Resp. analista</th>
-                <th style="min-width:150px;">Resp. Comisión Técnica</th>
-                <th style="width:80px;">Desc. final</th>
+                ${esModoDA
+                    ? '<th style="min-width:140px;">Resolución auto</th><th style="width:80px;">Desc. final</th>'
+                    : '<th style="min-width:130px;">Resp. jurado</th><th style="min-width:160px;">Resp. analista</th><th style="min-width:150px;">Resp. Comisión Técnica</th><th style="width:80px;">Desc. final</th>'}
                 <th style="width:80px;"></th>
             </tr></thead>
             <tbody>
-                ${casos.map(c => renderFilaCaso(c, ciclo, estadoEval)).join('')}
+                ${casos.map(c => renderFilaCaso(c, ciclo, estadoEval, esModoDA)).join('')}
             </tbody>
           </table></div>`;
+
+    const comentariosDA = esModoDA && !['pendiente_carga','cargado'].includes(ciclo.estado)
+        ? `<div class="comentarios-da" id="comentarios-da-${ciclo.id}">
+               <div class="spinner-wrap" style="padding:4px 0;"><div class="spinner" style="width:18px;height:18px;"></div></div>
+           </div>`
+        : '';
 
     // Aviso cuando el ciclo está abierto y ya tiene respuestas de jurado
     const tieneRespuestasEnCasos = casos.some(c => (c.respuestas_jurado || []).length > 0);
@@ -887,11 +991,13 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
                 &nbsp;
                 <span class="badge-eval badge-ciclo-${ciclo.estado}">${labelEstadoCiclo(ciclo.estado)}</span>
                 ${ciclo.cantidad_reaperturas > 0 ? '<span class="badge-eval" style="background:#fef9e7;color:#7d6608;margin-left:4px;">Reabierto</span>' : ''}
+                ${esSinCasos ? '<span class="badge-eval" style="background:#e8f8f2;color:#148f77;margin-left:4px;">Sin casos</span>' : ''}
                 <span style="font-size:12px;color:var(--gris);margin-left:10px;">${casos.length} caso(s) · mín ${ciclo.min_casos} · máx ${ciclo.max_casos}</span>
             </div>
             <div class="tabla-acciones">
                 ${puedeAgregarCaso ? `<button class="btn btn-primario btn-pequeño" onclick="abrirModalAgregar('${ciclo.id}', ${ciclo.numero_ciclo})">+ Agregar caso</button>` : ''}
                 ${puedeAgregarCaso ? `<button class="btn btn-outline btn-pequeño"  onclick="abrirModalImportar('${ciclo.id}', ${ciclo.numero_ciclo})">Importar Excel</button>` : ''}
+                ${puedeAbrirSinCasos ? `<button class="btn btn-outline btn-pequeño" style="border-color:#148f77;color:#148f77;" onclick="abrirModalAbrirSinCasos('${ciclo.id}', ${ciclo.numero_ciclo})">Abrir sin casos</button>` : ''}
                 ${puedeAbrirCiclo  ? `<button class="btn btn-success btn-pequeño"  onclick="abrirCiclo('${ciclo.id}', ${ciclo.numero_ciclo})">Abrir ciclo</button>` : ''}
                 ${puedeCerrarCiclo ? `<button class="btn btn-peligro btn-pequeño"  onclick="abrirModalCerrarCiclo('${ciclo.id}', ${ciclo.numero_ciclo}, ${casos.length})">Cerrar ciclo</button>` : ''}
                 ${puedeReenviar    ? `<button class="btn btn-outline btn-pequeño"   onclick="reenviarNotificacion('${ciclo.id}', ${ciclo.numero_ciclo})">📧 Reenviar notif.</button>` : ''}
@@ -900,9 +1006,11 @@ function renderCicloCard(ciclo, estadoEval, evalId) {
             </div>
         </div>
         ${renderCicloMeta(ciclo)}
+        ${bloqueInfoDA}
         ${avisoAbiertoCon}
         ${reaperturaInfo}
         ${tablaCasos}
+        ${comentariosDA}
     </div>`;
 }
 
@@ -1035,7 +1143,7 @@ function abrirVideoAdmin(casoId) {
     if (embed) {
         const iframe = document.createElement('iframe');
         iframe.src = embed;
-        iframe.style.cssText = 'width:100%;height:420px;border:none;border-radius:0 0 8px 8px;';
+        iframe.style.cssText = 'width:100%;aspect-ratio:16/9;border:none;display:block;';
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
         wrap.appendChild(iframe);
@@ -1099,8 +1207,51 @@ function _renderDescFinal(caso) {
     }).join('');
 }
 
+// ── Resolución automática (modo descuento_automatico) ─────────────
+function _renderResolucionAuto(caso) {
+    // Derivado a Comisión sin resolver
+    if (caso.estado === 'derivado_comision') {
+        return '<span style="color:#8e44ad;font-size:11px;font-weight:600;">⏳ Pend. Comisión</span>';
+    }
+    if (!caso.resolucion_final) {
+        return caso.estado === 'visible_jurado'
+            ? '<span style="color:var(--gris);font-size:11px;">⏳ Al cierre</span>'
+            : '<span style="color:var(--gris);font-size:11px;">—</span>';
+    }
+    if (caso.resolucion_final === 'sin_descuento') {
+        const label = caso.decision_analista === 'revertir' ? '↩ Revertido' : '✓ Sin descuento';
+        return `<span style="color:#1e8449;font-size:12px;font-weight:600;">${label}</span>`;
+    }
+    if (caso.resolucion_final === 'apelacion_acogida') {
+        return '<span style="color:#1e8449;font-size:12px;font-weight:600;">✓ Rev. Comisión</span>';
+    }
+    if (caso.resolucion_final === 'apelacion_rechazada') {
+        return '<span style="color:#922b21;font-size:12px;font-weight:600;">Conf. Comisión</span>';
+    }
+    const labels = {
+        interpretativa_confirmada: 'Apreciación conf.',
+        reglamentaria_confirmada:  'Reglamentaria conf.'
+    };
+    return `<span class="descuento-badge">${labels[caso.resolucion_final] || caso.resolucion_final}</span>`;
+}
+
+function _renderDescFinalDA(caso) {
+    // Revertido por analista o por Comisión → sin descuento
+    if (!caso.resolucion_final
+        || caso.resolucion_final === 'sin_descuento'
+        || caso.resolucion_final === 'apelacion_acogida') {
+        return '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>';
+    }
+    // Derivado a Comisión sin resolución aún
+    if (caso.estado === 'derivado_comision') {
+        return '<span style="color:#8e44ad;font-size:11px;">Pend.</span>';
+    }
+    const d = caso.descuento_puntos || 0;
+    return d > 0 ? `<span class="descuento-badge">-${d} pt</span>` : '<span style="color:#1e8449;font-size:12px;font-weight:600;">Sin desc.</span>';
+}
+
 // ── Render fila de caso ───────────────────────────────────────────
-function renderFilaCaso(caso, ciclo, estadoEval) {
+function renderFilaCaso(caso, ciclo, estadoEval, esModoDA) {
     const puedeEditar = ['pendiente_carga', 'cargado'].includes(ciclo.estado)
         && !['publicado', 'cerrado'].includes(estadoEval)
         && caso.estado === 'cargado';
@@ -1134,7 +1285,34 @@ function renderFilaCaso(caso, ciclo, estadoEval) {
     if (puedeVerRespuestas) {
         accionesArr.push(`<button class="btn btn-secundario btn-pequeño" onclick="verRespuestas('${caso.id}', ${caso.numero_caso})">Respuestas</button>`);
     }
-    accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="border-color:#d4ac0d;color:#d4ac0d;" onclick="abrirModalBanco('${caso.id}', ${caso.numero_caso})" title="Guardar en Banco de Situaciones">⭐</button>`);
+    if (caso.en_banco) {
+        accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="background:#fef9c3;border-color:#d4ac0d;color:#7d6608;cursor:default;" title="Ya guardada en Banco de Situaciones" disabled>⭐</button>`);
+    } else {
+        accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="border-color:#bbb;color:#bbb;" onclick="abrirModalBanco('${caso.id}', ${caso.numero_caso})" title="Guardar en Banco de Situaciones">☆</button>`);
+    }
+
+    if (esModoDA) {
+        // Acciones DA: Revertir y Derivar a Comisión disponibles si caso abierto (no resuelto/derivado)
+        const cicloAbierto = ['abierto', 'en_revision'].includes(ciclo.estado);
+        if (cicloAbierto && caso.estado === 'visible_jurado' && !['publicado', 'cerrado'].includes(estadoEval)) {
+            accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="border-color:#e67e22;color:#e67e22;" onclick="abrirModalRevertir('${caso.id}', ${caso.numero_caso})" title="Revertir situación sin descuento">↩ Revertir</button>`);
+            accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="border-color:#8e44ad;color:#8e44ad;" onclick="abrirModalDerivar('${caso.id}', ${caso.numero_caso})" title="Enviar a Comisión Técnica">→ Comisión</button>`);
+        }
+        if (cicloAbierto && caso.estado === 'derivado_comision') {
+            accionesArr.push(`<span style="font-size:11px;color:#8e44ad;font-weight:600;">⏳ En Comisión</span>`);
+        }
+        return `<tr>
+            <td>${caso.numero_caso}</td>
+            <td><span class="badge-eval badge-tipo-${caso.tipo_caso}">${labelTipo(caso.tipo_caso)}</span></td>
+            <td>${descBadge}</td>
+            <td class="col-desc">${sanitizar(caso.descripcion || '—')}</td>
+            <td style="text-align:center;">${_renderVideoCelda(caso)}</td>
+            <td><span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span></td>
+            <td class="resp-celda">${_renderResolucionAuto(caso)}</td>
+            <td class="dec-celda">${_renderDescFinalDA(caso)}</td>
+            <td><div class="tabla-acciones">${accionesArr.join('')}</div></td>
+        </tr>`;
+    }
 
     return `<tr>
         <td>${caso.numero_caso}</td>
@@ -1184,9 +1362,19 @@ let _cicloSinCasos    = false;
 function abrirModalCerrarCiclo(cicloId, numeroCiclo, numCasos) {
     _cicloParaCerrar = cicloId;
     _cicloSinCasos   = (numCasos === 0);
+    const esModoDA   = _evalData?.modo_flujo === 'descuento_automatico';
     document.getElementById('modal-cerrar-ciclo-titulo').textContent = `Cerrar Ciclo ${numeroCiclo}`;
-    document.getElementById('cerrar-ciclo-motivo').value             = _cicloSinCasos ? 'Sin casos — evaluación sin faltas' : '';
+    document.getElementById('cerrar-ciclo-motivo').value = _cicloSinCasos ? 'Sin casos — sin faltas' : '';
     document.getElementById('cerrar-ciclo-sin-casos').style.display  = _cicloSinCasos ? '' : 'none';
+    if (esModoDA) {
+        document.getElementById('cerrar-ciclo-sin-casos').innerHTML =
+            numCasos === 0
+            ? '⚡ Sin casos — el ciclo cerrará sin descuentos (Descuento automático).'
+            : `⚡ Descuento Automático: los ${numCasos} caso(s) se resolverán automáticamente al cerrar. No se requieren respuestas de jurados.`;
+        document.getElementById('cerrar-ciclo-sin-casos').style.display = '';
+    } else {
+        document.getElementById('cerrar-ciclo-sin-casos').innerHTML = 'Sin casos cargados — evaluación sin faltas. Descuento: 0 puntos.';
+    }
     document.getElementById('modal-cerrar-ciclo').classList.remove('oculto');
 }
 async function cerrarCiclo() {
@@ -1238,6 +1426,54 @@ async function habilitarRespuestaJurado() {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al habilitar respuesta del jurado', 'error');
+    }
+}
+
+// ── Comentarios jurado por ciclo (modo DA) ────────────────────────
+async function cargarComentariosDA() {
+    const ciclos = _evalData?.ciclos || [];
+    for (const ciclo of ciclos) {
+        const el = document.getElementById(`comentarios-da-${ciclo.id}`);
+        if (!el) continue;
+        try {
+            const lista = await api.get(`/admin/ciclos/${ciclo.id}/comentarios-jurado`);
+            if (!lista.length) {
+                el.innerHTML = '<h4>Comentarios de jurados</h4><p style="font-size:12px;color:var(--gris);">Sin comentarios registrados.</p>';
+                continue;
+            }
+            const items = lista.map(c => {
+                const esCierre = c.estado === 'generado_por_cierre';
+                return `<div class="coment-item">
+                    <strong style="font-size:12px;">${sanitizar(c.jurado_nombre || '—')}${c.jurado_cat ? ' <span style="color:var(--gris);">(' + sanitizar(c.jurado_cat) + ')</span>' : ''}</strong>
+                    <span class="${esCierre ? 'coment-auto' : ''}" style="display:block;margin-top:2px;">${sanitizar(c.comentario)}</span>
+                    <span style="font-size:10px;color:var(--gris);">${c.enviado_en ? fmtFechaChile(c.enviado_en) : ''}${esCierre ? ' · (generado al cierre)' : ''}</span>
+                </div>`;
+            }).join('');
+            el.innerHTML = `<h4>Comentarios de jurados (${lista.length})</h4>${items}`;
+        } catch(e) {
+            el.innerHTML = '<h4>Comentarios de jurados</h4><p style="font-size:12px;color:var(--gris);">No se pudieron cargar.</p>';
+        }
+    }
+}
+
+// ── Abrir ciclo sin casos (modo DA) ──────────────────────────────
+let _cicloParaAbrirSinCasos = null;
+function abrirModalAbrirSinCasos(cicloId, numeroCiclo) {
+    _cicloParaAbrirSinCasos = cicloId;
+    document.getElementById('abrir-sin-casos-titulo').textContent = `Abrir Ciclo ${numeroCiclo} sin casos`;
+    document.getElementById('abrir-sin-casos-comentario').value    = '';
+    document.getElementById('modal-abrir-sin-casos').classList.remove('oculto');
+}
+async function abrirSinCasos() {
+    const comentario = document.getElementById('abrir-sin-casos-comentario').value.trim();
+    if (!comentario) { mostrarToast('El comentario es obligatorio', 'error'); return; }
+    try {
+        const res = await api.post(`/admin/ciclos/${_cicloParaAbrirSinCasos}/abrir-sin-casos`, { comentario_sin_casos: comentario });
+        document.getElementById('modal-abrir-sin-casos').classList.add('oculto');
+        mostrarToast(res.mensaje || 'Ciclo abierto sin casos', 'exito');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al abrir el ciclo', 'error');
     }
 }
 
@@ -1917,8 +2153,89 @@ async function guardarEnBanco() {
         await api.post(`/admin/casos/${_bancoCasoId}/guardar-en-banco`, { comentario_banco: comentario });
         mostrarToast('Situación guardada en el Banco de Situaciones ⭐', 'exito');
         cerrarModalBanco();
+        cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al guardar en banco', 'error');
+        btn.disabled = false;
+    }
+}
+
+// ── Revertir situación (modo DA) ──────────────────────────────────
+let _revertirCasoId = null;
+function abrirModalRevertir(casoId, numeroCaso) {
+    _revertirCasoId = casoId;
+    document.getElementById('revertir-caso-num').textContent = numeroCaso;
+    document.getElementById('revertir-motivo').value = '';
+    document.getElementById('revertir-error').classList.add('oculto');
+    document.getElementById('btn-revertir-confirmar').disabled = false;
+    document.getElementById('modal-revertir-da').classList.remove('oculto');
+}
+function cerrarModalRevertir() {
+    _revertirCasoId = null;
+    document.getElementById('modal-revertir-da').classList.add('oculto');
+}
+async function confirmarRevertir() {
+    if (!_revertirCasoId) return;
+    const motivo = document.getElementById('revertir-motivo').value.trim();
+    const errEl  = document.getElementById('revertir-error');
+    if (!motivo) {
+        errEl.textContent = 'El motivo es obligatorio.';
+        errEl.classList.remove('oculto');
+        return;
+    }
+    const btn = document.getElementById('btn-revertir-confirmar');
+    btn.disabled = true;
+    try {
+        await api.post(`/admin/casos/${_revertirCasoId}/decision-analista`, {
+            decision: 'revertir',
+            comentario_analista: motivo
+        });
+        mostrarToast('Situación revertida sin descuento ↩', 'exito');
+        cerrarModalRevertir();
+        cargarEvaluacion();
+    } catch (e) {
+        errEl.textContent = e.message || 'Error al revertir.';
+        errEl.classList.remove('oculto');
+        btn.disabled = false;
+    }
+}
+
+// ── Derivar a Comisión Técnica (modo DA) ─────────────────────────
+let _derivarCasoId = null;
+function abrirModalDerivar(casoId, numeroCaso) {
+    _derivarCasoId = casoId;
+    document.getElementById('derivar-caso-num').textContent = numeroCaso;
+    document.getElementById('derivar-motivo').value = '';
+    document.getElementById('derivar-error').classList.add('oculto');
+    document.getElementById('btn-derivar-confirmar').disabled = false;
+    document.getElementById('modal-derivar-da').classList.remove('oculto');
+}
+function cerrarModalDerivar() {
+    _derivarCasoId = null;
+    document.getElementById('modal-derivar-da').classList.add('oculto');
+}
+async function confirmarDerivar() {
+    if (!_derivarCasoId) return;
+    const motivo = document.getElementById('derivar-motivo').value.trim();
+    const errEl  = document.getElementById('derivar-error');
+    if (!motivo) {
+        errEl.textContent = 'El motivo es obligatorio.';
+        errEl.classList.remove('oculto');
+        return;
+    }
+    const btn = document.getElementById('btn-derivar-confirmar');
+    btn.disabled = true;
+    try {
+        await api.post(`/admin/casos/${_derivarCasoId}/decision-analista`, {
+            decision: 'derivar_comision',
+            comentario_analista: motivo
+        });
+        mostrarToast('Situación enviada a Comisión Técnica →', 'exito');
+        cerrarModalDerivar();
+        cargarEvaluacion();
+    } catch (e) {
+        errEl.textContent = e.message || 'Error al derivar.';
+        errEl.classList.remove('oculto');
         btn.disabled = false;
     }
 }

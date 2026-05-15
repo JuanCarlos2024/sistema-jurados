@@ -212,8 +212,9 @@ function renderTabla(data) {
         const tipoClase = r.tipo_caso || 'informativo';
         const desc    = sanitizar(r.descripcion_caso || '—');
         const com     = sanitizar(r.comentario_banco || '—');
+        if (r.video_url) _bancoVideoMap[r.id] = r.video_url;
         const video   = r.video_url
-            ? `<a href="${sanitizar(r.video_url)}" target="_blank" rel="noopener" class="btn btn-pequeño btn-secundario" style="font-size:11px;">▶ Ver</a>`
+            ? `<button class="btn btn-pequeño btn-secundario" style="font-size:11px;" onclick="abrirVideoBanco('${r.id}')">▶ Ver</button>`
             : '<span style="color:var(--gris);font-size:11px;">Sin video</span>';
         const estadoBadge = r.activo
             ? '<span class="badge badge-activo" style="font-size:11px;">Activo</span>'
@@ -255,8 +256,9 @@ function verDetalle(id) {
     _detalleActual = r;
     const rodeo     = r.evaluacion?.rodeo;
     const tipoLabel = TIPO_LABELS[r.tipo_caso] || r.tipo_caso || '—';
+    if (r.video_url) _bancoVideoMap[r.id] = r.video_url;
     const videoHtml = r.video_url
-        ? `<a href="${sanitizar(r.video_url)}" target="_blank" rel="noopener" style="color:var(--azul);">${sanitizar(r.video_url)}</a>`
+        ? `<button class="btn btn-secundario btn-pequeño" onclick="abrirVideoBanco('${r.id}')">▶ Ver video</button>`
         : '<span style="color:var(--gris);">Sin video</span>';
 
     document.getElementById('det-titulo').textContent = 'Situación guardada';
@@ -365,8 +367,77 @@ async function exportarCSV() {
     }
 }
 
+// ── Video banco ──────────────────────────────────────────────────────
+const _bancoVideoMap = {};
+
+function normalizarVideoUrlBanco(url) {
+    try {
+        const u = new URL(url);
+        let videoId = null, start = null;
+        if (u.hostname === 'youtu.be') {
+            videoId = u.pathname.slice(1).split('/')[0] || null;
+            start = u.searchParams.get('t');
+        } else if (/youtube\.com$/.test(u.hostname)) {
+            if (u.pathname.startsWith('/embed/')) {
+                videoId = u.pathname.split('/embed/')[1].split('/')[0] || null;
+            } else {
+                videoId = u.searchParams.get('v') || null;
+            }
+            start = u.searchParams.get('t');
+        }
+        if (!videoId) return null;
+        videoId = videoId.split('?')[0].split('&')[0];
+        let embed = 'https://www.youtube.com/embed/' + videoId + '?autoplay=0&rel=0';
+        if (start) embed += '&start=' + encodeURIComponent(start);
+        return embed;
+    } catch(e) { return null; }
+}
+
+function abrirVideoBanco(id) {
+    const url  = _bancoVideoMap[id];
+    if (!url) return;
+    const wrap = document.getElementById('banco-video-wrap');
+    wrap.innerHTML = '';
+    const embed = normalizarVideoUrlBanco(url);
+    if (embed) {
+        const iframe = document.createElement('iframe');
+        iframe.src = embed;
+        iframe.style.cssText = 'width:100%;aspect-ratio:16/9;border:none;display:block;';
+        iframe.allowFullscreen = true;
+        iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
+        wrap.appendChild(iframe);
+    } else {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.textContent = 'Abrir video en nueva pestaña ↗';
+        a.style.cssText = 'display:block;padding:28px;text-align:center;font-size:14px;';
+        wrap.appendChild(a);
+    }
+    document.getElementById('modal-video-banco').classList.remove('oculto');
+}
+
+function cerrarVideoBanco() {
+    const wrap = document.getElementById('banco-video-wrap');
+    const iframe = wrap.querySelector('iframe');
+    if (iframe) iframe.src = '';
+    wrap.innerHTML = '';
+    document.getElementById('modal-video-banco').classList.add('oculto');
+}
+
 // buscar al cargar
 buscar();
 </script>
+
+<!-- MODAL: Video banco situaciones -->
+<div class="modal-overlay oculto" id="modal-video-banco" onclick="if(event.target===this)cerrarVideoBanco()">
+    <div class="modal" style="max-width:860px;padding:0;">
+        <div class="modal-header" style="padding:12px 16px;">
+            <h3 class="modal-titulo">Video de la situación</h3>
+            <button class="modal-cerrar" onclick="cerrarVideoBanco()">✕</button>
+        </div>
+        <div id="banco-video-wrap" style="min-height:80px;background:#000;border-radius:0 0 8px 8px;"></div>
+    </div>
+</div>
+
 </body>
 </html>

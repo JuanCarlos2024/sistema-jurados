@@ -56,7 +56,7 @@ router.get('/', async (req, res) => {
     // Batch: ciclos y casos
     const [{ data: ciclosData }, { data: casosData }] = await Promise.all([
         supabase.from('evaluacion_ciclos')
-            .select('id, evaluacion_id, numero_ciclo, estado')
+            .select('id, evaluacion_id, numero_ciclo, estado, es_ciclo_sin_casos, comentario_sin_casos')
             .in('evaluacion_id', evalIds)
             .order('numero_ciclo'),
         supabase.from('evaluacion_casos')
@@ -116,6 +116,8 @@ router.get('/', async (req, res) => {
             id:                  ciclo.id,
             numero_ciclo:        ciclo.numero_ciclo,
             estado:              ciclo.estado,
+            es_ciclo_sin_casos:  !!ciclo.es_ciclo_sin_casos,
+            comentario_sin_casos: ciclo.comentario_sin_casos || null,
             total_casos:         casos.length,
             respondidos,
             sin_respuesta:       sinRespAuto,
@@ -157,7 +159,7 @@ router.get('/:id/casos', async (req, res) => {
     const { data: ev } = await supabase
         .from('evaluaciones')
         .select(`
-            id, estado, rodeo_id,
+            id, estado, rodeo_id, modo_flujo,
             rodeo:rodeos(club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .eq('id', evalId)
@@ -223,21 +225,35 @@ router.get('/:id/casos', async (req, res) => {
         for (const r of (respuestasArr || [])) respMap[r.caso_id] = r;
     }
 
+    // Comentarios del jurado por ciclo (modo descuento_automatico)
+    const comentMap = {};
+    if (cicloIds.length) {
+        const { data: comentsArr } = await supabase
+            .from('evaluacion_comentarios_jurado_ciclo')
+            .select('ciclo_id, comentario, estado, enviado_en')
+            .in('ciclo_id', cicloIds)
+            .eq('asignacion_id', asignacion.id);
+        for (const c of (comentsArr || [])) comentMap[c.ciclo_id] = c;
+    }
+
+    const modoFlujo = ev.modo_flujo || 'apelacion_jurado';
+
     function buildCicloConCasos(ciclo) {
         if (!ciclo) return null;
-        if (ciclo.estado === 'pendiente_carga') return { ...ciclo, casos: [] };
+        if (ciclo.estado === 'pendiente_carga') return { ...ciclo, casos: [], mi_comentario: null };
         const casos = (casosPorCiclo[ciclo.id] || []).map(caso => {
             const resp = respMap[caso.id] || null;
-            const puede_responder = ciclo.estado === 'abierto'
+            const puede_responder = modoFlujo === 'apelacion_jurado'
+                && ciclo.estado === 'abierto'
                 && caso.estado === 'visible_jurado'
                 && !resp;
             return { ...caso, mi_respuesta: resp, puede_responder };
         });
-        return { ...ciclo, casos };
+        return { ...ciclo, casos, mi_comentario: comentMap[ciclo.id] || null };
     }
 
     res.json({
-        evaluacion: { id: ev.id, estado: ev.estado, rodeo: ev.rodeo || {} },
+        evaluacion: { id: ev.id, estado: ev.estado, modo_flujo: modoFlujo, rodeo: ev.rodeo || {} },
         ciclo1: buildCicloConCasos(ciclosMap[1] || null),
         ciclo2: buildCicloConCasos(ciclosMap[2] || null)
     });
@@ -314,10 +330,13 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
     // Verificar asignación activa
     const { data: ev } = await supabase
         .from('evaluaciones')
-        .select('id, rodeo_id')
+        .select('id, rodeo_id, modo_flujo')
         .eq('id', evalId)
         .single();
     if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (ev.modo_flujo === 'descuento_automatico') {
+        return res.status(409).json({ error: 'En modo Descuento Automático los casos se resuelven automáticamente al cierre del ciclo' });
+    }
 
     const { data: asignacion } = await supabase
         .from('asignaciones')
@@ -384,6 +403,70 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
     const { data, error } = await supabase
         .from('evaluacion_respuestas_jurado')
         .insert(payload)
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.status(201).json(data);
+});
+
+// POST /:id/ciclos/:cicloId/comentario — enviar comentario de ciclo (modo descuento_automatico)
+router.post('/:id/ciclos/:cicloId/comentario', async (req, res) => {
+    const { comentario } = req.body;
+    const evalId  = req.params.id;
+    const cicloId = req.params.cicloId;
+
+    if (!comentario || !comentario.trim()) {
+        return res.status(400).json({ error: 'El comentario no puede estar vacío' });
+    }
+    if (comentario.trim().length > 1000) {
+        return res.status(400).json({ error: 'El comentario no puede superar 1000 caracteres' });
+    }
+
+    const { data: ev } = await supabase
+        .from('evaluaciones')
+        .select('id, rodeo_id, modo_flujo')
+        .eq('id', evalId)
+        .single();
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (ev.modo_flujo !== 'descuento_automatico') {
+        return res.status(409).json({ error: 'Función solo disponible en modo Descuento Automático' });
+    }
+
+    const { data: asignacion } = await supabase
+        .from('asignaciones')
+        .select('id')
+        .eq('usuario_pagado_id', req.usuario.id)
+        .eq('rodeo_id', ev.rodeo_id)
+        .eq('estado', 'activo')
+        .neq('estado_designacion', 'rechazado')
+        .limit(1)
+        .single();
+    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
+
+    const { data: ciclo } = await supabase
+        .from('evaluacion_ciclos')
+        .select('id, evaluacion_id, estado')
+        .eq('id', cicloId)
+        .eq('evaluacion_id', evalId)
+        .single();
+    if (!ciclo) return res.status(404).json({ error: 'Ciclo no encontrado' });
+    if (ciclo.estado !== 'abierto') return res.status(409).json({ error: 'El ciclo no está abierto' });
+
+    const now = new Date().toISOString();
+
+    const { data, error } = await supabase
+        .from('evaluacion_comentarios_jurado_ciclo')
+        .upsert({
+            evaluacion_id: evalId,
+            ciclo_id:      cicloId,
+            asignacion_id: asignacion.id,
+            comentario:    comentario.trim(),
+            estado:        'enviado',
+            enviado_en:    now,
+            updated_at:    now
+        }, { onConflict: 'ciclo_id,asignacion_id' })
         .select()
         .single();
 

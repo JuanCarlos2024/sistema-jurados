@@ -57,7 +57,13 @@ router.get('/', async (req, res) => {
         });
     }
 
-    res.json({ casos: casos.map(c => ({ ...c, respuestas_jurado: respPorCaso[c.id] || [] })) });
+    const { data: enBancoRows } = await supabase
+        .from('evaluacion_banco_situaciones')
+        .select('caso_id')
+        .in('caso_id', casoIds);
+    const enBancoSet = new Set((enBancoRows || []).map(x => x.caso_id));
+
+    res.json({ casos: casos.map(c => ({ ...c, respuestas_jurado: respPorCaso[c.id] || [], en_banco: enBancoSet.has(c.id) })) });
 });
 
 // GET /:id/respuestas — respuestas de jurados a un caso
@@ -163,11 +169,18 @@ router.delete('/:id', async (req, res) => {
 
     const { data: caso } = await supabase
         .from('evaluacion_casos')
-        .select('id, ciclo_id, evaluacion_id')
+        .select('id, ciclo_id, evaluacion_id, estado')
         .eq('id', req.params.id)
         .single();
 
     if (!caso) return res.status(404).json({ error: 'Caso no encontrado' });
+
+    // Bloquear eliminación física si el caso ya fue abierto al jurado
+    if (caso.estado !== 'cargado') {
+        return res.status(409).json({
+            error: 'No se puede eliminar una situación ya abierta al jurado. Use "Revertir situación" para dejarla sin descuento.'
+        });
+    }
 
     const { count } = await supabase
         .from('evaluacion_respuestas_jurado')
@@ -260,13 +273,23 @@ router.post('/:id/decision-analista', async (req, res) => {
 
     const { data: caso, error: casoErr } = await supabase
         .from('evaluacion_casos')
-        .select('id, ciclo_id, evaluacion_id, tipo_caso, estado, descuento_puntos')
+        .select('id, ciclo_id, evaluacion_id, tipo_caso, estado, descuento_puntos, evaluacion:evaluaciones!evaluacion_id(modo_flujo)')
         .eq('id', req.params.id)
         .single();
 
     if (casoErr) return res.status(404).json({ error: 'Caso no encontrado' });
-    if (caso.estado !== 'pendiente_analista') {
-        return res.status(409).json({ error: `El caso debe estar en pendiente_analista (actual: ${caso.estado})` });
+
+    const modoFlujo = caso.evaluacion?.modo_flujo || 'apelacion_jurado';
+    // En DA, se puede actuar desde visible_jurado además de pendiente_analista
+    const estadosPermitidos = modoFlujo === 'descuento_automatico'
+        ? ['pendiente_analista', 'visible_jurado']
+        : ['pendiente_analista'];
+    if (!estadosPermitidos.includes(caso.estado)) {
+        return res.status(409).json({ error: `El caso debe estar en ${estadosPermitidos.join(' o ')} (actual: ${caso.estado})` });
+    }
+    // En DA desde visible_jurado solo se puede revertir o derivar (mantener = default al cierre)
+    if (modoFlujo === 'descuento_automatico' && caso.estado === 'visible_jurado' && decision === 'mantener') {
+        return res.status(409).json({ error: 'En modo Descuento Automático el descuento se aplica por defecto al cierre. Use Revertir o Derivar a Comisión.' });
     }
 
     const now = new Date().toISOString();
@@ -373,7 +396,9 @@ router.post('/:id/decision-analista', async (req, res) => {
 
 // POST /:id/decision-comision — solo comision_tecnica o jefe_area o admin pleno
 router.post('/:id/decision-comision', soloRolEvaluacion('comision_tecnica', 'jefe_area'), async (req, res) => {
-    const { decision, comentario_comision } = req.body;
+    // Acepta 'decision' o 'decision_comision' por compatibilidad con distintos clientes
+    const decision = req.body.decision || req.body.decision_comision;
+    const { comentario_comision } = req.body;
 
     if (!decision || !['aprueba_apelacion', 'rechaza_apelacion'].includes(decision)) {
         return res.status(400).json({ error: 'decision inválida (aprueba_apelacion|rechaza_apelacion)' });
