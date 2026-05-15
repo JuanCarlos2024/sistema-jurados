@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matriz de Participación — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ── Filtros ── */
+        .mat-filtros {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            background: #f8f9fa;
+            border: 1px solid var(--gris-borde);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 14px;
+        }
+        .mat-filtros > div { display: flex; flex-direction: column; gap: 4px; }
+        .mat-label {
+            font-size: 11px; color: var(--gris); font-weight: 600;
+            text-transform: uppercase; letter-spacing: .4px;
+        }
+        .mat-sel {
+            border: 1px solid var(--gris-borde); border-radius: 6px;
+            padding: 5px 10px; font-size: 13px; background: #fff; cursor: pointer;
+        }
+
+        /* ── Tabla ── */
+        .mat-tabla-wrap {
+            overflow-x: auto;
+            overflow-y: auto;
+            max-height: calc(100vh - 280px);
+            border: 1px solid var(--gris-borde);
+            border-radius: 8px;
+        }
+        .mat-tabla {
+            border-collapse: collapse;
+            min-width: 100%;
+            font-size: 12px;
+            background: #fff;
+        }
+        .mat-tabla thead {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            box-shadow: 0 2px 4px rgba(0,0,0,.07);
+        }
+        .mat-tabla thead tr { background: #f5f7fa; }
+        .mat-th-persona {
+            min-width: 190px;
+            position: sticky;
+            left: 0;
+            background: #1a3c6e;
+            color: #fff;
+            font-weight: 700;
+            z-index: 21;
+            border-right: 2px solid #0f2547;
+            white-space: nowrap;
+            padding: 8px 12px;
+        }
+        .mat-td-persona {
+            position: sticky;
+            left: 0;
+            background: #fff;
+            z-index: 5;
+            border-right: 2px solid #d5dae0;
+            padding: 8px 12px;
+            min-width: 190px;
+            box-shadow: 2px 0 4px rgba(0,0,0,.06);
+        }
+        .mat-tabla tbody tr { border-bottom: 1px solid #f0f0f0; }
+        .mat-tabla tbody tr:hover { background: #fafbfc; }
+        .mat-tabla tbody tr:hover .mat-td-persona { background: #f7f8fb; }
+
+        /* ── Resumen y exportación ── */
+        .mat-resumen {
+            font-size: 12px;
+            color: var(--gris);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .mat-btns-export { display: flex; gap: 6px; flex-wrap: wrap; }
+
+        /* ── Estado vacío ── */
+        .mat-empty {
+            text-align: center;
+            padding: 48px 20px;
+            color: var(--gris);
+        }
+        .mat-empty-icon { font-size: 40px; margin-bottom: 10px; }
+        .mat-empty p { font-size: 14px; margin: 0; }
+        .mat-spinner { text-align: center; padding: 40px; color: var(--gris); font-size: 13px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <!-- CONTENIDO -->
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Matriz de Participación</h1>
+            </div>
+            <div class="topbar-acciones">
+                <span style="font-size:12px;color:var(--gris);">Detalle de salidas a rodeo por jurado/delegado</span>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- Filtros de período -->
+            <div class="mat-filtros">
+                <div>
+                    <label class="mat-label">Año</label>
+                    <select id="mat-año" class="mat-sel" onchange="onFiltroBase()"></select>
+                </div>
+                <div>
+                    <label class="mat-label">Mes</label>
+                    <select id="mat-mes" class="mat-sel" onchange="onFiltroBase()">
+                        <option value="">Todo el año</option>
+                        <option value="1">Enero</option>
+                        <option value="2">Febrero</option>
+                        <option value="3">Marzo</option>
+                        <option value="4">Abril</option>
+                        <option value="5">Mayo</option>
+                        <option value="6">Junio</option>
+                        <option value="7">Julio</option>
+                        <option value="8">Agosto</option>
+                        <option value="9">Septiembre</option>
+                        <option value="10">Octubre</option>
+                        <option value="11">Noviembre</option>
+                        <option value="12">Diciembre</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="mat-label">Desde</label>
+                    <input type="date" id="mat-desde" class="mat-sel" onchange="onRangoFecha()" style="font-size:12px;padding:4px 6px;">
+                </div>
+                <div>
+                    <label class="mat-label">Hasta</label>
+                    <input type="date" id="mat-hasta" class="mat-sel" onchange="onRangoFecha()" style="font-size:12px;padding:4px 6px;">
+                </div>
+                <div style="display:flex;align-items:flex-end;">
+                    <button id="btn-limpiar-fechas" class="btn btn-pequeño" onclick="limpiarFechas()" style="display:none;font-size:11px;padding:4px 8px;">✕ Limpiar fechas</button>
+                </div>
+            </div>
+
+            <!-- Filtros de la matriz -->
+            <div class="mat-filtros">
+                <div>
+                    <label class="mat-label">Tipo persona</label>
+                    <select id="mat-tipo" class="mat-sel">
+                        <option value="">Todos</option>
+                        <option value="jurado">Jurados</option>
+                        <option value="delegado_rentado">Delegados</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="mat-label">Categoría</label>
+                    <select id="mat-cat" class="mat-sel">
+                        <option value="">Todas</option>
+                        <option value="A">Cat. A</option>
+                        <option value="B">Cat. B</option>
+                        <option value="C">Cat. C</option>
+                        <option value="DR">Delegado Rentado</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="mat-label">Ordenar por</label>
+                    <select id="mat-order" class="mat-sel">
+                        <option value="salidas_desc">Más salidas primero</option>
+                        <option value="salidas_asc">Menos salidas primero</option>
+                        <option value="nota_desc">Mejor promedio nota</option>
+                        <option value="nota_asc">Menor promedio nota</option>
+                        <option value="nombre_az">Nombre A-Z</option>
+                        <option value="cat_az">Categoría A-B-C</option>
+                        <option value="ultima_desc">Última salida más reciente</option>
+                        <option value="ultima_asc">Última salida más antigua</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="mat-label">Buscar nombre</label>
+                    <input type="text" id="mat-search" class="mat-sel" placeholder="Nombre..." style="width:180px;"
+                        onkeydown="if(event.key==='Enter') cargarMatriz()">
+                </div>
+                <div style="display:flex;align-items:flex-end;padding-bottom:4px;">
+                    <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--gris);cursor:pointer;white-space:nowrap;">
+                        <input type="checkbox" id="mat-sin-salidas" checked style="margin:0;cursor:pointer;">
+                        Incluir sin salidas
+                    </label>
+                </div>
+                <div style="display:flex;align-items:flex-end;gap:6px;">
+                    <button class="btn btn-primario btn-pequeño" onclick="cargarMatriz()">Cargar matriz</button>
+                    <button class="btn btn-secundario btn-pequeño" onclick="limpiarTodo()">Limpiar</button>
+                </div>
+            </div>
+
+            <!-- Área de resultados -->
+            <div id="mat-area">
+                <div class="mat-empty">
+                    <div class="mat-empty-icon">🗂️</div>
+                    <p>Seleccione los filtros y presione <strong>Cargar matriz</strong> para ver el detalle de salidas.</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+// ─── Timezone-safe ────────────────────────────────────────────────
+function mesAnioChile() {
+    const partes = new Intl.DateTimeFormat('es-CL', {
+        timeZone: 'America/Santiago', year: 'numeric', month: '2-digit'
+    }).formatToParts(new Date());
+    const p = {};
+    partes.forEach(({ type, value }) => { p[type] = value; });
+    return { mes: parseInt(p.month), año: parseInt(p.year) };
+}
+const hoy = mesAnioChile();
+
+// ─── Poblar selector de años ─────────────────────────────────────
+(function poblarAnios() {
+    const sel = document.getElementById('mat-año');
+    for (let y = hoy.año; y >= hoy.año - 4; y--) {
+        const opt = document.createElement('option');
+        opt.value = String(y);
+        opt.textContent = String(y);
+        if (y === hoy.año) opt.selected = true;
+        sel.appendChild(opt);
+    }
+})();
+
+// ─── Filtros de período ───────────────────────────────────────────
+function onFiltroBase() {
+    // Si hay rango explícito, ignorar (el rango ya tomó el control)
+    const desde = document.getElementById('mat-desde')?.value || '';
+    const hasta = document.getElementById('mat-hasta')?.value || '';
+    if (desde || hasta) return;
+}
+
+function onRangoFecha() {
+    const desde = document.getElementById('mat-desde').value;
+    const hasta = document.getElementById('mat-hasta').value;
+    const btn   = document.getElementById('btn-limpiar-fechas');
+    btn.style.display = (desde || hasta) ? 'inline-block' : 'none';
+    // Deshabilitar año/mes cuando hay rango explícito
+    const usaRango = !!(desde || hasta);
+    ['mat-año', 'mat-mes'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = usaRango;
+    });
+}
+
+function limpiarFechas() {
+    document.getElementById('mat-desde').value = '';
+    document.getElementById('mat-hasta').value = '';
+    document.getElementById('btn-limpiar-fechas').style.display = 'none';
+    ['mat-año', 'mat-mes'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = false;
+    });
+}
+
+function limpiarTodo() {
+    limpiarFechas();
+    document.getElementById('mat-año').value   = String(hoy.año);
+    document.getElementById('mat-mes').value   = '';
+    document.getElementById('mat-tipo').value  = '';
+    document.getElementById('mat-cat').value   = '';
+    document.getElementById('mat-order').value = 'salidas_desc';
+    document.getElementById('mat-search').value = '';
+    document.getElementById('mat-sin-salidas').checked = true;
+}
+
+// ─── Estado de la carga ───────────────────────────────────────────
+let _matrizData   = null;
+let _matrizParams = null;
+
+// ─── Cargar matriz ────────────────────────────────────────────────
+async function cargarMatriz() {
+    const area = document.getElementById('mat-area');
+    area.innerHTML = '<div class="mat-spinner">Cargando matriz...</div>';
+
+    const desde = document.getElementById('mat-desde').value;
+    const hasta = document.getElementById('mat-hasta').value;
+    const año   = document.getElementById('mat-año').value || hoy.año;
+    const mes   = document.getElementById('mat-mes').value || '';
+    const tipo  = document.getElementById('mat-tipo').value || '';
+    const cat   = document.getElementById('mat-cat').value || '';
+    const order = document.getElementById('mat-order').value || 'salidas_desc';
+    const search = document.getElementById('mat-search').value.trim() || '';
+    const sinSalidas = document.getElementById('mat-sin-salidas').checked ? '1' : '0';
+
+    const params = new URLSearchParams({ año, order });
+    if (mes)    params.set('mes', mes);
+    if (desde)  params.set('desde', desde);
+    if (hasta)  params.set('hasta', hasta);
+    if (tipo)   params.set('tipo', tipo);
+    if (cat)    params.set('categoria', cat);
+    if (search) params.set('search', search);
+    params.set('incluir_sin_salidas', sinSalidas);
+
+    _matrizParams = params.toString();
+
+    try {
+        const d = await api.get(`/admin/dashboard/salidas-matriz?${_matrizParams}`);
+        _matrizData = d;
+        renderMatriz(d);
+    } catch(e) {
+        area.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar la matriz')}</div>`;
+    }
+}
+
+// ─── Renderizar tabla ─────────────────────────────────────────────
+function renderMatriz(d) {
+    const area = document.getElementById('mat-area');
+    const { personas, periodo } = d;
+
+    if (!personas || personas.length === 0) {
+        area.innerHTML = `
+        <div class="mat-empty">
+            <div class="mat-empty-icon">🔍</div>
+            <p>Sin personas para los filtros seleccionados.</p>
+        </div>`;
+        return;
+    }
+
+    const COLORES  = { A: '#2980b9', B: '#27ae60', C: '#e67e22', DR: '#8e44ad', '?': '#aaa' };
+    const TIPO_LBL = { jurado: 'Jurado', delegado_rentado: 'Delegado' };
+    const maxRodeos = Math.max(...personas.map(p => p.rodeos.length), 0);
+
+    function fmtFechaCorta(f) {
+        return f ? f.slice(8,10)+'/'+f.slice(5,7)+'/'+f.slice(0,4) : '';
+    }
+    function fmtFechaSimple(f) {
+        return f ? f.slice(8,10)+'/'+f.slice(5,7)+'/'+f.slice(0,4) : '—';
+    }
+    function colorNota(n) {
+        if (n === null) return '#aaa';
+        return n >= 6 ? '#27ae60' : n >= 4.5 ? '#e67e22' : '#c0392b';
+    }
+
+    // Encabezados
+    let thR1 = `
+        <th class="mat-th-persona" rowspan="2">Persona</th>
+        <th rowspan="2" style="white-space:nowrap;padding:8px 10px;">Tipo</th>
+        <th rowspan="2" style="text-align:center;padding:8px 8px;">Cat.</th>
+        <th rowspan="2" style="text-align:right;white-space:nowrap;padding:8px 10px;">Salidas</th>
+        <th rowspan="2" style="text-align:right;white-space:nowrap;min-width:90px;padding:8px 10px;">Prom. Nota</th>`;
+    for (let i = 1; i <= maxRodeos; i++) {
+        thR1 += `<th colspan="2" style="text-align:center;font-size:10px;background:#edf2f7;color:#555;white-space:nowrap;border-left:1px solid #d5dae0;padding:6px 8px;">Rodeo ${i}</th>`;
+    }
+
+    let thR2 = '';
+    for (let i = 1; i <= maxRodeos; i++) {
+        thR2 += `<th style="font-size:10px;min-width:140px;border-left:1px solid #d5dae0;padding:5px 8px;">Detalle</th>
+                 <th style="font-size:10px;text-align:right;min-width:54px;padding:5px 8px;">Nota</th>`;
+    }
+
+    // Filas
+    const filas = personas.map(p => {
+        const col   = COLORES[p.categoria] || '#aaa';
+        const pNota = p.promedio_nota !== null
+            ? `<span style="font-weight:700;color:${colorNota(p.promedio_nota)};font-size:13px;">${p.promedio_nota.toFixed(2)}</span>`
+              + `<span style="font-size:10px;color:#aaa;"> (${p.notas_count}/${p.total_salidas})</span>`
+            : '<span style="color:#aaa;font-size:11px;">Sin nota</span>';
+
+        let celdas = '';
+        if (p.total_salidas === 0 && maxRodeos > 0) {
+            celdas = `<td colspan="${maxRodeos * 2}" style="text-align:center;color:#bbb;font-size:11px;font-style:italic;vertical-align:middle;padding:10px 8px;border-left:1px solid #e8ecf0;">Sin salidas en el período</td>`;
+        } else {
+            for (let i = 0; i < maxRodeos; i++) {
+                const r = p.rodeos[i] || null;
+                if (!r) {
+                    celdas += `<td style="border-left:1px solid #e8ecf0;"></td><td></td>`;
+                } else {
+                    const notaStr = r.nota !== null ? r.nota.toFixed(1) : 'Sin nota';
+                    celdas += `
+                    <td style="font-size:10px;line-height:1.45;vertical-align:top;border-left:1px solid #e8ecf0;padding:5px 8px;min-width:140px;">
+                        <div style="font-weight:600;color:#222;">${sanitizar(r.club || '—')}</div>
+                        <div style="color:#666;">${sanitizar(r.asociacion || '—')}</div>
+                        <div style="color:#999;font-size:9px;">${sanitizar(r.tipo_rodeo || '—')}</div>
+                        <div style="color:#bbb;font-size:9px;">${fmtFechaCorta(r.fecha)}</div>
+                    </td>
+                    <td style="font-size:11px;font-weight:700;color:${colorNota(r.nota)};text-align:right;vertical-align:top;padding:5px 8px;white-space:nowrap;">${notaStr}</td>`;
+                }
+            }
+        }
+
+        return `<tr>
+            <td class="mat-td-persona">
+                <div style="font-weight:600;font-size:12px;color:#1a2744;">${sanitizar(p.nombre)}</div>
+                <span style="display:inline-block;margin-top:3px;font-size:10px;background:${col}22;color:${col};border-radius:4px;padding:1px 5px;font-weight:600;">${p.categoria}</span>
+            </td>
+            <td style="font-size:11px;white-space:nowrap;padding:7px 10px;">${TIPO_LBL[p.tipo_persona] || p.tipo_persona}</td>
+            <td style="text-align:center;padding:7px 8px;">
+                <span style="background:${col}22;color:${col};border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">${p.categoria}</span>
+            </td>
+            <td style="text-align:right;font-weight:700;font-size:14px;color:var(--primario);padding:7px 10px;">${p.total_salidas}</td>
+            <td style="text-align:right;padding:7px 10px;">${pNota}</td>
+            ${celdas}
+        </tr>`;
+    }).join('');
+
+    const nCon = personas.filter(p => p.total_salidas > 0).length;
+    const nSin = personas.filter(p => p.total_salidas === 0).length;
+    const fecha = new Date().toISOString().slice(0,10).replace(/-/g,'');
+
+    area.innerHTML = `
+    <div class="mat-resumen">
+        <div>
+            <strong>${nCon}</strong> persona(s) con salidas${nSin > 0 ? ` — <strong>${nSin}</strong> sin salidas` : ''}
+            &nbsp;·&nbsp; Período: ${fmtFechaSimple(periodo.inicio)} al ${fmtFechaSimple(periodo.fin)}
+        </div>
+        <div class="mat-btns-export">
+            <button class="btn btn-primario btn-pequeño" onclick="exportarExcel()" style="font-size:12px;">⬇ Exportar Excel</button>
+            <button class="btn btn-outline btn-pequeño"  onclick="exportarCSV()"   style="font-size:12px;">Exportar CSV</button>
+        </div>
+    </div>
+    <div class="mat-tabla-wrap">
+        <table class="mat-tabla">
+            <thead>
+                <tr>${thR1}</tr>
+                <tr>${thR2}</tr>
+            </thead>
+            <tbody>${filas}</tbody>
+        </table>
+    </div>`;
+}
+
+// ─── Exportar Excel ───────────────────────────────────────────────
+async function exportarExcel() {
+    if (!_matrizParams) return;
+    const fecha = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    try {
+        await api.descargar(
+            `/admin/dashboard/salidas-matriz/excel?${_matrizParams}`,
+            `reporte_salidas_rodeo_${fecha}.xlsx`
+        );
+    } catch(e) {
+        alert('Error al exportar Excel: ' + (e.message || e));
+    }
+}
+
+// ─── Exportar CSV ─────────────────────────────────────────────────
+function exportarCSV() {
+    if (!_matrizData?.personas) return;
+    const { personas, periodo } = _matrizData;
+    const TIPO_LBL = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
+    const fmt = f => f ? f.slice(8,10)+'/'+f.slice(5,7)+'/'+f.slice(0,4) : '';
+
+    const header = ['Persona','Tipo','Categoría','Total Salidas','Promedio Nota',
+                    'Notas Registradas','Sin Nota','Fecha Rodeo','Club','Asociación','Tipo Rodeo','Nota'];
+    const rows = [header];
+
+    personas.forEach(p => {
+        const tipo = TIPO_LBL[p.tipo_persona] || p.tipo_persona;
+        if (p.rodeos.length === 0) {
+            rows.push([p.nombre, tipo, p.categoria, 0, '', 0, 0, 'Sin salida', '—', '—', '—', '—']);
+        } else {
+            p.rodeos.forEach(r => {
+                rows.push([p.nombre, tipo, p.categoria, p.total_salidas, p.promedio_nota ?? '',
+                    p.notas_count, p.sin_nota_count,
+                    fmt(r.fecha), r.club || '—', r.asociacion || '—', r.tipo_rodeo || '—', r.nota ?? '—']);
+            });
+        }
+    });
+
+    const csv  = rows.map(row => row.map(v => '"' + String(v ?? '').replace(/"/g,'""') + '"').join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `reporte_salidas_rodeo_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

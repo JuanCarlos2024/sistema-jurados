@@ -5,7 +5,8 @@
 (function () {
     var NAV = [
         { s: 'Principal' },
-        { href: '/admin/dashboard.html',           icon: '📊', label: 'Dashboard' },
+        { href: '/admin/dashboard.html',               icon: '📊', label: 'Dashboard' },
+        { href: '/admin/matriz-participacion.html',    icon: '🗂️', label: 'Matriz de Participación' },
         { s: 'Personas' },
         { href: '/admin/usuarios.html',            icon: '👥', label: 'Jurados y Delegados' },
         { href: '/admin/disponibilidad.html',      icon: '📅', label: 'Disponibilidad' },

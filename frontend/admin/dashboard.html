@@ -697,7 +697,7 @@ function renderDesempeno(d) {
             ${kpi(resumen.total_notas,              'Notas registradas')}
             ${kpi(resumen.total_evaluados,          'Evaluados con nota')}
             ${kpi(resumen.total_usuarios,           'Personas en el período')}
-            ${kpi(resumen.total_salidas,            'Total salidas a jurar')}
+            ${kpi(resumen.total_salidas,            'Total salidas a rodeo')}
             ${kpi(promSal,                          'Promedio salidas / persona')}
         </div>
     </div>
@@ -751,13 +751,23 @@ function renderDesempeno(d) {
         </div>
         <div class="desemp-dos-col">
             <div class="desemp-bloque">
-                <div class="desemp-bloque-titulo" id="desemp-titulo-salidas">Salidas a jurar por mes y categoría</div>
+                <div class="desemp-bloque-titulo" id="desemp-titulo-salidas">Salidas a rodeo por mes y categoría</div>
                 <div class="desemp-grafico-wrap"><canvas id="chart-desemp-salidas"></canvas></div>
             </div>
             <div class="desemp-bloque">
                 <div class="desemp-bloque-titulo" id="desemp-titulo-notas">Promedio de nota por mes</div>
                 <div class="desemp-grafico-wrap"><canvas id="chart-desemp-notas"></canvas></div>
             </div>
+        </div>
+    </div>
+
+    <div class="dash-seccion" style="margin-top:16px;">
+        <div class="desemp-bloque" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+            <div>
+                <div style="font-size:14px;font-weight:700;color:var(--oscuro);">🗂️ Matriz de Participación en Rodeos</div>
+                <div style="font-size:12px;color:var(--gris);margin-top:3px;">Detalle completo de salidas por jurado/delegado, con filtros propios, exportación Excel y CSV</div>
+            </div>
+            <a href="/admin/matriz-participacion.html" class="btn btn-primario btn-pequeño">Ver matriz →</a>
         </div>
     </div>`;
 
@@ -847,10 +857,11 @@ function renderRankingSalidasTabs(ranking, ranking_menor, sin_salidas, por_categ
             }, LIMITE);
 
     return `<div class="desemp-bloque">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
-            <div class="desemp-bloque-titulo" style="margin:0;">Salidas a jurar</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+            <div class="desemp-bloque-titulo" style="margin:0;">Salidas a rodeo</div>
             <div style="display:flex;gap:4px;flex-wrap:wrap;" id="tabs-ranking-salidas">${tabBtns}</div>
         </div>
+        <div style="font-size:11px;color:var(--gris);margin-bottom:8px;">Filtrado según Tipo y Categoría seleccionados arriba.</div>
         <div id="tab-mas"   style="display:block;">${contenido_mas}</div>
         <div id="tab-menor" style="display:none;">${contenido_menor}</div>
         <div id="tab-cero"  style="display:none;">${contenido_cero}</div>
@@ -948,7 +959,7 @@ function cambiarGranularidad(gran) {
     const titulo = document.getElementById('desemp-evol-titulo');
     if (titulo) titulo.textContent = esMes ? 'Evolución mensual' : 'Evolución semanal';
     const tSal = document.getElementById('desemp-titulo-salidas');
-    if (tSal) tSal.textContent = esMes ? 'Salidas a jurar por mes y categoría' : 'Salidas a jurar por fecha de rodeo';
+    if (tSal) tSal.textContent = esMes ? 'Salidas a rodeo por mes y categoría' : 'Salidas a rodeo por fecha de rodeo';
     const tNot = document.getElementById('desemp-titulo-notas');
     if (tNot) tNot.textContent = esMes ? 'Promedio de nota por mes' : 'Promedio de nota por fecha de rodeo';
     renderChartSalidasMes(evolucion, COLORES, gran);
