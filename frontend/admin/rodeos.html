@@ -1430,14 +1430,29 @@ async function confirmarReabrir() {
     if (!motivo) { mostrarToast('El motivo de reapertura es obligatorio', 'error'); return; }
     const btn = document.getElementById('btn-confirmar-reabrir');
     if (btn) { btn.disabled = true; btn.textContent = 'Procesando...'; }
+
+    let exito = false;
     try {
         await api.post('/admin/cartillas-jurado/' + _reabrirCartillaId + '/reabrir', { motivo });
-        cerrarModalReabrir();
-        mostrarToast('Cartilla reabierta. El jurado puede enviar una nueva version.', 'exito');
-        await renderAdjuntosAdmin();
+        exito = true;
     } catch(e) {
-        mostrarToast(e.message || 'Error al reabrir cartilla', 'error');
+        // Si el servidor devolvió 502 la operación pudo haberse completado igual.
+        // Informamos al usuario con un mensaje orientador.
+        const esSinRespuesta = !e.status || e.status === 502 || e.status === 503 || e.status === 0;
+        const msg = esSinRespuesta
+            ? 'No se recibió respuesta del servidor. Cierra y vuelve a abrir el rodeo para verificar si la cartilla quedó reabierta.'
+            : (e.message || 'Error al reabrir cartilla');
+        mostrarToast(msg, 'error');
+    } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Solicitar corrección'; }
+    }
+
+    if (exito) {
+        cerrarModalReabrir();
+        mostrarToast('Cartilla reabierta correctamente. El jurado puede enviar una nueva versión.', 'success');
+        // Refrescar panel de adjuntos en background — error de refresh no debe
+        // sobreescribir el mensaje de éxito ni afectar al usuario.
+        renderAdjuntosAdmin().catch(() => {});
     }
 }
 
