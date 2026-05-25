@@ -115,16 +115,7 @@ router.patch('/:id', soloRolEvaluacion('analista', 'jefe_area'), async (req, res
         if (!['interpretativa', 'reglamentaria', 'informativo'].includes(tipo_caso)) {
             return res.status(400).json({ error: 'tipo_caso inválido' });
         }
-        if (tipo_caso === 'informativo') {
-            const { data: ciclo } = await supabase
-                .from('evaluacion_ciclos')
-                .select('numero_ciclo')
-                .eq('id', casoActual.ciclo_id)
-                .single();
-            if (!ciclo || ciclo.numero_ciclo !== 2) {
-                return res.status(400).json({ error: 'Los casos informativos solo pueden estar en el ciclo 2' });
-            }
-        }
+        // Nota: tipo 'informativo' (Conceptual/Sin descuento) está permitido en ambos ciclos.
         const desc = await getDescuentos();
         cambios.tipo_caso        = tipo_caso;
         cambios.descuento_puntos = desc[tipo_caso] ?? 0;

@@ -277,7 +277,7 @@
             <div id="import-step-1">
                 <div class="alerta alerta-info" style="margin-bottom:14px;">
                     Columnas requeridas: <strong>ciclo · numero_caso · tipo_caso · descripcion · url_video</strong><br>
-                    <small>tipo_caso: interpretativa (Apreciación) · reglamentaria · informativo (Conceptual, solo ciclo 2)</small>
+                    <small>tipo_caso: interpretativa (Apreciación) · reglamentaria · informativo (Conceptual, sin descuento)</small>
                 </div>
                 <div style="margin-bottom:14px;">
                     <button class="btn btn-secundario btn-pequeño" onclick="descargarPlantillaCasos()">Descargar plantilla Excel</button>
@@ -1624,9 +1624,8 @@ function configurarSelectTipo(numeroCiclo) {
     const sel = document.getElementById('caso-tipo');
     const optInfo = sel.querySelector('option[value="informativo"]');
     if (optInfo) optInfo.remove();
-    if (numeroCiclo === 2) {
-        sel.insertAdjacentHTML('beforeend', '<option value="informativo">Conceptual</option>');
-    }
+    // Conceptual (sin descuento) está disponible en ambos ciclos
+    sel.insertAdjacentHTML('beforeend', '<option value="informativo">Conceptual</option>');
 }
 const _DESCUENTO_POR_TIPO = { interpretativa: 1, reglamentaria: 1, informativo: 0 };
 const _DESCUENTO_LABEL    = { 0: 'Sin descuento (0 puntos)', 1: '1 punto', 2: '2 puntos' };

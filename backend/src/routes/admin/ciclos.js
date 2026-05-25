@@ -822,10 +822,7 @@ router.post('/:id/casos', async (req, res) => {
         .single();
 
     if (cicloErr) return res.status(404).json({ error: 'Ciclo no encontrado' });
-
-    if (tipo_caso === 'informativo' && ciclo.numero_ciclo !== 2) {
-        return res.status(400).json({ error: 'Los casos informativos solo pueden agregarse al ciclo 2' });
-    }
+    // Nota: tipo 'informativo' (Conceptual/Sin descuento) está permitido en ambos ciclos.
 
     const { count } = await supabase
         .from('evaluacion_casos')
@@ -897,7 +894,7 @@ router.get('/:id/plantilla', async (req, res) => {
 
         ws.addRow({ ciclo: 1, numero_caso: 1, tipo_caso: 'interpretativa', descripcion: 'Ejemplo descripción', url_video: '' });
         ws.addRow({ ciclo: 1, numero_caso: 2, tipo_caso: 'reglamentaria',  descripcion: 'Ejemplo descripción', url_video: 'https://...' });
-        ws.addRow({ ciclo: 2, numero_caso: 1, tipo_caso: 'informativo',    descripcion: 'Solo ciclo 2',        url_video: '' });
+        ws.addRow({ ciclo: 1, numero_caso: 3, tipo_caso: 'informativo',    descripcion: 'Conceptual (sin descuento, válido en ciclo 1 y 2)', url_video: '' });
 
         res.setHeader('Content-Disposition', 'attachment; filename="plantilla_casos.xlsx"');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -974,10 +971,7 @@ router.post('/:id/importar', uploadExcel.single('archivo'), async (req, res) => 
             errores.push({ fila, error: `numero_caso inválido: "${f.numero_caso}" (debe ser número >= 1)` });
             continue;
         }
-        if (tipo_caso === 'informativo' && ciclo.numero_ciclo !== 2) {
-            errores.push({ fila, error: `Casos informativos solo se permiten en Ciclo 2` });
-            continue;
-        }
+        // Nota: tipo 'informativo' (Conceptual/Sin descuento) está permitido en ambos ciclos.
         if (numerosExistentes.has(numero_caso)) {
             errores.push({ fila, error: `numero_caso ${numero_caso} ya existe en este ciclo` });
             continue;
