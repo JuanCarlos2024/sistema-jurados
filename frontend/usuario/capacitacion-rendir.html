@@ -293,6 +293,31 @@ if (!api.getUsuario()) {
 }
 
 async function iniciarPrueba() {
+    // ── Verificar abandono pendiente ──────────────────────────────────────────
+    // Si el usuario confirmó recargar/cerrar mientras estaba en una prueba,
+    // pagehide guardó una bandera aquí. Detectarla y finalizar antes de continuar.
+    var _flagKey   = 'cap_abandono_' + _asigId;
+    var _flagRaw   = null;
+    try { _flagRaw = localStorage.getItem(_flagKey); } catch (e) {}
+    if (_flagRaw) {
+        try { localStorage.removeItem(_flagKey); } catch (e) {}
+        try {
+            var _flagInfo = JSON.parse(_flagRaw);
+            if (_flagInfo && _flagInfo.intentoId) {
+                // Finalizar en backend (idempotente: si ya está completado retorna OK)
+                try {
+                    await api.post(
+                        '/usuario/capacitaciones/intentos/' + _flagInfo.intentoId + '/abandonar',
+                        {}
+                    );
+                } catch (eAb) { /* ya completado o error de red: continuar igualmente */ }
+                window.location.href =
+                    '/usuario/capacitacion-resultado.html?id=' + _flagInfo.intentoId;
+                return;
+            }
+        } catch (e) { /* JSON malformado: ignorar y continuar normalmente */ }
+    }
+
     try {
         var data = await api.get('/usuario/capacitaciones/' + _asigId + '/iniciar');
         _intentoId         = data.intento_id;
@@ -630,6 +655,7 @@ async function abandonarYSalir() {
 
     try {
         await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/abandonar', {});
+        try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (e) {}
         window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
     } catch (err) {
         // Si falla, re-activar la prueba para que el jurado pueda continuar
@@ -665,6 +691,7 @@ async function finalizarPrueba(porTiempo) {
 
     try {
         await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar', {});
+        try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (e) {}
         window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
     } catch (err) {
         _enviando     = false;
@@ -691,20 +718,48 @@ window.addEventListener('beforeunload', function (e) {
     return '';
 });
 
-// sendBeacon al cerrar/recargar: finalizar en backend si el usuario confirma salir
-// pagehide es más confiable que beforeunload para esto
+// Cierre/recarga confirmado: guardar bandera y finalizar en backend
+// pagehide solo se dispara cuando la página REALMENTE se descarga
+// (si el usuario cancela el diálogo de beforeunload, pagehide NO se dispara)
 document.addEventListener('pagehide', function (e) {
     if (!_pruebaActiva || !_intentoId) return;
-    // e.persisted=true significa que la página va al bfcache (se puede restaurar)
-    // En ese caso no finalizamos. En la práctica no ocurre porque beforeunload
-    // devuelve valor (lo que deshabilita bfcache en los navegadores modernos).
+    // e.persisted = true → bfcache (page puede restaurarse); no finalizar
+    // En la práctica, beforeunload con e.returnValue deshabilita bfcache en navegadores modernos
     if (e.persisted) return;
+
+    // CAPA 1: bandera en localStorage (sincrónica, 100% confiable)
+    // Al recargar, iniciarPrueba() detecta esta bandera y finaliza antes de continuar
+    try {
+        localStorage.setItem(
+            'cap_abandono_' + _asigId,
+            JSON.stringify({ intentoId: _intentoId })
+        );
+    } catch (e2) {}
+
+    // CAPA 2: fetch con keepalive = true (el request continúa tras la descarga de la página)
+    // Permite enviar el header Authorization, a diferencia de sendBeacon
     var token = api.getToken();
     if (!token) return;
-    var url = '/api/usuario/capacitaciones/intentos/' + _intentoId
-            + '/abandonar?t=' + encodeURIComponent(token);
-    if (navigator.sendBeacon) {
-        navigator.sendBeacon(url, new Blob(['{}'], { type: 'application/json' }));
+
+    var enviado = false;
+    try {
+        fetch('/api/usuario/capacitaciones/intentos/' + _intentoId + '/abandonar', {
+            method:    'POST',
+            keepalive: true,
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type':  'application/json'
+            },
+            body: '{}'
+        });
+        enviado = true;
+    } catch (e2) {}
+
+    // CAPA 3: sendBeacon como fallback para navegadores sin fetch keepalive
+    if (!enviado && navigator.sendBeacon) {
+        var urlBeacon = '/api/usuario/capacitaciones/intentos/' + _intentoId
+                      + '/abandonar?t=' + encodeURIComponent(token);
+        navigator.sendBeacon(urlBeacon, new Blob(['{}'], { type: 'application/json' }));
     }
 });
 </script>
