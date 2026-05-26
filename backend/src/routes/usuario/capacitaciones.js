@@ -7,6 +7,8 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../../config/supabase');
+const jwt      = require('jsonwebtoken');
+const JWT_SECRET_CAP = process.env.JWT_SECRET || 'fallback_secret_change_in_prod';
 
 // ─── Helper: aleatorizar array (Fisher-Yates) ────────────────────────────────
 
@@ -407,6 +409,95 @@ router.post('/intentos/:id/finalizar', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ...data, correctas, incorrectas, no_respondidas, total_preguntas: total });
+});
+
+// ─── POST /intentos/:id/abandonar ─── finalizar por salida/abandono ──────────
+// Acepta token en Authorization header O en query ?t=TOKEN
+// (sendBeacon no puede enviar headers custom, por eso también acepta query param).
+// Idempotente: si el intento ya está completado devuelve 200 sin recalcular.
+
+router.post('/intentos/:id/abandonar', async (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const rawToken   = authHeader
+        ? authHeader.split(' ')[1]
+        : (req.query.t || null);
+
+    if (!rawToken) return res.status(401).json({ error: 'Token requerido' });
+
+    let usuario;
+    try {
+        usuario = jwt.verify(rawToken, JWT_SECRET_CAP);
+    } catch (e) {
+        return res.status(401).json({ error: 'Token inválido o expirado' });
+    }
+    if (usuario.tipo !== 'usuario_pagado') {
+        return res.status(403).json({ error: 'Sin permisos' });
+    }
+
+    const { data: intento } = await supabase
+        .from('capacitacion_intentos')
+        .select(`
+            id, estado, asignacion_id,
+            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                usuario_pagado_id, prueba_id,
+                prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
+                    puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+                )
+            )
+        `)
+        .eq('id', req.params.id)
+        .single();
+
+    if (!intento || intento.asignacion?.usuario_pagado_id !== usuario.id) {
+        return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    // Idempotente: si ya está completado no recalcular
+    if (intento.estado === 'completado') {
+        return res.json({ ok: true, ya_completado: true, intento_id: intento.id });
+    }
+    if (intento.estado !== 'en_curso') {
+        return res.status(400).json({ error: 'El intento no está en curso' });
+    }
+
+    // Calcular puntaje con las respuestas guardadas hasta el momento
+    // Las preguntas sin respuesta cuentan como incorrectas (misma lógica que /finalizar)
+    const { count: totalPregCount } = await supabase
+        .from('capacitacion_preguntas')
+        .select('id', { count: 'exact', head: true })
+        .eq('prueba_id', intento.asignacion.prueba_id);
+
+    const { count: correctasCount } = await supabase
+        .from('capacitacion_respuestas')
+        .select('id', { count: 'exact', head: true })
+        .eq('intento_id', intento.id)
+        .eq('es_correcta', true);
+
+    const total     = totalPregCount || 0;
+    const correctas = correctasCount || 0;
+    const puntaje   = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
+
+    const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
+    const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
+    const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
+    const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
+    const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
+    const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
+
+    const { error } = await supabase
+        .from('capacitacion_intentos')
+        .update({
+            estado:           'completado',
+            finalizado_en:    new Date().toISOString(),
+            puntaje_obtenido: puntaje,
+            nota,
+            aprobado
+        })
+        .eq('id', req.params.id);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ ok: true, intento_id: intento.id, puntaje, nota, aprobado });
 });
 
 // ─── GET /intentos/:id/resultado ─── ver resultado con correcciones ──────────

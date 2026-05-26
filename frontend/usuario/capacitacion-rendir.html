@@ -155,6 +155,40 @@
             font-size: 13px; color: #7d6608;
             margin-bottom: 14px; text-align: center;
         }
+
+        /* Modal de confirmación de salida */
+        .modal-salida-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 9999;
+        }
+        .modal-salida {
+            background: #fff; border-radius: 12px;
+            padding: 32px 28px; max-width: 440px; width: 92%;
+            text-align: center;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.22);
+        }
+        .modal-salida-icono { font-size: 36px; margin-bottom: 12px; }
+        .modal-salida h3 {
+            font-size: 17px; font-weight: 800;
+            margin-bottom: 12px; color: #7d0000;
+        }
+        .modal-salida p {
+            font-size: 13px; color: #555;
+            line-height: 1.65; margin-bottom: 24px;
+        }
+        .modal-salida-acciones {
+            display: flex; gap: 10px;
+            justify-content: center; flex-wrap: wrap;
+        }
+        .btn-salir-confirmar {
+            background: #fadbd8; color: #922b21;
+            border: 1px solid #e8c0bb;
+            padding: 9px 18px; border-radius: 8px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+        }
+        .btn-salir-confirmar:disabled { opacity: .6; cursor: not-allowed; }
     </style>
 </head>
 <body class="bloqueado" oncontextmenu="return false;">
@@ -205,6 +239,27 @@
     </div>
 </div>
 
+<!-- ═══ Modal de confirmación de salida ══════════════════════════════════════ -->
+<div id="modal-salida" class="modal-salida-overlay" style="display:none;">
+    <div class="modal-salida">
+        <div class="modal-salida-icono">⚠️</div>
+        <h3>¿Salir de la prueba?</h3>
+        <p>
+            Estás respondiendo una prueba. Si sales, vuelves atrás, recargas o cierras
+            esta página, <strong>la prueba se finalizará</strong> y las preguntas no
+            respondidas quedarán como incorrectas.
+        </p>
+        <div class="modal-salida-acciones">
+            <button class="btn btn-primario" onclick="cerrarModalSalida()">
+                Cancelar y continuar respondiendo
+            </button>
+            <button class="btn-salir-confirmar" id="btn-confirmar-salida" onclick="abandonarYSalir()">
+                Salir y finalizar prueba
+            </button>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -219,6 +274,11 @@ var _tiempoPorPregunta    = 0;    // segundos por pregunta (0 = sin límite)
 var _enviando             = false;
 var _asigId               = null;
 var _preguntaBloqueada    = false; // impide doble-click durante avance
+
+// Protección de salida
+var _pruebaActiva       = false; // true solo mientras el jurado está respondiendo preguntas
+var _enviandoAbandono   = false; // guard contra doble acción en modal de salida
+var _modalSalidaVisible = false;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -304,6 +364,9 @@ function mostrarInstrucciones(prueba, totalPreguntas) {
 function comenzarPrueba() {
     document.getElementById('pantalla-instrucciones').style.display = 'none';
     document.getElementById('zona-preguntas').style.display = '';
+    _pruebaActiva = true;
+    // Empujar un estado extra al historial para poder interceptar el botón "Atrás"
+    history.pushState({ enPrueba: true }, '', window.location.href);
     mostrarPregunta(0);
 }
 
@@ -540,6 +603,44 @@ async function responder(preguntaId, alternativaId) {
     }
 }
 
+// ─── Modal de salida / abandono ──────────────────────────────────────────────
+
+function mostrarModalSalida() {
+    if (_modalSalidaVisible) return;
+    _modalSalidaVisible = true;
+    var btn = document.getElementById('btn-confirmar-salida');
+    if (btn) { btn.disabled = false; btn.textContent = 'Salir y finalizar prueba'; }
+    document.getElementById('modal-salida').style.display = 'flex';
+}
+
+function cerrarModalSalida() {
+    _modalSalidaVisible = false;
+    document.getElementById('modal-salida').style.display = 'none';
+}
+
+async function abandonarYSalir() {
+    if (_enviandoAbandono || !_intentoId) return;
+    _enviandoAbandono = true;
+
+    var btn = document.getElementById('btn-confirmar-salida');
+    if (btn) { btn.disabled = true; btn.textContent = 'Finalizando…'; }
+
+    _pruebaActiva = false; // desactivar protección ANTES de navegar
+    detenerTimer();
+
+    try {
+        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/abandonar', {});
+        window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+    } catch (err) {
+        // Si falla, re-activar la prueba para que el jurado pueda continuar
+        _enviandoAbandono = false;
+        _pruebaActiva     = true;
+        cerrarModalSalida();
+        iniciarTimerPregunta();
+        mostrarToast(err.message || 'Error al finalizar. Puedes continuar respondiendo.', 'error');
+    }
+}
+
 // ─── Finalizar ────────────────────────────────────────────────────────────────
 
 async function finalizarPrueba(porTiempo) {
@@ -557,7 +658,8 @@ async function finalizarPrueba(porTiempo) {
         }
     }
 
-    _enviando = true;
+    _enviando     = true;
+    _pruebaActiva = false; // desactivar protección ANTES de navegar
     var btn = document.getElementById('btn-finalizar');
     if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
 
@@ -565,11 +667,46 @@ async function finalizarPrueba(porTiempo) {
         await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar', {});
         window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
     } catch (err) {
-        _enviando = false;
+        _enviando     = false;
+        _pruebaActiva = true; // re-activar si falla el envío
         if (btn) { btn.disabled = false; btn.textContent = 'Finalizar y enviar'; }
         mostrarToast(err.message || 'Error al enviar la prueba', 'error');
     }
 }
+// ─── Protección de salida ─────────────────────────────────────────────────────
+
+// Interceptar botón "Atrás" del navegador
+window.addEventListener('popstate', function () {
+    if (!_pruebaActiva) return;
+    // Volver a empujar el estado para que la URL no cambie
+    history.pushState({ enPrueba: true }, '', window.location.href);
+    mostrarModalSalida();
+});
+
+// Interceptar recarga de página y cierre de pestaña
+window.addEventListener('beforeunload', function (e) {
+    if (!_pruebaActiva) return;
+    e.preventDefault();
+    e.returnValue = ''; // requerido por Chrome/Edge para mostrar el diálogo nativo
+    return '';
+});
+
+// sendBeacon al cerrar/recargar: finalizar en backend si el usuario confirma salir
+// pagehide es más confiable que beforeunload para esto
+document.addEventListener('pagehide', function (e) {
+    if (!_pruebaActiva || !_intentoId) return;
+    // e.persisted=true significa que la página va al bfcache (se puede restaurar)
+    // En ese caso no finalizamos. En la práctica no ocurre porque beforeunload
+    // devuelve valor (lo que deshabilita bfcache en los navegadores modernos).
+    if (e.persisted) return;
+    var token = api.getToken();
+    if (!token) return;
+    var url = '/api/usuario/capacitaciones/intentos/' + _intentoId
+            + '/abandonar?t=' + encodeURIComponent(token);
+    if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob(['{}'], { type: 'application/json' }));
+    }
+});
 </script>
 </body>
 </html>
