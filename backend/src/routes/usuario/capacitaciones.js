@@ -261,6 +261,7 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
                 tipo:               p.tipo || 'alternativa_unica',
                 video_url:          p.video_url || null,
                 video_sin_audio:    p.video_sin_audio || false,
+                imagen_url:         p.imagen_url || null,
                 alternativas:       altsOrdenadas,
                 respuesta_guardada: respMap[p.id] || null
             };
@@ -435,7 +436,7 @@ router.get('/intentos/:id/resultado', async (req, res) => {
 
     const { data: preguntas } = await supabase
         .from('capacitacion_preguntas')
-        .select('id, orden, enunciado')
+        .select('id, orden, enunciado, tipo, imagen_url')
         .eq('prueba_id', intento.asignacion.prueba_id)
         .order('orden', { ascending: true });
 
@@ -497,6 +498,8 @@ router.get('/intentos/:id/resultado', async (req, res) => {
             pregunta_id:         p.id,
             orden:               p.orden,
             enunciado:           p.enunciado,
+            tipo:                p.tipo || null,
+            imagen_url:          p.imagen_url || null,
             alternativas:        altsOrdenadas,
             alternativa_elegida: resp?.alternativa_id || null,
             es_correcta:         resp?.es_correcta ?? null

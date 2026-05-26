@@ -65,6 +65,22 @@
         .alt-detalle.elegida-incorrecta { background: #fadbd8; }
         .alt-detalle.normal            { background: #f8f9fa; }
         .alt-icono { font-size: 14px; }
+
+        .imagen-resultado {
+            width: 100%;
+            max-width: 540px;
+            margin: 0 auto 14px auto;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #f3f4f6;
+            border: 1px solid var(--gris-borde);
+        }
+        .imagen-resultado img {
+            width: 100%;
+            max-height: 320px;
+            object-fit: contain;
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -187,11 +203,17 @@ function render(data) {
                 + '</div>';
         }).join('');
 
+        var tieneImagen = (d.tipo === 'imagen_alternativas' || d.tipo === 'verdadero_falso_imagen');
+        var imagenHtml  = (tieneImagen && d.imagen_url)
+            ? '<div class="imagen-resultado"><img src="' + sanitizar(d.imagen_url) + '" alt="Imagen de la pregunta" onerror="this.parentElement.style.display=\'none\'"></div>'
+            : '';
+
         return '<div class="preg-resultado ' + clsCard + '">'
             + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
             + '<span style="font-size:18px;color:' + color + ';">' + icono + '</span>'
             + '<span style="font-size:13px;font-weight:700;color:var(--gris);">Pregunta ' + (idx + 1) + '</span>'
             + '</div>'
+            + imagenHtml
             + '<div style="font-size:14px;font-weight:600;margin-bottom:12px;">' + sanitizar(d.enunciado) + '</div>'
             + altsHtml
             + '</div>';
