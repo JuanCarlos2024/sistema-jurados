@@ -178,6 +178,7 @@
                 <button class="tab-btn activo" onclick="cambiarTab('config', this)">Configuración</button>
                 <button class="tab-btn" onclick="cambiarTab('preguntas', this)">Preguntas (<span id="cnt-preguntas">0</span>)</button>
                 <button class="tab-btn" onclick="cambiarTab('asignaciones', this)">Asignaciones (<span id="cnt-asig">0</span>)</button>
+                <button class="tab-btn" onclick="cambiarTab('material', this)">Material (<span id="cnt-material">0</span>)</button>
             </div>
 
             <!-- TAB: Configuración -->
@@ -302,6 +303,35 @@
                 </div>
                 <div id="lista-asig">
                     <div class="alerta alerta-info" style="font-size:13px;">Sin asignaciones aún.</div>
+                </div>
+            </div>
+
+            <!-- TAB: Material de estudio -->
+            <div id="tab-material" style="display:none;">
+                <div class="card">
+                    <div style="margin-bottom:14px;">
+                        <strong style="font-size:15px;">Buscar y agregar material</strong>
+                        <div style="font-size:12px;color:var(--gris);margin-top:2px;">Agrega materiales publicados o en borrador a esta capacitación. Los materiales archivados no aparecen aquí.</div>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
+                        <input type="text" id="mat-buscar-input" class="form-control"
+                               placeholder="Buscar por título…" oninput="filtrarMatDisponibles()" style="flex:1;min-width:200px;">
+                        <select id="mat-filtro-aud" class="form-control" onchange="filtrarMatDisponibles()" style="width:160px;">
+                            <option value="">Toda la audiencia</option>
+                            <option value="jurados">Jurados</option>
+                            <option value="delegados">Delegados</option>
+                            <option value="ambos">Ambos</option>
+                        </select>
+                    </div>
+                    <div id="mat-disponibles-lista" style="max-height:220px;overflow-y:auto;border:1px solid var(--gris-borde);border-radius:6px;margin-bottom:24px;">
+                        <div style="padding:14px;text-align:center;color:var(--gris);font-size:13px;">Abre esta pestaña para cargar los materiales disponibles.</div>
+                    </div>
+                    <div style="border-top:1px solid var(--gris-borde);padding-top:16px;">
+                        <strong style="font-size:14px;">Materiales asociados a esta capacitación</strong>
+                        <div id="mat-asociados-lista" style="margin-top:10px;">
+                            <div class="alerta alerta-info" style="font-size:13px;">Sin materiales asociados aún.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -513,9 +543,13 @@ async function cargarPrueba() {
 function cambiarTab(nombre, btn) {
     document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('activo'); });
     btn.classList.add('activo');
-    ['config', 'preguntas', 'asignaciones'].forEach(function (t) {
+    ['config', 'preguntas', 'asignaciones', 'material'].forEach(function (t) {
         document.getElementById('tab-' + t).style.display = (t === nombre) ? '' : 'none';
     });
+    if (nombre === 'material' && !_materialTabCargado) {
+        _materialTabCargado = true;
+        cargarMaterialTab();
+    }
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -1401,6 +1435,130 @@ async function confirmarAsignar() {
         cargarAsignaciones();
     } catch (err) {
         mostrarToast(err.message || 'Error al asignar', 'error');
+    }
+}
+
+// ─── Material de estudio ──────────────────────────────────────────────────────
+
+var _materialTabCargado  = false;
+var _todosLosMateriales  = [];
+var _materialesAsociados = [];
+
+var _ICONO_TIPO_MAT = { pdf:'📄', word:'📝', excel:'📊', imagen:'🖼️', youtube:'▶', link_externo:'🔗', video_externo:'🎬' };
+var _LABEL_AUD_MAT  = { jurados:'Jurados', delegados:'Delegados', ambos:'Ambos' };
+
+async function cargarMaterialTab() {
+    try {
+        _todosLosMateriales = await api.get('/admin/material-complementario');
+    } catch (e) {
+        _todosLosMateriales = [];
+    }
+    filtrarMatDisponibles();
+    await cargarMaterialesAsociados();
+}
+
+async function cargarMaterialesAsociados() {
+    try {
+        var data = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId + '/materiales');
+        _materialesAsociados = data || [];
+        renderMatAsociados();
+        document.getElementById('cnt-material').textContent = _materialesAsociados.length;
+    } catch (e) {
+        document.getElementById('mat-asociados-lista').innerHTML =
+            '<div class="alerta alerta-error" style="font-size:13px;">Error al cargar materiales asociados.</div>';
+    }
+}
+
+function filtrarMatDisponibles() {
+    var texto     = (document.getElementById('mat-buscar-input').value || '').toLowerCase().trim();
+    var audiencia = document.getElementById('mat-filtro-aud').value;
+    var asocIds   = new Set(_materialesAsociados.map(function (cm) { return cm.material && cm.material.id; }));
+
+    var disponibles = _todosLosMateriales.filter(function (m) {
+        if (m.estado === 'archivado') return false;
+        if (asocIds.has(m.id)) return false;
+        if (audiencia && m.audiencia !== audiencia) return false;
+        if (texto && m.titulo.toLowerCase().indexOf(texto) === -1) return false;
+        return true;
+    });
+
+    renderMatDisponibles(disponibles);
+}
+
+function renderMatDisponibles(lista) {
+    var div = document.getElementById('mat-disponibles-lista');
+    if (!lista.length) {
+        div.innerHTML = '<div style="padding:14px;text-align:center;color:var(--gris);font-size:13px;">No hay materiales disponibles para agregar.</div>';
+        return;
+    }
+    div.innerHTML = lista.map(function (m) {
+        var icono    = _ICONO_TIPO_MAT[m.tipo_material] || '📁';
+        var audLabel = _LABEL_AUD_MAT[m.audiencia] || m.audiencia;
+        var borrador = m.estado === 'borrador'
+            ? '<span style="font-size:10px;background:#fef9e7;color:#7d6608;padding:1px 6px;border-radius:8px;margin-left:4px;">Borrador</span>'
+            : '';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--gris-borde);font-size:13px;">'
+            + '<span style="flex:1;">' + icono + ' ' + sanitizar(m.titulo) + borrador
+            + ' <span style="color:var(--gris);font-size:11px;">· ' + sanitizar(audLabel) + '</span></span>'
+            + '<button class="btn btn-primario btn-pequeño" onclick="asociarMaterial(\'' + m.id + '\')">Agregar</button>'
+            + '</div>';
+    }).join('');
+}
+
+function renderMatAsociados() {
+    var div = document.getElementById('mat-asociados-lista');
+    if (!_materialesAsociados.length) {
+        div.innerHTML = '<div class="alerta alerta-info" style="font-size:13px;">Sin materiales asociados aún.</div>';
+        return;
+    }
+    div.innerHTML = _materialesAsociados.map(function (cm) {
+        var m = cm.material;
+        if (!m) return '';
+        var icono      = _ICONO_TIPO_MAT[m.tipo_material] || '📁';
+        var audLabel   = _LABEL_AUD_MAT[m.audiencia] || m.audiencia;
+        var estadoBadge = m.estado === 'publicado'
+            ? '<span style="font-size:10px;background:#d5f5e3;color:#1e8449;padding:1px 6px;border-radius:8px;margin-left:4px;">Publicado</span>'
+            : '<span style="font-size:10px;background:#fef9e7;color:#7d6608;padding:1px 6px;border-radius:8px;margin-left:4px;">Borrador</span>';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--gris-borde);font-size:13px;">'
+            + '<span style="flex:1;">' + icono + ' ' + sanitizar(m.titulo) + estadoBadge
+            + ' <span style="color:var(--gris);font-size:11px;">· ' + sanitizar(audLabel) + '</span></span>'
+            + '<label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;cursor:pointer;">'
+            + '<input type="checkbox"' + (cm.obligatorio ? ' checked' : '')
+            + ' onchange="toggleMatObligatorio(\'' + m.id + '\',this.checked)"> Obligatorio</label>'
+            + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;" '
+            + 'onclick="desasociarMaterial(\'' + m.id + '\')">Quitar</button>'
+            + '</div>';
+    }).join('');
+}
+
+async function asociarMaterial(materialId) {
+    try {
+        await api.post('/admin/capacitaciones/pruebas/' + _pruebaId + '/materiales', { material_id: materialId });
+        await cargarMaterialesAsociados();
+        filtrarMatDisponibles();
+        mostrarToast('Material agregado', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al agregar material', 'error');
+    }
+}
+
+async function desasociarMaterial(materialId) {
+    try {
+        await api.delete('/admin/capacitaciones/pruebas/' + _pruebaId + '/materiales/' + materialId);
+        await cargarMaterialesAsociados();
+        filtrarMatDisponibles();
+        mostrarToast('Material quitado', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al quitar material', 'error');
+    }
+}
+
+async function toggleMatObligatorio(materialId, checked) {
+    try {
+        await api.patch('/admin/capacitaciones/pruebas/' + _pruebaId + '/materiales/' + materialId, { obligatorio: checked });
+    } catch (err) {
+        mostrarToast(err.message || 'Error al actualizar', 'error');
+        await cargarMaterialesAsociados();
     }
 }
 </script>

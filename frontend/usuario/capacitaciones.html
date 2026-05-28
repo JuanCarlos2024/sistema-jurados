@@ -44,6 +44,17 @@
             padding:40px 24px;
             font-size:14px;
         }
+        .mat-item-row {
+            display:flex; align-items:center; gap:10px;
+            padding:8px 12px; border-bottom:1px solid var(--gris-borde);
+            font-size:13px;
+        }
+        .mat-item-row:last-child { border-bottom:none; }
+        .mc-overlay {
+            position:fixed; inset:0; background:rgba(0,0,0,.55);
+            z-index:1100; display:flex; align-items:center;
+            justify-content:center; padding:20px;
+        }
     </style>
 </head>
 <body>
@@ -83,6 +94,21 @@
     </div>
 </div>
 
+<!-- ─── Modal preview material ──────────────────────────────────────────────── -->
+<div id="mc-overlay" class="mc-overlay" style="display:none;" onclick="cerrarMcModal()">
+    <div id="mc-dialog" style="background:#fff;border-radius:12px;max-width:860px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;" onclick="event.stopPropagation()">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--gris-borde);flex-shrink:0;">
+            <div style="flex:1;min-width:0;">
+                <div id="mc-nombre" style="font-weight:700;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+                <div id="mc-desc"   style="font-size:12px;color:var(--gris);margin-top:2px;"></div>
+            </div>
+            <button onclick="cerrarMcModal()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;margin-left:10px;line-height:1;">✕</button>
+        </div>
+        <div id="mc-preview-area" style="flex:1;overflow:auto;min-height:180px;"></div>
+        <div id="mc-footer" style="padding:12px 20px;border-top:1px solid var(--gris-borde);display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;"></div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
@@ -105,6 +131,9 @@ async function cargar() {
 }
 
 cargar();
+
+var _matCargado  = {}; // asignacionId → boolean
+var _matDatos    = {}; // materialId → { id, titulo, descripcion, tipo }
 
 function render(lista) {
     var div = document.getElementById('contenido');
@@ -175,9 +204,193 @@ function render(lista) {
             + '<div class="prueba-meta">' + metaItems.map(function (m) { return '<span>' + sanitizar(m) + '</span>'; }).join('') + '</div>'
             + limiteHtml
             + '<div class="prueba-acciones">' + acciones + '</div>'
+            + '<div style="margin-top:10px;border-top:1px solid var(--gris-borde);padding-top:10px;">'
+            + '<button class="btn btn-outline btn-pequeño" onclick="toggleMatSec(\'' + item.asignacion_id + '\',this)">📚 Material de estudio</button>'
+            + '<div id="mat-sec-' + item.asignacion_id + '" style="display:none;margin-top:10px;"></div>'
+            + '</div>'
             + '</div>';
     }).join('');
 }
+
+// ─── Material de estudio por prueba ──────────────────────────────────────────
+
+function toggleMatSec(asignacionId, btn) {
+    var sec = document.getElementById('mat-sec-' + asignacionId);
+    if (!sec) return;
+    var abierto = sec.style.display !== 'none';
+    sec.style.display = abierto ? 'none' : '';
+    btn.textContent = abierto ? '📚 Material de estudio' : '📚 Ocultar material';
+    if (!abierto && !_matCargado[asignacionId]) {
+        _matCargado[asignacionId] = true;
+        cargarMatDePrueba(asignacionId, sec);
+    }
+}
+
+async function cargarMatDePrueba(asignacionId, sec) {
+    sec.innerHTML = '<div style="font-size:13px;color:var(--gris);padding:6px 0;">Cargando…</div>';
+    try {
+        var lista = await api.get('/usuario/capacitaciones/' + asignacionId + '/materiales');
+        if (!lista || lista.length === 0) {
+            sec.innerHTML = '<div style="font-size:13px;color:var(--gris);">Esta capacitación no tiene material de estudio.</div>';
+            return;
+        }
+        var ICONO = { pdf:'📄', word:'📝', excel:'📊', imagen:'🖼️', youtube:'▶', link_externo:'🔗', video_externo:'🎬' };
+        var rows = lista.map(function (cm) {
+            var m = cm.material;
+            _matDatos[m.id] = { id: m.id, titulo: m.titulo, descripcion: m.descripcion || '', tipo: m.tipo_material };
+            var icono = ICONO[m.tipo_material] || '📁';
+            var oblig = cm.obligatorio ? '<span style="color:#e67e22;font-size:11px;margin-left:4px;">★ Obligatorio</span>' : '';
+            return '<div class="mat-item-row">'
+                + '<span style="flex:1;">' + icono + ' ' + sanitizar(m.titulo) + oblig + '</span>'
+                + '<button class="btn btn-outline btn-pequeño" onclick="abrirMatPreview(\'' + m.id + '\',\'' + asignacionId + '\')">Ver</button>'
+                + '</div>';
+        }).join('');
+        sec.innerHTML = '<div style="border:1px solid var(--gris-borde);border-radius:8px;overflow:hidden;">' + rows + '</div>';
+    } catch (err) {
+        sec.innerHTML = '<div style="font-size:13px;color:#922b21;">Error: ' + sanitizar(err.message || '') + '</div>';
+    }
+}
+
+// ─── Preview modal ────────────────────────────────────────────────────────────
+
+async function abrirMatPreview(materialId, asignacionId) {
+    var meta = _matDatos[materialId];
+    if (!meta) return;
+
+    document.getElementById('mc-nombre').textContent = meta.titulo;
+    document.getElementById('mc-desc').textContent   = meta.descripcion || '';
+    document.getElementById('mc-preview-area').innerHTML = '<div style="padding:30px;text-align:center;color:var(--gris);">Cargando…</div>';
+    document.getElementById('mc-footer').innerHTML = '';
+    document.getElementById('mc-overlay').style.display = 'flex';
+
+    window._mcMatId   = materialId;
+    window._mcAsigId  = asignacionId;
+
+    try {
+        var datos = await api.get('/usuario/material-complementario/' + materialId + '/abrir');
+        construirMatPreview(datos, meta, materialId, asignacionId);
+        registrarMatInteraccion(materialId, 'visualizacion');
+    } catch (err) {
+        document.getElementById('mc-preview-area').innerHTML =
+            '<div style="padding:20px;color:#922b21;">' + sanitizar(err.message || 'Error al cargar') + '</div>';
+    }
+}
+
+function construirMatPreview(datos, meta, materialId, asignacionId) {
+    var area   = document.getElementById('mc-preview-area');
+    var footer = document.getElementById('mc-footer');
+    area.innerHTML   = '';
+    footer.innerHTML = '';
+
+    if (datos.tipo === 'archivo') {
+        var url  = datos.url;
+        var tipo = meta.tipo;
+
+        if (tipo === 'pdf') {
+            var ifr = document.createElement('iframe');
+            ifr.style.cssText = 'width:100%;height:520px;border:none;';
+            ifr.src = url;
+            area.appendChild(ifr);
+        } else if (tipo === 'imagen') {
+            var img = document.createElement('img');
+            img.style.cssText = 'max-width:100%;max-height:500px;display:block;margin:16px auto;border-radius:8px;object-fit:contain;';
+            img.alt = meta.titulo;
+            img.src = url;
+            area.appendChild(img);
+        } else if (tipo === 'word' || tipo === 'excel') {
+            var viewerUrl = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url);
+            var ifr2 = document.createElement('iframe');
+            ifr2.style.cssText = 'width:100%;height:520px;border:none;';
+            ifr2.src = viewerUrl;
+            area.appendChild(ifr2);
+        } else {
+            area.innerHTML = '<div style="padding:24px;text-align:center;"><p style="font-size:14px;color:var(--gris);">Vista previa no disponible. Usa el botón de descarga.</p></div>';
+        }
+
+        window._mcUrlDescarga = url;
+        var btnD = document.createElement('button');
+        btnD.className = 'btn btn-primario btn-pequeño';
+        btnD.textContent = '⬇ Descargar';
+        btnD.onclick = function () { mcDescargar(materialId); };
+        footer.appendChild(btnD);
+
+    } else if (datos.tipo === 'externo') {
+        var urlExt = datos.url;
+        var tipo   = meta.tipo;
+
+        if (tipo === 'youtube') {
+            var embedUrl = mcYoutubeEmbed(urlExt);
+            if (embedUrl) {
+                var ifr3 = document.createElement('iframe');
+                ifr3.style.cssText = 'width:100%;height:420px;border:none;';
+                ifr3.src = embedUrl;
+                ifr3.setAttribute('allowfullscreen', '');
+                ifr3.setAttribute('allow', 'autoplay; encrypted-media');
+                area.appendChild(ifr3);
+            } else {
+                area.innerHTML = '<div style="padding:24px;text-align:center;"><p style="color:var(--gris);">URL de YouTube inválida.</p></div>';
+            }
+        } else if (tipo === 'video_externo') {
+            var vid = document.createElement('video');
+            vid.style.cssText = 'width:100%;max-height:420px;background:#000;';
+            vid.controls = true;
+            vid.src = urlExt;
+            area.appendChild(vid);
+        } else {
+            area.innerHTML = '<div style="padding:24px;text-align:center;">'
+                + '<div style="font-size:36px;margin-bottom:12px;">🔗</div>'
+                + '<p style="font-size:14px;color:var(--gris);">Este enlace se abrirá en una nueva pestaña.</p>'
+                + '</div>';
+        }
+
+        window._mcUrlExterna = urlExt;
+        var btnE = document.createElement('button');
+        btnE.className = 'btn btn-primario btn-pequeño';
+        btnE.textContent = '🔗 Abrir enlace';
+        btnE.onclick = function () { mcAbrirExterno(materialId); };
+        footer.appendChild(btnE);
+    }
+}
+
+function mcDescargar(materialId) {
+    if (window._mcUrlDescarga) {
+        window.open(window._mcUrlDescarga, '_blank');
+        registrarMatInteraccion(materialId, 'descarga');
+    }
+}
+
+function mcAbrirExterno(materialId) {
+    if (window._mcUrlExterna) {
+        window.open(window._mcUrlExterna, '_blank', 'noopener,noreferrer');
+        registrarMatInteraccion(materialId, 'apertura_link');
+    }
+}
+
+function cerrarMcModal() {
+    document.getElementById('mc-overlay').style.display = 'none';
+    document.getElementById('mc-preview-area').innerHTML = '';
+    window._mcUrlDescarga = null;
+    window._mcUrlExterna  = null;
+}
+
+function registrarMatInteraccion(materialId, tipo) {
+    api.post('/usuario/material-complementario/' + materialId + '/interaccion', {
+        tipo_interaccion: tipo
+    }).catch(function () {}); // fire-and-forget, no bloquea
+}
+
+function mcYoutubeEmbed(url) {
+    if (!url) return null;
+    var m = url.trim().match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    if (!m) return null;
+    return 'https://www.youtube-nocookie.com/embed/' + m[1];
+}
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && document.getElementById('mc-overlay').style.display !== 'none') {
+        cerrarMcModal();
+    }
+});
 </script>
 </body>
 </html>

@@ -1195,6 +1195,98 @@ router.post('/pruebas/:id/agregar-desde-banco', async (req, res) => {
     res.status(201).json({ agregadas: creadas.length, pregunta_ids: creadas });
 });
 
+// ─── GET /pruebas/:id/materiales ─────────────────────────────────────────────
+
+router.get('/pruebas/:id/materiales', async (req, res) => {
+    const { data, error } = await supabase
+        .from('capacitacion_materiales')
+        .select(`
+            id, obligatorio, orden, created_at,
+            material:material_complementario(
+                id, titulo, descripcion, categoria, tipo_material,
+                nombre_archivo, audiencia, estado, obligatorio
+            )
+        `)
+        .eq('capacitacion_id', req.params.id)
+        .order('orden', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+});
+
+// ─── POST /pruebas/:id/materiales ─────────────────────────────────────────────
+
+router.post('/pruebas/:id/materiales', async (req, res) => {
+    const { material_id, obligatorio = false, orden } = req.body;
+    if (!material_id) return res.status(400).json({ error: 'material_id es obligatorio' });
+
+    const { data: mat } = await supabase
+        .from('material_complementario')
+        .select('id, estado')
+        .eq('id', material_id)
+        .is('deleted_at', null)
+        .single();
+
+    if (!mat) return res.status(404).json({ error: 'Material no encontrado' });
+    if (mat.estado === 'archivado') {
+        return res.status(400).json({ error: 'No se puede asociar un material archivado' });
+    }
+
+    const { data, error } = await supabase
+        .from('capacitacion_materiales')
+        .insert({
+            capacitacion_id: req.params.id,
+            material_id,
+            obligatorio: obligatorio === true || obligatorio === 'true',
+            orden: orden != null ? parseInt(orden) : null
+        })
+        .select()
+        .single();
+
+    if (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'Este material ya está asociado a esta capacitación' });
+        return res.status(500).json({ error: error.message });
+    }
+    res.status(201).json(data);
+});
+
+// ─── DELETE /pruebas/:id/materiales/:materialId ───────────────────────────────
+
+router.delete('/pruebas/:id/materiales/:materialId', async (req, res) => {
+    const { error } = await supabase
+        .from('capacitacion_materiales')
+        .delete()
+        .eq('capacitacion_id', req.params.id)
+        .eq('material_id', req.params.materialId);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+});
+
+// ─── PATCH /pruebas/:id/materiales/:materialId — actualizar obligatorio ────────
+
+router.patch('/pruebas/:id/materiales/:materialId', async (req, res) => {
+    const updates = {};
+    if (req.body.obligatorio !== undefined) {
+        updates.obligatorio = req.body.obligatorio === true || req.body.obligatorio === 'true';
+    }
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nada que actualizar' });
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+        .from('capacitacion_materiales')
+        .update(updates)
+        .eq('capacitacion_id', req.params.id)
+        .eq('material_id', req.params.materialId)
+        .select()
+        .single();
+
+    if (!data) return res.status(404).json({ error: 'Vinculación no encontrada' });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
 // ─── POST /upload-imagen ──────────────────────────────────────────────────────
 
 router.post('/upload-imagen', _uploadImagen.single('imagen'), async (req, res) => {

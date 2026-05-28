@@ -72,4 +72,41 @@ router.get('/:id/abrir', async (req, res) => {
     res.json({ tipo: 'archivo', url: signed.signedUrl, nombre: mat.nombre_archivo });
 });
 
+// ─── POST /:id/interaccion ────────────────────────────────────────────────────
+router.post('/:id/interaccion', async (req, res) => {
+    const tipo    = req.usuario.tipo_persona;
+    const allowed = audienciaQuery(tipo);
+    if (!allowed) return res.status(403).json({ error: 'Tipo de usuario no autorizado' });
+
+    const { tipo_interaccion, capacitacion_id } = req.body;
+    const TIPOS_VALIDOS = ['visualizacion', 'descarga', 'apertura_link'];
+    if (!TIPOS_VALIDOS.includes(tipo_interaccion)) {
+        return res.status(400).json({ error: 'tipo_interaccion inválido' });
+    }
+
+    const { data: mat } = await supabase
+        .from('material_complementario')
+        .select('id, estado, audiencia')
+        .eq('id', req.params.id)
+        .is('deleted_at', null)
+        .single();
+
+    if (!mat) return res.status(404).json({ error: 'Material no encontrado' });
+    if (mat.estado !== 'publicado') return res.status(403).json({ error: 'Material no disponible' });
+    if (!allowed.includes(mat.audiencia)) return res.status(403).json({ error: 'Sin acceso a este material' });
+
+    const rol_usuario = tipo === 'jurado' ? 'jurado' : 'delegado';
+
+    // Fire-and-forget — no esperamos para no bloquear la respuesta
+    supabase.from('material_complementario_interacciones').insert({
+        material_id:     req.params.id,
+        usuario_id:      req.usuario.id,
+        capacitacion_id: capacitacion_id || null,
+        tipo_interaccion,
+        rol_usuario
+    }).then(() => {});
+
+    res.json({ ok: true });
+});
+
 module.exports = router;

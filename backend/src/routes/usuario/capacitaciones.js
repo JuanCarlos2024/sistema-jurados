@@ -113,6 +113,54 @@ router.get('/', async (req, res) => {
     res.json(result);
 });
 
+// ─── GET /:asignacion_id/materiales ─── materiales de estudio de una prueba ───
+
+router.get('/:asignacion_id/materiales', async (req, res) => {
+    const uid  = req.usuario.id;
+    const tipo = req.usuario.tipo_persona;
+
+    let allowed;
+    if (tipo === 'jurado')           allowed = ['jurados', 'ambos'];
+    else if (tipo === 'delegado_rentado') allowed = ['delegados', 'ambos'];
+    else return res.status(403).json({ error: 'Tipo de usuario no autorizado' });
+
+    const { data: asig } = await supabase
+        .from('capacitacion_asignaciones')
+        .select('id, prueba_id')
+        .eq('id', req.params.asignacion_id)
+        .eq('usuario_pagado_id', uid)
+        .single();
+
+    if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
+
+    const { data, error } = await supabase
+        .from('capacitacion_materiales')
+        .select(`
+            id, obligatorio, orden,
+            material:material_complementario(
+                id, titulo, descripcion, categoria, tipo_material,
+                nombre_archivo, url_externa, audiencia, obligatorio, estado, deleted_at
+            )
+        `)
+        .eq('capacitacion_id', asig.prueba_id)
+        .order('orden', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const filtrados = (data || []).filter(cm => {
+        const m = cm.material;
+        return m && m.estado === 'publicado' && !m.deleted_at && allowed.includes(m.audiencia);
+    }).map(cm => ({
+        vinculo_id:  cm.id,
+        obligatorio: cm.obligatorio,
+        orden:       cm.orden,
+        material: (({ estado, deleted_at, ...rest }) => rest)(cm.material)
+    }));
+
+    res.json(filtrados);
+});
+
 // ─── GET /:asignacion_id/iniciar ─── obtiene/crea intento y devuelve preguntas
 
 router.get('/:asignacion_id/iniciar', async (req, res) => {

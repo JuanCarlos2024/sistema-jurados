@@ -256,6 +256,19 @@
     </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════ MODAL ESTADÍSTICAS -->
+<div id="modal-stats" class="modal-overlay" style="display:none;" onclick="cerrarModalStats()">
+    <div class="modal" style="max-width:500px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="stats-titulo">Estadísticas</h3>
+            <button class="modal-cerrar" onclick="cerrarModalStats()">✕</button>
+        </div>
+        <div class="modal-body" id="stats-body">
+            <div class="alerta alerta-info" style="font-size:13px;">Cargando…</div>
+        </div>
+    </div>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════ MODAL CONFIRMAR ELIMINAR -->
 <div id="modal-eliminar" class="modal-overlay" style="display:none;" onclick="cerrarModalEliminar()">
     <div class="modal" style="max-width:420px;" onclick="event.stopPropagation()">
@@ -364,6 +377,7 @@ function renderLista(lista) {
             + '<td>' + estadoBadge + '</td>'
             + '<td><div class="acciones-celda">'
             + btnVer
+            + '<button class="btn btn-outline btn-pequeño" onclick="abrirEstadisticas(\'' + m.id + '\')">📊 Stats</button>'
             + '<button class="btn btn-secundario btn-pequeño" onclick="abrirEditar(\'' + m.id + '\')">Editar</button>'
             + btnEstado
             + '<button class="btn btn-peligro btn-pequeño" onclick="abrirEliminar(\'' + m.id + '\',\'' + sanitizar(m.titulo).replace(/'/g,'\\\'') + '\')">Eliminar</button>'
@@ -618,6 +632,57 @@ async function confirmarEliminar() {
     } catch (err) {
         mostrarToast(err.message || 'Error al eliminar', 'error');
     }
+}
+
+// ─── Estadísticas ─────────────────────────────────────────────────────────────
+async function abrirEstadisticas(id) {
+    document.getElementById('modal-stats').style.display = '';
+    document.getElementById('stats-titulo').textContent  = 'Estadísticas';
+    document.getElementById('stats-body').innerHTML      = '<div class="alerta alerta-info" style="font-size:13px;">Cargando…</div>';
+
+    try {
+        var data = await api.get('/admin/material-complementario/' + id + '/estadisticas');
+        document.getElementById('stats-titulo').textContent = 'Estadísticas: ' + (data.titulo || '');
+
+        var ultsHtml = '';
+        if (data.ultimas_interacciones && data.ultimas_interacciones.length > 0) {
+            var TIPO_LABEL = { visualizacion: '👁 Visualización', descarga: '⬇ Descarga', apertura_link: '🔗 Apertura link' };
+            ultsHtml = '<div style="margin-top:16px;">'
+                + '<strong style="font-size:13px;">Últimas interacciones</strong>'
+                + '<div style="margin-top:8px;max-height:200px;overflow-y:auto;border:1px solid var(--gris-borde);border-radius:6px;">'
+                + data.ultimas_interacciones.map(function (i) {
+                    var tipoLabel = TIPO_LABEL[i.tipo_interaccion] || i.tipo_interaccion;
+                    var fecha = new Date(i.created_at).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' });
+                    return '<div style="padding:7px 12px;border-bottom:1px solid var(--gris-borde);font-size:12px;display:flex;justify-content:space-between;gap:8px;">'
+                        + '<span>' + tipoLabel + ' · ' + sanitizar(i.rol_usuario) + '</span>'
+                        + '<span style="color:var(--gris);">' + sanitizar(fecha) + '</span>'
+                        + '</div>';
+                }).join('')
+                + '</div></div>';
+        } else {
+            ultsHtml = '<div style="margin-top:14px;font-size:12px;color:var(--gris);">Sin interacciones registradas aún.</div>';
+        }
+
+        document.getElementById('stats-body').innerHTML =
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">'
+            + '<div style="text-align:center;padding:16px;background:#eaf4fb;border-radius:8px;">'
+            + '<div style="font-size:26px;font-weight:700;color:#1a5276;">' + data.total_visualizaciones + '</div>'
+            + '<div style="font-size:12px;color:var(--gris);margin-top:4px;">👁 Visualizaciones</div></div>'
+            + '<div style="text-align:center;padding:16px;background:#e9f7ef;border-radius:8px;">'
+            + '<div style="font-size:26px;font-weight:700;color:#1e8449;">' + data.total_descargas + '</div>'
+            + '<div style="font-size:12px;color:var(--gris);margin-top:4px;">⬇ Descargas</div></div>'
+            + '<div style="text-align:center;padding:16px;background:#fef9e7;border-radius:8px;">'
+            + '<div style="font-size:26px;font-weight:700;color:#7d6608;">' + data.total_aperturas_link + '</div>'
+            + '<div style="font-size:12px;color:var(--gris);margin-top:4px;">🔗 Aperturas link</div></div>'
+            + '</div>'
+            + ultsHtml;
+    } catch (err) {
+        document.getElementById('stats-body').innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message) + '</div>';
+    }
+}
+
+function cerrarModalStats() {
+    document.getElementById('modal-stats').style.display = 'none';
 }
 
 // ─── Labels y helpers ─────────────────────────────────────────────────────────

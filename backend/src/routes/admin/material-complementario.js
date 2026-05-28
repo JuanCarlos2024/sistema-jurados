@@ -98,6 +98,47 @@ router.get('/:id/descargar', async (req, res) => {
     res.json({ url: data.signedUrl, nombre: mat.nombre_archivo });
 });
 
+// ─── GET /:id/estadisticas ────────────────────────────────────────────────────
+router.get('/:id/estadisticas', async (req, res) => {
+    const { data: mat } = await supabase
+        .from('material_complementario')
+        .select('id, titulo')
+        .eq('id', req.params.id)
+        .is('deleted_at', null)
+        .single();
+
+    if (!mat) return res.status(404).json({ error: 'Material no encontrado' });
+
+    const [visRes, descRes, linkRes, ultRes] = await Promise.all([
+        supabase.from('material_complementario_interacciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('material_id', req.params.id)
+            .eq('tipo_interaccion', 'visualizacion'),
+        supabase.from('material_complementario_interacciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('material_id', req.params.id)
+            .eq('tipo_interaccion', 'descarga'),
+        supabase.from('material_complementario_interacciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('material_id', req.params.id)
+            .eq('tipo_interaccion', 'apertura_link'),
+        supabase.from('material_complementario_interacciones')
+            .select('tipo_interaccion, rol_usuario, created_at, usuario_id, capacitacion_id')
+            .eq('material_id', req.params.id)
+            .order('created_at', { ascending: false })
+            .limit(10)
+    ]);
+
+    res.json({
+        material_id:           mat.id,
+        titulo:                mat.titulo,
+        total_visualizaciones: visRes.count  ?? 0,
+        total_descargas:       descRes.count ?? 0,
+        total_aperturas_link:  linkRes.count ?? 0,
+        ultimas_interacciones: ultRes.data   || []
+    });
+});
+
 // ─── POST / — crear material ─────────────────────────────────────────────────
 router.post('/', upload.single('archivo'), async (req, res) => {
     const {
