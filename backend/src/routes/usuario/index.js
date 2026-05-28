@@ -15,5 +15,6 @@ router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/cartillas', require('./cartillas'));
 router.use('/evaluaciones', require('./evaluaciones'));
 router.use('/capacitaciones', require('./capacitaciones'));
+router.use('/material-complementario', require('./material-complementario'));
 
 module.exports = router;

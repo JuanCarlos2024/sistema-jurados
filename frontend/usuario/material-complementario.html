@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Material Complementario — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .filtros-bar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .filtros-bar input,
+        .filtros-bar select {
+            padding: 8px 12px;
+            border: 1px solid var(--gris-borde);
+            border-radius: 6px;
+            font-size: 13px;
+            background: #fff;
+        }
+        .filtros-bar input { flex: 1; min-width: 180px; }
+
+        .materiales-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .material-card {
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
+            background: #fff;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .material-card:hover {
+            border-color: var(--primario);
+            box-shadow: 0 2px 8px rgba(0,0,0,.07);
+        }
+        .material-card.obligatorio {
+            border-left: 4px solid #e74c3c;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .card-titulo {
+            font-size: 15px;
+            font-weight: 700;
+            margin: 0;
+            color: var(--texto);
+            line-height: 1.3;
+        }
+        .card-desc {
+            font-size: 13px;
+            color: var(--gris);
+            margin: 0;
+            line-height: 1.4;
+        }
+        .card-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            font-size: 12px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 9px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-tipo-pdf          { background: #fde8e8; color: #c0392b; }
+        .badge-tipo-word         { background: #dbeafe; color: #1e40af; }
+        .badge-tipo-excel        { background: #d1fae5; color: #065f46; }
+        .badge-tipo-imagen       { background: #fef3c7; color: #92400e; }
+        .badge-tipo-youtube      { background: #fee2e2; color: #b91c1c; }
+        .badge-tipo-link_externo { background: #ede9fe; color: #5b21b6; }
+        .badge-tipo-video_externo{ background: #e0f2fe; color: #0369a1; }
+        .badge-obligatorio       { background: #fee2e2; color: #991b1b; }
+        .badge-categoria         { background: #f0f4ff; color: #3730a3; }
+
+        .card-footer {
+            margin-top: auto;
+            padding-top: 8px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .estado-vacio {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--gris);
+        }
+        .estado-vacio .icon-grande {
+            font-size: 48px;
+            display: block;
+            margin-bottom: 12px;
+        }
+        .estado-vacio p {
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .loading-placeholder {
+            text-align: center;
+            padding: 40px;
+            color: var(--gris);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html" class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/evaluaciones.html" class="nav-item"><span class="icon">📋</span> Mis Evaluaciones</a>
+            <a href="/usuario/capacitaciones.html" class="nav-item"><span class="icon">🎓</span> Mis Capacitaciones</a>
+            <a href="/usuario/material-complementario.html" class="nav-item activo"><span class="icon">📂</span> Material complementario</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Material Complementario</h1>
+                <p class="subtitulo" id="subtitulo-audiencia">Recursos de estudio disponibles para ti</p>
+            </div>
+        </div>
+
+        <div class="filtros-bar">
+            <input type="text" id="filtro-texto" placeholder="Buscar por título o descripción..." oninput="aplicarFiltros()">
+            <select id="filtro-tipo" onchange="aplicarFiltros()">
+                <option value="">Todos los tipos</option>
+                <option value="pdf">PDF</option>
+                <option value="word">Word</option>
+                <option value="excel">Excel</option>
+                <option value="imagen">Imagen</option>
+                <option value="youtube">YouTube</option>
+                <option value="link_externo">Enlace externo</option>
+                <option value="video_externo">Video externo</option>
+            </select>
+            <select id="filtro-categoria" onchange="aplicarFiltros()">
+                <option value="">Todas las categorías</option>
+            </select>
+        </div>
+
+        <div id="contenedor-materiales">
+            <div class="loading-placeholder">Cargando materiales...</div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+(function () {
+    var _materiales = [];
+
+    var ICONOS_TIPO = {
+        pdf:           '📄',
+        word:          '📝',
+        excel:         '📊',
+        imagen:        '🖼️',
+        youtube:       '▶️',
+        link_externo:  '🔗',
+        video_externo: '🎥'
+    };
+
+    var LABELS_TIPO = {
+        pdf:           'PDF',
+        word:          'Word',
+        excel:         'Excel',
+        imagen:        'Imagen',
+        youtube:       'YouTube',
+        link_externo:  'Enlace externo',
+        video_externo: 'Video externo'
+    };
+
+    function tipoEsArchivo(tipo) {
+        return ['pdf', 'word', 'excel', 'imagen'].includes(tipo);
+    }
+
+    function sanitizar(str) {
+        var d = document.createElement('div');
+        d.textContent = String(str || '');
+        return d.innerHTML;
+    }
+
+    function formatearFecha(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        return d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+
+    async function init() {
+        var usuario = api.getUsuario();
+        if (!usuario) { api.cerrarSesion(); return; }
+
+        document.getElementById('nombre-usr').textContent = usuario.nombre_completo || usuario.rut || '';
+
+        var tipo = usuario.tipo_persona;
+        var subtitulo = document.getElementById('subtitulo-audiencia');
+        if (tipo === 'jurado') {
+            subtitulo.textContent = 'Recursos de estudio para jurados';
+        } else if (tipo === 'delegado_rentado') {
+            subtitulo.textContent = 'Recursos de estudio para delegados';
+        }
+
+        try {
+            _materiales = await api.get('/usuario/material-complementario/mis-materiales');
+            poblarFiltroCategoria(_materiales);
+            renderMateriales(_materiales);
+        } catch (err) {
+            document.getElementById('contenedor-materiales').innerHTML =
+                '<div class="estado-vacio"><span class="icon-grande">⚠️</span><p>' +
+                sanitizar(err.error || err.message || 'Error al cargar los materiales') + '</p></div>';
+        }
+    }
+
+    function poblarFiltroCategoria(materiales) {
+        var cats = [];
+        materiales.forEach(function (m) {
+            if (m.categoria && !cats.includes(m.categoria)) cats.push(m.categoria);
+        });
+        cats.sort();
+        var sel = document.getElementById('filtro-categoria');
+        cats.forEach(function (c) {
+            var opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            sel.appendChild(opt);
+        });
+    }
+
+    function aplicarFiltros() {
+        var texto = document.getElementById('filtro-texto').value.trim().toLowerCase();
+        var tipo  = document.getElementById('filtro-tipo').value;
+        var cat   = document.getElementById('filtro-categoria').value;
+
+        var filtrados = _materiales.filter(function (m) {
+            if (tipo && m.tipo_material !== tipo) return false;
+            if (cat  && m.categoria !== cat)      return false;
+            if (texto) {
+                var hayCoincidencia =
+                    (m.titulo       || '').toLowerCase().includes(texto) ||
+                    (m.descripcion  || '').toLowerCase().includes(texto) ||
+                    (m.categoria    || '').toLowerCase().includes(texto);
+                if (!hayCoincidencia) return false;
+            }
+            return true;
+        });
+
+        renderMateriales(filtrados, _materiales.length > 0 && filtrados.length === 0);
+    }
+
+    function renderMateriales(materiales, esFiltroVacio) {
+        var cont = document.getElementById('contenedor-materiales');
+
+        if (materiales.length === 0) {
+            if (esFiltroVacio) {
+                cont.innerHTML =
+                    '<div class="estado-vacio">' +
+                    '<span class="icon-grande">🔍</span>' +
+                    '<p>No se encontraron materiales con los filtros aplicados.</p>' +
+                    '</div>';
+            } else {
+                cont.innerHTML =
+                    '<div class="estado-vacio">' +
+                    '<span class="icon-grande">📂</span>' +
+                    '<p>No hay material complementario disponible por el momento.</p>' +
+                    '</div>';
+            }
+            return;
+        }
+
+        var html = '<div class="materiales-grid">';
+        materiales.forEach(function (m) {
+            var icono = ICONOS_TIPO[m.tipo_material] || '📄';
+            var label = LABELS_TIPO[m.tipo_material] || m.tipo_material;
+            var badgeTipo = '<span class="badge badge-tipo-' + m.tipo_material + '">' + icono + ' ' + sanitizar(label) + '</span>';
+            var badgeOblig = m.obligatorio ? '<span class="badge badge-obligatorio">⚠ Obligatorio</span>' : '';
+            var badgeCat   = m.categoria   ? '<span class="badge badge-categoria">' + sanitizar(m.categoria) + '</span>' : '';
+            var desc = m.descripcion
+                ? '<p class="card-desc">' + sanitizar(m.descripcion) + '</p>'
+                : '';
+            var btnLabel = tipoEsArchivo(m.tipo_material) ? 'Descargar' : 'Abrir';
+            var btnIcon  = tipoEsArchivo(m.tipo_material) ? '⬇' : '↗';
+
+            html +=
+                '<div class="material-card' + (m.obligatorio ? ' obligatorio' : '') + '">' +
+                    '<div class="card-header">' +
+                        '<p class="card-titulo">' + sanitizar(m.titulo) + '</p>' +
+                    '</div>' +
+                    desc +
+                    '<div class="card-meta">' +
+                        badgeTipo + badgeCat + badgeOblig +
+                    '</div>' +
+                    '<div style="font-size:11px;color:var(--gris);">Publicado: ' + formatearFecha(m.created_at) + '</div>' +
+                    '<div class="card-footer">' +
+                        '<button class="btn btn-primario btn-pequeño" onclick="abrirMaterial(\'' + m.id + '\')">' +
+                            btnIcon + ' ' + btnLabel +
+                        '</button>' +
+                    '</div>' +
+                '</div>';
+        });
+        html += '</div>';
+        cont.innerHTML = html;
+    }
+
+    window.abrirMaterial = async function (id) {
+        try {
+            var data = await api.get('/usuario/material-complementario/' + id + '/abrir');
+            if (data.url) {
+                window.open(data.url, '_blank', 'noopener,noreferrer');
+            }
+        } catch (err) {
+            alert(err.error || err.message || 'No se pudo abrir el material');
+        }
+    };
+
+    init();
+})();
+</script>
+</body>
+</html>
