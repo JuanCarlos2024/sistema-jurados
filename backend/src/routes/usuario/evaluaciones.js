@@ -261,13 +261,15 @@ router.get('/:id/casos', async (req, res) => {
 
 // GET /:id/resultado
 router.get('/:id/resultado', async (req, res) => {
+    const evalId = req.params.id;
+
     const { data: ev } = await supabase
         .from('evaluaciones')
         .select(`
-            id, estado, nota_final, puntaje_final, observacion_general, created_at,
-            rodeo:rodeos(id, club, fecha, asociacion)
+            id, estado, nota_final, puntaje_final, observacion_general,
+            rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
         `)
-        .eq('id', req.params.id)
+        .eq('id', evalId)
         .single();
 
     if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
@@ -275,7 +277,6 @@ router.get('/:id/resultado', async (req, res) => {
         return res.status(403).json({ error: 'La evaluación aún no ha sido publicada' });
     }
 
-    // Asignación activa del jurado
     const { data: asignacion } = await supabase
         .from('asignaciones')
         .select('id')
@@ -285,40 +286,137 @@ router.get('/:id/resultado', async (req, res) => {
         .limit(1)
         .single();
 
-    // Detalle de descuentos del jurado
-    let descuentos = [];
-    if (asignacion) {
-        const { data: casos } = await supabase
-            .from('evaluacion_casos')
-            .select('id, numero_caso, tipo_caso, descripcion, descuento_puntos, resolucion_final')
-            .eq('evaluacion_id', req.params.id)
-            .in('estado', ['resuelto', 'consolidado'])
-            .order('numero_caso');
+    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
 
-        if (casos?.length) {
-            const casoIds = casos.map(c => c.id);
-            const { data: resps } = await supabase
-                .from('evaluacion_respuestas_jurado')
-                .select('caso_id, decision, descuento_final')
-                .in('caso_id', casoIds)
-                .eq('asignacion_id', asignacion.id);
+    const miResultado = ev.nota_final != null
+        ? { nota: ev.nota_final, puntaje_evaluacion: ev.puntaje_final, calificacion_cualitativa: null }
+        : null;
 
-            const respMap = {};
-            for (const r of (resps || [])) respMap[r.caso_id] = r;
+    const { data: ciclosRaw } = await supabase
+        .from('evaluacion_ciclos')
+        .select('id, numero_ciclo')
+        .eq('evaluacion_id', evalId)
+        .order('numero_ciclo');
 
-            descuentos = casos.map(c => ({
-                numero_caso:     c.numero_caso,
-                tipo_caso:       c.tipo_caso,
-                descripcion:     c.descripcion,
-                descuento_puntos: c.descuento_puntos,
-                descuento_final: respMap[c.id]?.descuento_final ?? null,
-                decision:        respMap[c.id]?.decision ?? null,
-                resolucion_final: c.resolucion_final
-            }));
-        }
+    const cicloIds = (ciclosRaw || []).map(c => c.id);
+
+    const [casosResult, cicloComentsResult, cfinalResult] = await Promise.all([
+        cicloIds.length
+            ? supabase.from('evaluacion_casos')
+                .select('id, ciclo_id, numero_caso, tipo_caso, descripcion, descuento_puntos, video_url, resolucion_final, estado, decision_analista, comentario_analista, decision_comision, comentario_comision')
+                .in('ciclo_id', cicloIds)
+                .in('estado', ESTADOS_VISIBLES_CASO)
+                .order('numero_caso')
+            : Promise.resolve({ data: [] }),
+        cicloIds.length
+            ? supabase.from('evaluacion_comentarios_jurado_ciclo')
+                .select('ciclo_id, comentario, enviado_en')
+                .in('ciclo_id', cicloIds)
+                .eq('asignacion_id', asignacion.id)
+            : Promise.resolve({ data: [] }),
+        supabase.from('evaluacion_comentarios_finales')
+            .select('comentario, created_at')
+            .eq('evaluacion_id', evalId)
+            .eq('asignacion_id', asignacion.id)
+            .limit(1)
+            .maybeSingle()
+    ]);
+
+    const casosRaw = casosResult.data || [];
+    const casoIds  = casosRaw.map(c => c.id);
+
+    let respMap = {};
+    if (casoIds.length) {
+        const { data: resps } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select('caso_id, decision, comentario, decision_analista, comentario_analista, decidido_analista_en, decision_comite, comentario_comite, decidido_comite_en, descuento_final')
+            .in('caso_id', casoIds)
+            .eq('asignacion_id', asignacion.id);
+        for (const r of (resps || [])) respMap[r.caso_id] = r;
     }
 
-    res.json({ ...ev, descuentos });
+    const casosPorCiclo = {};
+    for (const c of casosRaw) {
+        (casosPorCiclo[c.ciclo_id] = casosPorCiclo[c.ciclo_id] || []).push(c);
+    }
+
+    const comentCicloMap = {};
+    for (const c of (cicloComentsResult.data || [])) comentCicloMap[c.ciclo_id] = c;
+
+    const ciclos = (ciclosRaw || []).map(ciclo => ({
+        numero_ciclo:   ciclo.numero_ciclo,
+        mi_comentario:  comentCicloMap[ciclo.id] || null,
+        casos: (casosPorCiclo[ciclo.id] || []).map(caso => ({
+            id:                      caso.id,
+            numero_caso:             caso.numero_caso,
+            tipo_caso:               caso.tipo_caso,
+            descripcion:             caso.descripcion || null,
+            descuento_puntos:        caso.descuento_puntos,
+            video_url:               caso.video_url || null,
+            resolucion_final:        caso.resolucion_final || null,
+            estado:                  caso.estado,
+            comentario_comision:     caso.comentario_comision || null,
+            decision_analista_caso:  caso.decision_analista || null,
+            comentario_analista_caso: caso.comentario_analista || null,
+            mi_respuesta:            respMap[caso.id] || null,
+            requiere_respuesta:      caso.tipo_caso !== 'informativo'
+        }))
+    }));
+
+    res.json({
+        rodeo:              ev.rodeo || {},
+        mi_resultado:       miResultado,
+        ciclos,
+        comentario_final:   cfinalResult.data || null,
+        observacion_general: ev.observacion_general || null,
+        estado:             ev.estado
+    });
+});
+
+// POST /:id/comentario-final — comentario post-cierre del jurado (uno por evaluación)
+router.post('/:id/comentario-final', async (req, res) => {
+    const { comentario } = req.body;
+    if (!comentario || !String(comentario).trim()) {
+        return res.status(400).json({ error: 'El comentario no puede estar vacío' });
+    }
+    if (String(comentario).trim().length > 2000) {
+        return res.status(400).json({ error: 'El comentario no puede superar 2000 caracteres' });
+    }
+
+    const { data: ev } = await supabase
+        .from('evaluaciones')
+        .select('id, rodeo_id, estado')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (!['publicado', 'cerrado'].includes(ev.estado)) {
+        return res.status(403).json({ error: 'Solo puedes comentar evaluaciones publicadas' });
+    }
+
+    const { data: asignacion } = await supabase
+        .from('asignaciones')
+        .select('id')
+        .eq('usuario_pagado_id', req.usuario.id)
+        .eq('rodeo_id', ev.rodeo_id)
+        .eq('estado', 'activo')
+        .limit(1)
+        .single();
+
+    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
+
+    const { data, error } = await supabase
+        .from('evaluacion_comentarios_finales')
+        .insert({ evaluacion_id: req.params.id, asignacion_id: asignacion.id, comentario: String(comentario).trim() })
+        .select()
+        .single();
+
+    if (error) {
+        if (error.code === '23505') return res.status(409).json({ error: 'Ya enviaste un comentario para esta evaluación' });
+        return res.status(500).json({ error: error.message });
+    }
+
+    res.status(201).json(data);
 });
 
 // POST /:id/casos/:casoId/responder

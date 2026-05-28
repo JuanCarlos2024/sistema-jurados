@@ -224,6 +224,7 @@ function render(data) {
                 <h2>${sanitizar(rodeo.club || '')} — ${sanitizar(rodeo.asociacion || '')}</h2>
                 <p>${sanitizar(rodeo.fecha || '')}${rodeo.tipo_rodeo_nombre ? ' · ' + sanitizar(rodeo.tipo_rodeo_nombre) : ''}</p>
                 ${cal ? `<div class="calificacion-chip">${sanitizar(cal)}</div>` : ''}
+                ${data.observacion_general ? `<div class="calificacion-chip" style="margin-top:6px;opacity:.9;">${sanitizar(data.observacion_general)}</div>` : ''}
             </div>
         </div>`;
     } else {
@@ -286,6 +287,29 @@ function renderCasoResultado(caso) {
         miRespHtml = '<span class="mi-decision" style="color:#e67e22;">Sin respuesta registrada</span>';
     }
 
+    const videoHtml = caso.video_url
+        ? `<div style="margin-top:8px;"><a href="${sanitizar(caso.video_url)}" target="_blank" rel="noopener noreferrer" style="font-size:13px;color:var(--primario);text-decoration:none;">▶ Ver video del caso</a></div>`
+        : '';
+
+    const miComentHtml = (caso.mi_respuesta && caso.mi_respuesta.comentario && caso.mi_respuesta.decision === 'rechaza')
+        ? `<div style="background:#f8f9fa;border-radius:6px;padding:8px 12px;font-size:12px;color:var(--gris);margin-top:8px;">
+            <strong style="display:block;font-size:11px;text-transform:uppercase;margin-bottom:2px;">Tu apelación</strong>
+            ${sanitizar(caso.mi_respuesta.comentario)}
+          </div>`
+        : '';
+
+    const analistaHtml = (caso.mi_respuesta && caso.mi_respuesta.comentario_analista)
+        ? (function() {
+            const r = caso.mi_respuesta;
+            const decLabels = { aprobada_auto: 'Aprobada automáticamente', aprobada: 'Apelación aprobada', rechazada: 'Apelación rechazada', derivada_comite: 'Derivada a comisión' };
+            const decLabel = decLabels[r.decision_analista] || '';
+            return `<div class="comision-nota" style="border-left-color:#2980b9;background:#eaf4fb;color:#1a5276;">
+                <strong>Revisión del analista${decLabel ? ' — ' + decLabel : ''}</strong>
+                ${sanitizar(r.comentario_analista)}
+            </div>`;
+          })()
+        : '';
+
     return `
     <div class="caso-resultado">
         <div class="caso-resultado-header">
@@ -297,6 +321,10 @@ function renderCasoResultado(caso) {
             </div>
             ${miRespHtml}
         </div>
+        ${caso.descripcion ? `<p style="font-size:13px;color:var(--texto);margin:6px 0 0;">${sanitizar(caso.descripcion)}</p>` : ''}
+        ${videoHtml}
+        ${miComentHtml}
+        ${analistaHtml}
         ${caso.comentario_comision ? `
         <div class="comision-nota">
             <strong>Comentario de la comisión técnica</strong>
