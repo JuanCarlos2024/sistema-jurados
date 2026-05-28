@@ -120,6 +120,38 @@
         }
         .comentario-final-wrap h3 { margin: 0 0 6px; font-size: 15px; }
         .comentario-final-wrap p  { margin: 0 0 12px; font-size: 13px; color: var(--gris); }
+
+        /* ── Video inline (mismo que evaluacion-casos) ── */
+        .video-inline-contenedor {
+            max-width: 820px;
+            margin: 8px auto 16px auto;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #aed6f1;
+            background: #000;
+        }
+        .video-inline-contenedor.oculto { display: none; }
+        .video-inline-ratio {
+            position: relative;
+            width: 100%;
+            padding-bottom: 56.25%;
+        }
+        .video-inline-ratio iframe {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .video-inline-fallback {
+            padding: 20px;
+            text-align: center;
+            color: #ccc;
+            font-size: 13px;
+            background: #1a1a1a;
+        }
+        .video-inline-fallback a { color: #aed6f1; }
+
         .comentario-registrado {
             background: #f0fff4;
             border: 1px solid #a9dfbf;
@@ -289,7 +321,13 @@ function renderCasoResultado(caso) {
     }
 
     const videoHtml = caso.video_url
-        ? `<div style="margin-top:8px;"><a href="${sanitizar(caso.video_url)}" target="_blank" rel="noopener noreferrer" style="font-size:13px;color:var(--primario);text-decoration:none;">▶ Ver video del caso</a></div>`
+        ? `<div style="margin-top:8px;">
+            <button id="btn-video-${caso.id}" class="btn btn-pequeño"
+                style="background:#eaf4fb;color:#1a5276;border:1px solid #aed6f1;"
+                onclick="toggleVideo('${caso.id}')">&#9654; Ver video del caso</button>
+            <div id="video-${caso.id}" class="video-inline-contenedor oculto"
+                data-url="${sanitizar(caso.video_url)}"></div>
+           </div>`
         : '';
 
     const miComentHtml = (caso.mi_respuesta && caso.mi_respuesta.comentario && caso.mi_respuesta.decision === 'rechaza')
@@ -376,6 +414,73 @@ async function enviarComentarioFinal() {
             if (errEl) { errEl.textContent = e.message || 'Error al enviar.'; errEl.classList.remove('oculto'); }
             if (btn) { btn.disabled = false; btn.textContent = 'Enviar comentario'; }
         }
+    }
+}
+
+// ── Video inline (portado desde evaluacion-casos.html) ────────────────────────
+function normalizarVideoUrl(url) {
+    if (!url || !/^https?:\/\//i.test(url)) return null;
+    try {
+        const u = new URL(url);
+        let videoId = null, start = null;
+        if (u.hostname === 'youtu.be') {
+            videoId = u.pathname.slice(1).split('/')[0] || null;
+            start   = u.searchParams.get('t') || u.searchParams.get('start') || null;
+        } else if (u.hostname === 'www.youtube.com' || u.hostname === 'youtube.com') {
+            if (u.pathname.startsWith('/embed/')) {
+                videoId = u.pathname.split('/embed/')[1].split('/')[0] || null;
+                start   = u.searchParams.get('start') || u.searchParams.get('t') || null;
+            } else {
+                videoId = u.searchParams.get('v') || null;
+                start   = u.searchParams.get('t') || u.searchParams.get('start') || null;
+            }
+        }
+        if (!videoId) return null;
+        videoId = videoId.split('?')[0].split('&')[0];
+        let embed = 'https://www.youtube.com/embed/' + videoId + '?autoplay=0&rel=0';
+        if (start) embed += '&start=' + encodeURIComponent(start);
+        return embed;
+    } catch (_) { return null; }
+}
+
+function toggleVideo(casoId) {
+    const wrap = document.getElementById('video-' + casoId);
+    const btn  = document.getElementById('btn-video-' + casoId);
+    if (!wrap || !btn) return;
+    const url     = wrap.dataset.url || '';
+    const visible = !wrap.classList.contains('oculto');
+    if (visible) {
+        const iframe = wrap.querySelector('iframe');
+        if (iframe) iframe.src = '';
+        wrap.classList.add('oculto');
+        btn.textContent = '▶ Ver video del caso';
+    } else {
+        const embedUrl = normalizarVideoUrl(url);
+        wrap.innerHTML = '';
+        if (embedUrl) {
+            const ratio  = document.createElement('div');
+            ratio.className = 'video-inline-ratio';
+            const iframe = document.createElement('iframe');
+            iframe.src = embedUrl;
+            iframe.allowFullscreen = true;
+            iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
+            ratio.appendChild(iframe);
+            wrap.appendChild(ratio);
+        } else {
+            const fb = document.createElement('div');
+            fb.className = 'video-inline-fallback';
+            const msg = document.createElement('p');
+            msg.textContent = 'Este video no permite previsualización dentro del sistema.';
+            msg.style.marginBottom = '10px';
+            fb.appendChild(msg);
+            const a = document.createElement('a');
+            a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+            a.textContent = 'Abrir video externo ↗';
+            fb.appendChild(a);
+            wrap.appendChild(fb);
+        }
+        wrap.classList.remove('oculto');
+        btn.textContent = '▼ Ocultar video';
     }
 }
 
