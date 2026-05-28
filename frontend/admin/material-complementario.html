@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Material Complementario — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ── Badges ── */
+        .badge-mat {
+            display: inline-block; padding: 2px 9px; border-radius: 10px;
+            font-size: 11px; font-weight: 600; white-space: nowrap;
+        }
+        .badge-borrador   { background: #fef9e7; color: #7d6608; }
+        .badge-publicado  { background: #d5f5e3; color: #1e8449; }
+        .badge-archivado  { background: #f0f0f0; color: #888; }
+        .badge-jurados    { background: #eaf4fb; color: #1a5276; }
+        .badge-delegados  { background: #fef9e7; color: #784212; }
+        .badge-ambos      { background: #e9f7ef; color: #1e8449; }
+        .badge-tipo       { background: #f4ecf7; color: #6c3483; }
+
+        /* ── Filtros ── */
+        .filtros-bar {
+            display: flex; gap: 10px; flex-wrap: wrap;
+            align-items: center; margin-bottom: 16px;
+        }
+        .filtros-bar select, .filtros-bar input {
+            border: 1px solid var(--gris-borde); border-radius: 6px;
+            padding: 6px 10px; font-size: 13px; background: #fff;
+            color: var(--texto); height: 34px;
+        }
+        .filtros-bar select { min-width: 140px; }
+        .filtros-bar input  { min-width: 220px; }
+
+        /* ── Tabla ── */
+        .tabla-materiales { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .tabla-materiales th {
+            background: #f8f9fa; font-size: 11px; text-transform: uppercase;
+            letter-spacing: .4px; color: var(--gris); font-weight: 700;
+            padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--gris-borde);
+        }
+        .tabla-materiales td {
+            padding: 10px 12px; border-bottom: 1px solid var(--gris-borde);
+            vertical-align: middle;
+        }
+        .tabla-materiales tr:last-child td { border-bottom: none; }
+        .tabla-materiales tr:hover td     { background: #fafbfc; }
+        .acciones-celda { display: flex; gap: 5px; flex-wrap: wrap; }
+
+        /* ── Ícono tipo ── */
+        .icono-tipo { font-size: 16px; }
+
+        /* ── Toggle fuente en modal ── */
+        .fuente-tabs { display: flex; gap: 0; margin-bottom: 12px; }
+        .fuente-tab {
+            flex: 1; padding: 7px 0; font-size: 13px; font-weight: 600;
+            border: 1px solid var(--gris-borde); background: #f8f9fa;
+            cursor: pointer; text-align: center; transition: background .15s;
+        }
+        .fuente-tab:first-child { border-radius: 6px 0 0 6px; }
+        .fuente-tab:last-child  { border-radius: 0 6px 6px 0; border-left: none; }
+        .fuente-tab.activa      { background: var(--primario); color: #fff; border-color: var(--primario); }
+
+        /* ── Zona de archivo ── */
+        .zona-archivo {
+            border: 2px dashed var(--gris-borde); border-radius: 8px;
+            padding: 18px; text-align: center; cursor: pointer;
+            transition: border-color .15s, background .15s;
+        }
+        .zona-archivo:hover { border-color: var(--primario); background: #f0f7ff; }
+        .zona-archivo input[type=file] { display: none; }
+        .archivo-seleccionado {
+            background: #e9f7ef; border: 1px solid #a9dfbf; border-radius: 6px;
+            padding: 8px 12px; font-size: 12px; margin-top: 8px;
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        }
+        .archivo-seleccionado button {
+            background: none; border: none; color: #922b21; cursor: pointer;
+            font-size: 14px; line-height: 1;
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno"
+                 style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Material Complementario</h1>
+            </div>
+            <div class="topbar-acciones">
+                <button class="btn btn-primario btn-pequeño" onclick="abrirModalNuevo()">+ Nuevo material</button>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="card">
+                <!-- Filtros -->
+                <div class="filtros-bar">
+                    <select id="filtro-estado" onchange="aplicarFiltros()">
+                        <option value="">Todos los estados</option>
+                        <option value="borrador">Borrador</option>
+                        <option value="publicado">Publicado</option>
+                        <option value="archivado">Archivado</option>
+                    </select>
+                    <select id="filtro-audiencia" onchange="aplicarFiltros()">
+                        <option value="">Toda la audiencia</option>
+                        <option value="jurados">Jurados</option>
+                        <option value="delegados">Delegados</option>
+                        <option value="ambos">Ambos</option>
+                    </select>
+                    <input type="text" id="filtro-buscar" placeholder="Buscar por título…"
+                           oninput="aplicarFiltros()" style="flex:1;min-width:180px;">
+                </div>
+                <!-- Lista -->
+                <div id="contenido-lista">
+                    <div class="alerta alerta-info" style="font-size:13px;">Cargando materiales…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ MODAL CREAR/EDITAR -->
+<div id="modal-form" class="modal-overlay" style="display:none;" onclick="cerrarModal()">
+    <div class="modal" style="max-width:600px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="modal-titulo">Nuevo material</h3>
+            <button class="modal-cerrar" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-grupo" style="grid-column:1/-1;">
+                    <label class="form-label">Título <span style="color:red">*</span></label>
+                    <input type="text" id="f-titulo" class="form-control" placeholder="Ej: Reglamento de Rodeo 2026" maxlength="200">
+                </div>
+                <div class="form-grupo" style="grid-column:1/-1;">
+                    <label class="form-label">Descripción</label>
+                    <textarea id="f-descripcion" class="form-control" rows="2"
+                        placeholder="Breve descripción del material…" maxlength="1000"></textarea>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Categoría</label>
+                    <input type="text" id="f-categoria" class="form-control"
+                        placeholder="Ej: Reglamento, Circular, Manual…" maxlength="100">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Tipo de material <span style="color:red">*</span></label>
+                    <select id="f-tipo" class="form-control" onchange="actualizarFuente()">
+                        <optgroup label="Archivos">
+                            <option value="pdf">PDF</option>
+                            <option value="word">Word (.doc/.docx)</option>
+                            <option value="excel">Excel (.xls/.xlsx)</option>
+                            <option value="imagen">Imagen (JPG/PNG)</option>
+                        </optgroup>
+                        <optgroup label="Enlaces">
+                            <option value="youtube">YouTube</option>
+                            <option value="link_externo">Link externo</option>
+                            <option value="video_externo">Video externo</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Audiencia <span style="color:red">*</span></label>
+                    <select id="f-audiencia" class="form-control">
+                        <option value="jurados">Jurados</option>
+                        <option value="delegados">Delegados</option>
+                        <option value="ambos">Ambos (jurados y delegados)</option>
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Estado</label>
+                    <select id="f-estado" class="form-control">
+                        <option value="borrador">Borrador</option>
+                        <option value="publicado">Publicado</option>
+                        <option value="archivado">Archivado</option>
+                    </select>
+                </div>
+                <div class="form-grupo" style="grid-column:1/-1;display:flex;align-items:center;gap:10px;margin-bottom:0;">
+                    <input type="checkbox" id="f-obligatorio" style="width:16px;height:16px;cursor:pointer;">
+                    <label for="f-obligatorio" class="form-label" style="margin:0;cursor:pointer;">
+                        Marcar como obligatorio / recomendado
+                    </label>
+                </div>
+                <div class="form-grupo" style="grid-column:1/-1;margin-bottom:0;">
+                    <label class="form-label">Orden de visualización</label>
+                    <input type="number" id="f-orden" class="form-control" value="0" min="0" style="width:100px;">
+                </div>
+            </div>
+
+            <!-- Fuente del contenido -->
+            <div style="margin-top:18px;">
+                <label class="form-label">Fuente del contenido <span style="color:red">*</span></label>
+
+                <!-- Tabs solo visibles cuando el tipo puede ser ambos (para flexibilidad en edición) -->
+                <div id="fuente-tabs-wrap" class="fuente-tabs" style="display:none;">
+                    <button type="button" class="fuente-tab activa" id="tab-archivo" onclick="seleccionarTab('archivo')">Subir archivo</button>
+                    <button type="button" class="fuente-tab" id="tab-url"     onclick="seleccionarTab('url')">URL externa</button>
+                </div>
+
+                <!-- Panel archivo -->
+                <div id="panel-archivo">
+                    <div class="zona-archivo" id="zona-archivo-drop"
+                         onclick="document.getElementById('f-archivo').click()"
+                         ondragover="event.preventDefault();this.style.borderColor='var(--primario)'"
+                         ondragleave="this.style.borderColor=''"
+                         ondrop="manejarDrop(event)">
+                        <div style="font-size:24px;margin-bottom:4px;">📎</div>
+                        <div style="font-size:13px;font-weight:600;">Haz clic o arrastra un archivo aquí</div>
+                        <div style="font-size:11px;color:var(--gris);margin-top:2px;">
+                            PDF, Word, Excel o Imagen · Máx. 20 MB
+                        </div>
+                        <input type="file" id="f-archivo" onchange="mostrarArchivoSeleccionado(this)">
+                    </div>
+                    <div id="archivo-info" style="display:none;" class="archivo-seleccionado">
+                        <span id="archivo-nombre" style="font-weight:600;"></span>
+                        <span id="archivo-tamano" style="color:var(--gris);"></span>
+                        <button type="button" onclick="limpiarArchivo()" title="Quitar archivo">✕</button>
+                    </div>
+                    <div id="archivo-actual" style="display:none;font-size:12px;color:var(--gris);margin-top:6px;">
+                        Archivo actual: <strong id="archivo-actual-nombre"></strong>
+                        <em style="margin-left:4px;">(sube uno nuevo para reemplazarlo)</em>
+                    </div>
+                </div>
+
+                <!-- Panel URL -->
+                <div id="panel-url" style="display:none;">
+                    <input type="url" id="f-url" class="form-control"
+                        placeholder="https://www.youtube.com/watch?v=… o https://…">
+                    <div style="font-size:11px;color:var(--gris);margin-top:4px;">
+                        Pega aquí el enlace completo (YouTube, Drive, Dropbox, etc.)
+                    </div>
+                </div>
+            </div>
+
+            <div id="error-form" class="alerta alerta-error" style="display:none;margin-top:14px;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primario" id="btn-guardar" onclick="guardar()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ MODAL CONFIRMAR ELIMINAR -->
+<div id="modal-eliminar" class="modal-overlay" style="display:none;" onclick="cerrarModalEliminar()">
+    <div class="modal" style="max-width:420px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>Eliminar material</h3>
+            <button class="modal-cerrar" onclick="cerrarModalEliminar()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="alerta alerta-error" style="margin-bottom:12px;">
+                Esta acción elimina el material. No se puede deshacer.
+            </div>
+            <p style="font-size:14px;margin:0;">¿Confirmas eliminar <strong id="eliminar-nombre"></strong>?</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalEliminar()">Cancelar</button>
+            <button class="btn btn-peligro" onclick="confirmarEliminar()">Eliminar</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('administrador');
+    var u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    document.getElementById('nombre-admin').textContent = u.nombre_completo || u.email || '';
+    cargarLista();
+});
+
+// ─── Estado ──────────────────────────────────────────────────────────────────
+var _materiales    = [];
+var _modoEditar    = null;   // null = crear, id = editar
+var _idEliminar    = null;
+var _tabActiva     = 'archivo'; // 'archivo' | 'url'
+
+// ─── Carga y render ──────────────────────────────────────────────────────────
+async function cargarLista() {
+    var div = document.getElementById('contenido-lista');
+    try {
+        _materiales = await api.get('/admin/material-complementario');
+        aplicarFiltros();
+    } catch (err) {
+        div.innerHTML = '<div class="alerta alerta-error">' + sanitizar(err.message) + '</div>';
+    }
+}
+
+function aplicarFiltros() {
+    var estado    = document.getElementById('filtro-estado').value;
+    var audiencia = document.getElementById('filtro-audiencia').value;
+    var texto     = (document.getElementById('filtro-buscar').value || '').toLowerCase().trim();
+
+    var lista = _materiales.filter(function (m) {
+        if (estado    && m.estado    !== estado)    return false;
+        if (audiencia && m.audiencia !== audiencia) return false;
+        if (texto && m.titulo.toLowerCase().indexOf(texto) === -1) return false;
+        return true;
+    });
+
+    renderLista(lista);
+}
+
+function renderLista(lista) {
+    var div = document.getElementById('contenido-lista');
+
+    if (!lista.length) {
+        div.innerHTML = '<div class="estado-vacio" style="padding:32px 0;text-align:center;">'
+            + '<div style="font-size:32px;margin-bottom:8px;">📂</div>'
+            + '<p style="color:var(--gris);margin:0;">No hay materiales que coincidan con los filtros.</p>'
+            + '</div>';
+        return;
+    }
+
+    var filas = lista.map(function (m) {
+        var estadoBadge = '<span class="badge-mat badge-' + m.estado + '">' + labelEstado(m.estado) + '</span>';
+        var audBadge    = '<span class="badge-mat badge-' + m.audiencia + '">' + labelAudiencia(m.audiencia) + '</span>';
+        var tipoBadge   = '<span class="badge-mat badge-tipo">' + iconoTipo(m.tipo_material) + ' ' + labelTipo(m.tipo_material) + '</span>';
+        var oblig       = m.obligatorio ? '<span title="Obligatorio" style="color:#e67e22;font-weight:700;">★</span>' : '';
+
+        var btnVer = '';
+        if (m.nombre_archivo) {
+            btnVer = '<button class="btn btn-outline btn-pequeño" onclick="descargar(\'' + m.id + '\',event)">⬇ Ver</button>';
+        } else if (m.url_externa) {
+            btnVer = '<a href="' + sanitizar(m.url_externa) + '" target="_blank" rel="noopener" class="btn btn-outline btn-pequeño">🔗 Abrir</a>';
+        }
+
+        var btnEstado = '';
+        if (m.estado === 'borrador') {
+            btnEstado = '<button class="btn btn-secundario btn-pequeño" onclick="cambiarEstado(\'' + m.id + '\',\'publicado\')">Publicar</button>';
+        } else if (m.estado === 'publicado') {
+            btnEstado = '<button class="btn btn-secundario btn-pequeño" onclick="cambiarEstado(\'' + m.id + '\',\'borrador\')">Despublicar</button>'
+                + ' <button class="btn btn-secundario btn-pequeño" onclick="cambiarEstado(\'' + m.id + '\',\'archivado\')">Archivar</button>';
+        } else {
+            btnEstado = '<button class="btn btn-secundario btn-pequeño" onclick="cambiarEstado(\'' + m.id + '\',\'borrador\')">Reactivar</button>';
+        }
+
+        return '<tr>'
+            + '<td><strong>' + sanitizar(m.titulo) + '</strong>'
+            + (m.categoria ? '<br><span style="font-size:11px;color:var(--gris);">' + sanitizar(m.categoria) + '</span>' : '')
+            + ' ' + oblig + '</td>'
+            + '<td>' + tipoBadge + '</td>'
+            + '<td>' + audBadge  + '</td>'
+            + '<td>' + estadoBadge + '</td>'
+            + '<td><div class="acciones-celda">'
+            + btnVer
+            + '<button class="btn btn-secundario btn-pequeño" onclick="abrirEditar(\'' + m.id + '\')">Editar</button>'
+            + btnEstado
+            + '<button class="btn btn-peligro btn-pequeño" onclick="abrirEliminar(\'' + m.id + '\',\'' + sanitizar(m.titulo).replace(/'/g,'\\\'') + '\')">Eliminar</button>'
+            + '</div></td>'
+            + '</tr>';
+    }).join('');
+
+    div.innerHTML = '<table class="tabla-materiales">'
+        + '<thead><tr>'
+        + '<th>Título</th><th>Tipo</th><th>Audiencia</th><th>Estado</th><th>Acciones</th>'
+        + '</tr></thead>'
+        + '<tbody>' + filas + '</tbody>'
+        + '</table>';
+}
+
+// ─── Modal crear ─────────────────────────────────────────────────────────────
+function abrirModalNuevo() {
+    _modoEditar = null;
+    document.getElementById('modal-titulo').textContent = 'Nuevo material';
+    resetearForm();
+    document.getElementById('modal-form').style.display = '';
+}
+
+function cerrarModal() {
+    document.getElementById('modal-form').style.display = 'none';
+    resetearForm();
+}
+
+function resetearForm() {
+    document.getElementById('f-titulo').value       = '';
+    document.getElementById('f-descripcion').value  = '';
+    document.getElementById('f-categoria').value    = '';
+    document.getElementById('f-tipo').value         = 'pdf';
+    document.getElementById('f-audiencia').value    = 'jurados';
+    document.getElementById('f-estado').value       = 'borrador';
+    document.getElementById('f-obligatorio').checked = false;
+    document.getElementById('f-orden').value        = '0';
+    document.getElementById('f-url').value          = '';
+    document.getElementById('error-form').style.display = 'none';
+    limpiarArchivo();
+    document.getElementById('archivo-actual').style.display = 'none';
+    actualizarFuente();
+}
+
+// ─── Modal editar ─────────────────────────────────────────────────────────────
+async function abrirEditar(id) {
+    try {
+        var m = await api.get('/admin/material-complementario/' + id);
+        _modoEditar = id;
+        document.getElementById('modal-titulo').textContent = 'Editar material';
+        document.getElementById('f-titulo').value       = m.titulo || '';
+        document.getElementById('f-descripcion').value  = m.descripcion || '';
+        document.getElementById('f-categoria').value    = m.categoria || '';
+        document.getElementById('f-tipo').value         = m.tipo_material || 'pdf';
+        document.getElementById('f-audiencia').value    = m.audiencia || 'jurados';
+        document.getElementById('f-estado').value       = m.estado || 'borrador';
+        document.getElementById('f-obligatorio').checked = !!m.obligatorio;
+        document.getElementById('f-orden').value        = m.orden != null ? m.orden : 0;
+        document.getElementById('f-url').value          = m.url_externa || '';
+
+        // Mostrar archivo actual si existe
+        var elActual = document.getElementById('archivo-actual');
+        if (m.nombre_archivo) {
+            document.getElementById('archivo-actual-nombre').textContent = m.nombre_archivo;
+            elActual.style.display = '';
+        } else {
+            elActual.style.display = 'none';
+        }
+
+        document.getElementById('error-form').style.display = 'none';
+        limpiarArchivo();
+        actualizarFuente();
+        document.getElementById('modal-form').style.display = '';
+    } catch (err) {
+        mostrarToast(err.message || 'Error al cargar el material', 'error');
+    }
+}
+
+// ─── Gestión de fuente (archivo vs URL) ──────────────────────────────────────
+function actualizarFuente() {
+    var tipo       = document.getElementById('f-tipo').value;
+    var esTipoUrl  = ['youtube','link_externo','video_externo'].indexOf(tipo) !== -1;
+    var tabsWrap   = document.getElementById('fuente-tabs-wrap');
+    var panelArch  = document.getElementById('panel-archivo');
+    var panelUrl   = document.getElementById('panel-url');
+
+    // Solo mostrar tabs en edición cuando puede haber ambos; en creación forzar según tipo
+    tabsWrap.style.display = 'none';
+
+    if (esTipoUrl) {
+        _tabActiva = 'url';
+    } else {
+        _tabActiva = 'archivo';
+    }
+
+    panelArch.style.display = _tabActiva === 'archivo' ? '' : 'none';
+    panelUrl.style.display  = _tabActiva === 'url'     ? '' : 'none';
+}
+
+function seleccionarTab(tab) {
+    _tabActiva = tab;
+    document.getElementById('tab-archivo').classList.toggle('activa', tab === 'archivo');
+    document.getElementById('tab-url').classList.toggle('activa',     tab === 'url');
+    document.getElementById('panel-archivo').style.display = tab === 'archivo' ? '' : 'none';
+    document.getElementById('panel-url').style.display     = tab === 'url'     ? '' : 'none';
+}
+
+// ─── Archivo drag & drop ──────────────────────────────────────────────────────
+function manejarDrop(e) {
+    e.preventDefault();
+    document.getElementById('zona-archivo-drop').style.borderColor = '';
+    var file = e.dataTransfer.files[0];
+    if (!file) return;
+    var input = document.getElementById('f-archivo');
+    var dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    mostrarArchivoSeleccionado(input);
+}
+
+function mostrarArchivoSeleccionado(input) {
+    if (!input.files || !input.files[0]) return;
+    var f = input.files[0];
+    document.getElementById('archivo-nombre').textContent = f.name;
+    document.getElementById('archivo-tamano').textContent = '(' + formatBytes(f.size) + ')';
+    document.getElementById('archivo-info').style.display = '';
+    document.getElementById('zona-archivo-drop').style.display = 'none';
+}
+
+function limpiarArchivo() {
+    var input = document.getElementById('f-archivo');
+    input.value = '';
+    document.getElementById('archivo-info').style.display = 'none';
+    document.getElementById('zona-archivo-drop').style.display = '';
+}
+
+// ─── Guardar (crear o actualizar) ────────────────────────────────────────────
+async function guardar() {
+    var errDiv = document.getElementById('error-form');
+    errDiv.style.display = 'none';
+
+    var titulo     = document.getElementById('f-titulo').value.trim();
+    var tipo       = document.getElementById('f-tipo').value;
+    var audiencia  = document.getElementById('f-audiencia').value;
+    var estado     = document.getElementById('f-estado').value;
+    var url        = document.getElementById('f-url').value.trim();
+    var archivo    = document.getElementById('f-archivo').files[0];
+
+    if (!titulo) { mostrarError('El título es obligatorio.'); return; }
+
+    var esTipoUrl = ['youtube','link_externo','video_externo'].indexOf(tipo) !== -1;
+
+    if (esTipoUrl && !url) {
+        mostrarError('Ingresa la URL del contenido.'); return;
+    }
+    if (!esTipoUrl && !archivo && !_modoEditar) {
+        mostrarError('Selecciona un archivo para subir.'); return;
+    }
+
+    var btn = document.getElementById('btn-guardar');
+    btn.disabled = true;
+    btn.textContent = 'Guardando…';
+
+    try {
+        var fd = new FormData();
+        fd.append('titulo',        titulo);
+        fd.append('descripcion',   document.getElementById('f-descripcion').value.trim());
+        fd.append('categoria',     document.getElementById('f-categoria').value.trim());
+        fd.append('tipo_material', tipo);
+        fd.append('audiencia',     audiencia);
+        fd.append('estado',        estado);
+        fd.append('obligatorio',   document.getElementById('f-obligatorio').checked ? 'true' : 'false');
+        fd.append('orden',         document.getElementById('f-orden').value || '0');
+        if (url)     fd.append('url_externa', url);
+        if (archivo) fd.append('archivo',     archivo);
+
+        var endpoint = _modoEditar
+            ? '/api/admin/material-complementario/' + _modoEditar
+            : '/api/admin/material-complementario';
+
+        var resp = await fetch(endpoint, {
+            method:  _modoEditar ? 'PUT' : 'POST',
+            headers: { 'Authorization': 'Bearer ' + api.getToken() },
+            body:    fd
+        });
+
+        if (!resp.ok) {
+            var d = await resp.json().catch(function () { return {}; });
+            throw { error: d.error || 'Error al guardar' };
+        }
+
+        cerrarModal();
+        mostrarToast(_modoEditar ? 'Material actualizado' : 'Material creado', 'exito');
+        await cargarLista();
+    } catch (err) {
+        mostrarError(err.error || err.message || 'Error al guardar.');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+    }
+}
+
+function mostrarError(msg) {
+    var div = document.getElementById('error-form');
+    div.textContent = msg;
+    div.style.display = '';
+}
+
+// ─── Cambiar estado ───────────────────────────────────────────────────────────
+async function cambiarEstado(id, nuevoEstado) {
+    var labels = { publicado: 'publicar', borrador: 'despublicar / pasar a borrador', archivado: 'archivar' };
+    if (!confirm('¿Confirmas ' + (labels[nuevoEstado] || nuevoEstado) + ' este material?')) return;
+    try {
+        await api.patch('/admin/material-complementario/' + id + '/estado', { estado: nuevoEstado });
+        mostrarToast('Estado actualizado', 'exito');
+        await cargarLista();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al cambiar estado', 'error');
+    }
+}
+
+// ─── Descarga ─────────────────────────────────────────────────────────────────
+async function descargar(id, e) {
+    if (e) e.stopPropagation();
+    try {
+        var res = await api.get('/admin/material-complementario/' + id + '/descargar');
+        window.open(res.url, '_blank');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al obtener enlace de descarga', 'error');
+    }
+}
+
+// ─── Eliminar ─────────────────────────────────────────────────────────────────
+function abrirEliminar(id, nombre) {
+    _idEliminar = id;
+    document.getElementById('eliminar-nombre').textContent = '"' + nombre + '"';
+    document.getElementById('modal-eliminar').style.display = '';
+}
+
+function cerrarModalEliminar() {
+    _idEliminar = null;
+    document.getElementById('modal-eliminar').style.display = 'none';
+}
+
+async function confirmarEliminar() {
+    if (!_idEliminar) return;
+    try {
+        await api.delete('/admin/material-complementario/' + _idEliminar);
+        cerrarModalEliminar();
+        mostrarToast('Material eliminado', 'exito');
+        await cargarLista();
+    } catch (err) {
+        mostrarToast(err.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ─── Labels y helpers ─────────────────────────────────────────────────────────
+function labelEstado(e) {
+    return { borrador: 'Borrador', publicado: 'Publicado', archivado: 'Archivado' }[e] || e;
+}
+
+function labelAudiencia(a) {
+    return { jurados: 'Jurados', delegados: 'Delegados', ambos: 'Ambos' }[a] || a;
+}
+
+function labelTipo(t) {
+    return {
+        pdf: 'PDF', word: 'Word', excel: 'Excel', imagen: 'Imagen',
+        youtube: 'YouTube', link_externo: 'Link externo', video_externo: 'Video'
+    }[t] || t;
+}
+
+function iconoTipo(t) {
+    return {
+        pdf: '📄', word: '📝', excel: '📊', imagen: '🖼️',
+        youtube: '▶', link_externo: '🔗', video_externo: '🎬'
+    }[t] || '📁';
+}
+
+function formatBytes(bytes) {
+    if (bytes < 1024)         return bytes + ' B';
+    if (bytes < 1024 * 1024)  return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+</script>
+</body>
+</html>

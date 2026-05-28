@@ -27,6 +27,7 @@
         { s: 'Capacitaciones' },
         { href: '/admin/capacitaciones.html',              icon: '🎓', label: 'Capacitaciones' },
         { href: '/admin/capacitacion-banco-preguntas.html', icon: '📚', label: 'Banco de Preguntas' },
+        { href: '/admin/material-complementario.html',     icon: '📂', label: 'Material Complementario' },
         { s: 'Evaluación Técnica' },
         { href: '/admin/evaluaciones.html',                    icon: '📝', label: 'Análisis de Casos' },
         { href: '/admin/evaluacion-dashboard.html',            icon: '📊', label: 'Dashboard Eval.' },

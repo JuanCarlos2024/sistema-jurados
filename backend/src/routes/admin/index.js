@@ -45,5 +45,6 @@ router.use('/casos', require('./casos'));
 router.use('/respuestas-jurado', require('./respuestas-jurado'));
 router.use('/reporte-deportivo', require('./reporte-deportivo'));
 router.use('/notificaciones', require('./notificaciones'));
+router.use('/material-complementario', require('./material-complementario'));
 
 module.exports = router;
