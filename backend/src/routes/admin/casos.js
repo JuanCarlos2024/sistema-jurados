@@ -196,6 +196,100 @@ router.delete('/:id', async (req, res) => {
     res.json({ mensaje: 'Caso eliminado' });
 });
 
+// PATCH /:id/anular — anulación lógica (soft delete) del caso
+router.patch('/:id/anular', async (req, res) => {
+    const { motivo, comentario } = req.body;
+    if (!motivo || !motivo.trim()) {
+        return res.status(400).json({ error: 'El motivo de anulación es obligatorio' });
+    }
+
+    const { data: caso, error: fetchErr } = await supabase
+        .from('evaluacion_casos')
+        .select(`
+            id, ciclo_id, evaluacion_id, estado, anulado, numero_caso,
+            evaluacion:evaluaciones!evaluacion_id(estado)
+        `)
+        .eq('id', req.params.id)
+        .single();
+
+    if (fetchErr || !caso) return res.status(404).json({ error: 'Caso no encontrado' });
+    if (caso.anulado) return res.status(409).json({ error: 'Este caso ya está anulado' });
+
+    const estadoBloqueado = ['publicado', 'aprobado', 'cerrado'];
+    if (estadoBloqueado.includes(caso.evaluacion?.estado)) {
+        return res.status(409).json({
+            error: `No se puede anular un caso de una evaluación en estado "${caso.evaluacion.estado}"`
+        });
+    }
+
+    const now = new Date().toISOString();
+
+    const { error: updErr } = await supabase
+        .from('evaluacion_casos')
+        .update({
+            anulado:              true,
+            anulado_en:           now,
+            anulado_por:          req.usuario.id,
+            motivo_anulacion:     motivo.trim(),
+            comentario_anulacion: comentario?.trim() || null,
+            estado:               'resuelto',
+            updated_at:           now
+        })
+        .eq('id', req.params.id);
+
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: caso.evaluacion_id,
+        ciclo_id:      caso.ciclo_id,
+        caso_id:       req.params.id,
+        accion:        'anular_caso',
+        detalle: {
+            motivo:          motivo.trim(),
+            comentario:      comentario?.trim() || null,
+            estado_anterior: caso.estado,
+            numero_caso:     caso.numero_caso
+        },
+        actor_id:    req.usuario.id,
+        actor_tipo:  'administrador',
+        actor_nombre: req.usuario.nombre,
+        ip_address:  req.ip
+    });
+
+    // Intentar cerrar el ciclo si ya no quedan casos activos sin resolver
+    let ciclo_cerrado = false;
+    let evaluacion_actualizada = null;
+
+    const { data: noResueltos } = await supabase
+        .from('evaluacion_casos')
+        .select('id')
+        .eq('ciclo_id', caso.ciclo_id)
+        .neq('estado', 'resuelto');
+
+    if (!noResueltos || noResueltos.length === 0) {
+        await supabase
+            .from('evaluacion_ciclos')
+            .update({ estado: 'cerrado', fecha_cierre: now, updated_at: now })
+            .eq('id', caso.ciclo_id)
+            .neq('estado', 'cerrado');
+        ciclo_cerrado = true;
+
+        const autoPublicado = await intentarAutoPublicar(
+            caso.evaluacion_id, req.usuario.id, req.usuario.nombre, req.ip
+        );
+        if (autoPublicado) {
+            const { data: evAct } = await supabase
+                .from('evaluaciones')
+                .select('id, estado, nota_final, puntaje_final')
+                .eq('id', caso.evaluacion_id)
+                .single();
+            evaluacion_actualizada = evAct;
+        }
+    }
+
+    res.json({ ok: true, ciclo_cerrado, evaluacion_actualizada });
+});
+
 // POST /:id/guardar-en-banco — guardar caso en Banco de Situaciones
 router.post('/:id/guardar-en-banco', async (req, res) => {
     const { comentario_banco } = req.body;

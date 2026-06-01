@@ -62,6 +62,7 @@ router.get('/', async (req, res) => {
         supabase.from('evaluacion_casos')
             .select('id, ciclo_id, evaluacion_id, estado, descuento_puntos')
             .in('evaluacion_id', evalIds)
+            .eq('anulado', false)
     ]);
 
     const casoIds = (casosData || []).map(c => c.id);
@@ -201,6 +202,7 @@ router.get('/:id/casos', async (req, res) => {
             .select('id, numero_caso, tipo_caso, estado, descripcion, video_url, descuento_puntos, ciclo_id')
             .in('ciclo_id', cicloIds)
             .in('estado', ESTADOS_VISIBLES_CASO)
+            .eq('anulado', false)
             .order('numero_caso');
 
         for (const c of (casosData || [])) {
@@ -306,6 +308,7 @@ router.get('/:id/resultado', async (req, res) => {
                 .select('id, ciclo_id, numero_caso, tipo_caso, descripcion, descuento_puntos, video_url, resolucion_final, estado, decision_analista, comentario_analista, decision_comision, comentario_comision')
                 .in('ciclo_id', cicloIds)
                 .in('estado', ESTADOS_VISIBLES_CASO)
+                .eq('anulado', false)
                 .order('numero_caso')
             : Promise.resolve({ data: [] }),
         cicloIds.length

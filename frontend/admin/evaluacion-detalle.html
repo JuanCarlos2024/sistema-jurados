@@ -42,6 +42,7 @@
         .badge-caso-derivado_comision  { background: #fef9e7; color: #7d6608; }
         .badge-caso-consolidado        { background: #d1f2eb; color: #148f77; }
         .badge-caso-resuelto           { background: #d5f5e3; color: #1e8449; }
+        .badge-caso-anulado            { background: #e8e8e8; color: #999; text-decoration: line-through; }
 
         .badge-tipo-interpretativa { background: #eaf4fb; color: #1a5276; }
         .badge-tipo-reglamentaria  { background: #fef9e7; color: #7d6608; }
@@ -542,6 +543,42 @@
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="cerrarModalEliminarCaso()">Cancelar</button>
             <button class="btn btn-peligro" id="btn-elim-caso-confirmar" disabled onclick="confirmarEliminarCaso()">Eliminar definitivamente</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Anular caso (soft delete) -->
+<div class="modal-overlay oculto" id="modal-anular-caso">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+            <h3 class="modal-titulo" style="color:#a04000;">Anular situación N° <span id="anular-caso-num"></span></h3>
+            <button class="modal-cerrar" onclick="cerrarModalAnularCaso()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div style="background:#fff3e0;border:1px solid #e0a060;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#7d4e00;">
+                <strong>Anulación lógica:</strong> El caso quedará excluido de la evaluación y las vistas del jurado, pero sus datos se conservan en el sistema para auditoría. Esta acción no se puede deshacer.
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label">Motivo de anulación <span style="color:var(--rojo)">*</span></label>
+                <select id="anular-caso-motivo" class="form-control">
+                    <option value="">— Seleccionar motivo —</option>
+                    <option value="Cargado por error">Cargado por error</option>
+                    <option value="Caso duplicado">Caso duplicado</option>
+                    <option value="Video no disponible o incorrecto">Video no disponible o incorrecto</option>
+                    <option value="Situación no aplica al ciclo">Situación no aplica al ciclo</option>
+                    <option value="Decisión del analista o jefe de área">Decisión del analista o jefe de área</option>
+                    <option value="Otro">Otro</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Comentario adicional <span style="color:var(--gris);font-weight:400;">(opcional)</span></label>
+                <textarea id="anular-caso-comentario" class="form-control" rows="3" maxlength="500"
+                    placeholder="Detalles adicionales sobre la anulación..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarModalAnularCaso()">Cancelar</button>
+            <button class="btn" style="background:#e67e22;color:#fff;" onclick="confirmarAnularCaso()">Confirmar anulación</button>
         </div>
     </div>
 </div>
@@ -1262,6 +1299,11 @@ function renderFilaCaso(caso, ciclo, estadoEval, esModoDA) {
         && esAnalista;
 
     const puedeVerRespuestas = !['pendiente_carga', 'cargado'].includes(ciclo.estado);
+    const puedeAnular = !caso.anulado && !['publicado', 'aprobado', 'cerrado'].includes(estadoEval);
+    const trAnuladoStyle = caso.anulado ? ' style="opacity:0.55;background:#f5f5f5;"' : '';
+    const estadoBadge = caso.anulado
+        ? '<span class="badge-eval badge-caso-anulado">Anulado</span>'
+        : `<span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span>`;
 
     // Guardar datos del caso para el modal de edición rápida
     _casoMediaMap[caso.id] = {
@@ -1291,6 +1333,10 @@ function renderFilaCaso(caso, ciclo, estadoEval, esModoDA) {
         accionesArr.push(`<button class="btn btn-outline btn-pequeño" style="border-color:#bbb;color:#bbb;" onclick="abrirModalBanco('${caso.id}', ${caso.numero_caso})" title="Guardar en Banco de Situaciones">☆</button>`);
     }
 
+    if (puedeAnular) {
+        accionesArr.push(`<button class="btn btn-pequeño" style="background:#fff0e0;color:#a04000;border:1px solid #e0a060;" onclick="abrirModalAnularCaso('${caso.id}', ${caso.numero_caso})">⊘ Anular</button>`);
+    }
+
     if (esModoDA) {
         // Acciones DA: Revertir y Derivar a Comisión disponibles si caso abierto (no resuelto/derivado)
         const cicloAbierto = ['abierto', 'en_revision'].includes(ciclo.estado);
@@ -1301,30 +1347,30 @@ function renderFilaCaso(caso, ciclo, estadoEval, esModoDA) {
         if (cicloAbierto && caso.estado === 'derivado_comision') {
             accionesArr.push(`<span style="font-size:11px;color:#8e44ad;font-weight:600;">⏳ En Comisión</span>`);
         }
-        return `<tr>
+        return `<tr${trAnuladoStyle}>
             <td>${caso.numero_caso}</td>
             <td><span class="badge-eval badge-tipo-${caso.tipo_caso}">${labelTipo(caso.tipo_caso)}</span></td>
             <td>${descBadge}</td>
             <td class="col-desc">${sanitizar(caso.descripcion || '—')}</td>
             <td style="text-align:center;">${_renderVideoCelda(caso)}</td>
-            <td><span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span></td>
-            <td class="resp-celda">${_renderResolucionAuto(caso)}</td>
-            <td class="dec-celda">${_renderDescFinalDA(caso)}</td>
+            <td>${estadoBadge}</td>
+            <td class="resp-celda">${caso.anulado ? '' : _renderResolucionAuto(caso)}</td>
+            <td class="dec-celda">${caso.anulado ? '' : _renderDescFinalDA(caso)}</td>
             <td><div class="tabla-acciones">${accionesArr.join('')}</div></td>
         </tr>`;
     }
 
-    return `<tr>
+    return `<tr${trAnuladoStyle}>
         <td>${caso.numero_caso}</td>
         <td><span class="badge-eval badge-tipo-${caso.tipo_caso}">${labelTipo(caso.tipo_caso)}</span></td>
         <td>${descBadge}</td>
         <td class="col-desc">${sanitizar(caso.descripcion || '—')}</td>
         <td style="text-align:center;">${_renderVideoCelda(caso)}</td>
-        <td><span class="badge-eval badge-caso-${caso.estado}">${labelEstadoCaso(caso.estado)}</span></td>
-        <td class="resp-celda">${_renderRespInline(caso, ciclo.estado)}</td>
-        <td class="dec-celda">${_renderAnalista(caso)}</td>
-        <td class="dec-celda">${_renderComite(caso)}</td>
-        <td class="dec-celda">${_renderDescFinal(caso)}</td>
+        <td>${estadoBadge}</td>
+        <td class="resp-celda">${caso.anulado ? '' : _renderRespInline(caso, ciclo.estado)}</td>
+        <td class="dec-celda">${caso.anulado ? `<span style="font-size:11px;color:#999;">Motivo: ${sanitizar(caso.motivo_anulacion || '—')}</span>` : _renderAnalista(caso)}</td>
+        <td class="dec-celda">${caso.anulado ? '' : _renderComite(caso)}</td>
+        <td class="dec-celda">${caso.anulado ? '' : _renderDescFinal(caso)}</td>
         <td><div class="tabla-acciones">${accionesArr.join('')}</div></td>
     </tr>`;
 }
@@ -1745,6 +1791,44 @@ async function confirmarEliminarCaso() {
         cargarEvaluacion();
     } catch (e) {
         mostrarToast(e.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ── Anular caso ──────────────────────────────────────────────────
+let _anularCasoId  = null;
+let _anularCasoNum = null;
+
+function abrirModalAnularCaso(casoId, numeroCaso) {
+    _anularCasoId  = casoId;
+    _anularCasoNum = numeroCaso;
+    document.getElementById('anular-caso-num').textContent = numeroCaso;
+    document.getElementById('anular-caso-motivo').value    = '';
+    document.getElementById('anular-caso-comentario').value = '';
+    document.getElementById('modal-anular-caso').classList.remove('oculto');
+}
+
+function cerrarModalAnularCaso() {
+    document.getElementById('modal-anular-caso').classList.add('oculto');
+    _anularCasoId  = null;
+    _anularCasoNum = null;
+}
+
+async function confirmarAnularCaso() {
+    const motivo = document.getElementById('anular-caso-motivo').value;
+    if (!motivo) { mostrarToast('Debes seleccionar un motivo de anulación', 'error'); return; }
+    const comentario = document.getElementById('anular-caso-comentario').value.trim();
+    const numCasoActual = _anularCasoNum;
+    try {
+        const res = await api.patch(`/admin/casos/${_anularCasoId}/anular`, {
+            motivo,
+            comentario: comentario || null
+        });
+        cerrarModalAnularCaso();
+        mostrarToast(`Situación N° ${numCasoActual} anulada correctamente`, 'exito');
+        if (res.ciclo_cerrado) mostrarToast('El ciclo quedó cerrado automáticamente', 'info');
+        cargarEvaluacion();
+    } catch (e) {
+        mostrarToast(e.message || 'Error al anular el caso', 'error');
     }
 }
 
