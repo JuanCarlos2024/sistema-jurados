@@ -19,7 +19,7 @@ router.get('/mis-materiales', async (req, res) => {
 
     const { data, error } = await supabase
         .from('material_complementario')
-        .select('id, titulo, descripcion, categoria, tipo_material, nombre_archivo, url_externa, audiencia, obligatorio, orden, created_at')
+        .select('id, titulo, descripcion, categoria, tipo_material, nombre_archivo, url_externa, video_embed_html, audiencia, obligatorio, orden, created_at')
         .eq('estado', 'publicado')
         .is('deleted_at', null)
         .in('audiencia', allowed)
@@ -38,7 +38,7 @@ router.get('/:id/abrir', async (req, res) => {
 
     const { data: mat, error: matErr } = await supabase
         .from('material_complementario')
-        .select('id, tipo_material, url_archivo, nombre_archivo, url_externa, audiencia, estado')
+        .select('id, tipo_material, url_archivo, nombre_archivo, url_externa, video_embed_html, audiencia, estado')
         .eq('id', req.params.id)
         .is('deleted_at', null)
         .single();
@@ -53,9 +53,13 @@ router.get('/:id/abrir', async (req, res) => {
         return res.status(403).json({ error: 'No tienes acceso a este material' });
     }
 
-    // Tipo externo (youtube, link_externo, video_externo) — devolver URL directamente
-    if (mat.url_externa) {
-        return res.json({ tipo: 'externo', url: mat.url_externa });
+    // Tipo externo (youtube, sharepoint, notebooklm, link_externo, video_externo) — devolver URL y embed
+    if (mat.url_externa || mat.video_embed_html) {
+        return res.json({
+            tipo:             'externo',
+            url:              mat.url_externa     || null,
+            video_embed_html: mat.video_embed_html || null
+        });
     }
 
     // Tipo archivo — generar URL firmada

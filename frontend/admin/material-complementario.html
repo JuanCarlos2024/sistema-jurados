@@ -79,6 +79,12 @@
             background: none; border: none; color: #922b21; cursor: pointer;
             font-size: 14px; line-height: 1;
         }
+
+        /* ── Preview modal ── */
+        #preview-modal-area iframe {
+            width: 100%; height: 500px; border: none; border-radius: 6px;
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -137,7 +143,7 @@
 
 <!-- ═══════════════════════════════════════════════════════════ MODAL CREAR/EDITAR -->
 <div id="modal-form" class="modal-overlay" style="display:none;" onclick="cerrarModal()">
-    <div class="modal" style="max-width:600px;" onclick="event.stopPropagation()">
+    <div class="modal" style="max-width:620px;" onclick="event.stopPropagation()">
         <div class="modal-header">
             <h3 id="modal-titulo">Nuevo material</h3>
             <button class="modal-cerrar" onclick="cerrarModal()">✕</button>
@@ -167,10 +173,14 @@
                             <option value="excel">Excel (.xls/.xlsx)</option>
                             <option value="imagen">Imagen (JPG/PNG)</option>
                         </optgroup>
-                        <optgroup label="Enlaces">
+                        <optgroup label="Videos">
                             <option value="youtube">YouTube</option>
+                            <option value="sharepoint">SharePoint / Microsoft Stream</option>
+                            <option value="notebooklm">NotebookLM</option>
+                            <option value="video_externo">Video externo (MP4/URL directa)</option>
+                        </optgroup>
+                        <optgroup label="Otros enlaces">
                             <option value="link_externo">Link externo</option>
-                            <option value="video_externo">Video externo</option>
                         </optgroup>
                     </select>
                 </div>
@@ -241,9 +251,40 @@
                 <div id="panel-url" style="display:none;">
                     <input type="url" id="f-url" class="form-control"
                         placeholder="https://www.youtube.com/watch?v=… o https://…">
-                    <div style="font-size:11px;color:var(--gris);margin-top:4px;">
-                        Pega aquí el enlace completo (YouTube, Drive, Dropbox, etc.)
+                    <div id="ayuda-url" style="font-size:11px;color:var(--gris);margin-top:4px;">
+                        Pega aquí el enlace completo
                     </div>
+                </div>
+
+                <!-- Panel Embed (solo SharePoint/Stream) -->
+                <div id="panel-embed" style="display:none;margin-top:10px;">
+                    <label class="form-label" style="margin-bottom:4px;">
+                        Código embed / Insertar
+                        <span style="font-weight:normal;font-size:11px;color:var(--gris);">(recomendado — pega aquí el &lt;iframe&gt; generado por Stream/SharePoint)</span>
+                    </label>
+                    <textarea id="f-embed" class="form-control" rows="4"
+                        placeholder="&lt;iframe src=&quot;https://company.sharepoint.com/...&quot; width=&quot;640&quot; height=&quot;360&quot; frameborder=&quot;0&quot; scrolling=&quot;no&quot; allowfullscreen&gt;&lt;/iframe&gt;"
+                        style="font-family:monospace;font-size:11px;resize:vertical;"></textarea>
+                    <div style="font-size:11px;color:var(--gris);margin-top:3px;">
+                        Solo se permiten iframes de dominios seguros (SharePoint, Stream, YouTube, NotebookLM). Se validará automáticamente.
+                    </div>
+                </div>
+
+                <!-- Aviso SharePoint -->
+                <div id="ayuda-sharepoint" class="alerta alerta-info" style="display:none;font-size:12px;margin-top:8px;line-height:1.6;">
+                    <strong>Para SharePoint / Microsoft Stream:</strong>
+                    Abra el video en Microsoft Stream o SharePoint, haga clic en
+                    <em>Compartir → Insertar / Embed code</em> y pegue el código <code>&lt;iframe&gt;</code> en el campo de arriba.<br>
+                    Asegúrese que el archivo tenga <strong>permisos de visualización</strong> para los destinatarios.
+                    La URL directa también puede funcionar si el archivo tiene acceso público o de tenant.
+                </div>
+
+                <!-- Aviso NotebookLM -->
+                <div id="ayuda-notebooklm" class="alerta alerta-info" style="display:none;font-size:12px;margin-top:8px;line-height:1.6;">
+                    <strong>NotebookLM — compatibilidad limitada:</strong>
+                    NotebookLM puede bloquear la visualización embebida dentro de la plataforma.
+                    Si el contenido no se puede incrustar, los usuarios verán un mensaje claro y un botón para abrir en NotebookLM.<br>
+                    <em>Alternativa recomendada:</em> exporte o descargue el video desde NotebookLM y súbalo como MP4 o a SharePoint/YouTube.
                 </div>
             </div>
 
@@ -252,6 +293,22 @@
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
             <button class="btn btn-primario" id="btn-guardar" onclick="guardar()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ MODAL PREVISUALIZAR -->
+<div id="modal-preview" class="modal-overlay" style="display:none;" onclick="cerrarModalPreview()">
+    <div class="modal" style="max-width:900px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="preview-modal-titulo">Previsualización</h3>
+            <button class="modal-cerrar" onclick="cerrarModalPreview()">✕</button>
+        </div>
+        <div class="modal-body" id="preview-modal-area" style="min-height:440px;padding:16px 24px;">
+        </div>
+        <div class="modal-footer">
+            <span id="preview-modal-aviso" style="font-size:12px;color:var(--gris);flex:1;text-align:left;"></span>
+            <button class="btn btn-secundario" onclick="cerrarModalPreview()">Cerrar</button>
         </div>
     </div>
 </div>
@@ -351,9 +408,12 @@ function renderLista(lista) {
         var tipoBadge   = '<span class="badge-mat badge-tipo">' + iconoTipo(m.tipo_material) + ' ' + labelTipo(m.tipo_material) + '</span>';
         var oblig       = m.obligatorio ? '<span title="Obligatorio" style="color:#e67e22;font-weight:700;">★</span>' : '';
 
+        // Botón Ver/Probar según tipo
         var btnVer = '';
         if (m.nombre_archivo) {
             btnVer = '<button class="btn btn-outline btn-pequeño" onclick="descargar(\'' + m.id + '\',event)">⬇ Ver</button>';
+        } else if (m.tipo_material === 'youtube' || m.tipo_material === 'sharepoint' || m.tipo_material === 'notebooklm') {
+            btnVer = '<button class="btn btn-outline btn-pequeño" onclick="abrirPreview(\'' + m.id + '\')">▶ Probar</button>';
         } else if (m.url_externa) {
             btnVer = '<a href="' + sanitizar(m.url_externa) + '" target="_blank" rel="noopener" class="btn btn-outline btn-pequeño">🔗 Abrir</a>';
         }
@@ -416,6 +476,7 @@ function resetearForm() {
     document.getElementById('f-obligatorio').checked = false;
     document.getElementById('f-orden').value        = '0';
     document.getElementById('f-url').value          = '';
+    document.getElementById('f-embed').value        = '';
     document.getElementById('error-form').style.display = 'none';
     limpiarArchivo();
     document.getElementById('archivo-actual').style.display = 'none';
@@ -437,6 +498,7 @@ async function abrirEditar(id) {
         document.getElementById('f-obligatorio').checked = !!m.obligatorio;
         document.getElementById('f-orden').value        = m.orden != null ? m.orden : 0;
         document.getElementById('f-url').value          = m.url_externa || '';
+        document.getElementById('f-embed').value        = m.video_embed_html || '';
 
         // Mostrar archivo actual si existe
         var elActual = document.getElementById('archivo-actual');
@@ -456,15 +518,17 @@ async function abrirEditar(id) {
     }
 }
 
-// ─── Gestión de fuente (archivo vs URL) ──────────────────────────────────────
+// ─── Gestión de fuente (archivo / URL / embed) ────────────────────────────────
 function actualizarFuente() {
     var tipo       = document.getElementById('f-tipo').value;
-    var esTipoUrl  = ['youtube','link_externo','video_externo'].indexOf(tipo) !== -1;
+    var esTipoUrl  = ['youtube','link_externo','video_externo','sharepoint','notebooklm'].indexOf(tipo) !== -1;
     var tabsWrap   = document.getElementById('fuente-tabs-wrap');
     var panelArch  = document.getElementById('panel-archivo');
     var panelUrl   = document.getElementById('panel-url');
+    var panelEmbed = document.getElementById('panel-embed');
+    var ayudaSP    = document.getElementById('ayuda-sharepoint');
+    var ayudaNLM   = document.getElementById('ayuda-notebooklm');
 
-    // Solo mostrar tabs en edición cuando puede haber ambos; en creación forzar según tipo
     tabsWrap.style.display = 'none';
 
     if (esTipoUrl) {
@@ -473,8 +537,25 @@ function actualizarFuente() {
         _tabActiva = 'archivo';
     }
 
-    panelArch.style.display = _tabActiva === 'archivo' ? '' : 'none';
-    panelUrl.style.display  = _tabActiva === 'url'     ? '' : 'none';
+    panelArch.style.display  = _tabActiva === 'archivo' ? '' : 'none';
+    panelUrl.style.display   = esTipoUrl  ? '' : 'none';
+    panelEmbed.style.display = tipo === 'sharepoint' ? '' : 'none';
+    ayudaSP.style.display    = tipo === 'sharepoint' ? '' : 'none';
+    ayudaNLM.style.display   = tipo === 'notebooklm' ? '' : 'none';
+
+    // Actualizar placeholder de URL según tipo
+    var urlInput = document.getElementById('f-url');
+    if (tipo === 'youtube') {
+        urlInput.placeholder = 'https://www.youtube.com/watch?v=… o https://youtu.be/…';
+    } else if (tipo === 'sharepoint') {
+        urlInput.placeholder = 'https://company.sharepoint.com/…  (opcional si usa código embed)';
+    } else if (tipo === 'notebooklm') {
+        urlInput.placeholder = 'https://notebooklm.google.com/notebook/…';
+    } else if (tipo === 'video_externo') {
+        urlInput.placeholder = 'https://… (URL directa del archivo MP4 o video)';
+    } else {
+        urlInput.placeholder = 'https://… (URL completa del contenido)';
+    }
 }
 
 function seleccionarTab(tab) {
@@ -524,13 +605,19 @@ async function guardar() {
     var audiencia  = document.getElementById('f-audiencia').value;
     var estado     = document.getElementById('f-estado').value;
     var url        = document.getElementById('f-url').value.trim();
+    var embedCode  = document.getElementById('f-embed').value.trim();
     var archivo    = document.getElementById('f-archivo').files[0];
 
     if (!titulo) { mostrarError('El título es obligatorio.'); return; }
 
-    var esTipoUrl = ['youtube','link_externo','video_externo'].indexOf(tipo) !== -1;
+    var esTipoUrl = ['youtube','link_externo','video_externo','sharepoint','notebooklm'].indexOf(tipo) !== -1;
 
-    if (esTipoUrl && !url) {
+    // Validación por tipo
+    if (tipo === 'sharepoint') {
+        if (!url && !embedCode) {
+            mostrarError('Para SharePoint/Stream, ingresa la URL del video o el código embed (iframe).'); return;
+        }
+    } else if (esTipoUrl && !url) {
         mostrarError('Ingresa la URL del contenido.'); return;
     }
     if (!esTipoUrl && !archivo && !_modoEditar) {
@@ -551,8 +638,10 @@ async function guardar() {
         fd.append('estado',        estado);
         fd.append('obligatorio',   document.getElementById('f-obligatorio').checked ? 'true' : 'false');
         fd.append('orden',         document.getElementById('f-orden').value || '0');
-        if (url)     fd.append('url_externa', url);
-        if (archivo) fd.append('archivo',     archivo);
+        if (url)     fd.append('url_externa',     url);
+        if (archivo) fd.append('archivo',         archivo);
+        // Siempre enviar video_embed_html para que el PUT pueda limpiarla al cambiar de tipo
+        fd.append('video_embed_html', tipo === 'sharepoint' ? embedCode : '');
 
         var endpoint = _modoEditar
             ? '/api/admin/material-complementario/' + _modoEditar
@@ -685,6 +774,102 @@ function cerrarModalStats() {
     document.getElementById('modal-stats').style.display = 'none';
 }
 
+// ─── Previsualización admin ───────────────────────────────────────────────────
+function abrirPreview(id) {
+    var m = _materiales.find(function (x) { return x.id === id; });
+    if (!m) { mostrarToast('Material no encontrado', 'error'); return; }
+
+    document.getElementById('preview-modal-titulo').textContent = m.titulo || 'Previsualización';
+    document.getElementById('preview-modal-area').innerHTML =
+        '<div style="text-align:center;padding:60px;color:var(--gris);font-size:14px;">Cargando…</div>';
+    document.getElementById('preview-modal-aviso').textContent = '';
+    document.getElementById('modal-preview').style.display = '';
+    _renderPreviewAdmin(m);
+}
+
+function cerrarModalPreview() {
+    document.getElementById('modal-preview').style.display = 'none';
+    document.getElementById('preview-modal-area').innerHTML = ''; // detiene reproducción
+}
+
+function _renderPreviewAdmin(m) {
+    var area  = document.getElementById('preview-modal-area');
+    var aviso = document.getElementById('preview-modal-aviso');
+    var tipo  = m.tipo_material;
+    var url   = m.url_externa || '';
+    var embed = m.video_embed_html || '';
+
+    if (tipo === 'youtube') {
+        var embedUrl = _youtubeEmbedUrl(url);
+        if (embedUrl) {
+            var ifr = document.createElement('iframe');
+            ifr.src = embedUrl;
+            ifr.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+            ifr.allowFullscreen = true;
+            area.innerHTML = '';
+            area.appendChild(ifr);
+        } else {
+            area.innerHTML = '<div class="alerta alerta-error">No se pudo generar la URL de previsualización para YouTube. Verifique el link guardado.</div>';
+        }
+
+    } else if (tipo === 'sharepoint') {
+        area.innerHTML = '<div class="alerta alerta-info" style="margin-bottom:10px;font-size:12px;">'
+            + 'SharePoint/Stream: si el video no carga, verifique los permisos del archivo o use el código embed.</div>';
+        if (embed) {
+            var divE = document.createElement('div');
+            divE.style.cssText = 'width:100%;';
+            divE.innerHTML = embed;
+            var iframes = divE.getElementsByTagName('iframe');
+            for (var i = 0; i < iframes.length; i++) {
+                iframes[i].style.width  = '100%';
+                iframes[i].style.height = '500px';
+                iframes[i].style.border = 'none';
+                iframes[i].style.borderRadius = '6px';
+            }
+            area.appendChild(divE);
+        } else if (url) {
+            var ifrSP = document.createElement('iframe');
+            ifrSP.src = url;
+            ifrSP.allowFullscreen = true;
+            area.appendChild(ifrSP);
+        } else {
+            area.innerHTML += '<div class="alerta alerta-error">No hay URL ni código embed disponible para este material.</div>';
+        }
+
+    } else if (tipo === 'notebooklm') {
+        area.innerHTML = '<div class="alerta alerta-info" style="margin-bottom:10px;font-size:12px;">'
+            + 'NotebookLM puede bloquear la visualización embebida. Si no carga, abrir en nueva pestaña.</div>';
+        if (url) {
+            var ifrNLM = document.createElement('iframe');
+            ifrNLM.src = url;
+            area.appendChild(ifrNLM);
+            aviso.textContent = 'Compatibilidad limitada — puede requerir acceso externo a NotebookLM.';
+        } else {
+            area.innerHTML += '<div class="alerta alerta-error">No hay URL disponible para este contenido.</div>';
+        }
+
+    } else if (tipo === 'link_externo' || tipo === 'video_externo') {
+        if (url) {
+            area.innerHTML = '<div class="alerta alerta-info" style="margin-bottom:10px;font-size:12px;">'
+                + 'Algunos sitios externos bloquean la previsualización embebida.</div>';
+            var ifrL = document.createElement('iframe');
+            ifrL.src = url;
+            area.appendChild(ifrL);
+        } else {
+            area.innerHTML = '<div class="alerta alerta-info">No hay URL disponible para este material.</div>';
+        }
+
+    } else {
+        area.innerHTML = '<div class="alerta alerta-info">Previsualización no disponible para tipo "'
+            + sanitizar(tipo) + '". Use el botón Descargar o Abrir.</div>';
+    }
+}
+
+function _youtubeEmbedUrl(url) {
+    var m = String(url || '').match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/);
+    return m ? 'https://www.youtube.com/embed/' + m[1] : null;
+}
+
 // ─── Labels y helpers ─────────────────────────────────────────────────────────
 function labelEstado(e) {
     return { borrador: 'Borrador', publicado: 'Publicado', archivado: 'Archivado' }[e] || e;
@@ -697,14 +882,16 @@ function labelAudiencia(a) {
 function labelTipo(t) {
     return {
         pdf: 'PDF', word: 'Word', excel: 'Excel', imagen: 'Imagen',
-        youtube: 'YouTube', link_externo: 'Link externo', video_externo: 'Video'
+        youtube: 'YouTube', link_externo: 'Link externo', video_externo: 'Video',
+        sharepoint: 'SharePoint/Stream', notebooklm: 'NotebookLM'
     }[t] || t;
 }
 
 function iconoTipo(t) {
     return {
         pdf: '📄', word: '📝', excel: '📊', imagen: '🖼️',
-        youtube: '▶', link_externo: '🔗', video_externo: '🎬'
+        youtube: '▶', link_externo: '🔗', video_externo: '🎬',
+        sharepoint: '📺', notebooklm: '🔬'
     }[t] || '📁';
 }
 

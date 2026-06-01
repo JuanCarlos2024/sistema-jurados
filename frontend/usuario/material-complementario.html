@@ -78,6 +78,8 @@
         .badge-youtube       { background: #fee2e2; color: #b91c1c; }
         .badge-link_externo  { background: #ede9fe; color: #5b21b6; }
         .badge-video_externo { background: #e0f2fe; color: #0369a1; }
+        .badge-sharepoint    { background: #dbeafe; color: #1e3a8a; }
+        .badge-notebooklm    { background: #dcfce7; color: #14532d; }
         .badge-obligatorio   { background: #fee2e2; color: #991b1b; }
         .badge-categoria     { background: #f0f4ff; color: #3730a3; }
 
@@ -167,6 +169,15 @@
             color: #1a3a6c;
             line-height: 1.5;
         }
+        .mc-aviso-warn {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 8px;
+            padding: 14px 18px;
+            font-size: 13px;
+            color: #78350f;
+            line-height: 1.5;
+        }
 
         #mc-footer {
             padding: 14px 24px;
@@ -241,6 +252,8 @@
                     <option value="excel">Excel</option>
                     <option value="imagen">Imagen</option>
                     <option value="youtube">YouTube</option>
+                    <option value="sharepoint">SharePoint / Stream</option>
+                    <option value="notebooklm">NotebookLM</option>
                     <option value="link_externo">Enlace externo</option>
                     <option value="video_externo">Video externo</option>
                 </select>
@@ -284,11 +297,13 @@ protegerRuta('usuario_pagado');
 
     var ICONOS = {
         pdf: '📄', word: '📝', excel: '📊', imagen: '🖼️',
-        youtube: '▶️', link_externo: '🔗', video_externo: '🎥'
+        youtube: '▶️', link_externo: '🔗', video_externo: '🎥',
+        sharepoint: '📺', notebooklm: '🔬'
     };
     var LABELS = {
         pdf: 'PDF', word: 'Word', excel: 'Excel', imagen: 'Imagen',
-        youtube: 'YouTube', link_externo: 'Enlace externo', video_externo: 'Video externo'
+        youtube: 'YouTube', link_externo: 'Enlace externo', video_externo: 'Video externo',
+        sharepoint: 'SharePoint/Stream', notebooklm: 'NotebookLM'
     };
 
     function esTipoArchivo(tipo) {
@@ -460,6 +475,7 @@ protegerRuta('usuario_pagado');
         var footer = document.getElementById('mc-footer');
         var url    = data.url || '';
         var tipo   = mat.tipo_material;
+        var embed  = data.video_embed_html || '';
 
         window._mcUrlDescarga = url;
         window._mcUrlExterna  = url;
@@ -515,6 +531,62 @@ protegerRuta('usuario_pagado');
             } else {
                 area.innerHTML = '<div class="mc-aviso">No se pudo generar el enlace de previsualización.</div>';
                 footer.innerHTML = '<button class="btn btn-outline btn-pequeño" onclick="mcAbrirExterno()">↗ Abrir en YouTube</button>';
+            }
+
+        } else if (tipo === 'sharepoint') {
+            // Preferir embed HTML sanitizado si está disponible
+            var avisoPerm = '<div class="mc-aviso" style="margin-bottom:10px;">'
+                + 'Si el video no carga, verifique que el archivo tenga permisos de visualización para los usuarios correspondientes, '
+                + 'o solicite al administrador que use el código <em>Insertar / Embed</em> de Microsoft Stream o SharePoint.'
+                + '</div>';
+            if (embed) {
+                area.innerHTML = avisoPerm;
+                var divSP = document.createElement('div');
+                divSP.style.cssText = 'width:100%;';
+                divSP.innerHTML = embed;
+                // Ajustar dimensiones del iframe embebido
+                var iframes = divSP.getElementsByTagName('iframe');
+                for (var i = 0; i < iframes.length; i++) {
+                    iframes[i].style.width     = '100%';
+                    iframes[i].style.height    = '62vh';
+                    iframes[i].style.minHeight = '360px';
+                    iframes[i].style.border    = 'none';
+                    iframes[i].style.borderRadius = '6px';
+                }
+                area.appendChild(divSP);
+                footer.innerHTML = url
+                    ? '<button class="btn btn-outline btn-pequeño" onclick="mcAbrirExterno()">↗ Abrir en SharePoint</button>'
+                    : '';
+            } else if (url) {
+                area.innerHTML = avisoPerm;
+                var ifrSP = document.createElement('iframe');
+                ifrSP.src = url;
+                ifrSP.allowFullscreen = true;
+                ifrSP.title = mat.titulo || '';
+                area.appendChild(ifrSP);
+                footer.innerHTML = '<button class="btn btn-outline btn-pequeño" onclick="mcAbrirExterno()">↗ Abrir en SharePoint</button>';
+            } else {
+                area.innerHTML = '<div class="mc-aviso">No hay URL ni código embed disponible para este video.</div>';
+                footer.innerHTML = '';
+            }
+
+        } else if (tipo === 'notebooklm') {
+            var avisNLM = '<div class="mc-aviso-warn" style="margin-bottom:10px;">'
+                + '<strong>NotebookLM — visualización limitada:</strong> '
+                + 'NotebookLM puede bloquear la visualización embebida dentro de la plataforma. '
+                + 'Si el contenido no carga, use el botón para abrirlo directamente.<br>'
+                + '<em>Alternativa recomendada:</em> exportar el video desde NotebookLM y subirlo a YouTube, SharePoint o como MP4.'
+                + '</div>';
+            if (url) {
+                area.innerHTML = avisNLM;
+                var ifrNLM = document.createElement('iframe');
+                ifrNLM.src = url;
+                ifrNLM.title = mat.titulo || '';
+                area.appendChild(ifrNLM);
+                footer.innerHTML = '<button class="btn btn-outline btn-pequeño" onclick="mcAbrirExterno()">↗ Abrir en NotebookLM</button>';
+            } else {
+                area.innerHTML = avisNLM + '<div class="mc-aviso" style="margin-top:8px;">No hay URL disponible para este contenido.</div>';
+                footer.innerHTML = '';
             }
 
         } else if (tipo === 'word' || tipo === 'excel') {

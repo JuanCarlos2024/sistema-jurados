@@ -4,7 +4,7 @@ const multer   = require('multer');
 const supabase = require('../../config/supabase');
 
 // ─── Constantes de dominio ───────────────────────────────────────────────────
-const TIPOS_MATERIAL   = ['pdf','word','excel','imagen','youtube','link_externo','video_externo'];
+const TIPOS_MATERIAL   = ['pdf','word','excel','imagen','youtube','link_externo','video_externo','sharepoint','notebooklm'];
 const TIPOS_ARCHIVO    = ['pdf','word','excel','imagen']; // requieren upload
 const AUDIENCIAS       = ['jurados','delegados','ambos'];
 const ESTADOS          = ['borrador','publicado','archivado'];
@@ -38,6 +38,62 @@ const upload = multer({
 // Bucket de Supabase Storage (reutiliza el existente)
 const BUCKET = 'rodeo-adjuntos';
 
+// ─── Sanitización de iframes ──────────────────────────────────────────────────
+// Dominios permitidos en atributo src de iframes
+const DOMINIOS_EMBED_PERMITIDOS = [
+    'sharepoint.com',
+    'microsoftstream.com',
+    'office.com',
+    'microsoft.com',
+    'onedrive.live.com',
+    'youtube.com',
+    'youtu.be',
+    'notebooklm.google.com',
+    'docs.google.com'
+];
+
+function _dominioPermitido(src) {
+    try {
+        const url  = new URL(src);
+        const host = url.hostname.toLowerCase();
+        return DOMINIOS_EMBED_PERMITIDOS.some(d => host === d || host.endsWith('.' + d));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Valida y sanitiza un código <iframe>.
+ * Retorna { html } si pasa, o { error } si falla.
+ */
+function sanitizarIframe(raw) {
+    if (!raw || typeof raw !== 'string') return { error: 'Código embed vacío' };
+    const trimmed = raw.trim();
+    if (!trimmed)                            return { error: 'Código embed vacío' };
+
+    // Solo se permiten iframes
+    if (!/^<iframe[\s>]/i.test(trimmed))     return { error: 'Solo se permiten etiquetas <iframe> como código embed' };
+
+    // Rechazar scripts y javascript:
+    if (/<script/i.test(trimmed))            return { error: 'El código contiene etiquetas <script> no permitidas' };
+    if (/javascript:/i.test(trimmed))        return { error: 'El código contiene "javascript:" no permitido' };
+
+    // Rechazar manejadores de eventos on*
+    if (/\bon\w+\s*=/i.test(trimmed))        return { error: 'El código contiene atributos de evento (on...) no permitidos' };
+
+    // Extraer src
+    const srcMatch = trimmed.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    if (!srcMatch)                           return { error: 'El iframe no contiene atributo src válido' };
+
+    const src = srcMatch[1];
+    if (!/^https:\/\//i.test(src))           return { error: 'Solo se permiten fuentes con HTTPS en el iframe' };
+    if (!_dominioPermitido(src))             return { error: 'Dominio no permitido en el iframe. Use SharePoint, Microsoft Stream, YouTube o Google NotebookLM' };
+
+    // Limpiar eventuales on* que hayan pasado (doble seguridad)
+    const cleaned = trimmed.replace(/\bon\w+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/gi, '');
+    return { html: cleaned };
+}
+
 // ─── GET / — listar materiales ───────────────────────────────────────────────
 router.get('/', async (req, res) => {
     const { estado, audiencia } = req.query;
@@ -46,7 +102,7 @@ router.get('/', async (req, res) => {
         .from('material_complementario')
         .select(`
             id, titulo, descripcion, categoria, tipo_material,
-            nombre_archivo, url_externa, audiencia, obligatorio,
+            nombre_archivo, url_externa, video_embed_html, audiencia, obligatorio,
             estado, orden, created_at, updated_at, creado_por,
             administradores(nombre_completo)
         `)
@@ -143,7 +199,8 @@ router.get('/:id/estadisticas', async (req, res) => {
 router.post('/', upload.single('archivo'), async (req, res) => {
     const {
         titulo, descripcion, categoria, tipo_material,
-        url_externa, audiencia = 'jurados', obligatorio, estado = 'borrador', orden = 0
+        url_externa, video_embed_html,
+        audiencia = 'jurados', obligatorio, estado = 'borrador', orden = 0
     } = req.body;
 
     if (!titulo?.trim())                          return res.status(400).json({ error: 'El título es obligatorio' });
@@ -153,8 +210,21 @@ router.post('/', upload.single('archivo'), async (req, res) => {
 
     const esTipoUrl = !TIPOS_ARCHIVO.includes(tipo_material);
 
-    if (esTipoUrl && !url_externa?.trim()) {
+    // Validar fuente de contenido según tipo
+    if (tipo_material === 'sharepoint') {
+        if (!url_externa?.trim() && !video_embed_html?.trim()) {
+            return res.status(400).json({ error: 'Para SharePoint/Stream, ingresa la URL del video o el código embed (iframe)' });
+        }
+    } else if (esTipoUrl && !url_externa?.trim()) {
         return res.status(400).json({ error: 'Se requiere URL para este tipo de material' });
+    }
+
+    // Sanitizar iframe si se proporcionó
+    let embedHtmlGuardar = null;
+    if (video_embed_html?.trim()) {
+        const sanitResult = sanitizarIframe(video_embed_html.trim());
+        if (sanitResult.error) return res.status(400).json({ error: sanitResult.error });
+        embedHtmlGuardar = sanitResult.html;
     }
 
     let storagePath   = null;
@@ -180,20 +250,21 @@ router.post('/', upload.single('archivo'), async (req, res) => {
     const { data, error } = await supabase
         .from('material_complementario')
         .insert({
-            titulo:         titulo.trim(),
-            descripcion:    descripcion?.trim() || null,
-            categoria:      categoria?.trim()   || null,
+            titulo:           titulo.trim(),
+            descripcion:      descripcion?.trim()    || null,
+            categoria:        categoria?.trim()       || null,
             tipo_material,
-            url_archivo:    storagePath,
-            nombre_archivo: nombreArchivo,
-            mime_type:      mimeType,
-            tamano_archivo: tamanoArchivo,
-            url_externa:    url_externa?.trim()  || null,
+            url_archivo:      storagePath,
+            nombre_archivo:   nombreArchivo,
+            mime_type:        mimeType,
+            tamano_archivo:   tamanoArchivo,
+            url_externa:      url_externa?.trim()     || null,
+            video_embed_html: embedHtmlGuardar,
             audiencia,
-            obligatorio:    obligatorio === true || obligatorio === 'true',
+            obligatorio:      obligatorio === true || obligatorio === 'true',
             estado,
-            orden:          parseInt(orden)       || 0,
-            creado_por:     req.usuario.id
+            orden:            parseInt(orden)          || 0,
+            creado_por:       req.usuario.id
         })
         .select()
         .single();
@@ -206,7 +277,7 @@ router.post('/', upload.single('archivo'), async (req, res) => {
 router.put('/:id', upload.single('archivo'), async (req, res) => {
     const { data: mat } = await supabase
         .from('material_complementario')
-        .select('id, url_archivo')
+        .select('id, url_archivo, tipo_material')
         .eq('id', req.params.id)
         .is('deleted_at', null)
         .single();
@@ -215,7 +286,7 @@ router.put('/:id', upload.single('archivo'), async (req, res) => {
 
     const {
         titulo, descripcion, categoria, tipo_material,
-        url_externa, audiencia, obligatorio, estado, orden
+        url_externa, video_embed_html, audiencia, obligatorio, estado, orden
     } = req.body;
 
     const updates = { updated_at: new Date().toISOString() };
@@ -231,7 +302,19 @@ router.put('/:id', upload.single('archivo'), async (req, res) => {
         updates.tipo_material = tipo_material;
     }
     if (url_externa !== undefined) updates.url_externa = url_externa.trim() || null;
-    if (audiencia   !== undefined) {
+
+    // Procesar video_embed_html
+    if (video_embed_html !== undefined) {
+        if (video_embed_html?.trim()) {
+            const sanitResult = sanitizarIframe(video_embed_html.trim());
+            if (sanitResult.error) return res.status(400).json({ error: sanitResult.error });
+            updates.video_embed_html = sanitResult.html;
+        } else {
+            updates.video_embed_html = null;
+        }
+    }
+
+    if (audiencia !== undefined) {
         if (!AUDIENCIAS.includes(audiencia)) return res.status(400).json({ error: 'Audiencia inválida' });
         updates.audiencia = audiencia;
     }
