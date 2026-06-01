@@ -669,13 +669,31 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
         return res.status(400).json({ error: 'El comentario de alteración es obligatorio cuando resultados_alterados = sí' });
     }
 
-    const toNum = (v) => (v === null || v === '' || v === undefined) ? null : (isNaN(Number(v)) ? null : Number(v));
+    const REGEX_PUNTAJE = /^\d+(\s*\+\s*\d+)?$/;
+    const validarPuntaje = (v) => v === null || v === undefined || v === '' || REGEX_PUNTAJE.test(String(v).trim());
+    const normalizarPuntaje = (v) => {
+        if (v === null || v === undefined || v === '') return null;
+        const s = String(v).trim();
+        return s === '' ? null : s.replace(/\s*\+\s*/, '+');
+    };
+
+    const camposInvalidos = [
+        ['1er lugar', puntaje_analista_1er],
+        ['2do lugar', puntaje_analista_2do],
+        ['3er lugar', puntaje_analista_3er]
+    ].filter(([, v]) => v !== undefined && !validarPuntaje(v)).map(([label]) => label);
+
+    if (camposInvalidos.length > 0) {
+        return res.status(400).json({
+            error: `El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 (campos inválidos: ${camposInvalidos.join(', ')})`
+        });
+    }
 
     const cambios = { updated_at: new Date().toISOString() };
 
-    if (puntaje_analista_1er !== undefined) cambios.puntaje_analista_1er = toNum(puntaje_analista_1er);
-    if (puntaje_analista_2do !== undefined) cambios.puntaje_analista_2do = toNum(puntaje_analista_2do);
-    if (puntaje_analista_3er !== undefined) cambios.puntaje_analista_3er = toNum(puntaje_analista_3er);
+    if (puntaje_analista_1er !== undefined) cambios.puntaje_analista_1er = normalizarPuntaje(puntaje_analista_1er);
+    if (puntaje_analista_2do !== undefined) cambios.puntaje_analista_2do = normalizarPuntaje(puntaje_analista_2do);
+    if (puntaje_analista_3er !== undefined) cambios.puntaje_analista_3er = normalizarPuntaje(puntaje_analista_3er);
     if (observacion_general !== undefined)  cambios.observacion_general  = observacion_general || null;
     if (resultados_alterados !== undefined) cambios.resultados_alterados = !!resultados_alterados;
     if (comentario_resultados_alterados !== undefined)

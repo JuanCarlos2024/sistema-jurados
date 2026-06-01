@@ -2048,7 +2048,7 @@ function renderAnalisisDeportivo(ev) {
         const ofi = fmtNumDisplay(ev.datos_monitor?.[kOfi]);
         const anal = fmtNum(ev[kAnal]);
         const analInput = esAnalista
-            ? `<input type="number" id="ad-${kAnal}" class="form-control" value="${sanitizar(anal)}" placeholder="—" step="0.01" min="0" style="width:110px;">`
+            ? `<input type="text" id="ad-${kAnal}" class="form-control" value="${sanitizar(anal)}" placeholder="Ej: 36 o 30+5" style="width:120px;">`
             : `<div class="campo-readonly" style="min-height:32px;">${fmtNumDisplay(ev[kAnal])}</div>`;
         return `<tr>
             <td style="font-size:13px;padding:5px 12px 5px 0;white-space:nowrap;">${label}</td>
@@ -2173,7 +2173,8 @@ if (!window.__listenerAlteracionVisible) {
 
 async function guardarAnalisisDeportivo() {
     const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : undefined; };
-    const getNum = (id) => { const v = getVal(id); if (v === undefined || v === '') return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const REGEX_PUNTAJE = /^\d+(\s*\+\s*\d+)?$/;
+    const getTextPuntaje = (id) => { const v = getVal(id); if (v === undefined || v === '') return null; return v; };
 
     const altEl = document.getElementById('ad-resultados_alterados');
     const resultados_alterados = altEl ? altEl.checked : false;
@@ -2184,10 +2185,21 @@ async function guardarAnalisisDeportivo() {
         return;
     }
 
+    const p1 = getTextPuntaje('ad-puntaje_analista_1er');
+    const p2 = getTextPuntaje('ad-puntaje_analista_2do');
+    const p3 = getTextPuntaje('ad-puntaje_analista_3er');
+    const invalidos = [['1er lugar', p1], ['2do lugar', p2], ['3er lugar', p3]]
+        .filter(([, v]) => v !== null && !REGEX_PUNTAJE.test(v))
+        .map(([label]) => label);
+    if (invalidos.length > 0) {
+        mostrarToast(`El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 (${invalidos.join(', ')})`, 'error');
+        return;
+    }
+
     const body = {
-        puntaje_analista_1er:             getNum('ad-puntaje_analista_1er'),
-        puntaje_analista_2do:             getNum('ad-puntaje_analista_2do'),
-        puntaje_analista_3er:             getNum('ad-puntaje_analista_3er'),
+        puntaje_analista_1er:             p1,
+        puntaje_analista_2do:             p2,
+        puntaje_analista_3er:             p3,
         observacion_general:              getVal('ad-observacion_general') || null,
         resultados_alterados,
         comentario_resultados_alterados

@@ -307,14 +307,33 @@ router.put('/:id/datos-monitor', async (req, res) => {
         return res.status(403).json({ error: 'Solo el Monitor o Administrador pueden guardar datos del monitor' });
     }
 
-    const toNum = (v) => (v === null || v === '' || v === undefined) ? null : (isNaN(Number(v)) ? null : Number(v));
+    const REGEX_PUNTAJE = /^\d+(\s*\+\s*\d+)?$/;
+    const validarPuntaje = (v) => v === null || v === undefined || v === '' || REGEX_PUNTAJE.test(String(v).trim());
+    const normalizarPuntaje = (v) => {
+        if (v === null || v === undefined || v === '') return null;
+        const s = String(v).trim();
+        return s === '' ? null : s.replace(/\s*\+\s*/, '+');
+    };
+
     const { puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor } = req.body;
+
+    const camposInvalidos = [
+        ['1er lugar', puntaje_oficial_1er],
+        ['2do lugar', puntaje_oficial_2do],
+        ['3er lugar', puntaje_oficial_3er]
+    ].filter(([, v]) => !validarPuntaje(v)).map(([label]) => label);
+
+    if (camposInvalidos.length > 0) {
+        return res.status(400).json({
+            error: `El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 (campos inválidos: ${camposInvalidos.join(', ')})`
+        });
+    }
 
     const payload = {
         rodeo_id:            req.params.id,
-        puntaje_oficial_1er: toNum(puntaje_oficial_1er),
-        puntaje_oficial_2do: toNum(puntaje_oficial_2do),
-        puntaje_oficial_3er: toNum(puntaje_oficial_3er),
+        puntaje_oficial_1er: normalizarPuntaje(puntaje_oficial_1er),
+        puntaje_oficial_2do: normalizarPuntaje(puntaje_oficial_2do),
+        puntaje_oficial_3er: normalizarPuntaje(puntaje_oficial_3er),
         comentario_monitor:  comentario_monitor || null,
         updated_at:          new Date().toISOString()
     };

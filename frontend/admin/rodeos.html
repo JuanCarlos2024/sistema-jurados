@@ -523,15 +523,15 @@ function htmlDetalle(r) {
         return `<div class="form-fila" style="margin-bottom:12px;">
             <div class="form-grupo">
                 <label class="form-label">Puntaje oficial 1er lugar</label>
-                <input type="number" id="dm-p1" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_1er))}" step="0.01" min="0" placeholder="—">
+                <input type="text" id="dm-p1" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_1er))}" placeholder="Ej: 36 o 30+5">
             </div>
             <div class="form-grupo">
                 <label class="form-label">Puntaje oficial 2do lugar</label>
-                <input type="number" id="dm-p2" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_2do))}" step="0.01" min="0" placeholder="—">
+                <input type="text" id="dm-p2" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_2do))}" placeholder="Ej: 33 o 30+5">
             </div>
             <div class="form-grupo">
                 <label class="form-label">Puntaje oficial 3er lugar</label>
-                <input type="number" id="dm-p3" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_3er))}" step="0.01" min="0" placeholder="—">
+                <input type="text" id="dm-p3" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_3er))}" placeholder="Ej: 27 o 30+1">
             </div>
         </div>
         <div class="form-grupo" style="margin-bottom:12px;">
@@ -640,11 +640,25 @@ async function guardarRodeo(e) {
 }
 
 async function guardarDatosMonitor(rodeoId) {
-    const getNum = (id) => { const v = document.getElementById(id)?.value.trim(); if (!v) return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const REGEX_PUNTAJE = /^\d+(\s*\+\s*\d+)?$/;
+    const getTextPuntaje = (id) => {
+        const v = document.getElementById(id)?.value.trim();
+        return (!v || v === '') ? null : v;
+    };
+    const p1 = getTextPuntaje('dm-p1');
+    const p2 = getTextPuntaje('dm-p2');
+    const p3 = getTextPuntaje('dm-p3');
+    const invalidos = [['1er lugar', p1], ['2do lugar', p2], ['3er lugar', p3]]
+        .filter(([, v]) => v !== null && !REGEX_PUNTAJE.test(v))
+        .map(([label]) => label);
+    if (invalidos.length > 0) {
+        mostrarToast(`El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 (${invalidos.join(', ')})`, 'error');
+        return;
+    }
     const body = {
-        puntaje_oficial_1er: getNum('dm-p1'),
-        puntaje_oficial_2do: getNum('dm-p2'),
-        puntaje_oficial_3er: getNum('dm-p3'),
+        puntaje_oficial_1er: p1,
+        puntaje_oficial_2do: p2,
+        puntaje_oficial_3er: p3,
         comentario_monitor:  document.getElementById('dm-monitor')?.value.trim() || null,
     };
     try {

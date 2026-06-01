@@ -274,12 +274,14 @@ async function obtenerDatos(q, paginar = true) {
         const po2 = dm?.puntaje_oficial_2do ?? null;
         const po3 = dm?.puntaje_oficial_3er ?? null;
 
-        const dif1 = po1 != null && ev?.puntaje_analista_1er != null
-            ? parseFloat((po1 - ev.puntaje_analista_1er).toFixed(2)) : null;
-        const dif2 = po2 != null && ev?.puntaje_analista_2do != null
-            ? parseFloat((po2 - ev.puntaje_analista_2do).toFixed(2)) : null;
-        const dif3 = po3 != null && ev?.puntaje_analista_3er != null
-            ? parseFloat((po3 - ev.puntaje_analista_3er).toFixed(2)) : null;
+        // Diferencia solo calculable si ambos valores son enteros simples (sin "+")
+        const _numPuro = (v) => { if (v == null) return null; const n = parseFloat(String(v)); return isNaN(n) || String(v).includes('+') ? null : n; };
+        const dif1 = _numPuro(po1) != null && _numPuro(ev?.puntaje_analista_1er) != null
+            ? parseFloat((_numPuro(po1) - _numPuro(ev.puntaje_analista_1er)).toFixed(2)) : null;
+        const dif2 = _numPuro(po2) != null && _numPuro(ev?.puntaje_analista_2do) != null
+            ? parseFloat((_numPuro(po2) - _numPuro(ev.puntaje_analista_2do)).toFixed(2)) : null;
+        const dif3 = _numPuro(po3) != null && _numPuro(ev?.puntaje_analista_3er) != null
+            ? parseFloat((_numPuro(po3) - _numPuro(ev.puntaje_analista_3er)).toFixed(2)) : null;
 
         const c1_desc_efectivo      = stats?.c1_desc_efectivo      || 0;
         const c2_desc_efectivo      = stats?.c2_desc_efectivo      || 0;
@@ -385,12 +387,12 @@ router.get('/export', async (req, res) => {
             { header: 'Delegado Rentado',           key: 'delegados',        width: 25 },
             { header: 'Estado Evaluación',          key: 'estado_evaluacion',width: 18 },
             { header: 'Nota Final',                 key: 'nota_final',       width: 10 },
-            { header: 'Oficial 1er Lugar',          key: 'puntaje_oficial_1er',  width: 14 },
-            { header: 'Oficial 2do Lugar',          key: 'puntaje_oficial_2do',  width: 14 },
-            { header: 'Oficial 3er Lugar',          key: 'puntaje_oficial_3er',  width: 14 },
-            { header: 'Revisado 1er Lugar',         key: 'puntaje_analista_1er', width: 14 },
-            { header: 'Revisado 2do Lugar',         key: 'puntaje_analista_2do', width: 14 },
-            { header: 'Revisado 3er Lugar',         key: 'puntaje_analista_3er', width: 14 },
+            { header: 'Oficial 1er Lugar',          key: 'puntaje_oficial_1er',  width: 14, style: { numFmt: '@' } },
+            { header: 'Oficial 2do Lugar',          key: 'puntaje_oficial_2do',  width: 14, style: { numFmt: '@' } },
+            { header: 'Oficial 3er Lugar',          key: 'puntaje_oficial_3er',  width: 14, style: { numFmt: '@' } },
+            { header: 'Revisado 1er Lugar',         key: 'puntaje_analista_1er', width: 14, style: { numFmt: '@' } },
+            { header: 'Revisado 2do Lugar',         key: 'puntaje_analista_2do', width: 14, style: { numFmt: '@' } },
+            { header: 'Revisado 3er Lugar',         key: 'puntaje_analista_3er', width: 14, style: { numFmt: '@' } },
             { header: 'Resultado Alterado',         key: 'resultados_alterados', width: 16 },
             { header: 'Com. Alteración',            key: 'comentario_resultados_alterados', width: 35 },
             { header: 'Total Situaciones',          key: 'total_sit',        width: 16 },
@@ -447,12 +449,12 @@ router.get('/export', async (req, res) => {
                 delegados:        f.delegados,
                 estado_evaluacion: f.estado_evaluacion || 'Sin evaluación',
                 nota_final:       f.nota_final != null ? Number(f.nota_final) : '',
-                puntaje_oficial_1er:  f.puntaje_oficial_1er  != null ? Number(f.puntaje_oficial_1er)  : '',
-                puntaje_oficial_2do:  f.puntaje_oficial_2do  != null ? Number(f.puntaje_oficial_2do)  : '',
-                puntaje_oficial_3er:  f.puntaje_oficial_3er  != null ? Number(f.puntaje_oficial_3er)  : '',
-                puntaje_analista_1er: f.puntaje_analista_1er != null ? Number(f.puntaje_analista_1er) : '',
-                puntaje_analista_2do: f.puntaje_analista_2do != null ? Number(f.puntaje_analista_2do) : '',
-                puntaje_analista_3er: f.puntaje_analista_3er != null ? Number(f.puntaje_analista_3er) : '',
+                puntaje_oficial_1er:  f.puntaje_oficial_1er  ?? '',
+                puntaje_oficial_2do:  f.puntaje_oficial_2do  ?? '',
+                puntaje_oficial_3er:  f.puntaje_oficial_3er  ?? '',
+                puntaje_analista_1er: f.puntaje_analista_1er ?? '',
+                puntaje_analista_2do: f.puntaje_analista_2do ?? '',
+                puntaje_analista_3er: f.puntaje_analista_3er ?? '',
                 resultados_alterados: f.resultados_alterados ? 'SÍ' : 'NO',
                 comentario_resultados_alterados: f.comentario_resultados_alterados,
                 total_sit:        f.c1_total + f.c2_total,
