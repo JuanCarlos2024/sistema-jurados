@@ -504,4 +504,208 @@ router.get('/export', async (req, res) => {
     }
 });
 
+// ── Exportación Excel con detalle por caso ──────────────────────────────────
+// Genera una fila por situación/caso de cada rodeo.
+// Respeta exactamente los mismos filtros del endpoint principal.
+router.get('/export-detalle', async (req, res) => {
+    try {
+        const { data: filas } = await obtenerDatos(req.query, false);
+
+        const evalIds = filas.filter(f => f.eval_id).map(f => f.eval_id);
+
+        // Ciclos: id → { numero_ciclo, evaluacion_id }
+        const cicloMap = {};
+        if (evalIds.length > 0) {
+            const { data: ciclos } = await supabase
+                .from('evaluacion_ciclos')
+                .select('id, evaluacion_id, numero_ciclo')
+                .in('evaluacion_id', evalIds);
+            for (const c of (ciclos || [])) cicloMap[c.id] = c;
+        }
+
+        // Casos no anulados: evaluacion_id → [casos ordenados]
+        const cicloIds = Object.keys(cicloMap);
+        const casosByEval = {};
+        if (cicloIds.length > 0) {
+            const { data: casos } = await supabase
+                .from('evaluacion_casos')
+                .select(`
+                    id, ciclo_id, evaluacion_id, numero_caso,
+                    tipo_caso, descripcion, video_url,
+                    descuento_puntos, resolucion_final,
+                    comentario_analista, decision_analista,
+                    comentario_comision, decision_comision,
+                    anulado
+                `)
+                .in('ciclo_id', cicloIds)
+                .eq('anulado', false)
+                .order('ciclo_id')
+                .order('numero_caso', { ascending: true });
+            for (const c of (casos || [])) {
+                if (!casosByEval[c.evaluacion_id]) casosByEval[c.evaluacion_id] = [];
+                casosByEval[c.evaluacion_id].push(c);
+            }
+        }
+
+        // comentario_jefe del jefe deportivo (no está en obtenerDatos)
+        const comentJefeByEval = {};
+        if (evalIds.length > 0) {
+            const { data: evJefe } = await supabase
+                .from('evaluaciones')
+                .select('id, comentario_jefe')
+                .in('id', evalIds);
+            for (const e of (evJefe || [])) comentJefeByEval[e.id] = e.comentario_jefe || '';
+        }
+
+        const TIPO_CASO_LABEL = {
+            interpretativa: 'Apreciación',
+            reglamentaria:  'Reglamentaria',
+            informativo:    'Conceptual/Informativo'
+        };
+        const RESOL_LABEL = {
+            sin_descuento:               'Sin descuento (revertido)',
+            interpretativa_confirmada:   'Apreciación confirmada',
+            reglamentaria_confirmada:    'Reglamentaria confirmada',
+            apelacion_acogida:           'Apelación acogida',
+            apelacion_rechazada:         'Apelación rechazada'
+        };
+
+        // ── Construir filas del Excel ──────────────────────────────────────────
+        const excelRows = [];
+        for (const f of filas) {
+            const casos     = f.eval_id ? (casosByEval[f.eval_id] || []) : [];
+            const cJefe     = f.eval_id ? (comentJefeByEval[f.eval_id] || '') : '';
+
+            // Puntajes formateados
+            const fmtP = (v) => (v != null && v !== '') ? String(v) : '—';
+            const puntajeOficial  = `${fmtP(f.puntaje_oficial_1er)} - ${fmtP(f.puntaje_oficial_2do)} - ${fmtP(f.puntaje_oficial_3er)}`;
+            const puntajeRevisado = `${fmtP(f.puntaje_analista_1er)} - ${fmtP(f.puntaje_analista_2do)} - ${fmtP(f.puntaje_analista_3er)}`;
+
+            // Observaciones consolidadas
+            const obsPartes = [];
+            if (f.obs_jurado?.trim())   obsPartes.push(`JURADO: ${f.obs_jurado.trim()}`);
+            if (f.obs_analista?.trim()) obsPartes.push(`ANALISTA: ${f.obs_analista.trim()}`);
+            if (cJefe?.trim())          obsPartes.push(`JEFE DEPORTIVO: ${cJefe.trim()}`);
+            if (f.obs_monitor?.trim())  obsPartes.push(`MONITOR: ${f.obs_monitor.trim()}`);
+            if (f.obs_admin?.trim())    obsPartes.push(`ADMINISTRADOR: ${f.obs_admin.trim()}`);
+            const obsConsolidadas = obsPartes.join('\n') || '—';
+
+            // Resultado alterado
+            const altTexto = f.resultados_alterados
+                ? `Sí${f.comentario_resultados_alterados ? ': ' + f.comentario_resultados_alterados : ''}`
+                : 'No';
+
+            const base = {
+                club_asociacion:  `${f.club || ''} - ${f.asociacion || ''}`,
+                fecha:            fmtFecha(f.fecha),
+                tipo_rodeo:       f.tipo_rodeo || '—',
+                jurados:          f.jurados   || '—',
+                delegados:        f.delegados || '—',
+                puntaje_oficial:  puntajeOficial,
+                puntaje_revisado: puntajeRevisado,
+                analisis:         f.obs_analista || '—',
+                resultado_alterado: altTexto,
+                observaciones:    obsConsolidadas
+            };
+
+            if (casos.length === 0) {
+                excelRows.push({ ...base, ciclo_caso: '—', video_url: '—', descripcion_caso: '—', tipo_situacion: '—', resolucion: '—', descuento: '—', comentario_analista: '—', comentario_comision: '—' });
+            } else {
+                for (const caso of casos) {
+                    const cicloNum = cicloMap[caso.ciclo_id]?.numero_ciclo ?? '?';
+                    excelRows.push({
+                        ...base,
+                        ciclo_caso:           `C${cicloNum}-${caso.numero_caso}`,
+                        video_url:            caso.video_url          || '—',
+                        descripcion_caso:     caso.descripcion        || '—',
+                        tipo_situacion:       TIPO_CASO_LABEL[caso.tipo_caso] || caso.tipo_caso || '—',
+                        resolucion:           RESOL_LABEL[caso.resolucion_final] || caso.resolucion_final || '—',
+                        descuento:            caso.descuento_puntos   ?? 0,
+                        comentario_analista:  caso.comentario_analista  || '—',
+                        comentario_comision:  caso.comentario_comision  || '—'
+                    });
+                }
+            }
+        }
+
+        // ── Generar Excel ──────────────────────────────────────────────────────
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Sistema Jurados - Rodeo Chileno';
+        wb.created = new Date();
+        const ws = wb.addWorksheet('Reporte Deportivo Detalle');
+
+        ws.columns = [
+            { header: 'Club / Asociación',                          key: 'club_asociacion',    width: 38 },
+            { header: 'Fecha',                                       key: 'fecha',              width: 13 },
+            { header: 'Tipo de Rodeo',                               key: 'tipo_rodeo',         width: 26 },
+            { header: 'Jurado(s)',                                   key: 'jurados',            width: 34 },
+            { header: 'Delegado Rentado',                            key: 'delegados',          width: 28 },
+            { header: 'Puntaje Serie Campeones 1° - 2° - 3°',       key: 'puntaje_oficial',    width: 24, style: { numFmt: '@' } },
+            { header: 'Revisión Puntaje 1° - 2° - 3°',              key: 'puntaje_revisado',   width: 24, style: { numFmt: '@' } },
+            { header: 'Análisis de la Jura',                         key: 'analisis',           width: 48 },
+            { header: 'Resultado Alterado',                          key: 'resultado_alterado', width: 20 },
+            { header: 'Caso',                                        key: 'ciclo_caso',         width: 10 },
+            { header: 'Enlace a Situación / Video',                  key: 'video_url',          width: 46, style: { numFmt: '@' } },
+            { header: 'Comentario / Descripción',                    key: 'descripcion_caso',   width: 46 },
+            { header: 'Tipo Situación',                              key: 'tipo_situacion',     width: 20 },
+            { header: 'Resolución Final',                            key: 'resolucion',         width: 26 },
+            { header: 'Desc. Pts',                                   key: 'descuento',          width: 10 },
+            { header: 'Comentario Analista',                         key: 'comentario_analista',width: 44 },
+            { header: 'Comentario Comisión',                         key: 'comentario_comision',width: 44 },
+            { header: 'Observaciones (Jurado / Analista / Jefe / Monitor / Admin)', key: 'observaciones', width: 60 }
+        ];
+
+        // Estilo encabezado
+        ws.getRow(1).eachCell(cell => {
+            cell.font      = HEADER_STYLE.font;
+            cell.fill      = HEADER_STYLE.fill;
+            cell.alignment = HEADER_STYLE.alignment;
+            cell.border    = HEADER_STYLE.border;
+        });
+        ws.getRow(1).height = 28;
+        ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+        const CELL_BORDER = {
+            top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
+        };
+        const ROJO_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBD0' } };
+        const ALT_TEXT_COLS = new Set(['analisis', 'descripcion_caso', 'comentario_analista', 'comentario_comision', 'observaciones']);
+        const LINK_COL = 'video_url';
+
+        for (const r of excelRows) {
+            const row = ws.addRow(r);
+            row.height = 16;
+            const isAlt = r.resultado_alterado && r.resultado_alterado.startsWith('Sí');
+
+            row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+                const colKey = ws.columns[colNum - 1]?.key;
+                cell.border    = CELL_BORDER;
+                cell.alignment = {
+                    vertical: 'top',
+                    wrapText: ALT_TEXT_COLS.has(colKey) || colKey === LINK_COL
+                };
+                if (isAlt) cell.fill = ROJO_FILL;
+
+                // Enlace clickeable si tiene URL válida
+                if (colKey === LINK_COL && r.video_url && r.video_url !== '—' && r.video_url.startsWith('http')) {
+                    cell.value = { text: r.video_url, hyperlink: r.video_url };
+                    cell.font  = { color: { argb: 'FF1e3a5f' }, underline: true };
+                    if (isAlt) cell.font = { ...cell.font, color: { argb: 'FF1e3a5f' } };
+                }
+            });
+        }
+
+        const fecha = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="reporte_deportivo_detalle_${fecha}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 module.exports = router;

@@ -96,6 +96,7 @@
                 </select>
                 <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
                 <button class="btn btn-success btn-pequeño" onclick="exportarExcel()" id="btn-exportar" style="margin-left:auto;">Exportar Excel</button>
+                <button class="btn btn-primario btn-pequeño" onclick="exportarExcelDetallado()" id="btn-exportar-det">Exportar Excel Detallado</button>
             </div>
 
             <!-- Tabla -->
@@ -338,6 +339,20 @@ async function exportarExcel() {
         mostrarToast(e.message || 'Error al exportar', 'error');
     } finally {
         btn.disabled = false; btn.textContent = 'Exportar Excel';
+    }
+}
+
+async function exportarExcelDetallado() {
+    const btn = document.getElementById('btn-exportar-det');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        const params = buildParams(1);
+        params.delete('page'); params.delete('limit');
+        await api.descargar('/admin/reporte-deportivo/export-detalle?' + params.toString(), `reporte_deportivo_detalle_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar detallado', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Exportar Excel Detallado';
     }
 }
 
