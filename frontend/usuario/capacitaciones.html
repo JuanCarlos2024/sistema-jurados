@@ -319,14 +319,13 @@ function construirMatPreview(datos, meta, materialId, asignacionId) {
         var tipo   = meta.tipo;
 
         if (tipo === 'youtube') {
-            var embedUrl = mcYoutubeEmbed(urlExt);
-            if (embedUrl) {
-                var ifr3 = document.createElement('iframe');
-                ifr3.style.cssText = 'width:100%;height:420px;border:none;';
-                ifr3.src = embedUrl;
-                ifr3.setAttribute('allowfullscreen', '');
-                ifr3.setAttribute('allow', 'autoplay; encrypted-media');
-                area.appendChild(ifr3);
+            var yt = _ytExtraerId(urlExt);
+            if (yt) {
+                var cid = 'yt-p-' + (window._ytNextId = (window._ytNextId || 0) + 1);
+                var ytDiv = document.createElement('div');
+                ytDiv.id = cid;
+                area.appendChild(ytDiv);
+                _ytCrearPlayer(area, cid, urlExt, yt, 'width:100%;height:420px;border:none;display:block;');
             } else {
                 area.innerHTML = '<div style="padding:24px;text-align:center;"><p style="color:var(--gris);">URL de YouTube inválida.</p></div>';
             }
@@ -377,6 +376,77 @@ function registrarMatInteraccion(materialId, tipo) {
     api.post('/usuario/material-complementario/' + materialId + '/interaccion', {
         tipo_interaccion: tipo
     }).catch(function () {}); // fire-and-forget, no bloquea
+}
+
+// ── YouTube IFrame API — detección de bloqueo embebido (errores 101/150) ──
+(function() {
+    if (document.querySelector('script[src*="youtube.com/iframe_api"]')) return;
+    var s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(s);
+})();
+window._ytCallbacks = window._ytCallbacks || [];
+window.onYouTubeIframeAPIReady = function() {
+    window._ytApiReady = true;
+    (window._ytCallbacks || []).forEach(function(cb) { try { cb(); } catch(e) {} });
+    window._ytCallbacks = [];
+};
+function _ytExtraerId(url) {
+    if (!url || !/^https?:\/\//i.test(url)) return null;
+    try {
+        var u = new URL(url);
+        var vid = null, start = 0;
+        if (u.hostname === 'youtu.be') {
+            vid = u.pathname.slice(1).split('/')[0] || null;
+            var t = u.searchParams.get('t') || u.searchParams.get('start');
+            if (t) start = parseInt(t, 10) || 0;
+        } else if (/youtube\.com$/i.test(u.hostname)) {
+            vid = u.pathname.startsWith('/embed/')
+                ? u.pathname.split('/embed/')[1].split('/')[0]
+                : u.searchParams.get('v');
+            var t2 = u.searchParams.get('t') || u.searchParams.get('start');
+            if (t2) start = parseInt(t2, 10) || 0;
+        }
+        if (!vid) return null;
+        return { id: vid.split('?')[0].split('&')[0], start: start };
+    } catch(_) { return null; }
+}
+function _ytFallbackHtml(url) {
+    var e = String(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return '<div style="padding:24px;text-align:center;background:#fef9e7;border:1px solid #f0a500;border-radius:8px;margin:8px;">'
+        + '<p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#7d4e00;">Video no disponible para reproducción embebida</p>'
+        + '<p style="margin:0 0 14px;font-size:13px;color:#7d4e00;">YouTube o el propietario del contenido bloqueó la reproducción de este video dentro del sistema.</p>'
+        + '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'
+        + '<a href="' + e + '" target="_blank" rel="noopener noreferrer" class="btn btn-primario btn-pequeño">Abrir en YouTube ↗</a>'
+        + '<button class="btn btn-secundario btn-pequeño" data-ytcopy="' + e + '" onclick="_ytCopiarEnlace(this)">Copiar enlace</button>'
+        + '</div></div>';
+}
+function _ytCopiarEnlace(btn) {
+    var url = btn.getAttribute('data-ytcopy') || '';
+    if (!url) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function() {
+            var o = btn.textContent; btn.textContent = '✓ Copiado';
+            setTimeout(function() { btn.textContent = o; }, 2000);
+        }).catch(function() { prompt('Copia este enlace:', url); });
+    } else { prompt('Copia este enlace:', url); }
+}
+function _ytCrearPlayer(wrap, cid, url, yt, iframeStyle) {
+    var style = iframeStyle || 'width:100%;aspect-ratio:16/9;border:none;display:block;';
+    function init() {
+        if (!document.getElementById(cid)) return;
+        new YT.Player(cid, {
+            videoId: yt.id,
+            playerVars: { autoplay: 0, rel: 0, start: yt.start || 0, modestbranding: 1 },
+            events: {
+                onReady: function(ev) { ev.target.getIframe().style.cssText = style; },
+                onError: function(ev) {
+                    if (ev.data === 101 || ev.data === 150) { wrap.innerHTML = _ytFallbackHtml(url); }
+                }
+            }
+        });
+    }
+    if (window.YT && window.YT.Player) { init(); }
+    else { (window._ytCallbacks = window._ytCallbacks || []).push(init); }
 }
 
 function mcYoutubeEmbed(url) {
