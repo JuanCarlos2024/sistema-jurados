@@ -98,7 +98,8 @@
                 <h1 id="titulo-pagina" style="font-size:16px;">Cargando…</h1>
             </div>
             <div class="topbar-acciones">
-                <button class="btn btn-secundario btn-pequeño" onclick="exportar()" id="btn-exportar" disabled>Exportar CSV</button>
+                <button class="btn btn-secundario btn-pequeño" onclick="exportarCSV()" id="btn-exportar" disabled>Exportar CSV</button>
+                <button class="btn btn-secundario btn-pequeño" onclick="exportarExcel()" id="btn-exportar-excel" disabled>Exportar Excel</button>
             </div>
         </div>
 
@@ -217,15 +218,17 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
-var _pruebaId       = null;
-var _resultados     = [];
-var _estadisticas   = null;
-var _resetIntentoId = null;
+var _pruebaId              = null;
+var _resultados            = [];
+var _resultadosFiltrados   = [];
+var _estadisticas          = null;
+var _resetIntentoId        = null;
 
 document.addEventListener('DOMContentLoaded', function () {
     protegerRuta('administrador');
@@ -259,6 +262,7 @@ async function cargar() {
         renderEstadisticas();
         document.getElementById('page-body').style.display = '';
         document.getElementById('btn-exportar').disabled = false;
+        document.getElementById('btn-exportar-excel').disabled = false;
     } catch (err) {
         document.getElementById('titulo-pagina').textContent = 'Error';
         mostrarToast(err.message || 'Error al cargar', 'error');
@@ -351,6 +355,7 @@ function filtrarResultados() {
             && (!fechaHasta || (fecIni && fecIni <= fechaHasta));
     });
 
+    _resultadosFiltrados = lista;
     document.getElementById('res-contador').textContent = lista.length + ' de ' + _resultados.length + ' registros';
     renderResultados(lista);
 }
@@ -582,14 +587,62 @@ async function confirmarReset() {
 
 // ─── Exportar ─────────────────────────────────────────────────────────────────
 
-function exportar() {
-    var url = '/api/admin/capacitaciones/pruebas/' + _pruebaId + '/exportar';
-    var a   = document.createElement('a');
+function _exportFilas() {
+    var estadoTxt = function(r) {
+        if (r.estado === 'pendiente') return 'Pendiente';
+        if (r.estado === 'en_curso')  return 'En curso';
+        if (r.estado === 'completado') return r.aprobado === true ? 'Aprobado' : 'Reprobado';
+        return r.estado || '—';
+    };
+    return _resultadosFiltrados.map(function(r) {
+        return [
+            r.jurado && r.jurado.nombre_completo ? r.jurado.nombre_completo : '—',
+            r.jurado && r.jurado.rut             ? r.jurado.rut             : '—',
+            r.jurado && r.jurado.categoria       ? r.jurado.categoria       : '—',
+            r.jurado && r.jurado.asociacion      ? r.jurado.asociacion      : '—',
+            estadoTxt(r),
+            r.iniciado_en ? new Date(r.iniciado_en).toLocaleString('es-CL') : '—',
+            r.tiempo_usado || '—',
+            r.correctas      != null ? r.correctas      : '—',
+            r.incorrectas    != null ? r.incorrectas    : '—',
+            r.no_respondidas != null ? r.no_respondidas : '—',
+            r.puntaje_obtenido != null ? r.puntaje_obtenido + '%' : '—',
+            r.nota             != null ? r.nota             : '—',
+            r.aprobado === true ? 'Sí' : r.aprobado === false ? 'No' : '—'
+        ];
+    });
+}
+
+var _EXPORT_COLS = ['Jurado','RUT','Categoría','Asociación','Estado','Inicio','Tiempo',
+                    'Correctas','Incorrectas','Omitidas','Puntaje (%)','Nota','Aprobación'];
+
+function exportarCSV() {
+    if (_resultadosFiltrados.length === 0) { mostrarToast('No hay datos para exportar', 'error'); return; }
+    var esc = function(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+    var filas  = _exportFilas().map(function(r) { return r.map(esc).join(';'); });
+    var cabeza = _EXPORT_COLS.map(esc).join(';');
+    var csv    = '﻿' + [cabeza].concat(filas).join('\r\n');
+    var blob   = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url    = URL.createObjectURL(blob);
+    var a      = document.createElement('a');
+    var fecha  = new Date().toISOString().slice(0, 10);
     a.href     = url;
-    a.download = '';
+    a.download = 'resultados_prueba_' + _pruebaId + '_' + fecha + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function exportarExcel() {
+    if (_resultadosFiltrados.length === 0) { mostrarToast('No hay datos para exportar', 'error'); return; }
+    if (typeof XLSX === 'undefined') { mostrarToast('Librería Excel aún no cargada, intente en un momento', 'error'); return; }
+    var filas = _exportFilas();
+    var ws    = XLSX.utils.aoa_to_sheet([_EXPORT_COLS].concat(filas));
+    var wb    = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Resultados');
+    var fecha = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, 'resultados_prueba_' + _pruebaId + '_' + fecha + '.xlsx');
 }
 </script>
 </body>
