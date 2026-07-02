@@ -32,6 +32,15 @@ const fmtTiempo = (ini, fin) => {
     return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 };
 
+const calcularNota = (pct, nMin, nMax, nAprob, exig) => {
+    if (!exig || exig <= 0 || exig >= 100) return null;
+    const p = Math.max(0, Math.min(100, pct));
+    const nota = p <= exig
+        ? nMin + (p / exig) * (nAprob - nMin)
+        : nAprob + ((p - exig) / (100 - exig)) * (nMax - nAprob);
+    return Math.round(nota * 10) / 10;
+};
+
 // ─── GET /pruebas ─────────────────────────────────────────────────────────────
 
 router.get('/pruebas', async (req, res) => {
@@ -439,19 +448,33 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
+    // Total actual de preguntas de la prueba (fuente de verdad para todos los cálculos del display)
     const { count: totalPreguntas } = await supabase
         .from('capacitacion_preguntas')
         .select('id', { count: 'exact', head: true })
         .eq('prueba_id', req.params.id);
 
+    // Configuración de notas de esta prueba para recalcular en el display
+    const { data: pruebaConfig } = await supabase
+        .from('capacitacion_pruebas')
+        .select('nota_minima, nota_maxima, nota_aprobacion, puntaje_minimo_aprobacion')
+        .eq('id', req.params.id)
+        .single();
+
+    const totalP     = totalPreguntas || 0;
+    const pNotaMin   = parseFloat(pruebaConfig?.nota_minima             ?? 1.0);
+    const pNotaMax   = parseFloat(pruebaConfig?.nota_maxima             ?? 7.0);
+    const pNotaAprob = parseFloat(pruebaConfig?.nota_aprobacion         ?? 4.0);
+    const pExigencia = parseFloat(pruebaConfig?.puntaje_minimo_aprobacion ?? 60);
+
     const asigIds = (asigs || []).map(a => a.id);
-    let intentosMap = {};
+    let intentosMap  = {};
     let respuestasMap = {};
 
     if (asigIds.length > 0) {
         const { data: intentos } = await supabase
             .from('capacitacion_intentos')
-            .select('*')
+            .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, reset_motivo, reseteado_en')
             .in('asignacion_id', asigIds)
             .order('numero_intento', { ascending: true });
 
@@ -473,58 +496,52 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
             (respuestas || []).forEach(r => {
                 if (!respuestasMap[r.intento_id]) respuestasMap[r.intento_id] = { correctas: 0, incorrectas: 0 };
                 if (r.es_correcta) respuestasMap[r.intento_id].correctas++;
-                else respuestasMap[r.intento_id].incorrectas++;
+                else               respuestasMap[r.intento_id].incorrectas++;
             });
         }
     }
 
-    const totalP = totalPreguntas || 0;
-
     const result = (asigs || []).map(a => {
-        const intentos = intentosMap[a.id] || [];
+        const intentos   = intentosMap[a.id] || [];
         const completado = intentos.find(i => i.estado === 'completado');
-        const resps = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
+        const resps      = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
 
-        // Determinar cuántas preguntas debía responder este jurado en este intento.
-        // Se intenta en orden de confiabilidad:
-        // 1) orden_preguntas_json: registrado cuando el jurado inició la prueba (fuente exacta)
-        // 2) Derivado del puntaje guardado: total = round(correctas * 100 / puntaje).
-        //    Funciona aunque se hayan agregado preguntas a la prueba después de que el jurado la completó.
-        // 3) totalP actual: último recurso, puede estar inflado si se agregaron preguntas después.
-        let preguntasEnIntento;
-        if (completado
-            && Array.isArray(completado.orden_preguntas_json)
-            && completado.orden_preguntas_json.length > 0) {
-            preguntasEnIntento = completado.orden_preguntas_json.length;
-        } else if (resps
-            && completado
-            && completado.puntaje_obtenido > 0
-            && resps.correctas > 0) {
-            // puntaje = correctas / total * 100 → total = correctas * 100 / puntaje
-            const derivado = Math.round(resps.correctas * 1000 / (completado.puntaje_obtenido * 10));
-            preguntasEnIntento = Math.max(derivado, resps.correctas + resps.incorrectas);
-        } else {
-            preguntasEnIntento = Math.max(totalP, resps ? resps.correctas + resps.incorrectas : 0);
+        // Recalcular puntaje, nota y aprobado sobre el total ACTUAL de la prueba.
+        // Esto garantiza que correctas + incorrectas + omitidas = totalP, y que el
+        // puntaje que se muestra es coherente con "Preguntas (X)" en la pantalla.
+        let puntajeCalc  = null;
+        let notaCalc     = null;
+        let aprobadoCalc = null;
+
+        if (resps && totalP > 0) {
+            puntajeCalc  = Math.round((resps.correctas / totalP) * 1000) / 10;
+            notaCalc     = calcularNota(puntajeCalc, pNotaMin, pNotaMax, pNotaAprob, pExigencia);
+            aprobadoCalc = notaCalc != null ? notaCalc >= pNotaAprob : puntajeCalc >= pExigencia;
+        } else if (completado) {
+            // Prueba sin preguntas (edge case): usar valores almacenados como fallback
+            puntajeCalc  = completado.puntaje_obtenido;
+            notaCalc     = completado.nota ?? null;
+            aprobadoCalc = completado.aprobado;
         }
 
         return {
-            asignacion_id: a.id,
-            jurado: a.jurado,
-            fecha_limite: a.fecha_limite,
-            asignado_en: a.asignado_en,
-            total_intentos: intentos.length,
-            intento_id: completado ? completado.id : null,
-            aprobado: completado ? completado.aprobado : null,
-            puntaje_obtenido: completado ? completado.puntaje_obtenido : null,
-            nota: completado ? (completado.nota ?? null) : null,
-            iniciado_en: completado ? completado.iniciado_en : null,
-            finalizado_en: completado ? completado.finalizado_en : null,
-            tiempo_usado: completado ? fmtTiempo(completado.iniciado_en, completado.finalizado_en) : null,
-            correctas: resps ? resps.correctas : null,
-            incorrectas: resps ? resps.incorrectas : null,
-            no_respondidas: resps ? Math.max(0, preguntasEnIntento - resps.correctas - resps.incorrectas) : null,
-            total_preguntas: preguntasEnIntento,
-            estado: completado ? 'completado' : intentos.length > 0 ? 'en_curso' : 'pendiente'
+            asignacion_id:    a.id,
+            jurado:           a.jurado,
+            fecha_limite:     a.fecha_limite,
+            asignado_en:      a.asignado_en,
+            total_intentos:   intentos.length,
+            intento_id:       completado ? completado.id : null,
+            aprobado:         aprobadoCalc,
+            puntaje_obtenido: puntajeCalc,
+            nota:             notaCalc,
+            iniciado_en:      completado ? completado.iniciado_en : null,
+            finalizado_en:    completado ? completado.finalizado_en : null,
+            tiempo_usado:     completado ? fmtTiempo(completado.iniciado_en, completado.finalizado_en) : null,
+            correctas:        resps ? resps.correctas : null,
+            incorrectas:      resps ? resps.incorrectas : null,
+            no_respondidas:   resps ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null,
+            total_preguntas:  totalP,
+            estado:           completado ? 'completado' : intentos.length > 0 ? 'en_curso' : 'pendiente'
         };
     });
 
