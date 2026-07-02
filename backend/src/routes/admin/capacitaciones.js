@@ -485,14 +485,27 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
         const completado = intentos.find(i => i.estado === 'completado');
         const resps = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
 
-        // Preguntas que el jurado realmente vio en este intento.
-        // orden_preguntas_json registra exactamente qué preguntas se asignaron al intento,
-        // evitando contar como omitidas las preguntas agregadas a la prueba DESPUÉS de que el jurado la completó.
-        const preguntasEnIntento = (completado
+        // Determinar cuántas preguntas debía responder este jurado en este intento.
+        // Se intenta en orden de confiabilidad:
+        // 1) orden_preguntas_json: registrado cuando el jurado inició la prueba (fuente exacta)
+        // 2) Derivado del puntaje guardado: total = round(correctas * 100 / puntaje).
+        //    Funciona aunque se hayan agregado preguntas a la prueba después de que el jurado la completó.
+        // 3) totalP actual: último recurso, puede estar inflado si se agregaron preguntas después.
+        let preguntasEnIntento;
+        if (completado
             && Array.isArray(completado.orden_preguntas_json)
-            && completado.orden_preguntas_json.length > 0)
-            ? completado.orden_preguntas_json.length
-            : totalP;
+            && completado.orden_preguntas_json.length > 0) {
+            preguntasEnIntento = completado.orden_preguntas_json.length;
+        } else if (resps
+            && completado
+            && completado.puntaje_obtenido > 0
+            && resps.correctas > 0) {
+            // puntaje = correctas / total * 100 → total = correctas * 100 / puntaje
+            const derivado = Math.round(resps.correctas * 1000 / (completado.puntaje_obtenido * 10));
+            preguntasEnIntento = Math.max(derivado, resps.correctas + resps.incorrectas);
+        } else {
+            preguntasEnIntento = Math.max(totalP, resps ? resps.correctas + resps.incorrectas : 0);
+        }
 
         return {
             asignacion_id: a.id,
