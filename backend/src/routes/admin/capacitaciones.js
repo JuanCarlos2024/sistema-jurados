@@ -449,12 +449,14 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     // Total actual de preguntas (base para calcular no_respondidas)
-    const { count: totalPreguntas } = await supabase
-        .from('capacitacion_preguntas')
-        .select('id', { count: 'exact', head: true })
-        .eq('prueba_id', req.params.id);
+    // nota_aprobacion: necesaria para determinar aprobado_final cuando existe nota_manual
+    const [{ count: totalPreguntas }, { data: pruebaConfig }] = await Promise.all([
+        supabase.from('capacitacion_preguntas').select('id', { count: 'exact', head: true }).eq('prueba_id', req.params.id),
+        supabase.from('capacitacion_pruebas').select('nota_aprobacion').eq('id', req.params.id).single()
+    ]);
 
-    const totalP  = totalPreguntas || 0;
+    const totalP        = totalPreguntas || 0;
+    const notaAprobacion = parseFloat(pruebaConfig?.nota_aprobacion ?? 4.0);
     const asigIds = (asigs || []).map(a => a.id);
     let intentosMap   = {};
     let respuestasMap = {};
@@ -462,7 +464,7 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
     if (asigIds.length > 0) {
         const { data: intentos } = await supabase
             .from('capacitacion_intentos')
-            .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, puntaje_obtenido, nota, aprobado, reset_motivo, reseteado_en')
+            .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, puntaje_obtenido, nota, aprobado, nota_manual, nota_manual_activa, nota_manual_motivo, nota_manual_por, nota_manual_fecha, reset_motivo, reseteado_en')
             .in('asignacion_id', asigIds)
             .order('numero_intento', { ascending: true });
 
@@ -477,8 +479,6 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
 
         if (completadoIds.length > 0) {
             // .limit(10000) evita la truncación del límite por defecto de Supabase (1000 filas).
-            // Sin este límite, al haber muchos jurados completados (e.g. 40 × 30 = 1200 filas),
-            // las respuestas de algunos jurados son cortadas y su conteo queda incompleto.
             const { data: respuestas } = await supabase
                 .from('capacitacion_respuestas')
                 .select('intento_id, es_correcta')
@@ -489,7 +489,6 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
                 if (!respuestasMap[r.intento_id]) respuestasMap[r.intento_id] = { correctas: 0, incorrectas: 0 };
                 if (r.es_correcta === true)       respuestasMap[r.intento_id].correctas++;
                 else if (r.es_correcta === false) respuestasMap[r.intento_id].incorrectas++;
-                // es_correcta === null: no contada → cae en no_respondidas via totalP
             });
         }
     }
@@ -499,26 +498,41 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
         const completado = intentos.find(i => i.estado === 'completado');
         const resps      = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
 
-        // Usar valores almacenados del intento — misma fuente que usa el endpoint /intentos/:id/detalle.
-        // Esto garantiza que tabla, detalle, CSV y Excel muestren exactamente los mismos puntaje/nota/aprobado.
+        // nota_final: si existe nota_manual activa, se usa en vez de la automática.
+        // El puntaje y los conteos siempre reflejan el resultado real del intento.
+        const notaManualActiva = completado?.nota_manual_activa === true;
+        const notaFinal   = completado
+            ? (notaManualActiva ? completado.nota_manual : (completado.nota ?? null))
+            : null;
+        const aprobadoFinal = notaFinal != null
+            ? notaFinal >= notaAprobacion
+            : (completado?.aprobado ?? null);
+
         return {
-            asignacion_id:    a.id,
-            jurado:           a.jurado,
-            fecha_limite:     a.fecha_limite,
-            asignado_en:      a.asignado_en,
-            total_intentos:   intentos.length,
-            intento_id:       completado ? completado.id              : null,
-            aprobado:         completado ? completado.aprobado         : null,
-            puntaje_obtenido: completado ? completado.puntaje_obtenido : null,
-            nota:             completado ? (completado.nota ?? null)   : null,
-            iniciado_en:      completado ? completado.iniciado_en      : null,
-            finalizado_en:    completado ? completado.finalizado_en    : null,
-            tiempo_usado:     completado ? fmtTiempo(completado.iniciado_en, completado.finalizado_en) : null,
-            correctas:        resps ? resps.correctas  : null,
-            incorrectas:      resps ? resps.incorrectas : null,
-            no_respondidas:   resps ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null,
-            total_preguntas:  totalP,
-            estado:           completado ? 'completado' : intentos.length > 0 ? 'en_curso' : 'pendiente'
+            asignacion_id:       a.id,
+            jurado:              a.jurado,
+            fecha_limite:        a.fecha_limite,
+            asignado_en:         a.asignado_en,
+            total_intentos:      intentos.length,
+            intento_id:          completado ? completado.id              : null,
+            // nota y aprobado representan el valor FINAL (manual si existe, si no automático)
+            aprobado:            aprobadoFinal,
+            puntaje_obtenido:    completado ? completado.puntaje_obtenido : null,
+            nota:                notaFinal,
+            nota_automatica:     completado ? (completado.nota ?? null)   : null,
+            nota_manual:         notaManualActiva ? completado.nota_manual : null,
+            nota_manual_activa:  notaManualActiva,
+            nota_manual_motivo:  notaManualActiva ? completado.nota_manual_motivo : null,
+            nota_manual_por:     notaManualActiva ? completado.nota_manual_por    : null,
+            nota_manual_fecha:   notaManualActiva ? completado.nota_manual_fecha  : null,
+            iniciado_en:         completado ? completado.iniciado_en      : null,
+            finalizado_en:       completado ? completado.finalizado_en    : null,
+            tiempo_usado:        completado ? fmtTiempo(completado.iniciado_en, completado.finalizado_en) : null,
+            correctas:           resps ? resps.correctas  : null,
+            incorrectas:         resps ? resps.incorrectas : null,
+            no_respondidas:      resps ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null,
+            total_preguntas:     totalP,
+            estado:              completado ? 'completado' : intentos.length > 0 ? 'en_curso' : 'pendiente'
         };
     });
 
@@ -574,6 +588,145 @@ router.get('/pruebas/:id/estadisticas', async (req, res) => {
     });
 });
 
+// ─── POST /intentos/:id/nota-manual ──────────────────────────────────────────
+// Establece o modifica la nota manual de un intento completado.
+// Solo Administrador (protegido por la ruta /admin en app.js).
+
+router.post('/intentos/:id/nota-manual', async (req, res) => {
+    const { nota, motivo } = req.body;
+
+    if (nota == null || nota === '') {
+        return res.status(400).json({ error: 'La nota es obligatoria' });
+    }
+    if (!motivo || !String(motivo).trim()) {
+        return res.status(400).json({ error: 'El motivo es obligatorio' });
+    }
+
+    const notaNum = Math.round(parseFloat(nota) * 10) / 10;
+    if (isNaN(notaNum)) {
+        return res.status(400).json({ error: 'La nota debe ser un número válido' });
+    }
+
+    // Obtener intento con datos de prueba para validar rango y calcular aprobado
+    const { data: intento } = await supabase
+        .from('capacitacion_intentos')
+        .select(`
+            id, estado, nota, aprobado, nota_manual, nota_manual_activa,
+            asignacion_id,
+            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                prueba_id,
+                prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
+                    nota_minima, nota_maxima, nota_aprobacion
+                )
+            )
+        `)
+        .eq('id', req.params.id)
+        .single();
+
+    if (!intento) return res.status(404).json({ error: 'Intento no encontrado' });
+    if (intento.estado !== 'completado') {
+        return res.status(400).json({ error: 'Solo se puede editar la nota de un intento completado' });
+    }
+
+    const notaMin  = parseFloat(intento.asignacion?.prueba?.nota_minima    ?? 1.0);
+    const notaMax  = parseFloat(intento.asignacion?.prueba?.nota_maxima    ?? 7.0);
+    const notaAprob = parseFloat(intento.asignacion?.prueba?.nota_aprobacion ?? 4.0);
+    const pruebaId = intento.asignacion?.prueba_id;
+
+    if (notaNum < notaMin || notaNum > notaMax) {
+        return res.status(400).json({
+            error: `La nota debe estar entre ${notaMin} y ${notaMax}`
+        });
+    }
+
+    const accion     = intento.nota_manual_activa ? 'modificar' : 'crear';
+    const notaManualAnterior = intento.nota_manual_activa ? intento.nota_manual : null;
+
+    const { error: errUpd } = await supabase
+        .from('capacitacion_intentos')
+        .update({
+            nota_manual:        notaNum,
+            nota_manual_activa: true,
+            nota_manual_motivo: String(motivo).trim(),
+            nota_manual_por:    req.usuario.id,
+            nota_manual_fecha:  new Date().toISOString()
+        })
+        .eq('id', req.params.id);
+
+    if (errUpd) return res.status(500).json({ error: errUpd.message });
+
+    await supabase.from('capacitacion_notas_manuales_historial').insert({
+        intento_id:           req.params.id,
+        prueba_id:            pruebaId,
+        nota_automatica:      intento.nota,
+        nota_manual_anterior: notaManualAnterior,
+        nota_manual_nueva:    notaNum,
+        motivo:               String(motivo).trim(),
+        accion,
+        creado_por:           req.usuario.id
+    });
+
+    res.json({
+        ok:             true,
+        nota_manual:    notaNum,
+        nota_automatica: intento.nota,
+        aprobado_final: notaNum >= notaAprob
+    });
+});
+
+// ─── POST /intentos/:id/nota-manual/quitar ────────────────────────────────────
+// Quita la nota manual y vuelve al cálculo automático.
+// Solo Administrador.
+
+router.post('/intentos/:id/nota-manual/quitar', async (req, res) => {
+    const { motivo } = req.body;
+
+    if (!motivo || !String(motivo).trim()) {
+        return res.status(400).json({ error: 'El motivo es obligatorio' });
+    }
+
+    const { data: intento } = await supabase
+        .from('capacitacion_intentos')
+        .select(`
+            id, estado, nota, aprobado, nota_manual, nota_manual_activa,
+            asignacion_id,
+            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(prueba_id)
+        `)
+        .eq('id', req.params.id)
+        .single();
+
+    if (!intento) return res.status(404).json({ error: 'Intento no encontrado' });
+    if (!intento.nota_manual_activa) {
+        return res.status(400).json({ error: 'Este intento no tiene nota manual activa' });
+    }
+
+    const { error: errUpd } = await supabase
+        .from('capacitacion_intentos')
+        .update({
+            nota_manual:        null,
+            nota_manual_activa: false,
+            nota_manual_motivo: null,
+            nota_manual_por:    null,
+            nota_manual_fecha:  null
+        })
+        .eq('id', req.params.id);
+
+    if (errUpd) return res.status(500).json({ error: errUpd.message });
+
+    await supabase.from('capacitacion_notas_manuales_historial').insert({
+        intento_id:           req.params.id,
+        prueba_id:            intento.asignacion?.prueba_id,
+        nota_automatica:      intento.nota,
+        nota_manual_anterior: intento.nota_manual,
+        nota_manual_nueva:    null,
+        motivo:               String(motivo).trim(),
+        accion:               'quitar',
+        creado_por:           req.usuario.id
+    });
+
+    res.json({ ok: true, nota_automatica: intento.nota, aprobado: intento.aprobado });
+});
+
 // ─── POST /intentos/:id/reset ─────────────────────────────────────────────────
 
 router.post('/intentos/:id/reset', async (req, res) => {
@@ -613,7 +766,7 @@ router.post('/intentos/:id/reset', async (req, res) => {
 router.get('/intentos/:id/detalle', async (req, res) => {
     const { data: intento, error: eIntento } = await supabase
         .from('capacitacion_intentos')
-        .select('*')
+        .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, puntaje_obtenido, nota, aprobado, nota_manual, nota_manual_activa, nota_manual_motivo, nota_manual_por, nota_manual_fecha, orden_preguntas_json, orden_alternativas_json, reset_motivo, reseteado_en')
         .eq('id', req.params.id)
         .single();
 
@@ -701,19 +854,29 @@ router.get('/intentos/:id/detalle', async (req, res) => {
     const incorrectas   = detalle.filter(d => d.es_correcta === false).length;
     const no_respondidas = detalle.filter(d => d.es_correcta === null).length;
 
+    // nota_final: si existe nota_manual activa, se usa en vez de la automática
+    const notaManualActiva = intento.nota_manual_activa === true;
+    const notaFinal        = notaManualActiva ? intento.nota_manual : (intento.nota ?? null);
+
     res.json({
         intento: {
-            id: intento.id,
-            numero_intento: intento.numero_intento,
-            estado: intento.estado,
-            iniciado_en: intento.iniciado_en,
-            finalizado_en: intento.finalizado_en,
-            tiempo_usado: fmtTiempo(intento.iniciado_en, intento.finalizado_en),
+            id:               intento.id,
+            numero_intento:   intento.numero_intento,
+            estado:           intento.estado,
+            iniciado_en:      intento.iniciado_en,
+            finalizado_en:    intento.finalizado_en,
+            tiempo_usado:     fmtTiempo(intento.iniciado_en, intento.finalizado_en),
             puntaje_obtenido: intento.puntaje_obtenido,
-            nota: intento.nota,
-            aprobado: intento.aprobado,
-            reset_motivo: intento.reset_motivo,
-            reseteado_en: intento.reseteado_en
+            nota:             notaFinal,
+            nota_automatica:  intento.nota ?? null,
+            nota_manual:      notaManualActiva ? intento.nota_manual : null,
+            nota_manual_activa:  notaManualActiva,
+            nota_manual_motivo:  notaManualActiva ? intento.nota_manual_motivo  : null,
+            nota_manual_por:     notaManualActiva ? intento.nota_manual_por     : null,
+            nota_manual_fecha:   notaManualActiva ? intento.nota_manual_fecha   : null,
+            aprobado:         intento.aprobado,
+            reset_motivo:     intento.reset_motivo,
+            reseteado_en:     intento.reseteado_en
         },
         jurado: asig.jurado,
         prueba: prueba ? { id: prueba.id, titulo: prueba.titulo } : null,
