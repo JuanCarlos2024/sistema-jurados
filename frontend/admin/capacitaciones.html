@@ -109,6 +109,78 @@
     </div>
 </div>
 
+<!-- Modal replicar prueba -->
+<div id="modal-replicar" class="modal-overlay" style="display:none;" onclick="cerrarModalReplicar()">
+    <div class="modal" style="max-width:560px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3>Replicar prueba</h3>
+            <button class="modal-cerrar" onclick="cerrarModalReplicar()">✕</button>
+        </div>
+        <!-- Panel formulario -->
+        <div id="replicar-form-panel">
+            <div class="modal-body">
+                <div style="margin-bottom:14px;padding:10px 12px;background:#f8f9fa;border-radius:6px;font-size:13px;">
+                    Original: <strong id="replicar-nombre-original"></strong>
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Nuevo nombre <span style="color:red">*</span></label>
+                    <input type="text" id="replicar-titulo" class="form-control" placeholder="Nombre de la nueva prueba">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Descripción <span style="font-size:11px;font-weight:400;color:var(--gris);">(opcional — dejar vacío copia la original)</span></label>
+                    <textarea id="replicar-descripcion" class="form-control" rows="2"></textarea>
+                </div>
+                <div style="margin-bottom:14px;">
+                    <div class="form-label" style="margin-bottom:8px;">Contenido a copiar</div>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;cursor:pointer;">
+                        <input type="checkbox" id="replicar-preguntas" checked>
+                        Preguntas y alternativas (respuesta correcta actual)
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="checkbox" id="replicar-material">
+                        Material complementario asociado
+                    </label>
+                </div>
+                <div>
+                    <div class="form-label" style="margin-bottom:8px;">Asignaciones</div>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="replicar-asig" value="none" checked> Sin asignaciones (empezar limpio)
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="replicar-asig" value="todos"> Copiar todos los asignados
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:13px;cursor:pointer;font-weight:600;">
+                        <input type="radio" name="replicar-asig" value="reprobados"> Solo reprobados (nota final &lt; nota aprobación)
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="replicar-asig" value="pendientes"> Solo pendientes / no completados
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                        <input type="radio" name="replicar-asig" value="reprobados_pendientes"> Reprobados y pendientes
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secundario" onclick="cerrarModalReplicar()">Cancelar</button>
+                <button class="btn btn-primario" id="btn-confirmar-replicar" onclick="confirmarReplicar()">Replicar prueba</button>
+            </div>
+        </div>
+        <!-- Panel éxito -->
+        <div id="replicar-exito-panel" style="display:none;">
+            <div class="modal-body" style="text-align:center;padding:28px 20px;">
+                <div style="font-size:38px;margin-bottom:10px;color:#1e8449;">✓</div>
+                <div style="font-size:16px;font-weight:700;color:#1e8449;margin-bottom:6px;">Prueba replicada correctamente</div>
+                <div id="replicar-exito-titulo" style="font-size:14px;font-weight:600;margin-bottom:10px;"></div>
+                <div id="replicar-exito-stats" style="font-size:13px;color:var(--gris);"></div>
+            </div>
+            <div class="modal-footer" style="justify-content:center;gap:12px;">
+                <button class="btn btn-secundario" onclick="cerrarModalReplicarYRecargar()">Permanecer aquí</button>
+                <a id="replicar-ir-nueva" href="#" class="btn btn-primario">Ir a la nueva prueba →</a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
@@ -124,6 +196,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 var _pruebas = [];
 var _idEliminar = null;
+var _idReplicar = null;
 
 async function cargarLista() {
     var div = document.getElementById('contenido-lista');
@@ -159,6 +232,7 @@ function renderLista(pruebas) {
             + '<td><div class="tabla-acciones">'
             + '<a href="/admin/capacitacion-detalle.html?id=' + p.id + '" class="btn btn-outline btn-pequeño">Editar</a>'
             + '<a href="/admin/capacitacion-resultados.html?id=' + p.id + '" class="btn btn-secundario btn-pequeño">Resultados</a>'
+            + '<button class="btn btn-pequeño" style="background:#eef2ff;color:#3949ab;border:none;" onclick="abrirModalReplicar(\'' + p.id + '\')">Replicar</button>'
             + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;" onclick="abrirModalEliminar(\'' + p.id + '\',\'' + sanitizar(p.titulo).replace(/'/g, "\\'") + '\')">Eliminar</button>'
             + '</div></td>'
             + '</tr>';
@@ -225,6 +299,81 @@ async function confirmarEliminar() {
         cargarLista();
     } catch (err) {
         mostrarToast(err.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ─── Modal replicar prueba ────────────────────────────────────────────────────
+
+function abrirModalReplicar(id) {
+    _idReplicar = id;
+    var p = (_pruebas || []).find(function (x) { return x.id === id; });
+    var titulo = p ? p.titulo : '';
+    var descripcion = p ? (p.descripcion || '') : '';
+
+    document.getElementById('replicar-nombre-original').textContent = titulo;
+    document.getElementById('replicar-titulo').value = titulo + ' — Repetición';
+    document.getElementById('replicar-descripcion').value = descripcion;
+    document.getElementById('replicar-preguntas').checked = true;
+    document.getElementById('replicar-material').checked = false;
+    document.querySelector('input[name="replicar-asig"][value="none"]').checked = true;
+
+    document.getElementById('replicar-form-panel').style.display = '';
+    document.getElementById('replicar-exito-panel').style.display = 'none';
+    var btn = document.getElementById('btn-confirmar-replicar');
+    btn.disabled = false;
+    btn.textContent = 'Replicar prueba';
+
+    document.getElementById('modal-replicar').style.display = 'flex';
+    setTimeout(function () {
+        var t = document.getElementById('replicar-titulo');
+        t.focus();
+        t.select();
+    }, 100);
+}
+
+function cerrarModalReplicar() {
+    document.getElementById('modal-replicar').style.display = 'none';
+    _idReplicar = null;
+}
+
+function cerrarModalReplicarYRecargar() {
+    cerrarModalReplicar();
+    cargarLista();
+}
+
+async function confirmarReplicar() {
+    var titulo = document.getElementById('replicar-titulo').value.trim();
+    if (!titulo) { mostrarToast('El título de la nueva prueba es obligatorio', 'error'); return; }
+
+    var btn = document.getElementById('btn-confirmar-replicar');
+    btn.disabled = true;
+    btn.textContent = 'Replicando…';
+
+    try {
+        var result = await api.post('/admin/capacitaciones/pruebas/' + _idReplicar + '/replicar', {
+            titulo:            titulo,
+            descripcion:       document.getElementById('replicar-descripcion').value.trim() || null,
+            copiar_preguntas:  document.getElementById('replicar-preguntas').checked,
+            copiar_material:   document.getElementById('replicar-material').checked,
+            modo_asignaciones: document.querySelector('input[name="replicar-asig"]:checked').value
+        });
+
+        // Mostrar panel de éxito dentro del modal
+        document.getElementById('replicar-form-panel').style.display = 'none';
+        document.getElementById('replicar-exito-panel').style.display = '';
+        document.getElementById('replicar-exito-titulo').textContent = result.nueva_prueba_titulo;
+
+        var stats = [];
+        if (result.stats.preguntas_copiadas   > 0) stats.push(result.stats.preguntas_copiadas   + ' pregunta(s) copiada(s)');
+        if (result.stats.material_copiado     > 0) stats.push(result.stats.material_copiado     + ' material(es) copiado(s)');
+        if (result.stats.asignaciones_copiadas > 0) stats.push(result.stats.asignaciones_copiadas + ' asignación(es) copiada(s)');
+        document.getElementById('replicar-exito-stats').textContent = stats.length > 0 ? stats.join(' · ') : 'Prueba creada como borrador sin contenido';
+        document.getElementById('replicar-ir-nueva').href = '/admin/capacitacion-detalle.html?id=' + result.nueva_prueba_id;
+
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Replicar prueba';
+        mostrarToast(err.message || 'Error al replicar la prueba', 'error');
     }
 }
 </script>

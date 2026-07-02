@@ -202,6 +202,214 @@ router.delete('/pruebas/:id', async (req, res) => {
     res.json({ ok: true });
 });
 
+// ─── POST /pruebas/:id/replicar ───────────────────────────────────────────────
+// Crea una nueva prueba copiando configuración, preguntas, material y/o
+// asignaciones según opciones. No copia intentos, respuestas ni resultados.
+// Solo Administrador (protegido por la ruta /admin en app.js).
+
+router.post('/pruebas/:id/replicar', async (req, res) => {
+    const {
+        titulo,
+        descripcion,
+        copiar_preguntas  = true,
+        copiar_material   = false,
+        modo_asignaciones = 'none'
+    } = req.body;
+
+    if (!titulo || !String(titulo).trim()) {
+        return res.status(400).json({ error: 'El título de la nueva prueba es obligatorio' });
+    }
+
+    const MODOS_VALIDOS = ['none', 'todos', 'reprobados', 'pendientes', 'reprobados_pendientes'];
+    if (!MODOS_VALIDOS.includes(modo_asignaciones)) {
+        return res.status(400).json({ error: 'Modo de asignaciones inválido' });
+    }
+
+    // 1. Obtener prueba original (validar que existe)
+    const { data: original, error: eOrig } = await supabase
+        .from('capacitacion_pruebas')
+        .select('*')
+        .eq('id', req.params.id)
+        .single();
+
+    if (eOrig || !original) return res.status(404).json({ error: 'Prueba no encontrada' });
+
+    // 2. Crear nueva prueba como borrador, copiando toda la configuración
+    const { data: nueva, error: eNueva } = await supabase
+        .from('capacitacion_pruebas')
+        .insert({
+            titulo:                       String(titulo).trim(),
+            descripcion:                  descripcion != null
+                                            ? (String(descripcion).trim() || null)
+                                            : original.descripcion,
+            instrucciones:                original.instrucciones,
+            tiempo_por_pregunta_segundos: original.tiempo_por_pregunta_segundos,
+            puntaje_minimo_aprobacion:    original.puntaje_minimo_aprobacion,
+            intentos_maximos:             original.intentos_maximos,
+            nota_minima:                  original.nota_minima,
+            nota_maxima:                  original.nota_maxima,
+            nota_aprobacion:              original.nota_aprobacion,
+            mezclar_preguntas:            original.mezclar_preguntas,
+            mezclar_alternativas:         original.mezclar_alternativas,
+            estado:                       'borrador',
+            creado_por:                   req.usuario.id
+            // fecha_inicio y fecha_fin quedan null — la nueva prueba comienza sin fechas
+        })
+        .select()
+        .single();
+
+    if (eNueva) return res.status(500).json({ error: 'Error al crear la prueba: ' + eNueva.message });
+
+    let preguntasCopiadas    = 0;
+    let materialCopiado      = 0;
+    let asignacionesCopiadas = 0;
+
+    // 3. Copiar preguntas y sus alternativas (snapshots propios de la nueva prueba)
+    if (copiar_preguntas !== false && copiar_preguntas !== 'false') {
+        const { data: preguntas } = await supabase
+            .from('capacitacion_preguntas')
+            .select('*')
+            .eq('prueba_id', req.params.id)
+            .order('orden', { ascending: true });
+
+        for (const p of (preguntas || [])) {
+            const { data: nuevaPreg, error: eP } = await supabase
+                .from('capacitacion_preguntas')
+                .insert({
+                    prueba_id:         nueva.id,
+                    orden:             p.orden,
+                    enunciado:         p.enunciado,
+                    tipo:              p.tipo,
+                    video_url:         p.video_url        || null,
+                    video_sin_audio:   p.video_sin_audio  || false,
+                    imagen_url:        p.imagen_url       || null,
+                    es_favorita:       p.es_favorita      || false,
+                    banco_pregunta_id: p.banco_pregunta_id || null
+                })
+                .select()
+                .single();
+
+            if (eP || !nuevaPreg) continue;
+
+            const { data: alts } = await supabase
+                .from('capacitacion_alternativas')
+                .select('texto, es_correcta, orden')
+                .eq('pregunta_id', p.id)
+                .order('orden', { ascending: true });
+
+            if (alts && alts.length > 0) {
+                await supabase.from('capacitacion_alternativas').insert(
+                    alts.map(a => ({
+                        pregunta_id: nuevaPreg.id,
+                        texto:       a.texto,
+                        es_correcta: a.es_correcta,
+                        orden:       a.orden
+                    }))
+                );
+            }
+            preguntasCopiadas++;
+        }
+    }
+
+    // 4. Copiar material (referencias: la nueva prueba apunta al mismo material global)
+    if (copiar_material === true || copiar_material === 'true') {
+        const { data: mats } = await supabase
+            .from('capacitacion_materiales')
+            .select('material_id, obligatorio, orden')
+            .eq('capacitacion_id', req.params.id);
+
+        if (mats && mats.length > 0) {
+            const { error: eMat } = await supabase.from('capacitacion_materiales').insert(
+                mats.map(m => ({
+                    capacitacion_id: nueva.id,
+                    material_id:     m.material_id,
+                    obligatorio:     m.obligatorio,
+                    orden:           m.orden
+                }))
+            );
+            if (!eMat) materialCopiado = mats.length;
+        }
+    }
+
+    // 5. Copiar asignaciones según el modo elegido (sin intentos ni respuestas)
+    if (modo_asignaciones !== 'none') {
+        const { data: asigs } = await supabase
+            .from('capacitacion_asignaciones')
+            .select('id, usuario_pagado_id')
+            .eq('prueba_id', req.params.id);
+
+        if (asigs && asigs.length > 0) {
+            let usuariosACopiar = [];
+
+            if (modo_asignaciones === 'todos') {
+                usuariosACopiar = asigs.map(a => a.usuario_pagado_id);
+            } else {
+                const asigIds = asigs.map(a => a.id);
+                const { data: intentos } = await supabase
+                    .from('capacitacion_intentos')
+                    .select('asignacion_id, estado, nota, aprobado, nota_manual, nota_manual_activa')
+                    .in('asignacion_id', asigIds);
+
+                const intentosMap = {};
+                (intentos || []).forEach(i => {
+                    if (!intentosMap[i.asignacion_id]) intentosMap[i.asignacion_id] = [];
+                    intentosMap[i.asignacion_id].push(i);
+                });
+
+                const notaAprobacion = parseFloat(original.nota_aprobacion ?? 4.0);
+
+                asigs.forEach(a => {
+                    const lista      = intentosMap[a.id] || [];
+                    const completado = lista.find(i => i.estado === 'completado');
+
+                    if (modo_asignaciones === 'pendientes') {
+                        // Pendientes: sin intento completado (nunca terminó la prueba)
+                        if (!completado) usuariosACopiar.push(a.usuario_pagado_id);
+                    } else {
+                        // reprobados o reprobados_pendientes
+                        if (completado) {
+                            // Usar nota_final (manual si activa, automática si no)
+                            const notaFinal = completado.nota_manual_activa === true
+                                ? completado.nota_manual
+                                : (completado.nota ?? null);
+                            const reprobado = notaFinal != null
+                                ? notaFinal < notaAprobacion
+                                : completado.aprobado === false;
+                            if (reprobado) usuariosACopiar.push(a.usuario_pagado_id);
+                        } else if (modo_asignaciones === 'reprobados_pendientes') {
+                            // Sin completado → pendiente → incluir
+                            usuariosACopiar.push(a.usuario_pagado_id);
+                        }
+                    }
+                });
+            }
+
+            if (usuariosACopiar.length > 0) {
+                const { error: eAsig } = await supabase
+                    .from('capacitacion_asignaciones')
+                    .insert(usuariosACopiar.map(uid => ({
+                        prueba_id:         nueva.id,
+                        usuario_pagado_id: uid,
+                        fecha_limite:      null,
+                        asignado_por:      req.usuario.id
+                    })));
+                if (!eAsig) asignacionesCopiadas = usuariosACopiar.length;
+            }
+        }
+    }
+
+    res.status(201).json({
+        ok:                  true,
+        nueva_prueba_id:     nueva.id,
+        nueva_prueba_titulo: nueva.titulo,
+        stats: {
+            preguntas_copiadas:    preguntasCopiadas,
+            material_copiado:      materialCopiado,
+            asignaciones_copiadas: asignacionesCopiadas
+        }
+    });
+});
+
 // ─── POST /preguntas ──────────────────────────────────────────────────────────
 
 router.post('/pruebas/:id/preguntas', async (req, res) => {
