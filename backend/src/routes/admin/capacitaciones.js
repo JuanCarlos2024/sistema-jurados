@@ -484,6 +484,16 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
         const intentos = intentosMap[a.id] || [];
         const completado = intentos.find(i => i.estado === 'completado');
         const resps = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
+
+        // Preguntas que el jurado realmente vio en este intento.
+        // orden_preguntas_json registra exactamente qué preguntas se asignaron al intento,
+        // evitando contar como omitidas las preguntas agregadas a la prueba DESPUÉS de que el jurado la completó.
+        const preguntasEnIntento = (completado
+            && Array.isArray(completado.orden_preguntas_json)
+            && completado.orden_preguntas_json.length > 0)
+            ? completado.orden_preguntas_json.length
+            : totalP;
+
         return {
             asignacion_id: a.id,
             jurado: a.jurado,
@@ -499,8 +509,8 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
             tiempo_usado: completado ? fmtTiempo(completado.iniciado_en, completado.finalizado_en) : null,
             correctas: resps ? resps.correctas : null,
             incorrectas: resps ? resps.incorrectas : null,
-            no_respondidas: resps ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null,
-            total_preguntas: totalP,
+            no_respondidas: resps ? Math.max(0, preguntasEnIntento - resps.correctas - resps.incorrectas) : null,
+            total_preguntas: preguntasEnIntento,
             estado: completado ? 'completado' : intentos.length > 0 ? 'en_curso' : 'pendiente'
         };
     });
