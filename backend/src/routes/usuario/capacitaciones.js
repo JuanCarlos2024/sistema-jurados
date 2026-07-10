@@ -174,7 +174,7 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
             id, prueba_id, fecha_limite,
             prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
                 id, titulo, descripcion, instrucciones,
-                tiempo_por_pregunta_segundos, intentos_maximos,
+                tiempo_por_pregunta_segundos, tiempo_limite_minutos, intentos_maximos,
                 estado, fecha_inicio, fecha_fin,
                 mezclar_preguntas, mezclar_alternativas
             )
@@ -199,7 +199,7 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
     // Verificar intentos disponibles
     const { data: intentos } = await supabase
         .from('capacitacion_intentos')
-        .select('id, estado, numero_intento, orden_preguntas_json, orden_alternativas_json')
+        .select('id, estado, numero_intento, orden_preguntas_json, orden_alternativas_json, vence_en')
         .eq('asignacion_id', asig.id)
         .order('numero_intento', { ascending: false });
 
@@ -217,18 +217,69 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
     // Usar intento en curso o crear uno nuevo
     let intento = enCurso;
     if (!intento) {
+        // Calcular vence_en si la prueba tiene tiempo límite
+        const venceEn = prueba.tiempo_limite_minutos
+            ? new Date(Date.now() + prueba.tiempo_limite_minutos * 60000).toISOString()
+            : null;
+
+        const insertData = {
+            asignacion_id:  asig.id,
+            numero_intento: (intentos || []).length + 1,
+            estado:         'en_curso'
+        };
+        if (venceEn) {
+            insertData.vence_en               = venceEn;
+            insertData.tiempo_limite_aplicado = prueba.tiempo_limite_minutos;
+        }
+
         const { data: nuevo, error: errNew } = await supabase
             .from('capacitacion_intentos')
-            .insert({
-                asignacion_id: asig.id,
-                numero_intento: (intentos || []).length + 1,
-                estado: 'en_curso'
-            })
+            .insert(insertData)
             .select()
             .single();
 
         if (errNew) return res.status(500).json({ error: errNew.message });
         intento = nuevo;
+    } else if (enCurso.vence_en && new Date() > new Date(enCurso.vence_en)) {
+        // Tiempo agotado en un intento retomado: finalizar automáticamente
+        const { count: totalPregCount } = await supabase
+            .from('capacitacion_preguntas')
+            .select('id', { count: 'exact', head: true })
+            .eq('prueba_id', asig.prueba_id);
+        const { count: correctasCount } = await supabase
+            .from('capacitacion_respuestas')
+            .select('id', { count: 'exact', head: true })
+            .eq('intento_id', enCurso.id)
+            .eq('es_correcta', true);
+
+        const total      = totalPregCount || 0;
+        const correctas  = correctasCount || 0;
+        const puntaje    = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
+
+        // Para calcular nota necesitamos la config de la prueba (ya la tenemos en prueba)
+        const { data: pruebaConf } = await supabase
+            .from('capacitacion_pruebas')
+            .select('puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion')
+            .eq('id', asig.prueba_id)
+            .single();
+
+        const exigencia      = parseFloat(pruebaConf?.puntaje_minimo_aprobacion ?? 60);
+        const notaMinima     = parseFloat(pruebaConf?.nota_minima    ?? 1.0);
+        const notaMaxima     = parseFloat(pruebaConf?.nota_maxima    ?? 7.0);
+        const notaAprobacion = parseFloat(pruebaConf?.nota_aprobacion ?? 4.0);
+        const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
+        const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
+
+        await supabase.from('capacitacion_intentos').update({
+            estado:               'completado',
+            finalizado_en:        new Date().toISOString(),
+            puntaje_obtenido:     puntaje,
+            nota,
+            aprobado,
+            finalizado_por_tiempo: true
+        }).eq('id', enCurso.id);
+
+        return res.json({ tiempo_expirado: true, intento_id: enCurso.id });
     }
 
     // Preguntas con tipo y video_url — nunca se expone es_correcta
@@ -319,13 +370,15 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
         .filter(Boolean);
 
     res.json({
-        intento_id:      intento.id,
+        intento_id:  intento.id,
+        vence_en:    intento.vence_en || null,
         prueba: {
             id:                           prueba.id,
             titulo:                       prueba.titulo,
             descripcion:                  prueba.descripcion || null,
             instrucciones:                prueba.instrucciones || null,
-            tiempo_por_pregunta_segundos: prueba.tiempo_por_pregunta_segundos
+            tiempo_por_pregunta_segundos: prueba.tiempo_por_pregunta_segundos,
+            tiempo_limite_minutos:        prueba.tiempo_limite_minutos || null
         },
         total_preguntas: preguntasConAlts.length,
         preguntas:       preguntasConAlts,
@@ -344,8 +397,13 @@ router.post('/intentos/:id/responder', async (req, res) => {
     const { data: intento } = await supabase
         .from('capacitacion_intentos')
         .select(`
-            id, estado, asignacion_id,
-            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(usuario_pagado_id)
+            id, estado, asignacion_id, vence_en,
+            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                usuario_pagado_id, prueba_id,
+                prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
+                    puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+                )
+            )
         `)
         .eq('id', req.params.id)
         .single();
@@ -355,6 +413,40 @@ router.post('/intentos/:id/responder', async (req, res) => {
     }
     if (intento.estado !== 'en_curso') {
         return res.status(400).json({ error: 'Este intento ya no está en curso' });
+    }
+
+    // Validar tiempo global: rechazar si el intento ya venció
+    if (intento.vence_en && new Date() > new Date(intento.vence_en)) {
+        const { count: totalPregCount } = await supabase
+            .from('capacitacion_preguntas')
+            .select('id', { count: 'exact', head: true })
+            .eq('prueba_id', intento.asignacion.prueba_id);
+        const { count: correctasCount } = await supabase
+            .from('capacitacion_respuestas')
+            .select('id', { count: 'exact', head: true })
+            .eq('intento_id', intento.id)
+            .eq('es_correcta', true);
+
+        const total      = totalPregCount || 0;
+        const correctas  = correctasCount || 0;
+        const puntaje    = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
+        const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
+        const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
+        const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
+        const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
+        const nota    = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
+        const aprobado = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
+
+        await supabase.from('capacitacion_intentos').update({
+            estado:                'completado',
+            finalizado_en:         new Date().toISOString(),
+            puntaje_obtenido:      puntaje,
+            nota,
+            aprobado,
+            finalizado_por_tiempo: true
+        }).eq('id', intento.id);
+
+        return res.status(408).json({ error: 'Tiempo expirado', intento_id: intento.id });
     }
 
     // Verificar si la alternativa es correcta
@@ -388,6 +480,7 @@ router.post('/intentos/:id/responder', async (req, res) => {
 // ─── POST /intentos/:id/finalizar ─── enviar y calcular puntaje ──────────────
 
 router.post('/intentos/:id/finalizar', async (req, res) => {
+    const { por_tiempo = false } = req.body;
     const { data: intento } = await supabase
         .from('capacitacion_intentos')
         .select(`
@@ -442,15 +535,18 @@ router.post('/intentos/:id/finalizar', async (req, res) => {
     const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
     const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
 
+    const updateData = {
+        estado:           'completado',
+        finalizado_en:    new Date().toISOString(),
+        puntaje_obtenido: puntaje,
+        nota,
+        aprobado
+    };
+    if (por_tiempo) updateData.finalizado_por_tiempo = true;
+
     const { data, error } = await supabase
         .from('capacitacion_intentos')
-        .update({
-            estado: 'completado',
-            finalizado_en: new Date().toISOString(),
-            puntaje_obtenido: puntaje,
-            nota,
-            aprobado
-        })
+        .update(updateData)
         .eq('id', req.params.id)
         .select()
         .single();

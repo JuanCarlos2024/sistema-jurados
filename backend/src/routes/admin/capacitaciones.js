@@ -48,7 +48,7 @@ router.get('/pruebas', async (req, res) => {
         .from('capacitacion_pruebas')
         .select(`
             id, titulo, descripcion,
-            tiempo_por_pregunta_segundos, puntaje_minimo_aprobacion,
+            tiempo_por_pregunta_segundos, tiempo_limite_minutos, puntaje_minimo_aprobacion,
             nota_minima, nota_maxima, nota_aprobacion,
             mezclar_preguntas, mezclar_alternativas,
             intentos_maximos, estado, fecha_inicio, fecha_fin,
@@ -157,7 +157,7 @@ router.get('/pruebas/:id', async (req, res) => {
 router.put('/pruebas/:id', async (req, res) => {
     const {
         titulo, descripcion, instrucciones,
-        tiempo_por_pregunta_segundos, puntaje_minimo_aprobacion, intentos_maximos,
+        tiempo_por_pregunta_segundos, tiempo_limite_minutos, puntaje_minimo_aprobacion, intentos_maximos,
         estado, fecha_inicio, fecha_fin,
         nota_minima, nota_maxima, nota_aprobacion,
         mezclar_preguntas, mezclar_alternativas
@@ -168,6 +168,7 @@ router.put('/pruebas/:id', async (req, res) => {
     if (descripcion !== undefined)                   updates.descripcion = descripcion || null;
     if (instrucciones !== undefined)                 updates.instrucciones = instrucciones || null;
     if (tiempo_por_pregunta_segundos !== undefined)  updates.tiempo_por_pregunta_segundos = tiempo_por_pregunta_segundos ? parseInt(tiempo_por_pregunta_segundos) : null;
+    if (tiempo_limite_minutos !== undefined)         updates.tiempo_limite_minutos = tiempo_limite_minutos ? parseInt(tiempo_limite_minutos) : null;
     if (puntaje_minimo_aprobacion !== undefined)     updates.puntaje_minimo_aprobacion = parseFloat(puntaje_minimo_aprobacion);
     if (intentos_maximos !== undefined)              updates.intentos_maximos = parseInt(intentos_maximos);
     if (estado !== undefined)                        updates.estado = estado;

@@ -37,6 +37,18 @@
         .timer-box.urgente { background: #fadbd8; color: #922b21; animation: parpadeo .7s infinite; }
         @keyframes parpadeo { 0%,100%{opacity:1} 50%{opacity:.5} }
 
+        .timer-global {
+            font-size: 20px;
+            font-weight: 800;
+            padding: 4px 16px;
+            border-radius: 8px;
+            background: #eef4ff;
+            color: #183b66;
+            min-width: 80px;
+            text-align: center;
+        }
+        .timer-global.urgente { background: #fadbd8; color: #922b21; animation: parpadeo .7s infinite; }
+
         .progreso-bar {
             height: 6px;
             background: var(--gris-borde);
@@ -205,6 +217,7 @@
         <span class="prueba-titulo-hdr" id="hdr-titulo">—</span>
         <div style="display:flex;align-items:center;gap:14px;">
             <span style="font-size:13px;color:var(--gris);" id="hdr-progreso"></span>
+            <div id="timer-global" class="timer-global" style="display:none;" title="Tiempo total restante"></div>
             <div id="timer-box" class="timer-box" style="display:none;"></div>
         </div>
     </div>
@@ -275,6 +288,12 @@ var _enviando             = false;
 var _asigId               = null;
 var _preguntaBloqueada    = false; // impide doble-click durante avance
 
+// Timer global de prueba
+var _venceEnMs           = null;  // ms timestamp cuando expira el intento (null = sin límite)
+var _timerGlobalInterval = null;
+var _aviso5min           = false;
+var _aviso1min           = false;
+
 // Protección de salida
 var _pruebaActiva       = false; // true solo mientras el jurado está respondiendo preguntas
 var _enviandoAbandono   = false; // guard contra doble acción en modal de salida
@@ -320,9 +339,22 @@ async function iniciarPrueba() {
 
     try {
         var data = await api.get('/usuario/capacitaciones/' + _asigId + '/iniciar');
+
+        // Tiempo expirado mientras el jurado estaba fuera: ir directo al resultado
+        if (data.tiempo_expirado) {
+            window.location.href = '/usuario/capacitacion-resultado.html?id=' + data.intento_id;
+            return;
+        }
+
         _intentoId         = data.intento_id;
         _preguntas         = data.preguntas || [];
         _tiempoPorPregunta = data.prueba.tiempo_por_pregunta_segundos || 0;
+
+        // Sincronizar timer global desde vence_en del servidor
+        if (data.vence_en) {
+            _venceEnMs = new Date(data.vence_en).getTime();
+            iniciarTimerGlobal();
+        }
 
         _preguntas.forEach(function (p) {
             _respuestas[p.id] = p.respuesta_guardada || null;
@@ -371,6 +403,16 @@ function mostrarInstrucciones(prueba, totalPreguntas) {
         datos.push('<div style="text-align:center;padding:10px 18px;background:#eef4ff;border-radius:8px;min-width:90px;">'
             + '<div style="font-size:24px;font-weight:800;">' + tStr + '</div>'
             + '<div style="font-size:11px;color:var(--gris);font-weight:600;text-transform:uppercase;">Por pregunta</div>'
+            + '</div>');
+    }
+    if (prueba.tiempo_limite_minutos) {
+        var tg    = prueba.tiempo_limite_minutos;
+        var tgStr = tg >= 60
+            ? Math.floor(tg / 60) + 'h' + (tg % 60 > 0 ? ' ' + (tg % 60) + 'min' : '')
+            : tg + ' min';
+        datos.push('<div style="text-align:center;padding:10px 18px;background:#fff8e1;border-radius:8px;min-width:90px;border:1px solid #ffe082;">'
+            + '<div style="font-size:24px;font-weight:800;color:#e65100;">' + tgStr + '</div>'
+            + '<div style="font-size:11px;color:var(--gris);font-weight:600;text-transform:uppercase;">Tiempo total</div>'
             + '</div>');
     }
     document.getElementById('instr-datos').innerHTML = datos.join('');
@@ -457,6 +499,59 @@ async function tiempoAgotado() {
     }
 
     avanzarSiguiente();
+}
+
+// ─── Timer GLOBAL de prueba ───────────────────────────────────────────────────
+
+function detenerTimerGlobal() {
+    if (_timerGlobalInterval) {
+        clearInterval(_timerGlobalInterval);
+        _timerGlobalInterval = null;
+    }
+}
+
+function iniciarTimerGlobal() {
+    detenerTimerGlobal();
+    if (!_venceEnMs) return;
+    var box = document.getElementById('timer-global');
+    box.style.display = '';
+    actualizarDisplayTimerGlobal();
+    _timerGlobalInterval = setInterval(function () {
+        actualizarDisplayTimerGlobal();
+    }, 1000);
+}
+
+function actualizarDisplayTimerGlobal() {
+    if (!_venceEnMs) return;
+    var leftMs  = _venceEnMs - Date.now();
+    var leftSec = Math.max(0, Math.floor(leftMs / 1000));
+    var mm = String(Math.floor(leftSec / 60)).padStart(2, '0');
+    var ss = String(leftSec % 60).padStart(2, '0');
+
+    var box = document.getElementById('timer-global');
+    box.textContent = mm + ':' + ss;
+    var urgente = leftSec <= 60;
+    box.className = 'timer-global' + (urgente ? ' urgente' : '');
+
+    if (!_aviso5min && leftSec <= 300 && leftSec > 60) {
+        _aviso5min = true;
+        mostrarToast('Quedan 5 minutos para finalizar la prueba', 'advertencia');
+    }
+    if (!_aviso1min && leftSec <= 60 && leftSec > 0) {
+        _aviso1min = true;
+        mostrarToast('¡Queda 1 minuto! La prueba se enviará automáticamente', 'error');
+    }
+    if (leftSec <= 0 && !_enviando) {
+        detenerTimerGlobal();
+        tiempoGlobalAgotado();
+    }
+}
+
+async function tiempoGlobalAgotado() {
+    if (_enviando) return;
+    detenerTimer();
+    mostrarToast('Tiempo agotado. Finalizando prueba…', 'error');
+    await finalizarPrueba(true);
 }
 
 // ─── Render pregunta ──────────────────────────────────────────────────────────
@@ -652,6 +747,7 @@ async function abandonarYSalir() {
 
     _pruebaActiva = false; // desactivar protección ANTES de navegar
     detenerTimer();
+    detenerTimerGlobal();
 
     try {
         await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/abandonar', {});
@@ -673,13 +769,15 @@ async function finalizarPrueba(porTiempo) {
     if (_enviando) return;
 
     detenerTimer();
+    detenerTimerGlobal();
 
     var sinResponder = _preguntas.length - respondidas();
     if (!porTiempo && sinResponder > 0) {
         var ok = confirm('Tienes ' + sinResponder + ' pregunta(s) sin responder. ¿Finalizar de todas formas?');
         if (!ok) {
-            // Reanudar timer si el usuario cancela en la última pregunta
+            // Reanudar timers si el usuario cancela en la última pregunta
             iniciarTimerPregunta();
+            if (_venceEnMs) iniciarTimerGlobal();
             return;
         }
     }
@@ -690,7 +788,8 @@ async function finalizarPrueba(porTiempo) {
     if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
 
     try {
-        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar', {});
+        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar',
+            porTiempo ? { por_tiempo: true } : {});
         try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (e) {}
         window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
     } catch (err) {

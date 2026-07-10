@@ -206,6 +206,11 @@
                             <small style="color:var(--gris);font-size:11px;">Ej: 60 = 1 minuto por pregunta</small>
                         </div>
                         <div class="form-grupo">
+                            <label class="form-label">Tiempo total de la prueba (minutos)</label>
+                            <input type="number" id="cfg-tiempo-global" class="form-control" min="1" placeholder="Sin límite">
+                            <small style="color:var(--gris);font-size:11px;">Ej: 60 = 1 hora para completar toda la prueba</small>
+                        </div>
+                        <div class="form-grupo">
                             <label class="form-label">Exigencia para nota 4.0 (%)</label>
                             <input type="number" id="cfg-puntaje" class="form-control" min="1" max="99">
                             <small style="color:var(--gris);font-size:11px;">Con este porcentaje el jurado obtiene nota 4.0</small>
@@ -560,6 +565,7 @@ function rellenarConfig(p) {
     document.getElementById('cfg-descripcion').value   = p.descripcion || '';
     document.getElementById('cfg-instrucciones').value = p.instrucciones || '';
     document.getElementById('cfg-tiempo').value        = p.tiempo_por_pregunta_segundos || '';
+    document.getElementById('cfg-tiempo-global').value = p.tiempo_limite_minutos || '';
     document.getElementById('cfg-puntaje').value        = p.puntaje_minimo_aprobacion || 60;
     document.getElementById('cfg-intentos').value      = p.intentos_maximos || 1;
     document.getElementById('cfg-nota-minima').value   = p.nota_minima    != null ? p.nota_minima    : 1.0;
@@ -585,6 +591,7 @@ async function guardarConfig() {
             descripcion:                   document.getElementById('cfg-descripcion').value.trim() || null,
             instrucciones:                 document.getElementById('cfg-instrucciones').value.trim() || null,
             tiempo_por_pregunta_segundos:  document.getElementById('cfg-tiempo').value || null,
+            tiempo_limite_minutos:         document.getElementById('cfg-tiempo-global').value || null,
             puntaje_minimo_aprobacion:     document.getElementById('cfg-puntaje').value || 60,
             intentos_maximos:              document.getElementById('cfg-intentos').value || 1,
             nota_minima:                   parseFloat(document.getElementById('cfg-nota-minima').value) || 1.0,
@@ -623,9 +630,10 @@ async function validarYPublicar() {
         return;
     }
 
-    // Preflight: tiempo por pregunta
-    var tiempo = document.getElementById('cfg-tiempo').value;
-    if (!tiempo) { mostrarToast('Define el tiempo por pregunta antes de publicar', 'advertencia'); return; }
+    // Preflight: al menos un temporizador debe estar configurado
+    var tiempoPreg   = document.getElementById('cfg-tiempo').value;
+    var tiempoGlobal = document.getElementById('cfg-tiempo-global').value;
+    if (!tiempoPreg && !tiempoGlobal) { mostrarToast('Define al menos un temporizador antes de publicar', 'advertencia'); return; }
 
     // Advertencia si no hay asignados (no bloquea)
     if (_asigAll.length === 0) {
