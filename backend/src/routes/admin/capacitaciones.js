@@ -541,6 +541,16 @@ router.put('/alternativas/:id', async (req, res) => {
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // Si cambió cuál alternativa es correcta, resincronizar las respuestas guardadas
+    // para que los recálculos dinámicos de correctas/incorrectas sean inmediatos.
+    if (es_correcta !== undefined) {
+        await supabase
+            .from('capacitacion_respuestas')
+            .update({ es_correcta: Boolean(es_correcta) })
+            .eq('alternativa_id', req.params.id);
+    }
+
     res.json(data);
 });
 
@@ -554,6 +564,40 @@ router.delete('/alternativas/:id', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
+});
+
+// ─── POST /preguntas/:id/anular ───────────────────────────────────────────────
+// Marca la pregunta como anulada: se excluye del total evaluable y del cálculo
+// de correctas/incorrectas/puntaje/nota en todos los endpoints de resultados.
+// Las respuestas históricas se conservan para trazabilidad.
+
+router.post('/preguntas/:id/anular', async (req, res) => {
+    const { data, error } = await supabase
+        .from('capacitacion_preguntas')
+        .update({ anulada: true, updated_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Pregunta no encontrada' });
+    res.json(data);
+});
+
+// ─── POST /preguntas/:id/reactivar ────────────────────────────────────────────
+// Revierte la anulación: la pregunta vuelve a incluirse en todos los cálculos.
+
+router.post('/preguntas/:id/reactivar', async (req, res) => {
+    const { data, error } = await supabase
+        .from('capacitacion_preguntas')
+        .update({ anulada: false, updated_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Pregunta no encontrada' });
+    res.json(data);
 });
 
 // ─── GET /pruebas/:id/asignaciones ───────────────────────────────────────────
@@ -645,6 +689,10 @@ router.delete('/asignaciones/:id', async (req, res) => {
 });
 
 // ─── GET /pruebas/:id/resultados ──────────────────────────────────────────────
+// Todos los valores numéricos (puntaje, nota, aprobado) se calculan dinámicamente
+// desde las respuestas actuales y la configuración actual de la prueba.
+// Esto garantiza que cualquier cambio en alternativas o preguntas anuladas
+// se refleje inmediatamente sin necesidad de recalcular el intento almacenado.
 
 router.get('/pruebas/:id/resultados', async (req, res) => {
     const { data: asigs, error } = await supabase
@@ -657,15 +705,21 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    // Total actual de preguntas (base para calcular no_respondidas)
-    // nota_aprobacion: necesaria para determinar aprobado_final cuando existe nota_manual
-    const [{ count: totalPreguntas }, { data: pruebaConfig }] = await Promise.all([
-        supabase.from('capacitacion_preguntas').select('id', { count: 'exact', head: true }).eq('prueba_id', req.params.id),
-        supabase.from('capacitacion_pruebas').select('nota_aprobacion').eq('id', req.params.id).single()
+    // Preguntas de la prueba: necesarias para totalP y para filtrar anuladas
+    const [{ data: preguntasInfo }, { data: pruebaConfig }] = await Promise.all([
+        supabase.from('capacitacion_preguntas').select('id, anulada').eq('prueba_id', req.params.id),
+        supabase.from('capacitacion_pruebas')
+            .select('puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion')
+            .eq('id', req.params.id).single()
     ]);
 
-    const totalP        = totalPreguntas || 0;
+    const anuladasSet    = new Set((preguntasInfo || []).filter(p => p.anulada).map(p => p.id));
+    const totalP         = (preguntasInfo || []).filter(p => !p.anulada).length;
+    const exigencia      = parseFloat(pruebaConfig?.puntaje_minimo_aprobacion ?? 60);
+    const notaMinima     = parseFloat(pruebaConfig?.nota_minima    ?? 1.0);
+    const notaMaxima     = parseFloat(pruebaConfig?.nota_maxima    ?? 7.0);
     const notaAprobacion = parseFloat(pruebaConfig?.nota_aprobacion ?? 4.0);
+
     const asigIds = (asigs || []).map(a => a.id);
     let intentosMap   = {};
     let respuestasMap = {};
@@ -673,7 +727,7 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
     if (asigIds.length > 0) {
         const { data: intentos } = await supabase
             .from('capacitacion_intentos')
-            .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, puntaje_obtenido, nota, aprobado, nota_manual, nota_manual_activa, nota_manual_motivo, nota_manual_por, nota_manual_fecha, reset_motivo, reseteado_en')
+            .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, nota_manual, nota_manual_activa, nota_manual_motivo, nota_manual_por, nota_manual_fecha, reset_motivo, reseteado_en')
             .in('asignacion_id', asigIds)
             .order('numero_intento', { ascending: true });
 
@@ -687,17 +741,19 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
             .map(i => i.id);
 
         if (completadoIds.length > 0) {
+            // pregunta_id es necesario para excluir respuestas de preguntas anuladas.
             // .limit(10000) evita la truncación del límite por defecto de Supabase (1000 filas).
             const { data: respuestas } = await supabase
                 .from('capacitacion_respuestas')
-                .select('intento_id, es_correcta')
+                .select('intento_id, pregunta_id, es_correcta')
                 .in('intento_id', completadoIds)
                 .limit(10000);
 
             (respuestas || []).forEach(r => {
+                if (anuladasSet.has(r.pregunta_id)) return; // excluir preguntas anuladas
                 if (!respuestasMap[r.intento_id]) respuestasMap[r.intento_id] = { correctas: 0, incorrectas: 0 };
-                if (r.es_correcta === true)       respuestasMap[r.intento_id].correctas++;
-                else if (r.es_correcta === false) respuestasMap[r.intento_id].incorrectas++;
+                if (r.es_correcta === true)        respuestasMap[r.intento_id].correctas++;
+                else if (r.es_correcta === false)  respuestasMap[r.intento_id].incorrectas++;
             });
         }
     }
@@ -707,15 +763,23 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
         const completado = intentos.find(i => i.estado === 'completado');
         const resps      = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
 
-        // nota_final: si existe nota_manual activa, se usa en vez de la automática.
-        // El puntaje y los conteos siempre reflejan el resultado real del intento.
+        // Puntaje y nota calculados dinámicamente desde respuestas actuales + config actual
+        const correctas      = resps ? resps.correctas   : null;
+        const incorrectas    = resps ? resps.incorrectas : null;
+        const noRespondidas  = resps != null ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null;
+        const puntajeDin     = (resps && totalP > 0) ? Math.round((resps.correctas / totalP) * 100 * 10) / 10 : (resps ? 0 : null);
+        const notaDin        = puntajeDin != null ? calcularNota(puntajeDin, notaMinima, notaMaxima, notaAprobacion, exigencia) : null;
+        const aprobadoDin    = notaDin != null ? notaDin >= notaAprobacion : (puntajeDin != null ? puntajeDin >= exigencia : null);
+
+        // nota_final: si existe nota_manual activa, la usamos como nota presentada al jurado.
+        // La nota automática recalculada se devuelve siempre en nota_automatica.
         const notaManualActiva = completado?.nota_manual_activa === true;
-        const notaFinal   = completado
-            ? (notaManualActiva ? completado.nota_manual : (completado.nota ?? null))
+        const notaFinal        = completado
+            ? (notaManualActiva ? completado.nota_manual : notaDin)
             : null;
-        const aprobadoFinal = notaFinal != null
+        const aprobadoFinal    = notaFinal != null
             ? notaFinal >= notaAprobacion
-            : (completado?.aprobado ?? null);
+            : aprobadoDin;
 
         return {
             asignacion_id:       a.id,
@@ -723,23 +787,22 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
             fecha_limite:        a.fecha_limite,
             asignado_en:         a.asignado_en,
             total_intentos:      intentos.length,
-            intento_id:          completado ? completado.id              : null,
-            // nota y aprobado representan el valor FINAL (manual si existe, si no automático)
+            intento_id:          completado ? completado.id : null,
             aprobado:            aprobadoFinal,
-            puntaje_obtenido:    completado ? completado.puntaje_obtenido : null,
+            puntaje_obtenido:    puntajeDin,
             nota:                notaFinal,
-            nota_automatica:     completado ? (completado.nota ?? null)   : null,
-            nota_manual:         notaManualActiva ? completado.nota_manual : null,
+            nota_automatica:     notaDin,
+            nota_manual:         notaManualActiva ? completado.nota_manual       : null,
             nota_manual_activa:  notaManualActiva,
             nota_manual_motivo:  notaManualActiva ? completado.nota_manual_motivo : null,
             nota_manual_por:     notaManualActiva ? completado.nota_manual_por    : null,
             nota_manual_fecha:   notaManualActiva ? completado.nota_manual_fecha  : null,
-            iniciado_en:         completado ? completado.iniciado_en      : null,
-            finalizado_en:       completado ? completado.finalizado_en    : null,
+            iniciado_en:         completado ? completado.iniciado_en   : null,
+            finalizado_en:       completado ? completado.finalizado_en : null,
             tiempo_usado:        completado ? fmtTiempo(completado.iniciado_en, completado.finalizado_en) : null,
-            correctas:           resps ? resps.correctas  : null,
-            incorrectas:         resps ? resps.incorrectas : null,
-            no_respondidas:      resps ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null,
+            correctas,
+            incorrectas,
+            no_respondidas:      noRespondidas,
             total_preguntas:     totalP,
             estado:              completado ? 'completado' : intentos.length > 0 ? 'en_curso' : 'pendiente'
         };
@@ -753,8 +816,9 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
 router.get('/pruebas/:id/estadisticas', async (req, res) => {
     const { data: preguntas } = await supabase
         .from('capacitacion_preguntas')
-        .select('id, enunciado, orden')
+        .select('id, enunciado, orden, anulada')
         .eq('prueba_id', req.params.id)
+        .eq('anulada', false)
         .order('orden', { ascending: true });
 
     if (!preguntas || preguntas.length === 0) return res.json({ preguntas: [] });
@@ -994,13 +1058,13 @@ router.get('/intentos/:id/detalle', async (req, res) => {
 
     const { data: prueba } = await supabase
         .from('capacitacion_pruebas')
-        .select('id, titulo')
+        .select('id, titulo, puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion')
         .eq('id', asig.prueba_id)
         .single();
 
     const { data: preguntas } = await supabase
         .from('capacitacion_preguntas')
-        .select('id, enunciado, orden')
+        .select('id, enunciado, orden, anulada')
         .eq('prueba_id', asig.prueba_id)
         .order('orden', { ascending: true });
 
@@ -1052,6 +1116,7 @@ router.get('/intentos/:id/detalle', async (req, res) => {
             numero: idx + 1,
             pregunta_id: pid,
             enunciado: p.enunciado,
+            anulada: p.anulada === true,
             alternativas: altsOrdenadas,
             alternativa_elegida: resp ? resp.alternativa_id : null,
             es_correcta: resp ? resp.es_correcta : null,
@@ -1059,13 +1124,26 @@ router.get('/intentos/:id/detalle', async (req, res) => {
         };
     }).filter(Boolean);
 
-    const correctas     = detalle.filter(d => d.es_correcta === true).length;
-    const incorrectas   = detalle.filter(d => d.es_correcta === false).length;
-    const no_respondidas = detalle.filter(d => d.es_correcta === null).length;
+    // Resumen excluye preguntas anuladas del total evaluable
+    const detalleEval    = detalle.filter(d => !d.anulada);
+    const correctas      = detalleEval.filter(d => d.es_correcta === true).length;
+    const incorrectas    = detalleEval.filter(d => d.es_correcta === false).length;
+    const no_respondidas = detalleEval.filter(d => d.es_correcta === null).length;
+    const totalEval      = detalleEval.length;
+
+    // Nota calculada dinámicamente con la configuración actual de la prueba
+    const exigencia      = parseFloat(prueba?.puntaje_minimo_aprobacion ?? 60);
+    const notaMinima     = parseFloat(prueba?.nota_minima    ?? 1.0);
+    const notaMaxima     = parseFloat(prueba?.nota_maxima    ?? 7.0);
+    const notaAprobacion = parseFloat(prueba?.nota_aprobacion ?? 4.0);
+    const puntajeDin     = totalEval > 0 ? Math.round((correctas / totalEval) * 100 * 10) / 10 : 0;
+    const notaDin        = calcularNota(puntajeDin, notaMinima, notaMaxima, notaAprobacion, exigencia);
+    const aprobadoDin    = notaDin != null ? notaDin >= notaAprobacion : puntajeDin >= exigencia;
 
     // nota_final: si existe nota_manual activa, se usa en vez de la automática
     const notaManualActiva = intento.nota_manual_activa === true;
-    const notaFinal        = notaManualActiva ? intento.nota_manual : (intento.nota ?? null);
+    const notaFinal        = notaManualActiva ? intento.nota_manual : notaDin;
+    const aprobadoFinal    = notaFinal != null ? notaFinal >= notaAprobacion : aprobadoDin;
 
     res.json({
         intento: {
@@ -1075,21 +1153,21 @@ router.get('/intentos/:id/detalle', async (req, res) => {
             iniciado_en:      intento.iniciado_en,
             finalizado_en:    intento.finalizado_en,
             tiempo_usado:     fmtTiempo(intento.iniciado_en, intento.finalizado_en),
-            puntaje_obtenido: intento.puntaje_obtenido,
+            puntaje_obtenido: puntajeDin,
             nota:             notaFinal,
-            nota_automatica:  intento.nota ?? null,
+            nota_automatica:  notaDin,
             nota_manual:      notaManualActiva ? intento.nota_manual : null,
             nota_manual_activa:  notaManualActiva,
             nota_manual_motivo:  notaManualActiva ? intento.nota_manual_motivo  : null,
             nota_manual_por:     notaManualActiva ? intento.nota_manual_por     : null,
             nota_manual_fecha:   notaManualActiva ? intento.nota_manual_fecha   : null,
-            aprobado:         intento.aprobado,
+            aprobado:         aprobadoFinal,
             reset_motivo:     intento.reset_motivo,
             reseteado_en:     intento.reseteado_en
         },
         jurado: asig.jurado,
         prueba: prueba ? { id: prueba.id, titulo: prueba.titulo } : null,
-        resumen: { total: detalle.length, correctas, incorrectas, no_respondidas },
+        resumen: { total: totalEval, correctas, incorrectas, no_respondidas },
         detalle
     });
 });
@@ -1097,11 +1175,20 @@ router.get('/intentos/:id/detalle', async (req, res) => {
 // ─── GET /pruebas/:id/exportar ────────────────────────────────────────────────
 
 router.get('/pruebas/:id/exportar', async (req, res) => {
-    const { data: prueba } = await supabase
-        .from('capacitacion_pruebas')
-        .select('titulo')
-        .eq('id', req.params.id)
-        .single();
+    const [{ data: prueba }, { data: preguntasInfo }] = await Promise.all([
+        supabase.from('capacitacion_pruebas')
+            .select('titulo, puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion')
+            .eq('id', req.params.id).single(),
+        supabase.from('capacitacion_preguntas')
+            .select('id, anulada').eq('prueba_id', req.params.id)
+    ]);
+
+    const anuladasSet    = new Set((preguntasInfo || []).filter(p => p.anulada).map(p => p.id));
+    const totalP         = (preguntasInfo || []).filter(p => !p.anulada).length;
+    const exigencia      = parseFloat(prueba?.puntaje_minimo_aprobacion ?? 60);
+    const notaMinima     = parseFloat(prueba?.nota_minima    ?? 1.0);
+    const notaMaxima     = parseFloat(prueba?.nota_maxima    ?? 7.0);
+    const notaAprobacion = parseFloat(prueba?.nota_aprobacion ?? 4.0);
 
     const { data: asigs } = await supabase
         .from('capacitacion_asignaciones')
@@ -1115,15 +1202,10 @@ router.get('/pruebas/:id/exportar', async (req, res) => {
         return res.status(404).json({ error: 'No hay asignaciones para exportar' });
     }
 
-    const { count: totalPreguntas } = await supabase
-        .from('capacitacion_preguntas')
-        .select('id', { count: 'exact', head: true })
-        .eq('prueba_id', req.params.id);
-
     const asigIds = asigs.map(a => a.id);
     const { data: intentos } = await supabase
         .from('capacitacion_intentos')
-        .select('*')
+        .select('id, asignacion_id, estado, numero_intento, iniciado_en, finalizado_en, nota_manual, nota_manual_activa, reset_motivo, reseteado_en')
         .in('asignacion_id', asigIds)
         .order('numero_intento', { ascending: true });
 
@@ -1136,28 +1218,44 @@ router.get('/pruebas/:id/exportar', async (req, res) => {
     const completadoIds = (intentos || []).filter(i => i.estado === 'completado').map(i => i.id);
     let respuestasMap = {};
     if (completadoIds.length > 0) {
+        // pregunta_id necesario para excluir anuladas; .limit(10000) evita truncación por defecto.
         const { data: respuestas } = await supabase
             .from('capacitacion_respuestas')
-            .select('intento_id, es_correcta')
-            .in('intento_id', completadoIds);
+            .select('intento_id, pregunta_id, es_correcta')
+            .in('intento_id', completadoIds)
+            .limit(10000);
 
         (respuestas || []).forEach(r => {
+            if (anuladasSet.has(r.pregunta_id)) return;
             if (!respuestasMap[r.intento_id]) respuestasMap[r.intento_id] = { correctas: 0, incorrectas: 0 };
             if (r.es_correcta) respuestasMap[r.intento_id].correctas++;
-            else respuestasMap[r.intento_id].incorrectas++;
+            else               respuestasMap[r.intento_id].incorrectas++;
         });
     }
 
-    const totalP = totalPreguntas || 0;
-    const COLS = ['Prueba','Jurado','RUT','Categoría','Asociación','Estado','Fecha Inicio','Fecha Término','Tiempo Usado','Total Preguntas','Correctas','Incorrectas','No Respondidas','Porcentaje','Nota','Aprobado','Intentos','Motivo Reinicio'];
+    const COLS = ['Prueba','Jurado','RUT','Categoría','Asociación','Estado','Fecha Inicio','Fecha Término','Tiempo Usado','Total Preguntas','Correctas','Incorrectas','No Respondidas','Porcentaje','Nota','Nota Automática','Nota Manual','Aprobado','Intentos','Motivo Reinicio'];
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
 
     const filas = asigs.map(a => {
-        const lista = intentosMap[a.id] || [];
+        const lista      = intentosMap[a.id] || [];
         const completado = lista.find(i => i.estado === 'completado');
-        const estado = completado ? 'Completado' : lista.length > 0 ? 'En curso' : 'Pendiente';
-        const resps = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
+        const estado     = completado ? 'Completado' : lista.length > 0 ? 'En curso' : 'Pendiente';
+        const resps      = completado ? (respuestasMap[completado.id] || { correctas: 0, incorrectas: 0 }) : null;
         const reiniciado = lista.find(i => i.estado === 'abandonado');
+
+        const correctas     = resps ? resps.correctas   : null;
+        const incorrectas   = resps ? resps.incorrectas : null;
+        const noResp        = resps != null ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : null;
+        const puntajeDin    = (resps && totalP > 0) ? Math.round((resps.correctas / totalP) * 100 * 10) / 10 : (resps ? 0 : null);
+        const notaDin       = puntajeDin != null ? calcularNota(puntajeDin, notaMinima, notaMaxima, notaAprobacion, exigencia) : null;
+        const aprobadoDin   = notaDin != null ? notaDin >= notaAprobacion : (puntajeDin != null ? puntajeDin >= exigencia : null);
+
+        const notaManualActiva = completado?.nota_manual_activa === true;
+        const notaFinal        = completado
+            ? (notaManualActiva ? completado.nota_manual : notaDin)
+            : null;
+        const aprobadoFinal    = notaFinal != null ? notaFinal >= notaAprobacion : aprobadoDin;
+
         return [
             prueba?.titulo || '',
             a.jurado?.nombre_completo || '—',
@@ -1165,16 +1263,18 @@ router.get('/pruebas/:id/exportar', async (req, res) => {
             a.jurado?.categoria || '—',
             a.jurado?.asociacion || '—',
             estado,
-            completado ? fmtDT(completado.iniciado_en) : '—',
+            completado ? fmtDT(completado.iniciado_en)   : '—',
             completado ? fmtDT(completado.finalizado_en) : '—',
             completado ? (fmtTiempo(completado.iniciado_en, completado.finalizado_en) || '—') : '—',
             totalP,
-            resps ? resps.correctas : '—',
-            resps ? resps.incorrectas : '—',
-            resps ? Math.max(0, totalP - resps.correctas - resps.incorrectas) : '—',
-            completado ? (completado.puntaje_obtenido + '%') : '—',
-            completado ? (completado.nota ?? '—') : '—',
-            completado ? (completado.aprobado ? 'Sí' : 'No') : '—',
+            correctas   ?? '—',
+            incorrectas ?? '—',
+            noResp      ?? '—',
+            puntajeDin  != null ? (puntajeDin + '%') : '—',
+            notaFinal   ?? '—',
+            notaDin     ?? '—',
+            notaManualActiva ? completado.nota_manual : '—',
+            aprobadoFinal != null ? (aprobadoFinal ? 'Sí' : 'No') : '—',
             lista.length,
             reiniciado ? (reiniciado.reset_motivo || '') : '—'
         ].map(esc).join(';');
