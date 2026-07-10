@@ -16,6 +16,9 @@
             position: relative;
         }
         .pregunta-card:hover { border-color: var(--primario); }
+        .pregunta-card.anulada { background: #f9f9f9; border-color: #ccc; opacity: .75; }
+        .pregunta-card.anulada .pregunta-enunciado { text-decoration: line-through; color: #888; }
+        .badge-anulada { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#fadbd8; color:#922b21; margin-left:4px; }
         .pregunta-num {
             font-size: 11px;
             font-weight: 700;
@@ -685,15 +688,22 @@ function renderPreguntas() {
             ? '<div style="margin:8px 0;"><img src="' + sanitizar(p.imagen_url) + '" alt="Imagen" style="max-width:100%;max-height:180px;border-radius:6px;object-fit:contain;" onerror="this.style.display=\'none\'"></div>'
             : '';
 
-        return '<div class="pregunta-card">'
+        var esAnulada   = p.anulada === true;
+        var btnAnular   = esAnulada
+            ? '<button class="btn btn-pequeño" style="background:#e8f5e9;color:#1e8449;border:none;" onclick="reactivarPregunta(\'' + p.id + '\')">Reactivar</button>'
+            : '<button class="btn btn-pequeño" style="background:#fff3e0;color:#e65100;border:none;" onclick="anularPregunta(\'' + p.id + '\')">Anular</button>';
+        var anuladaBadge = esAnulada ? '<span class="badge-anulada">ANULADA</span>' : '';
+
+        return '<div class="pregunta-card' + (esAnulada ? ' anulada' : '') + '">'
             + '<div class="pregunta-acciones">'
             + '<button class="star-btn" title="Favorita" onclick="toggleFavorita(\'' + p.id + '\',' + i + ')">' + star + '</button>'
             + '<button class="btn btn-outline btn-pequeño" onclick="guardarEnBanco(\'' + p.id + '\')" title="Guardar en banco">📚</button>'
-            + '<button class="btn btn-outline btn-pequeño" onclick="abrirModalPregunta(\'' + p.id + '\')">Editar</button>'
+            + (esAnulada ? '' : '<button class="btn btn-outline btn-pequeño" onclick="abrirModalPregunta(\'' + p.id + '\')">Editar</button>')
+            + btnAnular
             + '<button class="btn btn-pequeño" style="background:#fadbd8;color:#922b21;border:none;" onclick="eliminarPregunta(\'' + p.id + '\')">✕</button>'
             + '</div>'
             + '<div class="pregunta-num">Pregunta ' + (i + 1) + (p.es_favorita ? ' ★' : '') + '</div>'
-            + '<span class="tipo-badge">' + tipoLabel + '</span>' + bancoBadge
+            + '<span class="tipo-badge">' + tipoLabel + '</span>' + bancoBadge + anuladaBadge
             + (embedSrc ? '<div class="video-wrapper"><iframe src="' + embedSrc + '" allowfullscreen></iframe></div>' : '')
             + imagenCardHtml
             + '<div class="pregunta-enunciado">' + sanitizar(p.enunciado) + '</div>'
@@ -1043,6 +1053,32 @@ async function eliminarPregunta(id) {
         mostrarToast('Pregunta eliminada', 'exito');
     } catch (err) {
         mostrarToast(err.message || 'Error', 'error');
+    }
+}
+
+async function anularPregunta(id) {
+    if (!confirm('¿Anular esta pregunta? Quedará excluida del puntaje y nota de todos los intentos, sin borrarse.')) return;
+    try {
+        await api.post('/admin/capacitaciones/preguntas/' + id + '/anular', {});
+        var idx = _preguntas.findIndex(function(p) { return p.id === id; });
+        if (idx !== -1) _preguntas[idx].anulada = true;
+        renderPreguntas();
+        mostrarToast('Pregunta anulada — los resultados ya no la contabilizan', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al anular', 'error');
+    }
+}
+
+async function reactivarPregunta(id) {
+    if (!confirm('¿Reactivar esta pregunta? Volverá a contar en el puntaje y nota de todos los intentos.')) return;
+    try {
+        await api.post('/admin/capacitaciones/preguntas/' + id + '/reactivar', {});
+        var idx = _preguntas.findIndex(function(p) { return p.id === id; });
+        if (idx !== -1) _preguntas[idx].anulada = false;
+        renderPreguntas();
+        mostrarToast('Pregunta reactivada', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al reactivar', 'error');
     }
 }
 
