@@ -7,20 +7,18 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .cartilla-form { max-width: 780px; margin: 0 auto; }
+        .cartilla-form { max-width: 820px; margin: 0 auto; }
         .bloque { background:#fff; border:1px solid #ddd; border-radius:10px; margin-bottom:16px; overflow:hidden; }
         .bloque-header { background:#1a3c6e; color:#fff; padding:11px 18px; font-size:13px; font-weight:700; letter-spacing:.3px; display:flex; justify-content:space-between; align-items:center; }
         .bloque-header .badge-pendiente { font-size:10px; font-weight:600; background:rgba(255,255,255,.2); padding:2px 8px; border-radius:10px; }
         .bloque-body { padding:18px; }
         .campo-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-        .campo-grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
-        @media(max-width:580px){ .campo-grid, .campo-grid-3 { grid-template-columns:1fr; } }
+        @media(max-width:580px){ .campo-grid { grid-template-columns:1fr; } }
         .form-label { font-size:12px; font-weight:600; color:#555; margin-bottom:4px; display:block; }
         .req { color:#e74c3c; }
         .form-control { width:100%; padding:8px 10px; border:1px solid #ccc; border-radius:6px; font-size:14px; box-sizing:border-box; background:#fff; }
         .form-control:focus { outline:none; border-color:#1a3c6e; box-shadow:0 0 0 2px #d5e6ff; }
         .form-control[readonly], .form-control:disabled { background:#f5f5f5; color:#555; cursor:default; }
-        .campo-readonly { padding:8px 10px; background:#f5f5f5; border:1px solid #ddd; border-radius:6px; font-size:14px; color:#444; min-height:36px; }
         .radio-grupo { display:flex; gap:16px; align-items:center; margin-top:4px; }
         .radio-grupo label { display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer; }
         .checkbox-grupo { display:flex; flex-direction:column; gap:10px; }
@@ -41,6 +39,31 @@
         .bloque-futuro .bloque-body { display:flex; align-items:center; gap:10px; padding:14px 18px; font-size:13px; color:#777; font-style:italic; }
         #alerta-global { margin-bottom:14px; }
         .spinner-wrap { text-align:center; padding:40px; }
+
+        /* ── Tablas de ganado ────────────────────────────────────────────── */
+        .sub-titulo-ganado { font-size:12px; font-weight:700; color:#1a3c6e; text-transform:uppercase; letter-spacing:.4px; margin-bottom:10px; padding-bottom:6px; border-bottom:2px solid #e0e8f5; }
+        .tabla-wrap-ganado { overflow-x:auto; margin-bottom:18px; }
+        .tbl-ganado { border-collapse:collapse; font-size:12px; min-width:100%; }
+        .tbl-ganado th { background:#1a3c6e; color:#fff; padding:6px 8px; text-align:center; font-size:11px; font-weight:700; border:1px solid #14316a; white-space:nowrap; }
+        .tbl-ganado th.th-grupo { background:#2755a3; }
+        .tbl-ganado th.th-serie { background:#0f2347; text-align:left; min-width:130px; }
+        .tbl-ganado td { padding:3px 4px; border:1px solid #dde3ec; vertical-align:middle; background:#fff; }
+        .tbl-ganado tr:nth-child(even) td { background:#f7f9fc; }
+        .tbl-ganado td.td-serie { background:#eaf0f8; font-size:12px; }
+        .tbl-ganado td.td-calc { background:#f0f7ec; text-align:center; font-weight:600; color:#1a6e2b; font-size:12px; padding:4px 8px; }
+        .tbl-ganado td.td-total { background:#1a3c6e; color:#fff; font-weight:700; text-align:center; font-size:12px; padding:5px 8px; }
+        .tbl-ganado td.td-total-calc { background:#14a348; color:#fff; font-weight:700; text-align:center; font-size:12px; padding:5px 8px; }
+        .inp-ganado { width:100%; border:none; background:transparent; font-size:12px; padding:4px 6px; box-sizing:border-box; text-align:center; }
+        .inp-ganado:focus { outline:2px solid #2755a3; border-radius:3px; background:#fff; }
+        .inp-ganado[readonly], .inp-ganado:disabled { color:#555; cursor:default; background:transparent; }
+        .inp-ganado-serie { text-align:left; }
+        .sel-ganado { width:100%; border:none; background:transparent; font-size:12px; padding:3px 4px; box-sizing:border-box; }
+        .sel-ganado:focus { outline:2px solid #2755a3; border-radius:3px; background:#fff; }
+        .sel-ganado:disabled { color:#555; cursor:default; }
+        .btn-quitar-serie { background:none; border:none; color:#c0392b; cursor:pointer; font-size:16px; padding:2px 6px; line-height:1; border-radius:4px; }
+        .btn-quitar-serie:hover { background:#fdecea; }
+        .btn-agregar-serie { margin-top:8px; font-size:12px; padding:5px 14px; }
+        .aviso-ganado-bajo-peso { background:#fff8e1; border:1px solid #ffc107; border-radius:6px; padding:8px 12px; font-size:12px; color:#795800; margin-bottom:10px; display:none; }
     </style>
 </head>
 <body>
@@ -83,24 +106,38 @@
     </div>
 </div>
 
+<datalist id="series-sugeridas">
+    <option value="Primera libre A">
+    <option value="Primera libre B">
+    <option value="Primera libre C">
+    <option value="Serie criaderos">
+    <option value="Serie yeguas">
+    <option value="Serie caballos jóvenes">
+    <option value="Serie campeones">
+    <option value="Serie apertura">
+</datalist>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
 protegerRuta('usuario_pagado');
 
-// Verificar que el usuario es delegado
 const _usr = api.getUsuario();
 if (_usr?.tipo_persona !== 'delegado_rentado') {
     window.location.href = '/usuario/dashboard.html';
 }
 document.getElementById('nombre-usr').textContent = _usr?.nombre || '';
 
-const params  = new URLSearchParams(location.search);
+const params   = new URLSearchParams(location.search);
 const RODEO_ID = params.get('rodeo_id');
 
-let _cartillaId  = null;
-let _estado      = null;
-let _guardando   = false;
+let _cartillaId    = null;
+let _estado        = null;
+let _guardando     = false;
+
+// ── ETAPA 2: estado ganado ───────────────────────────────────────────────────
+let _seriesGanado   = []; // array de objetos serie con datos de los 4 bloques
+let _respuestasJson = {}; // copia completa de respuestas_json del servidor
 
 if (!RODEO_ID) {
     document.getElementById('cuerpo-cartilla').innerHTML =
@@ -119,29 +156,35 @@ async function init() {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// RENDER PRINCIPAL
+// ═════════════════════════════════════════════════════════════════════════════
 function renderCartilla(r) {
     const { rodeo, perfil, cartilla } = r;
     _estado     = cartilla ? cartilla.estado : 'nueva';
     _cartillaId = cartilla ? cartilla.id     : null;
     const ya    = _estado === 'enviada';
 
-    // Info del rodeo en cabecera
-    const fechaRodeo = rodeo?.fecha ? new Date(rodeo.fecha + 'T12:00:00').toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' }) : '—';
+    // Inicializar datos ganado desde respuestas_json
+    _respuestasJson = cartilla?.respuestas_json || {};
+    _seriesGanado   = Array.isArray(_respuestasJson.ganado_series)
+        ? _respuestasJson.ganado_series.map(s => ({ ...s }))
+        : [];
+
+    const fechaRodeo = rodeo?.fecha
+        ? new Date(rodeo.fecha + 'T12:00:00').toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' })
+        : '—';
 
     let html = '';
 
-    // ── Aviso si ya fue enviada ──────────────────────────────────────────────
     if (ya) {
-        const fechaEnv = cartilla.enviada_en
-            ? new Date(cartilla.enviada_en).toLocaleString('es-CL')
-            : '—';
+        const fechaEnv = cartilla.enviada_en ? new Date(cartilla.enviada_en).toLocaleString('es-CL') : '—';
         html += `<div class="enviada-notice">
             <strong>Informe enviado</strong>
             Esta cartilla fue enviada el ${fechaEnv}. Solo puede ser reabierta por el Administrador.
         </div>`;
     }
 
-    // ── Tarjeta del rodeo ────────────────────────────────────────────────────
     html += `<div class="rodeo-info-card">
         <div class="titulo">${sanitizar(rodeo?.club || '—')} — ${sanitizar(rodeo?.asociacion || '—')}</div>
         <div class="meta">
@@ -152,9 +195,7 @@ function renderCartilla(r) {
         </div>
     </div>`;
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // SECCIÓN I — Identificación del Rodeo
-    // ═══════════════════════════════════════════════════════════════════════
+    // ─── SECCIÓN I — Identificación del Rodeo (ETAPA 1, sin cambios) ─────────
     const c = cartilla || {};
     const fld = (campo, fallback) => {
         const v = c[campo];
@@ -168,9 +209,7 @@ function renderCartilla(r) {
     const bool2check = (campo) => c[campo] === true;
 
     html += `<div class="bloque">
-        <div class="bloque-header">
-            I. Identificación del Rodeo
-        </div>
+        <div class="bloque-header">I. Identificación del Rodeo</div>
         <div class="bloque-body">
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
@@ -216,9 +255,7 @@ function renderCartilla(r) {
                     <input type="number" id="f-publico_serie_campeones" class="form-control" min="0" placeholder="Ej: 350" value="${fld('publico_serie_campeones')}" ${ya ? 'readonly' : ''}>
                 </div>
             </div>
-
             <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
-
             <div style="margin-bottom:14px;">
                 <label class="form-label">¿Serie de Campeones corrida toda a 2 vueltas en el apiñadero (exceptuando desempates)?</label>
                 <div class="radio-grupo">
@@ -236,11 +273,10 @@ function renderCartilla(r) {
             <div style="margin-bottom:14px;">
                 <label class="form-label">¿Incluye informe de ganado bajo peso?</label>
                 <div class="radio-grupo">
-                    <label><input type="radio" name="incluye_informe_ganado_bajo_peso" value="si" ${bool2radio('incluye_informe_ganado_bajo_peso') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''}> Sí</label>
+                    <label><input type="radio" name="incluye_informe_ganado_bajo_peso" value="si" ${bool2radio('incluye_informe_ganado_bajo_peso') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''} id="r-ganado-bajo-si"> Sí</label>
                     <label><input type="radio" name="incluye_informe_ganado_bajo_peso" value="no" ${bool2radio('incluye_informe_ganado_bajo_peso') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
                 </div>
             </div>
-
             <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
             <div style="font-size:13px; font-weight:700; color:#1a3c6e; margin-bottom:12px;">Certificación del Club Organizador</div>
             <div class="checkbox-grupo">
@@ -264,11 +300,16 @@ function renderCartilla(r) {
         </div>
     </div>`;
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Secciones futuras (placeholders)
-    // ═══════════════════════════════════════════════════════════════════════
+    // ─── SECCIÓN II — Ganado (ETAPA 2) ───────────────────────────────────────
+    html += `<div class="bloque" id="bloque-ganado">
+        <div class="bloque-header">II. Información sobre el ganado utilizado en el Rodeo</div>
+        <div class="bloque-body" id="ganado-cuerpo">
+            <!-- Renderizado dinámicamente por renderBloqueGanado() -->
+        </div>
+    </div>`;
+
+    // ─── Secciones futuras (III en adelante) ─────────────────────────────────
     const seccionesFuturas = [
-        'II. Información sobre ganado utilizado en el rodeo',
         'III. Informe sobre desempeño del jurado',
         'IV. Informe de disciplina',
         'V. Estado del recinto deportivo',
@@ -290,7 +331,9 @@ function renderCartilla(r) {
 
     document.getElementById('cuerpo-cartilla').innerHTML = html;
 
-    // Barra de acciones fija (solo si no está enviada)
+    // Renderizar tablas de ganado (requiere que el DOM ya tenga #ganado-cuerpo)
+    renderBloqueGanado(ya);
+
     if (!ya) {
         const barra = document.createElement('div');
         barra.className = 'barra-acciones';
@@ -301,13 +344,302 @@ function renderCartilla(r) {
     }
 }
 
-// ─── Recolectar datos del formulario ─────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// ETAPA 2 — RENDER BLOQUES DE GANADO
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderBloqueGanado(ya) {
+    const cont = document.getElementById('ganado-cuerpo');
+    if (!cont) return;
+
+    const haySeries = _seriesGanado.length > 0;
+    const btnAgregar = ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSerie()">+ Agregar serie</button>`;
+
+    let html = '';
+
+    if (!haySeries && !ya) {
+        html += `<div class="alerta alerta-info" style="font-size:13px;margin-bottom:12px;">
+            No hay series registradas. Haga clic en <strong>+ Agregar serie</strong> para comenzar.
+        </div>`;
+    }
+
+    // ── Bloque 1: Colleras participantes y ganado utilizado ────────────────
+    html += `<div class="sub-titulo-ganado">1. Colleras participantes y ganado utilizado</div>`;
+    html += `<div class="tabla-wrap-ganado">${renderTablaColleras(ya)}</div>`;
+
+    // ── Bloque 2: Vueltas en apiñadero, tipo y peso ────────────────────────
+    html += `<div class="sub-titulo-ganado">2. Vueltas en apiñadero, tipo y peso del ganado</div>`;
+    html += `<div class="tabla-wrap-ganado">${renderTablaVueltas(ya)}</div>`;
+
+    // ── Bloque 3: Calidad del ganado ────────────────────────────────────────
+    html += `<div class="sub-titulo-ganado">3. Calidad del ganado</div>`;
+    html += `<div class="tabla-wrap-ganado">${renderTablaCalidad(ya)}</div>`;
+
+    // ── Bloque 4: Ganado fuera de peso ──────────────────────────────────────
+    html += `<div class="sub-titulo-ganado">4. Ganado fuera de peso</div>`;
+    html += `<p style="font-size:12px;color:#666;margin:-4px 0 10px;">En caso de existir ganado fuera de peso en cualquier serie, indique la cantidad y el porcentaje (Art. 242).</p>`;
+    html += `<div id="aviso-ganado-bajo-peso" class="aviso-ganado-bajo-peso">⚠ Ha ingresado datos de ganado fuera de peso. Se recomienda marcar "Sí" en "¿Incluye informe de ganado bajo peso?" (Sección I).</div>`;
+    html += `<div class="tabla-wrap-ganado">${renderTablaFueraPeso(ya)}</div>`;
+
+    html += btnAgregar;
+    cont.innerHTML = html;
+    calcTotalesB4(); // recalcular al cargar
+}
+
+// ── Tabla 1: Colleras ────────────────────────────────────────────────────────
+function renderTablaColleras(ya) {
+    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
+    const dis = ya ? 'disabled' : '';
+    let rows = _seriesGanado.map(function(s, i) {
+        return `<tr>
+            <td class="td-serie"><input list="series-sugeridas" class="inp-ganado inp-ganado-serie" value="${esc(s.nombre||'')}" ${dis} oninput="setCelda(${i},'nombre',this.value)" placeholder="Nombre serie"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c1n||'')}" ${dis} oninput="setCelda(${i},'c1n',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.c1g||'')}" ${dis} oninput="setCelda(${i},'c1g',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c2n||'')}" ${dis} oninput="setCelda(${i},'c2n',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.c2g||'')}" ${dis} oninput="setCelda(${i},'c2g',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c3n||'')}" ${dis} oninput="setCelda(${i},'c3n',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.c3g||'')}" ${dis} oninput="setCelda(${i},'c3g',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c4n||'')}" ${dis} oninput="setCelda(${i},'c4n',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.c4g||'')}" ${dis} oninput="setCelda(${i},'c4g',this.value)" placeholder="Tipo"></td>
+            ${ya ? '' : `<td style="text-align:center;"><button class="btn-quitar-serie" onclick="quitarSerie(${i})" title="Quitar serie">✕</button></td>`}
+        </tr>`;
+    }).join('');
+    return `<table class="tbl-ganado">
+        <thead>
+            <tr>
+                <th class="th-serie" rowspan="2">Serie</th>
+                <th class="th-grupo" colspan="2">1er animal</th>
+                <th class="th-grupo" colspan="2">2do animal</th>
+                <th class="th-grupo" colspan="2">3er animal</th>
+                <th class="th-grupo" colspan="2">4to animal</th>
+                ${ya ? '' : '<th rowspan="2" style="background:#0f2347;width:36px;"></th>'}
+            </tr>
+            <tr>
+                <th>N° colleras</th><th>Ganado</th>
+                <th>N° colleras</th><th>Ganado</th>
+                <th>N° colleras</th><th>Ganado</th>
+                <th>N° colleras</th><th>Ganado</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Tabla 2: Vueltas, tipo y peso ────────────────────────────────────────────
+function renderTablaVueltas(ya) {
+    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
+    const dis = ya ? 'disabled' : '';
+    let rows = _seriesGanado.map(function(s, i) {
+        return `<tr>
+            <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v1v||'')}" ${dis} oninput="setCelda(${i},'v1v',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.v1t||'')}" ${dis} oninput="setCelda(${i},'v1t',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v1p||'')}" ${dis} oninput="setCelda(${i},'v1p',this.value)" placeholder="kg"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v2v||'')}" ${dis} oninput="setCelda(${i},'v2v',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.v2t||'')}" ${dis} oninput="setCelda(${i},'v2t',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v2p||'')}" ${dis} oninput="setCelda(${i},'v2p',this.value)" placeholder="kg"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v3v||'')}" ${dis} oninput="setCelda(${i},'v3v',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.v3t||'')}" ${dis} oninput="setCelda(${i},'v3t',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v3p||'')}" ${dis} oninput="setCelda(${i},'v3p',this.value)" placeholder="kg"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v4v||'')}" ${dis} oninput="setCelda(${i},'v4v',this.value)"></td>
+            <td><input class="inp-ganado" value="${esc(s.v4t||'')}" ${dis} oninput="setCelda(${i},'v4t',this.value)" placeholder="Tipo"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v4p||'')}" ${dis} oninput="setCelda(${i},'v4p',this.value)" placeholder="kg"></td>
+        </tr>`;
+    }).join('');
+    return `<table class="tbl-ganado">
+        <thead>
+            <tr>
+                <th class="th-serie" rowspan="2">Serie</th>
+                <th class="th-grupo" colspan="3">1er animal</th>
+                <th class="th-grupo" colspan="3">2do animal</th>
+                <th class="th-grupo" colspan="3">3er animal</th>
+                <th class="th-grupo" colspan="3">4to animal</th>
+            </tr>
+            <tr>
+                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
+                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
+                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
+                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Tabla 3: Calidad ─────────────────────────────────────────────────────────
+function renderTablaCalidad(ya) {
+    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
+    const dis = ya ? 'disabled' : '';
+    const optsCal = (v) => ['Bueno','Regular','Malo'].map(o =>
+        `<option value="${o}" ${v === o ? 'selected' : ''}>${o}</option>`
+    ).join('');
+
+    let rows = _seriesGanado.map(function(s, i) {
+        return `<tr>
+            <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q1c||'')}" ${dis} oninput="setCelda(${i},'q1c',this.value)"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q1r||'')}" ${dis} oninput="setCelda(${i},'q1r',this.value)"></td>
+            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q1k',this.value)"><option value="">—</option>${optsCal(s.q1k)}</select></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q2c||'')}" ${dis} oninput="setCelda(${i},'q2c',this.value)"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q2r||'')}" ${dis} oninput="setCelda(${i},'q2r',this.value)"></td>
+            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q2k',this.value)"><option value="">—</option>${optsCal(s.q2k)}</select></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q3c||'')}" ${dis} oninput="setCelda(${i},'q3c',this.value)"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q3r||'')}" ${dis} oninput="setCelda(${i},'q3r',this.value)"></td>
+            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q3k',this.value)"><option value="">—</option>${optsCal(s.q3k)}</select></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q4c||'')}" ${dis} oninput="setCelda(${i},'q4c',this.value)"></td>
+            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q4r||'')}" ${dis} oninput="setCelda(${i},'q4r',this.value)"></td>
+            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q4k',this.value)"><option value="">—</option>${optsCal(s.q4k)}</select></td>
+        </tr>`;
+    }).join('');
+    return `<table class="tbl-ganado">
+        <thead>
+            <tr>
+                <th class="th-serie" rowspan="2">Serie</th>
+                <th class="th-grupo" colspan="3">1er animal</th>
+                <th class="th-grupo" colspan="3">2do animal</th>
+                <th class="th-grupo" colspan="3">3er animal</th>
+                <th class="th-grupo" colspan="3">4to animal</th>
+            </tr>
+            <tr>
+                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
+                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
+                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
+                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Tabla 4: Fuera de peso (con cálculos automáticos) ───────────────────────
+function renderTablaFueraPeso(ya) {
+    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
+    const dis = ya ? 'disabled' : '';
+    let rows = _seriesGanado.map(function(s, i) {
+        const tot  = numPos(s.fp_tot);
+        const baj  = numPos(s.fp_baj);
+        const sob  = numPos(s.fp_sob);
+        const fuer = baj + sob;
+        const pct  = tot > 0 ? ((fuer / tot) * 100).toFixed(1) : '—';
+        return `<tr>
+            <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
+            <td><input type="number" min="0" class="inp-ganado" id="fp_tot_${i}" value="${esc(s.fp_tot||'')}" ${dis} oninput="setCelda(${i},'fp_tot',this.value);calcTotalesB4()"></td>
+            <td><input type="number" min="0" class="inp-ganado" id="fp_baj_${i}" value="${esc(s.fp_baj||'')}" ${dis} oninput="setCelda(${i},'fp_baj',this.value);calcTotalesB4()"></td>
+            <td><input type="number" min="0" class="inp-ganado" id="fp_sob_${i}" value="${esc(s.fp_sob||'')}" ${dis} oninput="setCelda(${i},'fp_sob',this.value);calcTotalesB4()"></td>
+            <td class="td-calc" id="fp_fuer_${i}">${fuer > 0 ? fuer : '—'}</td>
+            <td class="td-calc" id="fp_pct_${i}">${pct !== '—' ? pct + '%' : '—'}</td>
+        </tr>`;
+    }).join('');
+    return `<table class="tbl-ganado">
+        <thead>
+            <tr>
+                <th class="th-serie">Serie</th>
+                <th>Total animales utilizados</th>
+                <th>Ganado bajo peso</th>
+                <th>Ganado sobre peso</th>
+                <th>Total fuera de peso</th>
+                <th>% fuera de peso</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+            <tr>
+                <td class="td-total">TOTAL</td>
+                <td class="td-total" id="fp-total-tot">—</td>
+                <td class="td-total" id="fp-total-baj">—</td>
+                <td class="td-total" id="fp-total-sob">—</td>
+                <td class="td-total" id="fp-total-fuer">—</td>
+                <td class="td-total-calc" id="fp-total-pct">—</td>
+            </tr>
+        </tfoot>
+    </table>`;
+}
+
+// ── Calcular totales Bloque 4 ─────────────────────────────────────────────────
+function calcTotalesB4() {
+    let sumTot = 0, sumBaj = 0, sumSob = 0;
+    let hayDatos = false;
+
+    _seriesGanado.forEach(function(s, i) {
+        const tot  = numPos(s.fp_tot);
+        const baj  = numPos(s.fp_baj);
+        const sob  = numPos(s.fp_sob);
+        const fuer = baj + sob;
+        const pct  = tot > 0 ? ((fuer / tot) * 100).toFixed(1) : null;
+
+        sumTot += tot; sumBaj += baj; sumSob += sob;
+        if (tot > 0 || baj > 0 || sob > 0) hayDatos = true;
+
+        const elFuer = document.getElementById('fp_fuer_' + i);
+        const elPct  = document.getElementById('fp_pct_'  + i);
+        if (elFuer) elFuer.textContent = fuer > 0 ? fuer : '—';
+        if (elPct)  elPct.textContent  = pct !== null ? pct + '%' : '—';
+    });
+
+    const sumFuer  = sumBaj + sumSob;
+    const pctTotal = sumTot > 0 ? ((sumFuer / sumTot) * 100).toFixed(1) : null;
+
+    setText('fp-total-tot',  hayDatos ? sumTot  : '—');
+    setText('fp-total-baj',  hayDatos ? sumBaj  : '—');
+    setText('fp-total-sob',  hayDatos ? sumSob  : '—');
+    setText('fp-total-fuer', hayDatos ? sumFuer : '—');
+    setText('fp-total-pct',  pctTotal !== null ? pctTotal + '%' : '—');
+
+    // Aviso relación con campo ganado bajo peso (ETAPA 1)
+    const aviso = document.getElementById('aviso-ganado-bajo-peso');
+    if (aviso) {
+        const hayGanadoBajoPeso = sumBaj > 0 || sumSob > 0;
+        const radioSi = document.getElementById('r-ganado-bajo-si');
+        const yaMarcadoSi = radioSi && radioSi.checked;
+        aviso.style.display = (hayGanadoBajoPeso && !yaMarcadoSi) ? 'block' : 'none';
+    }
+}
+
+function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+}
+
+function numPos(v) {
+    const n = parseFloat(v);
+    return (!isNaN(n) && n >= 0) ? n : 0;
+}
+
+function esc(v) {
+    return String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Agregar / quitar series ───────────────────────────────────────────────────
+function agregarSerie() {
+    _seriesGanado.push({ nombre:'' });
+    renderBloqueGanado(false);
+}
+
+function quitarSerie(idx) {
+    if (!confirm('¿Quitar esta serie de todas las tablas?')) return;
+    _seriesGanado.splice(idx, 1);
+    renderBloqueGanado(false);
+}
+
+// ── Actualizar celda en memoria ───────────────────────────────────────────────
+function setCelda(idx, campo, valor) {
+    if (!_seriesGanado[idx]) return;
+    _seriesGanado[idx][campo] = valor;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RECOLECTAR DATOS (ETAPA 1 + ETAPA 2)
+// ═════════════════════════════════════════════════════════════════════════════
 function recolectarDatos() {
     const radio = (name) => {
         const sel = document.querySelector(`input[name="${name}"]:checked`);
         if (!sel) return null;
         return sel.value === 'si';
     };
+    // Combina respuestas_json existente con los datos actuales de ganado
+    const respuestasActualizadas = Object.assign({}, _respuestasJson, {
+        ganado_series: _seriesGanado
+    });
     return {
         temporada:                       document.getElementById('f-temporada')?.value.trim() || null,
         fecha_rodeo:                     document.getElementById('f-fecha_rodeo')?.value || null,
@@ -324,11 +656,14 @@ function recolectarDatos() {
         certificacion_medialuna_comuna:      document.getElementById('f-cert_medialuna')?.checked   ?? false,
         certificacion_mas_200_personas:      document.getElementById('f-cert_200')?.checked         ?? false,
         certificacion_mas_250_personas:      document.getElementById('f-cert_250')?.checked         ?? false,
-        certificacion_vinculacion_comunidad: document.getElementById('f-cert_vinculacion')?.checked ?? false
+        certificacion_vinculacion_comunidad: document.getElementById('f-cert_vinculacion')?.checked ?? false,
+        respuestas_json: respuestasActualizadas
     };
 }
 
-// ─── Guardar borrador ─────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// GUARDAR BORRADOR
+// ═════════════════════════════════════════════════════════════════════════════
 async function guardarBorrador() {
     if (_guardando) return;
     _guardando = true;
@@ -339,12 +674,13 @@ async function guardarBorrador() {
         const datos = recolectarDatos();
 
         if (!_cartillaId) {
-            // Primera vez: crear cartilla
             const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
             _cartillaId = r.cartilla.id;
         }
 
         await api.patch(`/usuario/cartilla-delegado/${_cartillaId}`, datos);
+        // Actualizar copia local de respuestas_json para fusión futura
+        _respuestasJson = datos.respuestas_json;
         mostrarToast('Borrador guardado correctamente', 'exito');
     } catch (err) {
         mostrarToast(err.message || 'Error al guardar', 'error');
@@ -354,13 +690,15 @@ async function guardarBorrador() {
     }
 }
 
-// ─── Enviar cartilla ──────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// ENVIAR CARTILLA
+// ═════════════════════════════════════════════════════════════════════════════
 async function enviarCartilla() {
     if (_guardando) return;
 
     const datos = recolectarDatos();
 
-    // Validar campos mínimos en frontend antes de llamar al backend
+    // Validar campos obligatorios sección I
     const requeridos = {
         temporada:                   'Temporada',
         fecha_rodeo:                 'Fecha del Rodeo',
@@ -377,6 +715,20 @@ async function enviarCartilla() {
         return;
     }
 
+    // Validación ganado: si hay series, todas deben tener nombre
+    const seriesSinNombre = _seriesGanado.filter(s => !s.nombre || !s.nombre.trim());
+    if (seriesSinNombre.length > 0) {
+        mostrarToast('Todas las series deben tener nombre antes de enviar.', 'advertencia');
+        return;
+    }
+
+    // Validación relación ganado bajo peso
+    const sumBaj = _seriesGanado.reduce((acc, s) => acc + numPos(s.fp_baj), 0);
+    const sumSob = _seriesGanado.reduce((acc, s) => acc + numPos(s.fp_sob), 0);
+    if ((sumBaj > 0 || sumSob > 0) && datos.incluye_informe_ganado_bajo_peso !== true) {
+        if (!confirm('Ha ingresado ganado bajo/sobre peso pero no marcó "Sí" en "¿Incluye informe de ganado bajo peso?". ¿Desea continuar de todas formas?')) return;
+    }
+
     if (!confirm('¿Confirma el envío del Informe del Delegado?\n\nUna vez enviado no podrá editarlo sin autorización del Administrador.')) return;
 
     _guardando = true;
@@ -391,8 +743,6 @@ async function enviarCartilla() {
 
         await api.post(`/usuario/cartilla-delegado/${_cartillaId}/enviar`, datos);
         mostrarToast('Informe enviado correctamente', 'exito');
-
-        // Recargar para mostrar la vista de solo lectura
         setTimeout(() => init(), 1200);
     } catch (err) {
         mostrarToast(err.message || 'Error al enviar', 'error');

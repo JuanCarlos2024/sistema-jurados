@@ -1508,11 +1508,146 @@ async function verCartillaDelegadoDigital(cartillaId) {
                 ${fila('Más de 200 personas (Serie Campeones)', check2txt(c.certificacion_mas_200_personas) + ' ' + (c.certificacion_mas_200_personas ? 'Sí' : 'No'))}
                 ${fila('Más de 250 personas (Serie Campeones)', check2txt(c.certificacion_mas_250_personas) + ' ' + (c.certificacion_mas_250_personas ? 'Sí' : 'No'))}
                 ${fila('Proyecto vinculación con la comunidad', check2txt(c.certificacion_vinculacion_comunidad) + ' ' + (c.certificacion_vinculacion_comunidad ? 'Sí' : 'No'))}
-            </table>`;
+            </table>
+            ${renderGanadoModal(c.respuestas_json)}`;
     } catch (err) {
         document.getElementById('modal-cartilla-delegado-body').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar la cartilla')}</div>`;
     }
+}
+
+function renderGanadoModal(rj) {
+    const series = (rj && Array.isArray(rj.ganado_series) && rj.ganado_series.length > 0) ? rj.ganado_series : null;
+    if (!series) return '';
+
+    const thS = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;"';
+    const thG = 'style="background:#2755a3;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;text-align:center;border:1px solid #14316a;"';
+    const tdS = 'style="padding:4px 7px;font-size:11px;background:#eaf0f8;border:1px solid #dde3ec;white-space:nowrap;"';
+    const tdC = 'style="padding:4px 7px;font-size:11px;text-align:center;border:1px solid #dde3ec;"';
+    const tdK = 'style="padding:4px 7px;font-size:11px;text-align:center;border:1px solid #dde3ec;background:#f0f7ec;font-weight:600;"';
+    const val = (v) => (v !== undefined && v !== null && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>';
+
+    // Bloque 1
+    let b1rows = series.map(s => `<tr>
+        <td ${tdS}>${val(s.nombre)}</td>
+        <td ${tdC}>${val(s.c1n)}</td><td ${tdC}>${val(s.c1g)}</td>
+        <td ${tdC}>${val(s.c2n)}</td><td ${tdC}>${val(s.c2g)}</td>
+        <td ${tdC}>${val(s.c3n)}</td><td ${tdC}>${val(s.c3g)}</td>
+        <td ${tdC}>${val(s.c4n)}</td><td ${tdC}>${val(s.c4g)}</td>
+    </tr>`).join('');
+    const tbl1 = `<table style="border-collapse:collapse;min-width:100%;">
+        <thead>
+            <tr>
+                <th ${thS} rowspan="2">Serie</th>
+                <th ${thG} colspan="2">1er animal</th><th ${thG} colspan="2">2do animal</th>
+                <th ${thG} colspan="2">3er animal</th><th ${thG} colspan="2">4to animal</th>
+            </tr>
+            <tr>
+                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
+                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
+                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
+                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
+            </tr>
+        </thead>
+        <tbody>${b1rows}</tbody>
+    </table>`;
+
+    // Bloque 2
+    let b2rows = series.map(s => `<tr>
+        <td ${tdS}>${val(s.nombre)}</td>
+        <td ${tdC}>${val(s.v1v)}</td><td ${tdC}>${val(s.v1t)}</td><td ${tdC}>${val(s.v1p)}</td>
+        <td ${tdC}>${val(s.v2v)}</td><td ${tdC}>${val(s.v2t)}</td><td ${tdC}>${val(s.v2p)}</td>
+        <td ${tdC}>${val(s.v3v)}</td><td ${tdC}>${val(s.v3t)}</td><td ${tdC}>${val(s.v3p)}</td>
+        <td ${tdC}>${val(s.v4v)}</td><td ${tdC}>${val(s.v4t)}</td><td ${tdC}>${val(s.v4p)}</td>
+    </tr>`).join('');
+    const tbl2 = `<table style="border-collapse:collapse;min-width:100%;">
+        <thead>
+            <tr>
+                <th ${thS} rowspan="2">Serie</th>
+                <th ${thG} colspan="3">1er animal</th><th ${thG} colspan="3">2do animal</th>
+                <th ${thG} colspan="3">3er animal</th><th ${thG} colspan="3">4to animal</th>
+            </tr>
+            <tr>
+                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
+                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
+                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
+                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
+            </tr>
+        </thead>
+        <tbody>${b2rows}</tbody>
+    </table>`;
+
+    // Bloque 3
+    let b3rows = series.map(s => `<tr>
+        <td ${tdS}>${val(s.nombre)}</td>
+        <td ${tdC}>${val(s.q1c)}</td><td ${tdC}>${val(s.q1r)}</td><td ${tdK}>${val(s.q1k)}</td>
+        <td ${tdC}>${val(s.q2c)}</td><td ${tdC}>${val(s.q2r)}</td><td ${tdK}>${val(s.q2k)}</td>
+        <td ${tdC}>${val(s.q3c)}</td><td ${tdC}>${val(s.q3r)}</td><td ${tdK}>${val(s.q3k)}</td>
+        <td ${tdC}>${val(s.q4c)}</td><td ${tdC}>${val(s.q4r)}</td><td ${tdK}>${val(s.q4k)}</td>
+    </tr>`).join('');
+    const tbl3 = `<table style="border-collapse:collapse;min-width:100%;">
+        <thead>
+            <tr>
+                <th ${thS} rowspan="2">Serie</th>
+                <th ${thG} colspan="3">1er animal</th><th ${thG} colspan="3">2do animal</th>
+                <th ${thG} colspan="3">3er animal</th><th ${thG} colspan="3">4to animal</th>
+            </tr>
+            <tr>
+                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
+                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
+                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
+                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
+            </tr>
+        </thead>
+        <tbody>${b3rows}</tbody>
+    </table>`;
+
+    // Bloque 4
+    const numP = (v) => { const n = parseFloat(v); return (!isNaN(n) && n >= 0) ? n : 0; };
+    let sumTot = 0, sumBaj = 0, sumSob = 0;
+    let b4rows = series.map(s => {
+        const tot = numP(s.fp_tot), baj = numP(s.fp_baj), sob = numP(s.fp_sob);
+        const fuer = baj + sob;
+        const pct  = tot > 0 ? ((fuer / tot) * 100).toFixed(1) + '%' : '—';
+        sumTot += tot; sumBaj += baj; sumSob += sob;
+        return `<tr>
+            <td ${tdS}>${val(s.nombre)}</td>
+            <td ${tdC}>${tot || '<span style="color:#ccc;">—</span>'}</td>
+            <td ${tdC}>${baj || '<span style="color:#ccc;">—</span>'}</td>
+            <td ${tdC}>${sob || '<span style="color:#ccc;">—</span>'}</td>
+            <td ${tdK}>${fuer > 0 ? fuer : '<span style="color:#ccc;">—</span>'}</td>
+            <td ${tdK}>${pct}</td>
+        </tr>`;
+    }).join('');
+    const sumFuer = sumBaj + sumSob;
+    const pctTotal = sumTot > 0 ? ((sumFuer / sumTot) * 100).toFixed(1) + '%' : '—';
+    const thTot = 'style="background:#1a3c6e;color:#fff;padding:5px 8px;font-size:11px;text-align:center;border:1px solid #14316a;"';
+    b4rows += `<tr>
+        <td style="background:#1a3c6e;color:#fff;padding:5px 8px;font-size:11px;font-weight:700;border:1px solid #14316a;">TOTAL</td>
+        <td ${thTot}>${sumTot || '—'}</td><td ${thTot}>${sumBaj || '—'}</td><td ${thTot}>${sumSob || '—'}</td>
+        <td style="background:#14a348;color:#fff;padding:5px 8px;font-size:11px;font-weight:700;text-align:center;border:1px solid #0d8a3c;">${sumFuer || '—'}</td>
+        <td style="background:#14a348;color:#fff;padding:5px 8px;font-size:11px;font-weight:700;text-align:center;border:1px solid #0d8a3c;">${pctTotal}</td>
+    </tr>`;
+    const tbl4 = `<table style="border-collapse:collapse;min-width:100%;">
+        <thead>
+            <tr>
+                <th ${thS}>Serie</th>
+                <th ${thS}>Total animales</th><th ${thS}>Bajo peso</th><th ${thS}>Sobre peso</th>
+                <th ${thS}>Total fuera peso</th><th ${thS}>% fuera peso</th>
+            </tr>
+        </thead>
+        <tbody>${b4rows}</tbody>
+    </table>`;
+
+    const bloqueTitulo = (n, t) => `<div style="font-size:12px;font-weight:700;color:#1a3c6e;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 6px;">${n}. ${t}</div>`;
+    const wrapTbl = (t) => `<div style="overflow-x:auto;margin-bottom:4px;">${t}</div>`;
+
+    return `<hr style="margin:20px 0 16px;border:none;border-top:2px solid #e0e8f5;">
+        <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:12px;">II. Información sobre el ganado utilizado en el Rodeo</div>
+        ${bloqueTitulo('1','Colleras participantes y ganado utilizado')}${wrapTbl(tbl1)}
+        ${bloqueTitulo('2','Vueltas en apiñadero, tipo y peso')}${wrapTbl(tbl2)}
+        ${bloqueTitulo('3','Calidad del ganado')}${wrapTbl(tbl3)}
+        ${bloqueTitulo('4','Ganado fuera de peso')}${wrapTbl(tbl4)}`;
 }
 
 async function confirmarReabrir() {
