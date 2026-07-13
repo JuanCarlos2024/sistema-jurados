@@ -1439,6 +1439,9 @@ function cerrarModalReabrir() {
     if (el) el.style.display = 'none';
 }
 
+// ─── Estado global cartilla delegado activa ──────────────────────────────────
+let _cdActivaData = null;
+
 // ─── Ver Cartilla Delegado Digital ───────────────────────────────────────────
 async function verCartillaDelegadoDigital(cartillaId) {
     let modal = document.getElementById('modal-cartilla-delegado');
@@ -1509,7 +1512,20 @@ async function verCartillaDelegadoDigital(cartillaId) {
                 ${fila('Más de 250 personas (Serie Campeones)', check2txt(c.certificacion_mas_250_personas) + ' ' + (c.certificacion_mas_250_personas ? 'Sí' : 'No'))}
                 ${fila('Proyecto vinculación con la comunidad', check2txt(c.certificacion_vinculacion_comunidad) + ' ' + (c.certificacion_vinculacion_comunidad ? 'Sí' : 'No'))}
             </table>
-            ${renderGanadoModal(c.respuestas_json)}`;
+            ${renderGanadoModal(c.respuestas_json)}
+            ${renderEtapa3Modal(c.respuestas_json)}
+            ${renderEtapa4Modal(c.respuestas_json)}
+            <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
+            <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:10px;">Adjuntos de la cartilla</div>
+            <div id="adj-cd-modal-cont"><p style="font-size:12px;color:#888;font-style:italic;">Cargando adjuntos...</p></div>
+            ${renderHistorialObsCd(c)}
+            <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
+            <div id="cd-admin-acciones"></div>`;
+        _cdActivaData = c;
+        setTimeout(function(){
+            renderAdjuntosModalCd(c.rodeo_id);
+            renderAccionesCartillaDelegado(c);
+        }, 50);
     } catch (err) {
         document.getElementById('modal-cartilla-delegado-body').innerHTML =
             `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar la cartilla')}</div>`;
@@ -1650,6 +1666,512 @@ function renderGanadoModal(rj) {
         ${bloqueTitulo('4','Ganado fuera de peso')}${wrapTbl(tbl4)}`;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ETAPA 3 — Vista modal admin (solo lectura)
+// ═══════════════════════════════════════════════════════════════════
+function renderEtapa3Modal(rj) {
+    if (!rj) return '';
+    const dj      = rj.desempeno_jurado   || null;
+    const disc    = rj.disciplina_informe  || null;
+    const recinto = rj.recinto_deportivo   || null;
+    const col     = rj.colleras_invitadas  || null;
+    const ree     = rj.reemplazo_jinetes   || null;
+
+    if (!dj && !disc && !recinto && !col && !ree) return '';
+
+    const thS  = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
+    const tdC  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;"';
+    const tdH  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;background:#eaf0f8;font-weight:700;white-space:nowrap;"';
+    const val  = (v) => (v !== undefined && v !== null && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>';
+    const boolTxt = (v) => v === 'si' || v === true ? 'Sí' : v === 'no' || v === false ? 'No' : '—';
+    const bloqueTitulo = (t) => `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:20px 0 8px;border-top:1px solid #e0e8f5;padding-top:14px;">${sanitizar(t)}</div>`;
+    const subTit = (t) => `<div style="font-size:12px;font-weight:700;color:#1a3c6e;text-transform:uppercase;letter-spacing:.3px;margin:12px 0 6px;">${sanitizar(t)}</div>`;
+    const wrapTbl = (t) => `<div style="overflow-x:auto;margin-bottom:8px;">${t}</div>`;
+
+    let out = '<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">';
+
+    // ── III. Desempeño del Jurado ─────────────────────────────────────────
+    if (dj) {
+        out += bloqueTitulo('III. Informe sobre el desempeño del Jurado');
+        out += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">
+            <tr><td ${tdH}>¿Evaluación realizada?</td><td ${tdC}>${boolTxt(dj.evaluacion_realizada)}</td>
+                <td ${tdH}>Fecha de evaluación</td><td ${tdC}>${val(dj.fecha_evaluacion)}</td></tr>
+            <tr><td ${tdH}>Cantidad de jurados evaluados</td><td ${tdC}>${val(dj.cantidad_jurados)}</td>
+                <td ${tdH}>¿Más de un jurado?</td><td ${tdC}>${boolTxt(dj.mas_de_un_jurado)}</td></tr>
+        </table>`;
+        if (dj.observaciones) {
+            out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px;"><strong>Observaciones:</strong> ${sanitizar(dj.observaciones)}</div>`;
+        }
+        if (Array.isArray(dj.jurados) && dj.jurados.length > 0) {
+            out += subTit('Lista de jurados evaluados');
+            const jRows = dj.jurados.map(j => `<tr>
+                <td ${tdC}>${val(j.nombre)}</td>
+                <td ${tdC}>${val(j.evaluado)}</td>
+                <td ${tdC}>${val(j.observacion)}</td>
+            </tr>`).join('');
+            out += wrapTbl(`<table style="border-collapse:collapse;width:100%;">
+                <thead><tr><th ${thS}>Nombre del jurado</th><th ${thS}>¿Evaluado?</th><th ${thS}>Observación</th></tr></thead>
+                <tbody>${jRows}</tbody>
+            </table>`);
+        }
+    }
+
+    // ── IV. Disciplina ────────────────────────────────────────────────────
+    if (disc) {
+        out += bloqueTitulo('IV. Informe de disciplina');
+        out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo informe de disciplina?</strong> ${boolTxt(disc.hubo_informe)}</p>`;
+        if (Array.isArray(disc.situaciones) && disc.situaciones.length > 0) {
+            disc.situaciones.forEach((s, i) => {
+                out += `<div style="border:1px solid #dde3ec;border-radius:6px;margin-bottom:8px;overflow:hidden;">
+                    <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Situación N° ${i+1}</div>
+                    <div style="padding:10px 12px;">
+                    <table style="border-collapse:collapse;width:100%;font-size:12px;">
+                        <tr><td ${tdH}>Nombre del infractor</td><td ${tdC}>${val(s.nombre_infractor)}</td>
+                            <td ${tdH}>RUT</td><td ${tdC}>${val(s.rut)}</td></tr>
+                        <tr><td ${tdH}>N° de socio</td><td ${tdC}>${val(s.num_socio)}</td>
+                            <td ${tdH}>Tipo de falta</td><td ${tdC}>${val(s.tipo_falta)}</td></tr>
+                        <tr><td ${tdH}>Artículo reglamentario</td><td ${tdC}>${val(s.articulo)}</td>
+                            <td ${tdH}>Testigos</td><td ${tdC}>${val(s.testigos)}</td></tr>
+                    </table>
+                    ${s.detalle ? `<div style="margin-top:6px;font-size:12px;"><strong>Detalle:</strong> ${sanitizar(s.detalle)}</div>` : ''}
+                    ${s.observaciones ? `<div style="margin-top:4px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(s.observaciones)}</div>` : ''}
+                    </div>
+                </div>`;
+            });
+        } else if (disc.hubo_informe === 'si') {
+            out += `<p style="font-size:12px;color:#888;font-style:italic;">Sin situaciones registradas.</p>`;
+        }
+    }
+
+    // ── V. Recinto Deportivo ─────────────────────────────────────────────
+    if (recinto && Object.keys(recinto).length > 0) {
+        const ASPECTOS = [
+            {key:'piso',                   label:'Piso'},
+            {key:'riego',                  label:'Riego de la cancha'},
+            {key:'lineas_sentencia',       label:'Líneas de sentencia'},
+            {key:'banderas_salida',        label:'Banderas de salida'},
+            {key:'apinladero',             label:'Apiñadero'},
+            {key:'iluminacion',            label:'Iluminación de la cancha'},
+            {key:'atajadas',               label:'Atajadas'},
+            {key:'toril',                  label:'Toril'},
+            {key:'corrales',               label:'Corrales'},
+            {key:'picadero',               label:'Picadero'},
+            {key:'caseta_jurado',          label:'Caseta del Jurado'},
+            {key:'caseta_filmacion',       label:'Caseta de filmación'},
+            {key:'casinos',               label:'Casinos'},
+            {key:'banhos',                 label:'Baños'},
+            {key:'duchas_petiseros',       label:'Duchas para petiseros'},
+            {key:'graderias',              label:'Graderías'},
+            {key:'accesos_discapacitados', label:'Accesos para discapacitados'},
+            {key:'stands_artesanos',       label:'Stands de artesanos'}
+        ];
+        out += bloqueTitulo('V. Estado del recinto deportivo');
+        const recRows = ASPECTOS.filter(a => recinto[a.key+'_estado']).map(a => `<tr>
+            <td ${tdH}>${sanitizar(a.label)}</td>
+            <td ${tdC}>${val(recinto[a.key+'_estado'])}</td>
+            <td ${tdC}>${val(recinto[a.key+'_obs'])}</td>
+        </tr>`).join('');
+        if (recRows) {
+            out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+                <thead><tr><th ${thS}>Aspecto</th><th ${thS}>Estado</th><th ${thS}>Observación</th></tr></thead>
+                <tbody>${recRows}</tbody>
+            </table>`);
+        }
+        if (recinto.otros) {
+            out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:4px;"><strong>Otros aspectos:</strong> ${sanitizar(recinto.otros)}</div>`;
+        }
+    }
+
+    // ── VI. Colleras Invitadas ────────────────────────────────────────────
+    if (col) {
+        out += bloqueTitulo('VI. Colleras invitadas');
+        if (col.no_hubo) {
+            out += `<p style="font-size:12px;color:#555;">No hubo colleras invitadas en este rodeo.</p>`;
+        } else if (Array.isArray(col.items) && col.items.length > 0) {
+            const cRows = col.items.map(ci => `<tr>
+                <td ${tdC}>${val(ci.jinete1)}</td>
+                <td ${tdC}>${val(ci.jinete2)}</td>
+                <td ${tdC}>${val(ci.club)}</td>
+                <td ${tdC}>${val(ci.asociacion)}</td>
+                <td ${tdC}>${val(ci.observaciones)}</td>
+            </tr>`).join('');
+            out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+                <thead><tr><th ${thS}>Jinete 1</th><th ${thS}>Jinete 2</th><th ${thS}>Club</th><th ${thS}>Asociación</th><th ${thS}>Observaciones</th></tr></thead>
+                <tbody>${cRows}</tbody>
+            </table>`);
+        } else {
+            out += `<p style="font-size:12px;color:#888;font-style:italic;">Sin colleras invitadas registradas.</p>`;
+        }
+    }
+
+    // ── VII. Reemplazo de Jinetes ─────────────────────────────────────────
+    if (ree) {
+        out += bloqueTitulo('VII. Reemplazo de jinetes');
+        out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo reemplazo de jinetes?</strong> ${boolTxt(ree.hubo)}</p>`;
+        if (Array.isArray(ree.items) && ree.items.length > 0) {
+            const rRows = ree.items.map(re => `<tr>
+                <td ${tdC}>${val(re.nombre_reemplazado)}</td>
+                <td ${tdC}>${val(re.rut_reemplazado)}</td>
+                <td ${tdC}>${val(re.nombre_reemplazante)}</td>
+                <td ${tdC}>${val(re.rut_reemplazante)}</td>
+                <td ${tdC}>${val(re.motivo)}</td>
+                <td ${tdC}>${val(re.serie)}</td>
+                <td ${tdC}>${val(re.detalle)}</td>
+                <td ${tdC}>${val(re.observaciones)}</td>
+            </tr>`).join('');
+            out += wrapTbl(`<table style="border-collapse:collapse;min-width:100%;font-size:12px;">
+                <thead><tr>
+                    <th ${thS}>Reemplazado</th><th ${thS}>RUT/Socio</th>
+                    <th ${thS}>Reemplazante</th><th ${thS}>RUT/Socio</th>
+                    <th ${thS}>Motivo</th><th ${thS}>Serie</th>
+                    <th ${thS}>Detalle</th><th ${thS}>Observaciones</th>
+                </tr></thead>
+                <tbody>${rRows}</tbody>
+            </table>`);
+        }
+    }
+
+    return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ETAPA 4 — Vista modal admin (solo lectura)
+// ═══════════════════════════════════════════════════════════════════
+function renderEtapa4Modal(rj) {
+    if (!rj) return '';
+    const acc  = rj.accidentes_informe   || null;
+    const ba   = rj.bienestar_animal      || null;
+    const vet  = rj.informe_veterinario   || null;
+    const recs = rj.reclamos_sugerencias  || null;
+    if (!acc && !ba && !vet && !recs) return '';
+
+    const thS  = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
+    const tdC  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;"';
+    const tdH  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;background:#eaf0f8;font-weight:700;white-space:nowrap;"';
+    const val  = function(v){ return (v !== undefined && v !== null && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>'; };
+    const boolTxt = function(v){ return v === 'si' || v === true ? 'Sí' : (v === 'no' || v === false ? 'No' : '—'); };
+    const bloqueTitulo = function(t){ return `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:20px 0 8px;border-top:1px solid #e0e8f5;padding-top:14px;">${sanitizar(t)}</div>`; };
+    const wrapTbl = function(t){ return `<div style="overflow-x:auto;margin-bottom:8px;">${t}</div>`; };
+    const BA_LABELS = [
+        { key:'sombra_ganado',  label:'Sombra para ganado en corrales' },
+        { key:'sombra_equinos', label:'Sombra para equinos' },
+        { key:'agua_ganado',    label:'Agua para ganado en corrales' },
+        { key:'agua_equinos',   label:'Agua para equinos' },
+        { key:'comida_ganado',  label:'Comida para ganado' },
+        { key:'comida_equinos', label:'Comida para equinos' },
+    ];
+
+    let out = '';
+
+    // ── VIII. Accidentes ──────────────────────────────────────────────────
+    if (acc) {
+        out += bloqueTitulo('VIII. Informe de accidentes');
+        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
+            <tr><td ${tdH}>¿Hubo accidentes?</td><td ${tdC}>${boolTxt(acc.hubo_accidentes)}</td>
+                <td ${tdH}>¿Se revisó protocolo de rescate?</td><td ${tdC}>${boolTxt(acc.reviso_protocolo)}</td></tr>
+            <tr><td ${tdH}>Médico / paramédico</td><td ${tdC}>${val(acc.medico_nombre)}</td>
+                <td ${tdH}>Teléfono médico</td><td ${tdC}>${val(acc.medico_telefono)}</td></tr>
+        </table>`;
+        if (acc.medico_email) out += `<p style="font-size:12px;margin:0 0 4px;"><strong>Correo médico:</strong> ${sanitizar(acc.medico_email)}</p>`;
+        if (acc.observaciones_generales) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px;"><strong>Observaciones:</strong> ${sanitizar(acc.observaciones_generales)}</div>`;
+        if (Array.isArray(acc.items) && acc.items.length > 0) {
+            acc.items.forEach(function(a, i) {
+                out += `<div style="border:1px solid #dde3ec;border-radius:6px;margin-bottom:8px;overflow:hidden;">
+                    <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Accidente N° ${i+1}</div>
+                    <div style="padding:10px 12px;">
+                    <table style="border-collapse:collapse;width:100%;font-size:12px;">
+                        <tr><td ${tdH}>Tipo</td><td ${tdC}>${val(a.tipo)}</td>
+                            <td ${tdH}>Fecha/hora</td><td ${tdC}>${val(a.fecha_hora)}</td></tr>
+                        <tr><td ${tdH}>Persona</td><td ${tdC}>${val(a.persona)}</td>
+                            <td ${tdH}>RUT/Socio</td><td ${tdC}>${val(a.rut)}</td></tr>
+                        <tr><td ${tdH}>Categoría</td><td ${tdC}>${val(a.categoria)}</td>
+                            <td ${tdH}>Derivado a centro</td><td ${tdC}>${boolTxt(a.derivado)}</td></tr>
+                        ${a.derivado === 'si' ? `<tr><td ${tdH}>Centro asistencial</td><td ${tdC} colspan="3">${val(a.centro_asistencial)}</td></tr>` : ''}
+                    </table>
+                    ${a.descripcion ? `<div style="margin-top:5px;font-size:12px;"><strong>Descripción:</strong> ${sanitizar(a.descripcion)}</div>` : ''}
+                    ${a.atencion   ? `<div style="margin-top:3px;font-size:12px;"><strong>Atención:</strong> ${sanitizar(a.atencion)}</div>` : ''}
+                    ${a.observaciones ? `<div style="margin-top:3px;font-size:12px;"><strong>Obs:</strong> ${sanitizar(a.observaciones)}</div>` : ''}
+                    </div></div>`;
+            });
+        }
+    }
+
+    // ── IX. Bienestar Animal ──────────────────────────────────────────────
+    if (ba) {
+        out += bloqueTitulo('IX. Informe condiciones de Bienestar Animal');
+        const baRows = BA_LABELS.map(function(f){ return `<tr>
+            <td ${tdH}>${sanitizar(f.label)}</td>
+            <td ${tdC}>${boolTxt(ba[f.key])}</td>
+        </tr>`; }).join('');
+        out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+            <thead><tr><th ${thS}>Condición</th><th ${thS} style="width:80px;">¿Cumple?</th></tr></thead>
+            <tbody>${baRows}</tbody>
+        </table>`);
+        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:4px;margin-bottom:6px;">
+            <tr><td ${tdH}>¿Lesiones en equinos?</td><td ${tdC}>${boolTxt(ba.hubo_lesiones_equinos)}</td>
+                <td ${tdH}>¿Lesiones en bovinos?</td><td ${tdC}>${boolTxt(ba.hubo_lesiones_bovinos)}</td></tr>
+        </table>`;
+        if (ba.detalle_lesiones) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Detalle de lesiones:</strong> ${sanitizar(ba.detalle_lesiones)}</div>`;
+        if (ba.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(ba.observaciones)}</div>`;
+    }
+
+    // ── X. Veterinario ────────────────────────────────────────────────────
+    if (vet) {
+        out += bloqueTitulo('X. Informe del veterinario del Rodeo');
+        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
+            <tr><td ${tdH}>Nombre</td><td ${tdC}>${val(vet.nombre)}</td>
+                <td ${tdH}>Teléfono</td><td ${tdC}>${val(vet.telefono)}</td></tr>
+            <tr><td ${tdH}>Correo</td><td ${tdC}>${val(vet.correo)}</td>
+                <td ${tdH}>Preparación</td><td ${tdC}>${val(vet.preparacion)}${vet.especifica_tecnico?' — '+sanitizar(vet.especifica_tecnico):''}${vet.especifica_otro?' — '+sanitizar(vet.especifica_otro):''}</td></tr>
+        </table>`;
+        const vetRows = BA_LABELS.map(function(f){ return `<tr>
+            <td ${tdH}>${sanitizar(f.label)}</td>
+            <td ${tdC}>${boolTxt(vet[f.key])}</td>
+        </tr>`; }).join('');
+        out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+            <thead><tr><th ${thS}>Condición (según veterinario)</th><th ${thS} style="width:80px;">¿Cumple?</th></tr></thead>
+            <tbody>${vetRows}</tbody>
+        </table>`);
+        if (vet.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Observaciones:</strong> ${sanitizar(vet.observaciones)}</div>`;
+    }
+
+    // ── XI. Reclamos o sugerencias ────────────────────────────────────────
+    if (recs) {
+        out += bloqueTitulo('XI. Reclamos o sugerencias');
+        out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo reclamos?</strong> ${boolTxt(recs.hubo_reclamos)}</p>`;
+        if (Array.isArray(recs.items) && recs.items.length > 0) {
+            recs.items.forEach(function(r, i) {
+                out += `<div style="border:1px solid #dde3ec;border-radius:6px;margin-bottom:8px;overflow:hidden;">
+                    <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Reclamo N° ${i+1}</div>
+                    <div style="padding:10px 12px;">
+                    <table style="border-collapse:collapse;width:100%;font-size:12px;">
+                        <tr><td ${tdH}>Nombre</td><td ${tdC}>${val(r.nombre)}</td>
+                            <td ${tdH}>RUT/Socio</td><td ${tdC}>${val(r.rut)}</td></tr>
+                        <tr><td ${tdH}>Tipo</td><td ${tdC}>${val(r.tipo)}</td>
+                            <td ${tdH}>Respuesta</td><td ${tdC}>${val(r.respuesta)}</td></tr>
+                    </table>
+                    ${r.detalle ? `<div style="margin-top:5px;font-size:12px;"><strong>Detalle:</strong> ${sanitizar(r.detalle)}</div>` : ''}
+                    ${r.observaciones ? `<div style="margin-top:3px;font-size:12px;"><strong>Obs:</strong> ${sanitizar(r.observaciones)}</div>` : ''}
+                    </div></div>`;
+            });
+        }
+        if (recs.sugerencias) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Sugerencias del delegado:</strong> ${sanitizar(recs.sugerencias)}</div>`;
+        if (recs.observaciones_generales) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Observaciones:</strong> ${sanitizar(recs.observaciones_generales)}</div>`;
+    }
+
+    return out;
+}
+
+// ─── Adjuntos cartilla delegado (admin, async) ──────────────────────────────
+async function renderAdjuntosModalCd(rodeoId) {
+    const cont = document.getElementById('adj-cd-modal-cont');
+    if (!cont || !rodeoId) return;
+    try {
+        const r = await api.get(`/admin/adjuntos?rodeo_id=${rodeoId}`);
+        const adjuntos = (r.adjuntos || []).filter(function(a){ return a.tipo_adjunto === 'cartilla_delegado'; });
+        if (adjuntos.length === 0) {
+            cont.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;">Sin adjuntos subidos.</p>';
+            return;
+        }
+        cont.innerHTML = '<div style="border:1px solid #e0e8f5;border-radius:6px;padding:0 12px;">' +
+            adjuntos.map(function(a) {
+                const ico = a.mime_type && a.mime_type.startsWith('image/') ? '🖼️' : '📄';
+                const tam = a.tamano_bytes ? (a.tamano_bytes / 1024).toFixed(0) + ' KB' : '';
+                return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f0f0f0;flex-wrap:wrap;">
+                    <span style="font-size:18px;">${ico}</span>
+                    <div style="flex:1;min-width:100px;">
+                        <div style="font-size:12px;font-weight:600;">${sanitizar(a.nombre_archivo)}</div>
+                        ${tam ? `<div style="font-size:11px;color:#888;">${tam}</div>` : ''}
+                    </div>
+                    <button class="btn btn-pequeño btn-outline" onclick="verAdjuntoAdmin('${a.id}')">Ver</button>
+                </div>`;
+            }).join('') + '</div>';
+    } catch(e) {
+        cont.innerHTML = `<p style="font-size:12px;color:#c0392b;">Error al cargar adjuntos: ${sanitizar(e.message)}</p>`;
+    }
+}
+
+async function verAdjuntoAdmin(id) {
+    try {
+        const r = await api.get(`/admin/adjuntos/${id}/url`);
+        window.open(r.url, '_blank');
+    } catch(e) {
+        mostrarToast(e.message || 'Error al obtener URL', 'error');
+    }
+}
+
+// ─── Historial de observaciones (render sincrónico) ──────────────────────────
+function renderHistorialObsCd(c) {
+    const hist = Array.isArray(c.historial_observaciones) ? c.historial_observaciones : [];
+    if (!hist.length) return '';
+    const tipoLabel = { observacion: '👁 Observación', reenvio: '↩ Reenvío delegado', aprobacion: '✔ Aprobación' };
+    const items = hist.map(function(h) {
+        const fecha = h.fecha ? new Date(h.fecha).toLocaleString('es-CL') : '—';
+        const label = tipoLabel[h.tipo] || h.tipo;
+        const motivo = h.motivo ? `<div style="font-size:12px;color:#555;margin-top:3px;padding:5px 8px;background:#fff;border-radius:4px;border:1px solid #e0e0e0;">${sanitizar(h.motivo)}</div>` : '';
+        return `<div style="padding:8px 0;border-bottom:1px solid #f0f0f0;">
+            <div style="font-size:12px;font-weight:700;color:#1a3c6e;">${label}</div>
+            <div style="font-size:11px;color:#888;">${fecha}${h.por ? ' — ' + sanitizar(h.por) : ''}</div>
+            ${motivo}
+        </div>`;
+    }).join('');
+    return `<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
+        <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Historial de revisiones</div>
+        <div style="border:1px solid #e0e8f5;border-radius:6px;padding:4px 14px;">${items}</div>`;
+}
+
+// ─── Acciones administrativas sobre cartilla delegado ───────────────────────
+function renderAccionesCartillaDelegado(c) {
+    const cont = document.getElementById('cd-admin-acciones');
+    if (!cont) return;
+
+    const estado = c.estado || '';
+    const puedeObservar = ['enviada', 'reenviada'].includes(estado);
+    const puedeAprobar  = ['enviada', 'reenviada', 'observada'].includes(estado);
+    const hayCartilla   = ['enviada', 'reenviada', 'observada', 'aprobada'].includes(estado);
+
+    if (!hayCartilla) { cont.innerHTML = ''; return; }
+
+    let botonesHtml = '';
+    if (puedeObservar) {
+        botonesHtml += `<button class="btn btn-pequeño" style="background:#fff3cd;color:#856404;border:1px solid #ffc107;" onclick="abrirModalObservarCd('${c.id}')">👁 Observar</button> `;
+    }
+    if (puedeAprobar) {
+        botonesHtml += `<button class="btn btn-pequeño" style="background:#d4efdf;color:#1e8449;border:1px solid #52be80;" onclick="aprobarCartillaDelegado('${c.id}')">✔ Aprobar</button> `;
+    }
+    botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="descargarPdfCartillaDelegado('${c.id}')">📄 Exportar PDF</button> `;
+
+    const emailDelegado = c.delegado?.email || '';
+    botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="abrirModalCorreoCd('${c.id}', '${sanitizar(emailDelegado)}')">✉ Preparar correo</button>`;
+
+    cont.innerHTML = `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Acciones administrativas</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">${botonesHtml}</div>`;
+}
+
+// ─── Modal: Observar cartilla delegado ──────────────────────────────────────
+function abrirModalObservarCd(cartillaId) {
+    let m = document.getElementById('modal-observar-cd');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'modal-observar-cd';
+        m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1300;align-items:center;justify-content:center;padding:16px;';
+        m.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;padding:24px;">
+            <div style="font-weight:700;font-size:15px;color:#1a3c6e;margin-bottom:12px;">👁 Observar cartilla del delegado</div>
+            <p style="font-size:13px;color:#555;margin-bottom:12px;">Indica el motivo de la observación. El delegado podrá ver este mensaje y corregir su informe.</p>
+            <textarea id="obs-cd-motivo" rows="4" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;resize:vertical;" placeholder="Describe qué debe corregir el delegado..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+                <button class="btn btn-secundario btn-pequeño" onclick="document.getElementById('modal-observar-cd').style.display='none'">Cancelar</button>
+                <button class="btn btn-pequeño" id="btn-confirmar-observar-cd" style="background:#e67e22;color:#fff;border:none;" onclick="confirmarObservarCd()">Guardar observación</button>
+            </div>
+        </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('click', function(e) { if (e.target === m) m.style.display = 'none'; });
+    }
+    document.getElementById('obs-cd-motivo').value = '';
+    m._cartillaId = cartillaId;
+    m.style.display = 'flex';
+    setTimeout(function(){ document.getElementById('obs-cd-motivo').focus(); }, 50);
+}
+
+async function confirmarObservarCd() {
+    const m      = document.getElementById('modal-observar-cd');
+    const motivo = (document.getElementById('obs-cd-motivo')?.value || '').trim();
+    if (!motivo) { mostrarToast('El motivo de observación es obligatorio', 'error'); return; }
+    const btn = document.getElementById('btn-confirmar-observar-cd');
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+    try {
+        await api.post('/admin/cartillas-delegado/' + m._cartillaId + '/observar', { motivo });
+        m.style.display = 'none';
+        mostrarToast('Cartilla marcada como observada. El delegado puede corregir y reenviar.', 'exito');
+        await verCartillaDelegadoDigital(m._cartillaId);
+        if (rodeoActual?.id) verDetalle(rodeoActual.id);
+    } catch(e) {
+        mostrarToast(e.message || 'Error al observar cartilla', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Guardar observación'; }
+    }
+}
+
+async function aprobarCartillaDelegado(cartillaId) {
+    if (!confirm('¿Confirma la aprobación de esta cartilla del delegado?\n\nEl estado cambiará a "Aprobada" y el delegado no podrá editarla.')) return;
+    try {
+        await api.post('/admin/cartillas-delegado/' + cartillaId + '/aprobar', {});
+        mostrarToast('Cartilla aprobada correctamente.', 'exito');
+        await verCartillaDelegadoDigital(cartillaId);
+        if (rodeoActual?.id) verDetalle(rodeoActual.id);
+    } catch(e) {
+        mostrarToast(e.message || 'Error al aprobar cartilla', 'error');
+    }
+}
+
+async function descargarPdfCartillaDelegado(cartillaId) {
+    try {
+        await api.descargar('/admin/cartillas-delegado/' + cartillaId + '/pdf', 'cartilla-delegado.pdf');
+    } catch(e) {
+        mostrarToast(e.message || 'Error al generar PDF', 'error');
+    }
+}
+
+// ─── Modal: Preparar y enviar correo al delegado ─────────────────────────────
+function abrirModalCorreoCd(cartillaId, emailDelegado) {
+    let m = document.getElementById('modal-correo-cd');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'modal-correo-cd';
+        m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1300;align-items:center;justify-content:center;padding:16px;';
+        m.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:560px;width:100%;padding:24px;">
+            <div style="font-weight:700;font-size:15px;color:#1a3c6e;margin-bottom:12px;">✉ Preparar correo al delegado</div>
+            <div style="margin-bottom:10px;">
+                <label style="font-size:12px;font-weight:600;color:#555;display:block;margin-bottom:4px;">Destinatario</label>
+                <input type="email" id="correo-cd-to" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;" placeholder="correo@ejemplo.com">
+            </div>
+            <div style="margin-bottom:10px;">
+                <label style="font-size:12px;font-weight:600;color:#555;display:block;margin-bottom:4px;">Asunto</label>
+                <input type="text" id="correo-cd-subject" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:14px;">
+                <label style="font-size:12px;font-weight:600;color:#555;display:block;margin-bottom:4px;">Mensaje</label>
+                <textarea id="correo-cd-body" rows="6" style="width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;resize:vertical;"></textarea>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="btn btn-secundario btn-pequeño" onclick="document.getElementById('modal-correo-cd').style.display='none'">Cancelar</button>
+                <button class="btn btn-primario btn-pequeño" id="btn-enviar-correo-cd" onclick="enviarCorreoCd()">Enviar correo</button>
+            </div>
+        </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('click', function(e) { if (e.target === m) m.style.display = 'none'; });
+    }
+    m._cartillaId = cartillaId;
+    document.getElementById('correo-cd-to').value = emailDelegado || '';
+    const c = _cdActivaData || {};
+    const club = c.rodeo?.club || c.club_asociacion_organizador || '(rodeo)';
+    const fecha = c.fecha_rodeo ? new Date(c.fecha_rodeo + 'T12:00:00').toLocaleDateString('es-CL') : '';
+    document.getElementById('correo-cd-subject').value = `Cartilla de Delegado — ${club}${fecha ? ' ' + fecha : ''}`;
+    const estado = { enviada:'enviada', reenviada:'reenviada', observada:'observada', aprobada:'aprobada' }[c.estado] || c.estado || '';
+    document.getElementById('correo-cd-body').value = `Estimado/a ${c.delegado_nombre || 'Delegado'},\n\nLe informamos sobre el estado de su Cartilla de Delegado para el rodeo ${club}${fecha ? ' del ' + fecha : ''}.\n\nEstado actual: ${estado}\n\nSaludos,\nAdministración — Sistema de Jurados`;
+    m.style.display = 'flex';
+}
+
+async function enviarCorreoCd() {
+    const m = document.getElementById('modal-correo-cd');
+    const to      = (document.getElementById('correo-cd-to')?.value || '').trim();
+    const subject = (document.getElementById('correo-cd-subject')?.value || '').trim();
+    const body    = (document.getElementById('correo-cd-body')?.value || '').trim();
+    if (!to)      { mostrarToast('Ingrese el correo del destinatario', 'advertencia'); return; }
+    if (!subject) { mostrarToast('Ingrese el asunto del correo', 'advertencia'); return; }
+    const btn = document.getElementById('btn-enviar-correo-cd');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+    try {
+        await api.post('/admin/cartillas-delegado/' + m._cartillaId + '/enviar-correo', { to, subject, body });
+        m.style.display = 'none';
+        mostrarToast('Correo enviado correctamente.', 'exito');
+    } catch(e) {
+        mostrarToast(e.message || 'Error al enviar correo', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Enviar correo'; }
+    }
+}
+
 async function confirmarReabrir() {
     const motivo = (document.getElementById('reabrir-motivo')?.value || '').trim();
     if (!motivo) { mostrarToast('El motivo de reapertura es obligatorio', 'error'); return; }
@@ -1773,10 +2295,11 @@ async function renderAdjuntosAdmin() {
             html += '<div style="font-weight:600;margin-bottom:8px;color:#1a3c6e;">&#128203; Cartilla Delegado — Informe Digital</div>';
             cartillasDelegado.forEach(function(cd) {
                 const estadoColor = cd.estado === 'enviada'   ? '#27ae60'
+                                  : cd.estado === 'reenviada' ? '#1e8449'
                                   : cd.estado === 'aprobada'  ? '#1a5276'
                                   : cd.estado === 'observada' ? '#e67e22'
                                   : '#f39c12';
-                const estadoText  = { borrador:'Borrador', enviada:'Enviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[cd.estado] || cd.estado;
+                const estadoText  = { borrador:'Borrador', enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[cd.estado] || cd.estado;
                 const nombre      = cd.delegado?.nombre_completo || cd.delegado_nombre || 'Delegado';
                 const fechaStr    = cd.enviada_en
                     ? 'Enviada: ' + new Date(cd.enviada_en).toLocaleString('es-CL')

@@ -142,7 +142,7 @@ router.patch('/:id', async (req, res) => {
 
     if (!cartilla) return res.status(404).json({ error: 'Cartilla no encontrada.' });
     if (cartilla.delegado_id !== uid) return res.status(403).json({ error: 'Sin permiso.' });
-    if (cartilla.estado === 'enviada') {
+    if (['enviada', 'reenviada', 'aprobada'].includes(cartilla.estado)) {
         return res.status(409).json({ error: 'La cartilla ya fue enviada y no puede modificarse.' });
     }
 
@@ -175,7 +175,7 @@ router.post('/:id/enviar', async (req, res) => {
 
     if (!cartilla) return res.status(404).json({ error: 'Cartilla no encontrada.' });
     if (cartilla.delegado_id !== uid) return res.status(403).json({ error: 'Sin permiso.' });
-    if (cartilla.estado === 'enviada') {
+    if (['enviada', 'reenviada', 'aprobada'].includes(cartilla.estado)) {
         return res.status(409).json({ error: 'La cartilla ya fue enviada.' });
     }
 
@@ -192,12 +192,24 @@ router.post('/:id/enviar', async (req, res) => {
         });
     }
 
-    const ahora  = new Date().toISOString();
+    const ahora = new Date().toISOString();
+    // Si estaba observada, pasar a reenviada; si no, pasar a enviada
+    const esReenvio   = cartilla.estado === 'observada';
+    const nuevoEstado = esReenvio ? 'reenviada' : 'enviada';
+
+    // Registrar en historial
+    const historial = Array.isArray(cartilla.historial_observaciones) ? [...cartilla.historial_observaciones] : [];
+    if (esReenvio) {
+        historial.push({ tipo: 'reenvio', fecha: ahora, por: 'delegado' });
+    }
+
     const updates = {
-        estado:        'enviada',
-        enviada_en:    ahora,
-        updated_at:    ahora,
-        actualizado_por: uid
+        estado:                  nuevoEstado,
+        enviada_en:              cartilla.enviada_en || ahora,
+        updated_at:              ahora,
+        actualizado_por:         uid,
+        historial_observaciones: historial,
+        ...(esReenvio ? { reenviada_en: ahora } : {})
     };
     // Guardar también cualquier campo del body enviado simultáneamente
     CAMPOS_EDITABLES.forEach(k => {
@@ -212,7 +224,8 @@ router.post('/:id/enviar', async (req, res) => {
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ mensaje: 'Cartilla enviada correctamente.', cartilla: data });
+    const msg = esReenvio ? 'Cartilla reenviada correctamente.' : 'Cartilla enviada correctamente.';
+    res.json({ mensaje: msg, cartilla: data });
 });
 
 module.exports = router;

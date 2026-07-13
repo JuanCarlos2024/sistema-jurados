@@ -40,7 +40,7 @@
         #alerta-global { margin-bottom:14px; }
         .spinner-wrap { text-align:center; padding:40px; }
 
-        /* ── Tablas de ganado ────────────────────────────────────────────── */
+        /* ── Tablas de ganado (ETAPA 2) ────────────────────────────────────── */
         .sub-titulo-ganado { font-size:12px; font-weight:700; color:#1a3c6e; text-transform:uppercase; letter-spacing:.4px; margin-bottom:10px; padding-bottom:6px; border-bottom:2px solid #e0e8f5; }
         .tabla-wrap-ganado { overflow-x:auto; margin-bottom:18px; }
         .tbl-ganado { border-collapse:collapse; font-size:12px; min-width:100%; }
@@ -64,6 +64,57 @@
         .btn-quitar-serie:hover { background:#fdecea; }
         .btn-agregar-serie { margin-top:8px; font-size:12px; padding:5px 14px; }
         .aviso-ganado-bajo-peso { background:#fff8e1; border:1px solid #ffc107; border-radius:6px; padding:8px 12px; font-size:12px; color:#795800; margin-bottom:10px; display:none; }
+
+        /* ── ETAPA 3 ─────────────────────────────────────────────────────────── */
+        .sec-sub { font-size:12px; font-weight:700; color:#1a3c6e; text-transform:uppercase; letter-spacing:.3px; margin:14px 0 8px; padding-bottom:5px; border-bottom:1px solid #e0e8f5; }
+        .link-externo { display:inline-flex; align-items:center; gap:6px; background:#eaf4fb; border:1px solid #aed6f1; border-radius:6px; padding:8px 14px; font-size:13px; color:#1a3c6e; text-decoration:none; font-weight:600; margin-bottom:12px; }
+        .link-externo:hover { background:#d6eaf8; }
+        .aviso-relacion { background:#fff8e1; border:1px solid #ffc107; border-radius:6px; padding:8px 12px; font-size:12px; color:#795800; margin-bottom:10px; }
+        /* situaciones disciplinarias */
+        .sit-card { border:1px solid #dde3ec; border-radius:8px; margin-bottom:10px; overflow:hidden; }
+        .sit-card-hdr { background:#f0f4fb; border-bottom:1px solid #dde3ec; padding:7px 14px; display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:700; color:#1a3c6e; }
+        .sit-card-body { padding:12px 14px; display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+        @media(max-width:580px){ .sit-card-body { grid-template-columns:1fr; } }
+        .sit-card-full { grid-column:1/-1; }
+        /* aspectos recinto */
+        .aspectos-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        @media(max-width:600px){ .aspectos-grid { grid-template-columns:1fr; } }
+        .aspecto-card { border:1px solid #e0e8f5; border-radius:6px; padding:10px 12px; background:#fafcff; }
+        .aspecto-label { font-size:12px; font-weight:700; color:#333; margin-bottom:6px; display:block; }
+        .sel-estado { width:100%; padding:5px 8px; border:1px solid #ccc; border-radius:5px; font-size:13px; background:#fff; box-sizing:border-box; }
+        .sel-estado:focus { outline:none; border-color:#1a3c6e; }
+        .sel-estado:disabled { background:#f5f5f5; color:#555; }
+        .inp-obs-asp { width:100%; padding:4px 7px; border:1px solid #e0e0e0; border-radius:4px; font-size:12px; margin-top:5px; box-sizing:border-box; }
+        .inp-obs-asp:disabled, .inp-obs-asp[readonly] { background:#f5f5f5; color:#555; }
+        /* tablas dinámicas coleras/reemplazos */
+        .tbl-din { border-collapse:collapse; width:100%; font-size:13px; }
+        .tbl-din th { background:#2755a3; color:#fff; padding:7px 10px; font-size:12px; font-weight:700; white-space:nowrap; text-align:left; }
+        .tbl-din td { border:1px solid #e0e8f5; padding:4px 6px; vertical-align:middle; }
+        .tbl-din tr:nth-child(even) td { background:#f7f9fc; }
+        .inp-din { width:100%; border:none; background:transparent; font-size:13px; padding:3px 5px; box-sizing:border-box; min-width:80px; }
+        .inp-din:focus { outline:2px solid #2755a3; border-radius:3px; background:#fff; }
+        .inp-din:disabled { color:#555; cursor:default; }
+        .sel-din { width:100%; border:none; background:transparent; font-size:12px; padding:3px 4px; }
+        .sel-din:focus { outline:2px solid #2755a3; border-radius:3px; background:#fff; }
+        .sel-din:disabled { color:#555; }
+        .btn-q { background:none; border:none; color:#c0392b; cursor:pointer; font-size:16px; padding:2px 6px; border-radius:4px; }
+        .btn-q:hover { background:#fdecea; }
+        .campo-form-sm label { font-size:12px; font-weight:600; color:#555; display:block; margin-bottom:3px; }
+        .campo-form-sm input, .campo-form-sm select, .campo-form-sm textarea { width:100%; padding:6px 9px; border:1px solid #ccc; border-radius:5px; font-size:13px; box-sizing:border-box; }
+        .campo-form-sm input:disabled, .campo-form-sm select:disabled, .campo-form-sm textarea:disabled,
+        .campo-form-sm input[readonly], .campo-form-sm textarea[readonly] { background:#f5f5f5; color:#555; }
+
+        /* ── ETAPA 5 — estados y banners ─────────────────────────────────────── */
+        .estado-observada { background:#fdebd0; color:#784212; border:1px solid #e67e22; }
+        .estado-reenviada { background:#d5f5e3; color:#1e8449; border:1px solid #52be80; }
+        .estado-aprobada  { background:#d6eaf8; color:#1a5276; border:1px solid #2e86c1; }
+        .observada-banner { background:#fef9e7; border:1px solid #f39c12; border-radius:8px; padding:14px 18px; margin-bottom:16px; }
+        .observada-banner strong { display:block; font-size:15px; color:#784212; margin-bottom:6px; }
+        .observada-banner .motivo-obs { background:#fff; border:1px solid #f39c12; border-radius:5px; padding:8px 12px; font-size:13px; color:#333; margin-top:6px; white-space:pre-wrap; }
+        .aprobada-notice  { background:#d6eaf8; border:1px solid #2e86c1; border-radius:8px; padding:14px 18px; margin-bottom:16px; }
+        .aprobada-notice strong { display:block; font-size:15px; color:#1a5276; margin-bottom:4px; }
+        .plazo-vencido { background:#fdecea; border:1px solid #e74c3c; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#c0392b; font-weight:600; }
+        .plazo-proximo { background:#fff8e1; border:1px solid #ffc107; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px; color:#795800; }
     </style>
 </head>
 <body>
@@ -131,13 +182,27 @@ document.getElementById('nombre-usr').textContent = _usr?.nombre || '';
 const params   = new URLSearchParams(location.search);
 const RODEO_ID = params.get('rodeo_id');
 
+// ── Globals ETAPA 1 ──────────────────────────────────────────────────────────
 let _cartillaId    = null;
 let _estado        = null;
 let _guardando     = false;
 
-// ── ETAPA 2: estado ganado ───────────────────────────────────────────────────
-let _seriesGanado   = []; // array de objetos serie con datos de los 4 bloques
-let _respuestasJson = {}; // copia completa de respuestas_json del servidor
+// ── Globals ETAPA 2 ──────────────────────────────────────────────────────────
+let _seriesGanado   = [];
+let _respuestasJson = {};
+
+// ── Globals ETAPA 3 ──────────────────────────────────────────────────────────
+let _dj      = {};  // desempeño jurado
+let _disc    = {};  // disciplina
+let _recinto = {};  // recinto deportivo
+let _col     = {};  // colleras invitadas
+let _ree     = {};  // reemplazo jinetes
+
+// ── Globals ETAPA 4 ──────────────────────────────────────────────────────────
+let _acc  = {};  // accidentes
+let _ba   = {};  // bienestar animal
+let _vet  = {};  // veterinario
+let _recs = {};  // reclamos/sugerencias
 
 if (!RODEO_ID) {
     document.getElementById('cuerpo-cartilla').innerHTML =
@@ -163,9 +228,8 @@ function renderCartilla(r) {
     const { rodeo, perfil, cartilla } = r;
     _estado     = cartilla ? cartilla.estado : 'nueva';
     _cartillaId = cartilla ? cartilla.id     : null;
-    const ya    = _estado === 'enviada';
+    const ya    = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
 
-    // Inicializar datos ganado desde respuestas_json
     _respuestasJson = cartilla?.respuestas_json || {};
     _seriesGanado   = Array.isArray(_respuestasJson.ganado_series)
         ? _respuestasJson.ganado_series.map(s => ({ ...s }))
@@ -177,13 +241,48 @@ function renderCartilla(r) {
 
     let html = '';
 
-    if (ya) {
+    // ── Indicador de plazo de 3 días desde el rodeo ──────────────────────
+    if (rodeo?.fecha && (_estado === 'borrador' || _estado === 'nueva' || _estado === 'observada')) {
+        const fechaLimite = new Date(rodeo.fecha + 'T12:00:00');
+        fechaLimite.setDate(fechaLimite.getDate() + 3);
+        const diasRestantes = Math.ceil((fechaLimite - new Date()) / (1000 * 60 * 60 * 24));
+        if (diasRestantes < 0) {
+            html += `<div class="plazo-vencido">⚠ El plazo de envío venció hace ${Math.abs(diasRestantes)} día(s) (${fechaLimite.toLocaleDateString('es-CL')}). Envíe el informe a la brevedad.</div>`;
+        } else if (diasRestantes <= 1) {
+            html += `<div class="plazo-proximo">⏰ El plazo de envío vence el ${fechaLimite.toLocaleDateString('es-CL')} — en ${diasRestantes} día(s).</div>`;
+        }
+    }
+
+    // ── Banners de estado ─────────────────────────────────────────────────
+    if (_estado === 'enviada' || _estado === 'reenviada') {
         const fechaEnv = cartilla.enviada_en ? new Date(cartilla.enviada_en).toLocaleString('es-CL') : '—';
+        const label = _estado === 'reenviada' ? 'Informe reenviado' : 'Informe enviado';
         html += `<div class="enviada-notice">
-            <strong>Informe enviado</strong>
+            <strong>${label}</strong>
             Esta cartilla fue enviada el ${fechaEnv}. Solo puede ser reabierta por el Administrador.
         </div>`;
+    } else if (_estado === 'observada') {
+        const motivo = sanitizar(cartilla.observacion_admin || '');
+        const obsEn  = cartilla.observada_en ? new Date(cartilla.observada_en).toLocaleString('es-CL') : '—';
+        html += `<div class="observada-banner">
+            <strong>⚠ Cartilla bajo revisión — Requiere correcciones</strong>
+            El Administrador ha revisado tu informe y solicita ajustes (${obsEn}).
+            ${motivo ? `<div class="motivo-obs">${motivo}</div>` : ''}
+            <div style="margin-top:8px;font-size:13px;color:#555;">Puedes editar y reenviar el informe a continuación.</div>
+        </div>`;
+    } else if (_estado === 'aprobada') {
+        const aprobadaEn = cartilla.aprobada_en ? new Date(cartilla.aprobada_en).toLocaleString('es-CL') : '—';
+        html += `<div class="aprobada-notice">
+            <strong>✔ Informe aprobado</strong>
+            Tu cartilla fue aprobada el ${aprobadaEn}. Ya no puede ser modificada.
+        </div>`;
     }
+
+    // ── Estado badges ─────────────────────────────────────────────────────
+    const _estadoBadgeMap = { enviada:'estado-enviada', reenviada:'estado-reenviada', observada:'estado-observada', aprobada:'estado-aprobada', borrador:'estado-borrador' };
+    const _estadoLabelMap = { enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', aprobada:'Aprobada', borrador:'Borrador', nueva:'Nueva' };
+    const _badgeClass = _estadoBadgeMap[_estado] || 'estado-borrador';
+    const _badgeLabel = _estadoLabelMap[_estado] || _estado;
 
     html += `<div class="rodeo-info-card">
         <div class="titulo">${sanitizar(rodeo?.club || '—')} — ${sanitizar(rodeo?.asociacion || '—')}</div>
@@ -191,11 +290,11 @@ function renderCartilla(r) {
             <span>📅 ${fechaRodeo}</span>
             ${rodeo?.tipo_rodeo_nombre ? `<span>🏆 ${sanitizar(rodeo.tipo_rodeo_nombre)}</span>` : ''}
             ${rodeo?.categoria_rodeo_nombre ? `<span>${sanitizar(rodeo.categoria_rodeo_nombre)}</span>` : ''}
-            <span class="estado-badge ${ya ? 'estado-enviada' : 'estado-borrador'}">${ya ? 'Enviada' : (cartilla ? 'Borrador' : 'Nueva')}</span>
+            <span class="estado-badge ${_badgeClass}">${_badgeLabel}</span>
         </div>
     </div>`;
 
-    // ─── SECCIÓN I — Identificación del Rodeo (ETAPA 1, sin cambios) ─────────
+    // ─── SECCIÓN I — Identificación del Rodeo (ETAPA 1) ─────────────────────
     const c = cartilla || {};
     const fld = (campo, fallback) => {
         const v = c[campo];
@@ -266,7 +365,7 @@ function renderCartilla(r) {
             <div style="margin-bottom:14px;">
                 <label class="form-label">¿Incluye informe disciplinario?</label>
                 <div class="radio-grupo">
-                    <label><input type="radio" name="incluye_informe_disciplinario" value="si" ${bool2radio('incluye_informe_disciplinario') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''}> Sí</label>
+                    <label><input type="radio" name="incluye_informe_disciplinario" value="si" ${bool2radio('incluye_informe_disciplinario') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''} id="r-disc-e1-si"> Sí</label>
                     <label><input type="radio" name="incluye_informe_disciplinario" value="no" ${bool2radio('incluye_informe_disciplinario') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
                 </div>
             </div>
@@ -303,90 +402,115 @@ function renderCartilla(r) {
     // ─── SECCIÓN II — Ganado (ETAPA 2) ───────────────────────────────────────
     html += `<div class="bloque" id="bloque-ganado">
         <div class="bloque-header">II. Información sobre el ganado utilizado en el Rodeo</div>
-        <div class="bloque-body" id="ganado-cuerpo">
-            <!-- Renderizado dinámicamente por renderBloqueGanado() -->
-        </div>
+        <div class="bloque-body" id="ganado-cuerpo"></div>
     </div>`;
 
-    // ─── Secciones futuras (III en adelante) ─────────────────────────────────
-    const seccionesFuturas = [
-        'III. Informe sobre desempeño del jurado',
-        'IV. Informe de disciplina',
-        'V. Estado del recinto deportivo',
-        'VI. Colleras invitadas',
-        'VII. Reemplazo de jinetes',
-        'VIII. Accidentes',
-        'IX. Bienestar animal e informe veterinario',
-        'X. Reclamos o sugerencias',
-        'Adjuntos (fotos, videos, documentos)'
-    ];
-    seccionesFuturas.forEach(function(titulo) {
-        html += `<div class="bloque bloque-futuro">
-            <div class="bloque-header">${sanitizar(titulo)} <span class="badge-pendiente">Próximamente</span></div>
-            <div class="bloque-body">
-                <span style="font-size:20px;">🔒</span> Esta sección se habilitará en una etapa posterior.
-            </div>
-        </div>`;
-    });
+    // ─── SECCIÓN III — Desempeño del Jurado (ETAPA 3) ────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">III. Informe sobre el desempeño del Jurado</div>
+        <div class="bloque-body" id="sec-desempeno"></div>
+    </div>`;
+
+    // ─── SECCIÓN IV — Disciplina (ETAPA 3) ───────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">IV. Informe de disciplina</div>
+        <div class="bloque-body" id="sec-disciplina"></div>
+    </div>`;
+
+    // ─── SECCIÓN V — Recinto Deportivo (ETAPA 3) ─────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">V. Estado del recinto deportivo</div>
+        <div class="bloque-body" id="sec-recinto"></div>
+    </div>`;
+
+    // ─── SECCIÓN VI — Colleras Invitadas (ETAPA 3) ───────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">VI. Colleras invitadas</div>
+        <div class="bloque-body" id="sec-colleras"></div>
+    </div>`;
+
+    // ─── SECCIÓN VII — Reemplazo de Jinetes (ETAPA 3) ────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">VII. Reemplazo de jinetes</div>
+        <div class="bloque-body" id="sec-reemplazo"></div>
+    </div>`;
+
+    // ─── SECCIÓN VIII — Accidentes (ETAPA 4) ─────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">VIII. Informe de accidentes</div>
+        <div class="bloque-body" id="sec-accidentes"></div>
+    </div>`;
+
+    // ─── SECCIÓN IX — Bienestar Animal (ETAPA 4) ─────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">IX. Informe condiciones de Bienestar Animal</div>
+        <div class="bloque-body" id="sec-bienestar"></div>
+    </div>`;
+
+    // ─── SECCIÓN X — Veterinario (ETAPA 4) ───────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">X. Informe del veterinario del Rodeo</div>
+        <div class="bloque-body" id="sec-veterinario"></div>
+    </div>`;
+
+    // ─── SECCIÓN XI — Reclamos o sugerencias (ETAPA 4) ───────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">XI. Reclamos o sugerencias</div>
+        <div class="bloque-body" id="sec-reclamos"></div>
+    </div>`;
+
+    // ─── ADJUNTOS (ETAPA 4) ───────────────────────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">Adjuntos (fotos, imágenes, documentos PDF)</div>
+        <div class="bloque-body" id="sec-adjuntos-cd"></div>
+    </div>`;
 
     document.getElementById('cuerpo-cartilla').innerHTML = html;
 
-    // Renderizar tablas de ganado (requiere que el DOM ya tenga #ganado-cuerpo)
+    // Renderizar secciones dinámicas
     renderBloqueGanado(ya);
+    _initSecciones3(cartilla);
+    _initSecciones4(cartilla);
 
     if (!ya) {
         const barra = document.createElement('div');
         barra.className = 'barra-acciones';
+        const btnEnviarLabel = _estado === 'observada' ? 'Reenviar informe' : 'Enviar informe';
         barra.innerHTML = `
             <button class="btn btn-secundario" onclick="guardarBorrador()" id="btn-borrador">Guardar borrador</button>
-            <button class="btn btn-primario"   onclick="enviarCartilla()" id="btn-enviar">Enviar informe</button>`;
+            <button class="btn btn-primario"   onclick="enviarCartilla()" id="btn-enviar">${btnEnviarLabel}</button>`;
         document.getElementById('cuerpo-cartilla').appendChild(barra);
     }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ETAPA 2 — RENDER BLOQUES DE GANADO
+// ETAPA 2 — GANADO
 // ═════════════════════════════════════════════════════════════════════════════
 
 function renderBloqueGanado(ya) {
     const cont = document.getElementById('ganado-cuerpo');
     if (!cont) return;
-
     const haySeries = _seriesGanado.length > 0;
     const btnAgregar = ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSerie()">+ Agregar serie</button>`;
-
     let html = '';
-
     if (!haySeries && !ya) {
-        html += `<div class="alerta alerta-info" style="font-size:13px;margin-bottom:12px;">
-            No hay series registradas. Haga clic en <strong>+ Agregar serie</strong> para comenzar.
-        </div>`;
+        html += `<div class="alerta alerta-info" style="font-size:13px;margin-bottom:12px;">No hay series registradas. Haga clic en <strong>+ Agregar serie</strong> para comenzar.</div>`;
     }
-
-    // ── Bloque 1: Colleras participantes y ganado utilizado ────────────────
     html += `<div class="sub-titulo-ganado">1. Colleras participantes y ganado utilizado</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaColleras(ya)}</div>`;
-
-    // ── Bloque 2: Vueltas en apiñadero, tipo y peso ────────────────────────
     html += `<div class="sub-titulo-ganado">2. Vueltas en apiñadero, tipo y peso del ganado</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaVueltas(ya)}</div>`;
-
-    // ── Bloque 3: Calidad del ganado ────────────────────────────────────────
     html += `<div class="sub-titulo-ganado">3. Calidad del ganado</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaCalidad(ya)}</div>`;
-
-    // ── Bloque 4: Ganado fuera de peso ──────────────────────────────────────
     html += `<div class="sub-titulo-ganado">4. Ganado fuera de peso</div>`;
     html += `<p style="font-size:12px;color:#666;margin:-4px 0 10px;">En caso de existir ganado fuera de peso en cualquier serie, indique la cantidad y el porcentaje (Art. 242).</p>`;
     html += `<div id="aviso-ganado-bajo-peso" class="aviso-ganado-bajo-peso">⚠ Ha ingresado datos de ganado fuera de peso. Se recomienda marcar "Sí" en "¿Incluye informe de ganado bajo peso?" (Sección I).</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaFueraPeso(ya)}</div>`;
-
     html += btnAgregar;
     cont.innerHTML = html;
-    calcTotalesB4(); // recalcular al cargar
+    calcTotalesB4();
 }
 
-// ── Tabla 1: Colleras ────────────────────────────────────────────────────────
 function renderTablaColleras(ya) {
     if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
     const dis = ya ? 'disabled' : '';
@@ -404,28 +528,17 @@ function renderTablaColleras(ya) {
             ${ya ? '' : `<td style="text-align:center;"><button class="btn-quitar-serie" onclick="quitarSerie(${i})" title="Quitar serie">✕</button></td>`}
         </tr>`;
     }).join('');
-    return `<table class="tbl-ganado">
-        <thead>
-            <tr>
-                <th class="th-serie" rowspan="2">Serie</th>
-                <th class="th-grupo" colspan="2">1er animal</th>
-                <th class="th-grupo" colspan="2">2do animal</th>
-                <th class="th-grupo" colspan="2">3er animal</th>
-                <th class="th-grupo" colspan="2">4to animal</th>
-                ${ya ? '' : '<th rowspan="2" style="background:#0f2347;width:36px;"></th>'}
-            </tr>
-            <tr>
-                <th>N° colleras</th><th>Ganado</th>
-                <th>N° colleras</th><th>Ganado</th>
-                <th>N° colleras</th><th>Ganado</th>
-                <th>N° colleras</th><th>Ganado</th>
-            </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-    </table>`;
+    return `<table class="tbl-ganado"><thead><tr>
+        <th class="th-serie" rowspan="2">Serie</th>
+        <th class="th-grupo" colspan="2">1er animal</th><th class="th-grupo" colspan="2">2do animal</th>
+        <th class="th-grupo" colspan="2">3er animal</th><th class="th-grupo" colspan="2">4to animal</th>
+        ${ya ? '' : '<th rowspan="2" style="background:#0f2347;width:36px;"></th>'}
+    </tr><tr>
+        <th>N° colleras</th><th>Ganado</th><th>N° colleras</th><th>Ganado</th>
+        <th>N° colleras</th><th>Ganado</th><th>N° colleras</th><th>Ganado</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-// ── Tabla 2: Vueltas, tipo y peso ────────────────────────────────────────────
 function renderTablaVueltas(ya) {
     if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
     const dis = ya ? 'disabled' : '';
@@ -446,34 +559,20 @@ function renderTablaVueltas(ya) {
             <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v4p||'')}" ${dis} oninput="setCelda(${i},'v4p',this.value)" placeholder="kg"></td>
         </tr>`;
     }).join('');
-    return `<table class="tbl-ganado">
-        <thead>
-            <tr>
-                <th class="th-serie" rowspan="2">Serie</th>
-                <th class="th-grupo" colspan="3">1er animal</th>
-                <th class="th-grupo" colspan="3">2do animal</th>
-                <th class="th-grupo" colspan="3">3er animal</th>
-                <th class="th-grupo" colspan="3">4to animal</th>
-            </tr>
-            <tr>
-                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
-                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
-                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
-                <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
-            </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-    </table>`;
+    return `<table class="tbl-ganado"><thead><tr>
+        <th class="th-serie" rowspan="2">Serie</th>
+        <th class="th-grupo" colspan="3">1er animal</th><th class="th-grupo" colspan="3">2do animal</th>
+        <th class="th-grupo" colspan="3">3er animal</th><th class="th-grupo" colspan="3">4to animal</th>
+    </tr><tr>
+        <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th><th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
+        <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th><th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-// ── Tabla 3: Calidad ─────────────────────────────────────────────────────────
 function renderTablaCalidad(ya) {
     if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
     const dis = ya ? 'disabled' : '';
-    const optsCal = (v) => ['Bueno','Regular','Malo'].map(o =>
-        `<option value="${o}" ${v === o ? 'selected' : ''}>${o}</option>`
-    ).join('');
-
+    const optsCal = (v) => ['Bueno','Regular','Malo'].map(o => `<option value="${o}" ${v === o ? 'selected' : ''}>${o}</option>`).join('');
     let rows = _seriesGanado.map(function(s, i) {
         return `<tr>
             <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
@@ -491,144 +590,1056 @@ function renderTablaCalidad(ya) {
             <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q4k',this.value)"><option value="">—</option>${optsCal(s.q4k)}</select></td>
         </tr>`;
     }).join('');
-    return `<table class="tbl-ganado">
-        <thead>
-            <tr>
-                <th class="th-serie" rowspan="2">Serie</th>
-                <th class="th-grupo" colspan="3">1er animal</th>
-                <th class="th-grupo" colspan="3">2do animal</th>
-                <th class="th-grupo" colspan="3">3er animal</th>
-                <th class="th-grupo" colspan="3">4to animal</th>
-            </tr>
-            <tr>
-                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
-                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
-                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
-                <th>Corrido</th><th>Repetido</th><th>Calidad</th>
-            </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-    </table>`;
+    return `<table class="tbl-ganado"><thead><tr>
+        <th class="th-serie" rowspan="2">Serie</th>
+        <th class="th-grupo" colspan="3">1er animal</th><th class="th-grupo" colspan="3">2do animal</th>
+        <th class="th-grupo" colspan="3">3er animal</th><th class="th-grupo" colspan="3">4to animal</th>
+    </tr><tr>
+        <th>Corrido</th><th>Repetido</th><th>Calidad</th><th>Corrido</th><th>Repetido</th><th>Calidad</th>
+        <th>Corrido</th><th>Repetido</th><th>Calidad</th><th>Corrido</th><th>Repetido</th><th>Calidad</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-// ── Tabla 4: Fuera de peso (con cálculos automáticos) ───────────────────────
 function renderTablaFueraPeso(ya) {
     if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
     const dis = ya ? 'disabled' : '';
     let rows = _seriesGanado.map(function(s, i) {
-        const tot  = numPos(s.fp_tot);
-        const baj  = numPos(s.fp_baj);
-        const sob  = numPos(s.fp_sob);
-        const fuer = baj + sob;
-        const pct  = tot > 0 ? ((fuer / tot) * 100).toFixed(1) : '—';
+        const tot = numPos(s.fp_tot), baj = numPos(s.fp_baj), sob = numPos(s.fp_sob);
+        const fuer = baj + sob, pct = tot > 0 ? ((fuer/tot)*100).toFixed(1) : '—';
         return `<tr>
             <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
             <td><input type="number" min="0" class="inp-ganado" id="fp_tot_${i}" value="${esc(s.fp_tot||'')}" ${dis} oninput="setCelda(${i},'fp_tot',this.value);calcTotalesB4()"></td>
             <td><input type="number" min="0" class="inp-ganado" id="fp_baj_${i}" value="${esc(s.fp_baj||'')}" ${dis} oninput="setCelda(${i},'fp_baj',this.value);calcTotalesB4()"></td>
             <td><input type="number" min="0" class="inp-ganado" id="fp_sob_${i}" value="${esc(s.fp_sob||'')}" ${dis} oninput="setCelda(${i},'fp_sob',this.value);calcTotalesB4()"></td>
             <td class="td-calc" id="fp_fuer_${i}">${fuer > 0 ? fuer : '—'}</td>
-            <td class="td-calc" id="fp_pct_${i}">${pct !== '—' ? pct + '%' : '—'}</td>
+            <td class="td-calc" id="fp_pct_${i}">${pct !== '—' ? pct+'%' : '—'}</td>
         </tr>`;
     }).join('');
-    return `<table class="tbl-ganado">
-        <thead>
-            <tr>
-                <th class="th-serie">Serie</th>
-                <th>Total animales utilizados</th>
-                <th>Ganado bajo peso</th>
-                <th>Ganado sobre peso</th>
-                <th>Total fuera de peso</th>
-                <th>% fuera de peso</th>
-            </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-            <tr>
-                <td class="td-total">TOTAL</td>
-                <td class="td-total" id="fp-total-tot">—</td>
-                <td class="td-total" id="fp-total-baj">—</td>
-                <td class="td-total" id="fp-total-sob">—</td>
-                <td class="td-total" id="fp-total-fuer">—</td>
-                <td class="td-total-calc" id="fp-total-pct">—</td>
-            </tr>
-        </tfoot>
-    </table>`;
+    return `<table class="tbl-ganado"><thead><tr>
+        <th class="th-serie">Serie</th><th>Total animales utilizados</th><th>Ganado bajo peso</th>
+        <th>Ganado sobre peso</th><th>Total fuera de peso</th><th>% fuera de peso</th>
+    </tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr>
+        <td class="td-total">TOTAL</td>
+        <td class="td-total" id="fp-total-tot">—</td><td class="td-total" id="fp-total-baj">—</td>
+        <td class="td-total" id="fp-total-sob">—</td><td class="td-total" id="fp-total-fuer">—</td>
+        <td class="td-total-calc" id="fp-total-pct">—</td>
+    </tr></tfoot></table>`;
 }
 
-// ── Calcular totales Bloque 4 ─────────────────────────────────────────────────
 function calcTotalesB4() {
-    let sumTot = 0, sumBaj = 0, sumSob = 0;
-    let hayDatos = false;
-
-    _seriesGanado.forEach(function(s, i) {
-        const tot  = numPos(s.fp_tot);
-        const baj  = numPos(s.fp_baj);
-        const sob  = numPos(s.fp_sob);
-        const fuer = baj + sob;
-        const pct  = tot > 0 ? ((fuer / tot) * 100).toFixed(1) : null;
-
-        sumTot += tot; sumBaj += baj; sumSob += sob;
-        if (tot > 0 || baj > 0 || sob > 0) hayDatos = true;
-
-        const elFuer = document.getElementById('fp_fuer_' + i);
-        const elPct  = document.getElementById('fp_pct_'  + i);
-        if (elFuer) elFuer.textContent = fuer > 0 ? fuer : '—';
-        if (elPct)  elPct.textContent  = pct !== null ? pct + '%' : '—';
+    let sumTot=0, sumBaj=0, sumSob=0, hayDatos=false;
+    _seriesGanado.forEach(function(s,i){
+        const tot=numPos(s.fp_tot), baj=numPos(s.fp_baj), sob=numPos(s.fp_sob), fuer=baj+sob;
+        const pct=tot>0?((fuer/tot)*100).toFixed(1):null;
+        sumTot+=tot; sumBaj+=baj; sumSob+=sob;
+        if(tot>0||baj>0||sob>0) hayDatos=true;
+        const elFuer=document.getElementById('fp_fuer_'+i), elPct=document.getElementById('fp_pct_'+i);
+        if(elFuer) elFuer.textContent = fuer>0?fuer:'—';
+        if(elPct)  elPct.textContent  = pct!==null?pct+'%':'—';
     });
-
-    const sumFuer  = sumBaj + sumSob;
-    const pctTotal = sumTot > 0 ? ((sumFuer / sumTot) * 100).toFixed(1) : null;
-
-    setText('fp-total-tot',  hayDatos ? sumTot  : '—');
-    setText('fp-total-baj',  hayDatos ? sumBaj  : '—');
-    setText('fp-total-sob',  hayDatos ? sumSob  : '—');
-    setText('fp-total-fuer', hayDatos ? sumFuer : '—');
-    setText('fp-total-pct',  pctTotal !== null ? pctTotal + '%' : '—');
-
-    // Aviso relación con campo ganado bajo peso (ETAPA 1)
-    const aviso = document.getElementById('aviso-ganado-bajo-peso');
-    if (aviso) {
-        const hayGanadoBajoPeso = sumBaj > 0 || sumSob > 0;
-        const radioSi = document.getElementById('r-ganado-bajo-si');
-        const yaMarcadoSi = radioSi && radioSi.checked;
-        aviso.style.display = (hayGanadoBajoPeso && !yaMarcadoSi) ? 'block' : 'none';
-    }
+    const sumFuer=sumBaj+sumSob, pctTotal=sumTot>0?((sumFuer/sumTot)*100).toFixed(1):null;
+    setText('fp-total-tot', hayDatos?sumTot:'—');
+    setText('fp-total-baj', hayDatos?sumBaj:'—');
+    setText('fp-total-sob', hayDatos?sumSob:'—');
+    setText('fp-total-fuer',hayDatos?sumFuer:'—');
+    setText('fp-total-pct', pctTotal!==null?pctTotal+'%':'—');
+    const aviso=document.getElementById('aviso-ganado-bajo-peso');
+    if(aviso){ const radioSi=document.getElementById('r-ganado-bajo-si'); aviso.style.display=((sumBaj>0||sumSob>0)&&!(radioSi&&radioSi.checked))?'block':'none'; }
 }
 
-function setText(id, val) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = val;
-}
+function setText(id,val){ const el=document.getElementById(id); if(el) el.textContent=val; }
+function numPos(v){ const n=parseFloat(v); return(!isNaN(n)&&n>=0)?n:0; }
+function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function agregarSerie(){ _seriesGanado.push({nombre:''}); renderBloqueGanado(false); }
+function quitarSerie(idx){ if(!confirm('¿Quitar esta serie de todas las tablas?')) return; _seriesGanado.splice(idx,1); renderBloqueGanado(false); }
+function setCelda(idx,campo,valor){ if(_seriesGanado[idx]) _seriesGanado[idx][campo]=valor; }
 
-function numPos(v) {
-    const n = parseFloat(v);
-    return (!isNaN(n) && n >= 0) ? n : 0;
-}
+// ═════════════════════════════════════════════════════════════════════════════
+// ETAPA 3 — INICIALIZACIÓN
+// ═════════════════════════════════════════════════════════════════════════════
 
-function esc(v) {
-    return String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
+function _initSecciones3(cartilla) {
+    const rj = _respuestasJson;
+    _dj      = Object.assign({ evaluacion_realizada:null, fecha_evaluacion:'', cantidad_jurados:'', mas_de_un_jurado:null, observaciones:'', jurados:[] }, rj.desempeno_jurado  || {});
+    _disc    = Object.assign({ hubo_informe:null, situaciones:[] }, rj.disciplina_informe || {});
+    _recinto = Object.assign({}, rj.recinto_deportivo || {});
+    _col     = Object.assign({ no_hubo:false, items:[] }, rj.colleras_invitadas || {});
+    _ree     = Object.assign({ hubo:null, items:[] }, rj.reemplazo_jinetes || {});
 
-// ── Agregar / quitar series ───────────────────────────────────────────────────
-function agregarSerie() {
-    _seriesGanado.push({ nombre:'' });
-    renderBloqueGanado(false);
-}
-
-function quitarSerie(idx) {
-    if (!confirm('¿Quitar esta serie de todas las tablas?')) return;
-    _seriesGanado.splice(idx, 1);
-    renderBloqueGanado(false);
-}
-
-// ── Actualizar celda en memoria ───────────────────────────────────────────────
-function setCelda(idx, campo, valor) {
-    if (!_seriesGanado[idx]) return;
-    _seriesGanado[idx][campo] = valor;
+    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    renderSeccionDesempeno(ya);
+    renderSeccionDisciplina(ya);
+    renderSeccionRecinto(ya);
+    renderSeccionColleras(ya);
+    renderSeccionReemplazo(ya);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RECOLECTAR DATOS (ETAPA 1 + ETAPA 2)
+// SECCIÓN III — DESEMPEÑO DEL JURADO
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionDesempeno(ya) {
+    const cont = document.getElementById('sec-desempeno');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const chk = (campo, val) => _dj[campo] === val ? 'checked' : '';
+
+    let html = `
+    <a class="link-externo" href="https://ferochi.cl/encuesta-informe-de-evaluacion-jurado/" target="_blank" rel="noopener">
+        🔗 Ir a la evaluación en ferochi.cl (Área deportiva → Encuestas → Informe de evaluación)
+    </a>
+    <p style="font-size:13px;color:#555;margin:0 0 14px;">Complete un informe por cada jurado si hubo más de uno. Plazo: 3 días hábiles desde el rodeo.</p>
+
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">¿Evaluación de jurado realizada?</label>
+            <div class="radio-grupo">
+                <label><input type="radio" name="dj_eval" value="si" ${chk('evaluacion_realizada','si')} ${dis} onchange="setCampoDesemp('evaluacion_realizada','si')"> Sí</label>
+                <label><input type="radio" name="dj_eval" value="no" ${chk('evaluacion_realizada','no')} ${dis} onchange="setCampoDesemp('evaluacion_realizada','no')"> No</label>
+            </div>
+        </div>
+        <div>
+            <label class="form-label">Fecha de realización</label>
+            <input type="date" class="form-control" value="${esc(_dj.fecha_evaluacion||'')}" ${ro} oninput="setCampoDesemp('fecha_evaluacion',this.value)">
+        </div>
+    </div>
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">Cantidad de jurados evaluados</label>
+            <input type="number" min="0" class="form-control" value="${esc(_dj.cantidad_jurados||'')}" ${ro} oninput="setCampoDesemp('cantidad_jurados',this.value)" placeholder="Ej: 3">
+        </div>
+        <div>
+            <label class="form-label">¿Hubo más de un jurado?</label>
+            <div class="radio-grupo">
+                <label><input type="radio" name="dj_mas" value="si" ${chk('mas_de_un_jurado','si')} ${dis} onchange="setCampoDesemp('mas_de_un_jurado','si')"> Sí</label>
+                <label><input type="radio" name="dj_mas" value="no" ${chk('mas_de_un_jurado','no')} ${dis} onchange="setCampoDesemp('mas_de_un_jurado','no')"> No</label>
+            </div>
+        </div>
+    </div>
+    <div style="margin-bottom:14px;">
+        <label class="form-label">Observaciones del delegado sobre el desempeño</label>
+        <textarea class="form-control" rows="3" ${ro} oninput="setCampoDesemp('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_dj.observaciones||'')}</textarea>
+    </div>
+    <div class="sec-sub">Lista de jurados evaluados (opcional)</div>
+    <div id="dj-jurados-tabla"></div>
+    ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" style="margin-top:6px;" onclick="agregarJuradoDj()">+ Agregar jurado</button>`}`;
+
+    cont.innerHTML = html;
+    renderTablaJuradosDj(ya);
+}
+
+function renderTablaJuradosDj(ya) {
+    const wrap = document.getElementById('dj-jurados-tabla');
+    if (!wrap) return;
+    if (_dj.jurados.length === 0) {
+        wrap.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin jurados registrados.</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    const opts = (v) => ['Sí','No','N/A'].map(o => `<option ${v===o?'selected':''}>${o}</option>`).join('');
+    let rows = _dj.jurados.map((j,i) => `<tr>
+        <td><input class="inp-din" value="${esc(j.nombre||'')}" ${dis} oninput="setJuradoDj(${i},'nombre',this.value)" placeholder="Nombre completo"></td>
+        <td style="width:90px;"><select class="sel-din" ${dis} onchange="setJuradoDj(${i},'evaluado',this.value)"><option value="">—</option>${opts(j.evaluado)}</select></td>
+        <td><input class="inp-din" value="${esc(j.observacion||'')}" ${dis} oninput="setJuradoDj(${i},'observacion',this.value)" placeholder="Observación"></td>
+        ${ya ? '' : `<td style="width:36px;text-align:center;"><button class="btn-q" onclick="quitarJuradoDj(${i})">✕</button></td>`}
+    </tr>`).join('');
+    wrap.innerHTML = `<div class="tabla-wrap-ganado"><table class="tbl-din">
+        <thead><tr><th>Nombre del jurado</th><th>¿Evaluado?</th><th>Observación</th>${ya?'':'<th></th>'}</tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function setCampoDesemp(campo, valor) { _dj[campo] = valor; }
+function setJuradoDj(idx, campo, valor) { if(_dj.jurados[idx]) _dj.jurados[idx][campo] = valor; }
+function agregarJuradoDj() { _dj.jurados.push({nombre:'',evaluado:'',observacion:''}); renderTablaJuradosDj(false); }
+function quitarJuradoDj(idx) { if(!confirm('¿Quitar este jurado?')) return; _dj.jurados.splice(idx,1); renderTablaJuradosDj(false); }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN IV — DISCIPLINA
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionDisciplina(ya) {
+    const cont = document.getElementById('sec-disciplina');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const chk = (val) => _disc.hubo_informe === val ? 'checked' : '';
+    const huboSi = _disc.hubo_informe === 'si';
+
+    // Verificar si ETAPA 1 ya tiene el radio SI
+    const mostrarAvisoE1 = huboSi && !ya;
+
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 14px;">Si existieron faltas reglamentarias o disciplinarias, describa cada situación indicando los antecedentes del infractor y los hechos.</p>
+    <div style="margin-bottom:12px;">
+        <label class="form-label">¿Hubo informe de disciplina en este rodeo?</label>
+        <div class="radio-grupo">
+            <label><input type="radio" name="disc_hubo" value="si" ${chk('si')} ${dis} onchange="setDiscHubo('si')"> Sí</label>
+            <label><input type="radio" name="disc_hubo" value="no" ${chk('no')} ${dis} onchange="setDiscHubo('no')"> No</label>
+        </div>
+    </div>
+    <div id="disc-aviso-e1" class="aviso-relacion" style="display:${mostrarAvisoE1?'block':'none'};">
+        ⚠ Recuerde marcar "Sí" en "¿Incluye informe disciplinario?" (Sección I) si corresponde.
+    </div>
+    <div id="disc-situaciones-wrap" style="display:${huboSi?'block':'none'};">
+        <div class="sec-sub">Situaciones disciplinarias</div>
+        <div id="disc-situaciones-cont"></div>
+        ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSituacion()">+ Agregar situación</button>`}
+    </div>`;
+
+    renderTablaDisciplina(ya);
+}
+
+function renderTablaDisciplina(ya) {
+    const cont = document.getElementById('disc-situaciones-cont');
+    if (!cont) return;
+    if (_disc.situaciones.length === 0) {
+        cont.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin situaciones registradas. Agregue una situación disciplinaria.</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    cont.innerHTML = _disc.situaciones.map((s,i) => `
+    <div class="sit-card">
+        <div class="sit-card-hdr">
+            Situación N° ${i+1}
+            ${ya ? '' : `<button class="btn-q" onclick="quitarSituacion(${i})">✕ Eliminar</button>`}
+        </div>
+        <div class="sit-card-body">
+            <div class="campo-form-sm">
+                <label>Nombre del infractor</label>
+                <input type="text" value="${esc(s.nombre_infractor||'')}" ${ro} oninput="setSituacion(${i},'nombre_infractor',this.value)" placeholder="Nombre completo">
+            </div>
+            <div class="campo-form-sm">
+                <label>RUT</label>
+                <input type="text" value="${esc(s.rut||'')}" ${ro} oninput="setSituacion(${i},'rut',this.value)" placeholder="Ej: 12.345.678-9">
+            </div>
+            <div class="campo-form-sm">
+                <label>N° de socio</label>
+                <input type="text" value="${esc(s.num_socio||'')}" ${ro} oninput="setSituacion(${i},'num_socio',this.value)" placeholder="N° socio">
+            </div>
+            <div class="campo-form-sm">
+                <label>Tipo de falta</label>
+                <input type="text" value="${esc(s.tipo_falta||'')}" ${ro} oninput="setSituacion(${i},'tipo_falta',this.value)" placeholder="Ej: Reglamentaria">
+            </div>
+            <div class="campo-form-sm">
+                <label>Artículo reglamentario</label>
+                <input type="text" value="${esc(s.articulo||'')}" ${ro} oninput="setSituacion(${i},'articulo',this.value)" placeholder="Ej: Art. 45">
+            </div>
+            <div class="campo-form-sm">
+                <label>Testigos</label>
+                <input type="text" value="${esc(s.testigos||'')}" ${ro} oninput="setSituacion(${i},'testigos',this.value)" placeholder="Nombres de testigos">
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Detalle de los hechos</label>
+                <textarea rows="3" ${ro} oninput="setSituacion(${i},'detalle',this.value)" placeholder="Describa los hechos en detalle...">${esc(s.detalle||'')}</textarea>
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Observaciones / Evidencias</label>
+                <textarea rows="2" ${ro} oninput="setSituacion(${i},'observaciones',this.value)" placeholder="Observaciones, evidencias disponibles (fotos, videos, audios)...">${esc(s.observaciones||'')}</textarea>
+            </div>
+        </div>
+    </div>`).join('');
+}
+
+function setDiscHubo(val) {
+    _disc.hubo_informe = val;
+    const wrap  = document.getElementById('disc-situaciones-wrap');
+    const aviso = document.getElementById('disc-aviso-e1');
+    if (wrap)  wrap.style.display  = val === 'si' ? 'block' : 'none';
+    if (aviso) {
+        const radioSiE1 = document.getElementById('r-disc-e1-si');
+        aviso.style.display = (val === 'si' && !(radioSiE1 && radioSiE1.checked)) ? 'block' : 'none';
+    }
+    renderTablaDisciplina(_estado === 'enviada');
+}
+
+function setSituacion(idx, campo, valor) { if (_disc.situaciones[idx]) _disc.situaciones[idx][campo] = valor; }
+
+function agregarSituacion() {
+    _disc.situaciones.push({ nombre_infractor:'', rut:'', num_socio:'', tipo_falta:'', articulo:'', detalle:'', testigos:'', observaciones:'' });
+    renderTablaDisciplina(false);
+}
+
+function quitarSituacion(idx) {
+    if (!confirm('¿Eliminar esta situación disciplinaria?')) return;
+    _disc.situaciones.splice(idx, 1);
+    renderTablaDisciplina(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN V — RECINTO DEPORTIVO
+// ═════════════════════════════════════════════════════════════════════════════
+
+const ASPECTOS_RECINTO = [
+    {key:'piso',                   label:'Piso'},
+    {key:'riego',                  label:'Riego de la cancha'},
+    {key:'lineas_sentencia',       label:'Líneas de sentencia'},
+    {key:'banderas_salida',        label:'Banderas de salida'},
+    {key:'apinladero',             label:'Apiñadero'},
+    {key:'iluminacion',            label:'Iluminación de la cancha'},
+    {key:'atajadas',               label:'Atajadas'},
+    {key:'toril',                  label:'Toril'},
+    {key:'corrales',               label:'Corrales'},
+    {key:'picadero',               label:'Picadero'},
+    {key:'caseta_jurado',          label:'Caseta del Jurado'},
+    {key:'caseta_filmacion',       label:'Caseta de filmación'},
+    {key:'casinos',                label:'Casinos'},
+    {key:'banhos',                 label:'Baños'},
+    {key:'duchas_petiseros',       label:'Duchas para petiseros'},
+    {key:'graderias',              label:'Graderías'},
+    {key:'accesos_discapacitados', label:'Accesos para discapacitados'},
+    {key:'stands_artesanos',       label:'Stands de artesanos'}
+];
+
+function renderSeccionRecinto(ya) {
+    const cont = document.getElementById('sec-recinto');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const estadoOpts = (k) => ['Bueno','Regular','Malo','No aplica'].map(o =>
+        `<option value="${o}" ${_recinto[k+'_estado']===o?'selected':''}>${o}</option>`).join('');
+
+    const cards = ASPECTOS_RECINTO.map(a => `
+    <div class="aspecto-card">
+        <span class="aspecto-label">${sanitizar(a.label)}</span>
+        <select class="sel-estado" ${dis} onchange="setRecintoField('${a.key}_estado',this.value)">
+            <option value="">— Estado —</option>
+            ${estadoOpts(a.key)}
+        </select>
+        <input class="inp-obs-asp" type="text" value="${esc(_recinto[a.key+'_obs']||'')}" ${ro} oninput="setRecintoField('${a.key}_obs',this.value)" placeholder="Observación (opcional)">
+    </div>`).join('');
+
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 14px;">Describa el estado de cada uno de los aspectos del recinto. Seleccione el estado e indique observaciones si corresponde.</p>
+    <div class="aspectos-grid">${cards}</div>
+    <div style="margin-top:14px;">
+        <label class="form-label">Otros aspectos de la infraestructura deportiva que influyan en el bienestar y seguridad de los corredores</label>
+        <textarea id="recinto-otros" class="form-control" rows="3" ${ro} oninput="setRecintoField('otros',this.value)" placeholder="Describa otros aspectos relevantes...">${esc(_recinto.otros||'')}</textarea>
+    </div>`;
+}
+
+function setRecintoField(key, valor) { _recinto[key] = valor; }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN VI — COLLERAS INVITADAS
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionColleras(ya) {
+    const cont = document.getElementById('sec-colleras');
+    if (!cont) return;
+    const dis     = ya ? 'disabled' : '';
+    const noHubo  = _col.no_hubo === true;
+
+    cont.innerHTML = `
+    <div class="checkbox-item" style="margin-bottom:14px;">
+        <input type="checkbox" id="col-no-hubo" ${noHubo?'checked':''} ${dis} onchange="toggleCollerasNoHubo(this.checked)">
+        <label for="col-no-hubo" style="font-size:14px;">No hubo colleras invitadas en este rodeo</label>
+    </div>
+    <div id="col-tabla-wrap" style="display:${noHubo?'none':'block'};">
+        <div class="tabla-wrap-ganado" id="col-tabla-cont"></div>
+        ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarColleraInvitada()">+ Agregar collera invitada</button>`}
+    </div>`;
+
+    renderTablaCollerasInv(ya);
+}
+
+function renderTablaCollerasInv(ya) {
+    const wrap = document.getElementById('col-tabla-cont');
+    if (!wrap) return;
+    if (_col.items.length === 0) {
+        wrap.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin colleras registradas. Agregue una o marque "No hubo colleras invitadas".</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    let rows = _col.items.map((ci,i) => `<tr>
+        <td><input class="inp-din" value="${esc(ci.jinete1||'')}" ${dis} oninput="setColleraInvitada(${i},'jinete1',this.value)" placeholder="Jinete 1"></td>
+        <td><input class="inp-din" value="${esc(ci.jinete2||'')}" ${dis} oninput="setColleraInvitada(${i},'jinete2',this.value)" placeholder="Jinete 2 (si aplica)"></td>
+        <td><input class="inp-din" value="${esc(ci.club||'')}" ${dis} oninput="setColleraInvitada(${i},'club',this.value)" placeholder="Club"></td>
+        <td><input class="inp-din" value="${esc(ci.asociacion||'')}" ${dis} oninput="setColleraInvitada(${i},'asociacion',this.value)" placeholder="Asociación"></td>
+        <td><input class="inp-din" value="${esc(ci.observaciones||'')}" ${dis} oninput="setColleraInvitada(${i},'observaciones',this.value)" placeholder="Observaciones"></td>
+        ${ya ? '' : `<td style="width:36px;text-align:center;"><button class="btn-q" onclick="quitarColleraInvitada(${i})">✕</button></td>`}
+    </tr>`).join('');
+    wrap.innerHTML = `<table class="tbl-din"><thead><tr>
+        <th>Jinete 1</th><th>Jinete 2</th><th>Club</th><th>Asociación</th><th>Observaciones</th>
+        ${ya?'':'<th></th>'}
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function toggleCollerasNoHubo(checked) {
+    _col.no_hubo = checked;
+    const wrap = document.getElementById('col-tabla-wrap');
+    if (wrap) wrap.style.display = checked ? 'none' : 'block';
+}
+
+function setColleraInvitada(idx, campo, valor) { if (_col.items[idx]) _col.items[idx][campo] = valor; }
+
+function agregarColleraInvitada() {
+    _col.items.push({ jinete1:'', jinete2:'', club:'', asociacion:'', observaciones:'' });
+    renderTablaCollerasInv(false);
+}
+
+function quitarColleraInvitada(idx) {
+    if (!confirm('¿Quitar esta collera invitada?')) return;
+    _col.items.splice(idx, 1);
+    renderTablaCollerasInv(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN VII — REEMPLAZO DE JINETES
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionReemplazo(ya) {
+    const cont = document.getElementById('sec-reemplazo');
+    if (!cont) return;
+    const dis   = ya ? 'disabled' : '';
+    const chk   = (val) => _ree.hubo === val ? 'checked' : '';
+    const huboSi = _ree.hubo === 'si';
+
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 14px;">Informe si hubo reemplazo de jinetes por accidente o fuerza mayor e individualice a los corredores involucrados.</p>
+    <div style="margin-bottom:14px;">
+        <label class="form-label">¿Hubo reemplazo de jinetes durante el Rodeo?</label>
+        <div class="radio-grupo">
+            <label><input type="radio" name="ree_hubo" value="si" ${chk('si')} ${dis} onchange="setReeHubo('si')"> Sí</label>
+            <label><input type="radio" name="ree_hubo" value="no" ${chk('no')} ${dis} onchange="setReeHubo('no')"> No</label>
+        </div>
+    </div>
+    <div id="ree-tabla-wrap" style="display:${huboSi?'block':'none'};">
+        <div class="tabla-wrap-ganado" id="ree-tabla-cont"></div>
+        ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarReemplazo()">+ Agregar reemplazo</button>`}
+    </div>`;
+
+    renderTablaReemplazos(ya);
+}
+
+function renderTablaReemplazos(ya) {
+    const wrap = document.getElementById('ree-tabla-cont');
+    if (!wrap) return;
+    if (_ree.items.length === 0) {
+        wrap.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin reemplazos registrados.</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    const motivos = ['Accidente','Fuerza mayor','Otro'];
+    const optsMotivo = (v) => motivos.map(m => `<option value="${m}" ${v===m?'selected':''}>${m}</option>`).join('');
+    let rows = _ree.items.map((re,i) => `<tr>
+        <td><input class="inp-din" value="${esc(re.nombre_reemplazado||'')}" ${dis} oninput="setReemplazo(${i},'nombre_reemplazado',this.value)" placeholder="Nombre"></td>
+        <td><input class="inp-din" value="${esc(re.rut_reemplazado||'')}" ${dis} oninput="setReemplazo(${i},'rut_reemplazado',this.value)" placeholder="RUT/N° socio"></td>
+        <td><input class="inp-din" value="${esc(re.nombre_reemplazante||'')}" ${dis} oninput="setReemplazo(${i},'nombre_reemplazante',this.value)" placeholder="Nombre"></td>
+        <td><input class="inp-din" value="${esc(re.rut_reemplazante||'')}" ${dis} oninput="setReemplazo(${i},'rut_reemplazante',this.value)" placeholder="RUT/N° socio"></td>
+        <td style="min-width:110px;"><select class="sel-din" ${dis} onchange="setReemplazo(${i},'motivo',this.value)"><option value="">— Motivo —</option>${optsMotivo(re.motivo)}</select></td>
+        <td><input class="inp-din" value="${esc(re.serie||'')}" ${dis} oninput="setReemplazo(${i},'serie',this.value)" placeholder="Serie/instancia"></td>
+        <td><input class="inp-din" value="${esc(re.detalle||'')}" ${dis} oninput="setReemplazo(${i},'detalle',this.value)" placeholder="Detalle del motivo"></td>
+        <td><input class="inp-din" value="${esc(re.observaciones||'')}" ${dis} oninput="setReemplazo(${i},'observaciones',this.value)" placeholder="Obs."></td>
+        ${ya ? '' : `<td style="width:36px;text-align:center;"><button class="btn-q" onclick="quitarReemplazo(${i})">✕</button></td>`}
+    </tr>`).join('');
+    wrap.innerHTML = `<table class="tbl-din"><thead><tr>
+        <th>Reemplazado</th><th>RUT/Socio</th><th>Reemplazante</th><th>RUT/Socio</th>
+        <th>Motivo</th><th>Serie</th><th>Detalle</th><th>Observaciones</th>
+        ${ya?'':'<th></th>'}
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function setReeHubo(val) {
+    _ree.hubo = val;
+    const wrap = document.getElementById('ree-tabla-wrap');
+    if (wrap) wrap.style.display = val === 'si' ? 'block' : 'none';
+    renderTablaReemplazos(_estado === 'enviada');
+}
+
+function setReemplazo(idx, campo, valor) { if (_ree.items[idx]) _ree.items[idx][campo] = valor; }
+
+function agregarReemplazo() {
+    _ree.items.push({ nombre_reemplazado:'', rut_reemplazado:'', nombre_reemplazante:'', rut_reemplazante:'', motivo:'', serie:'', detalle:'', observaciones:'' });
+    renderTablaReemplazos(false);
+}
+
+function quitarReemplazo(idx) {
+    if (!confirm('¿Eliminar este reemplazo?')) return;
+    _ree.items.splice(idx, 1);
+    renderTablaReemplazos(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ETAPA 4 — INICIALIZACIÓN
+// ═════════════════════════════════════════════════════════════════════════════
+
+function _initSecciones4(cartilla) {
+    const rj = _respuestasJson;
+    _acc  = Object.assign({
+        hubo_accidentes: null, reviso_protocolo: null,
+        medico_nombre: '', medico_email: '', medico_telefono: '',
+        observaciones_generales: '', items: []
+    }, rj.accidentes_informe  || {});
+    _ba   = Object.assign({
+        sombra_ganado: null, sombra_equinos: null,
+        agua_ganado: null,   agua_equinos: null,
+        comida_ganado: null, comida_equinos: null,
+        hubo_lesiones_equinos: null, hubo_lesiones_bovinos: null,
+        observaciones: '', detalle_lesiones: ''
+    }, rj.bienestar_animal     || {});
+    _vet  = Object.assign({
+        nombre: '', telefono: '', correo: '',
+        preparacion: '', especifica_tecnico: '', especifica_otro: '',
+        sombra_ganado: null, sombra_equinos: null,
+        agua_ganado: null,   agua_equinos: null,
+        comida_ganado: null, comida_equinos: null,
+        observaciones: ''
+    }, rj.informe_veterinario  || {});
+    _recs = Object.assign({
+        hubo_reclamos: null, sugerencias: '',
+        observaciones_generales: '', items: []
+    }, rj.reclamos_sugerencias || {});
+
+    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    renderSeccionAccidentes(ya);
+    renderSeccionBienestar(ya);
+    renderSeccionVeterinario(ya);
+    renderSeccionReclamos(ya);
+    renderSeccionAdjuntos(ya);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN VIII — ACCIDENTES
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionAccidentes(ya) {
+    const cont = document.getElementById('sec-accidentes');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const chk = (campo, val) => _acc[campo] === val ? 'checked' : '';
+    const huboSi = _acc.hubo_accidentes === 'si';
+
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 14px;">Debe informar todos los casos, ya sean leves o graves. Se recuerda que previo al inicio del Rodeo, el delegado debe revisar el protocolo de rescate en presencia del Presidente del Club y del médico o personal de salud del evento.</p>
+
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">¿Hubo accidentes en este Rodeo?</label>
+            <div class="radio-grupo">
+                <label><input type="radio" name="acc_hubo" value="si" ${chk('hubo_accidentes','si')} ${dis} onchange="setAccCampo('hubo_accidentes','si');toggleAccTabla()"> Sí</label>
+                <label><input type="radio" name="acc_hubo" value="no" ${chk('hubo_accidentes','no')} ${dis} onchange="setAccCampo('hubo_accidentes','no');toggleAccTabla()"> No</label>
+            </div>
+        </div>
+        <div>
+            <label class="form-label">¿Se revisó protocolo de rescate antes del rodeo?</label>
+            <div class="radio-grupo">
+                <label><input type="radio" name="acc_prot" value="si" ${chk('reviso_protocolo','si')} ${dis} onchange="setAccCampo('reviso_protocolo','si')"> Sí</label>
+                <label><input type="radio" name="acc_prot" value="no" ${chk('reviso_protocolo','no')} ${dis} onchange="setAccCampo('reviso_protocolo','no')"> No</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="sec-sub">Médico o paramédico del evento</div>
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">Nombre</label>
+            <input type="text" class="form-control" value="${esc(_acc.medico_nombre||'')}" ${ro} oninput="setAccCampo('medico_nombre',this.value)" placeholder="Nombre completo">
+        </div>
+        <div>
+            <label class="form-label">Teléfono</label>
+            <input type="tel" class="form-control" value="${esc(_acc.medico_telefono||'')}" ${ro} oninput="setAccCampo('medico_telefono',this.value)" placeholder="+56 9 ...">
+        </div>
+    </div>
+    <div style="margin-bottom:12px;">
+        <label class="form-label">Correo</label>
+        <input type="email" class="form-control" value="${esc(_acc.medico_email||'')}" ${ro} oninput="setAccCampo('medico_email',this.value)" placeholder="correo@ejemplo.cl">
+    </div>
+    <div style="margin-bottom:14px;">
+        <label class="form-label">Observaciones generales</label>
+        <textarea class="form-control" rows="3" ${ro} oninput="setAccCampo('observaciones_generales',this.value)" placeholder="Observaciones generales...">${esc(_acc.observaciones_generales||'')}</textarea>
+    </div>
+
+    <div id="acc-tabla-wrap" style="display:${huboSi?'block':'none'};">
+        <div class="sec-sub">Accidentes registrados</div>
+        <div id="acc-items-cont"></div>
+        ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarAccidente()">+ Agregar accidente</button>`}
+    </div>`;
+
+    renderAccidentesItems(ya);
+}
+
+function renderAccidentesItems(ya) {
+    const cont = document.getElementById('acc-items-cont');
+    if (!cont) return;
+    if (!_acc.items || _acc.items.length === 0) {
+        cont.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin accidentes registrados. Agregue uno con el botón de abajo.</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const optsT = (v) => ['Leve','Grave','Otro'].map(t => `<option value="${t}" ${v===t?'selected':''}>${t}</option>`).join('');
+    const optsC = (v) => ['Jinete','Petisero','Público','Personal','Otro'].map(c => `<option value="${c}" ${v===c?'selected':''}>${c}</option>`).join('');
+
+    cont.innerHTML = _acc.items.map(function(a,i){ return `
+    <div class="sit-card" style="margin-bottom:10px;">
+        <div class="sit-card-hdr">
+            Accidente N° ${i+1}
+            ${ya ? '' : `<button class="btn-q" onclick="quitarAccidente(${i})">✕ Eliminar</button>`}
+        </div>
+        <div class="sit-card-body">
+            <div class="campo-form-sm">
+                <label>Tipo</label>
+                <select ${dis} onchange="setAccItem(${i},'tipo',this.value)"><option value="">—</option>${optsT(a.tipo)}</select>
+            </div>
+            <div class="campo-form-sm">
+                <label>Fecha y hora aproximada</label>
+                <input type="datetime-local" value="${esc(a.fecha_hora||'')}" ${ro} oninput="setAccItem(${i},'fecha_hora',this.value)">
+            </div>
+            <div class="campo-form-sm">
+                <label>Persona involucrada</label>
+                <input type="text" value="${esc(a.persona||'')}" ${ro} oninput="setAccItem(${i},'persona',this.value)" placeholder="Nombre">
+            </div>
+            <div class="campo-form-sm">
+                <label>RUT o N° de socio</label>
+                <input type="text" value="${esc(a.rut||'')}" ${ro} oninput="setAccItem(${i},'rut',this.value)" placeholder="Si se conoce">
+            </div>
+            <div class="campo-form-sm">
+                <label>Categoría</label>
+                <select ${dis} onchange="setAccItem(${i},'categoria',this.value)"><option value="">—</option>${optsC(a.categoria)}</select>
+            </div>
+            <div class="campo-form-sm">
+                <label>¿Derivado a centro asistencial?</label>
+                <div class="radio-grupo" style="margin-top:4px;">
+                    <label><input type="radio" name="acc_der_${i}" value="si" ${a.derivado==='si'?'checked':''} ${dis} onchange="setAccItem(${i},'derivado','si');toggleCentro(${i})"> Sí</label>
+                    <label><input type="radio" name="acc_der_${i}" value="no" ${a.derivado==='no'?'checked':''} ${dis} onchange="setAccItem(${i},'derivado','no');toggleCentro(${i})"> No</label>
+                </div>
+            </div>
+            <div class="campo-form-sm sit-card-full" id="acc-centro-${i}" style="display:${a.derivado==='si'?'block':'none'};">
+                <label>Nombre del centro asistencial</label>
+                <input type="text" value="${esc(a.centro_asistencial||'')}" ${ro} oninput="setAccItem(${i},'centro_asistencial',this.value)" placeholder="Hospital, clínica, etc.">
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Descripción del accidente</label>
+                <textarea rows="2" ${ro} oninput="setAccItem(${i},'descripcion',this.value)">${esc(a.descripcion||'')}</textarea>
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Atención realizada</label>
+                <textarea rows="2" ${ro} oninput="setAccItem(${i},'atencion',this.value)">${esc(a.atencion||'')}</textarea>
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Observaciones</label>
+                <textarea rows="2" ${ro} oninput="setAccItem(${i},'observaciones',this.value)">${esc(a.observaciones||'')}</textarea>
+            </div>
+        </div>
+    </div>`; }).join('');
+}
+
+function toggleAccTabla() {
+    const w = document.getElementById('acc-tabla-wrap');
+    if (w) w.style.display = _acc.hubo_accidentes === 'si' ? 'block' : 'none';
+}
+
+function toggleCentro(idx) {
+    const w = document.getElementById('acc-centro-' + idx);
+    if (w) w.style.display = (_acc.items[idx] && _acc.items[idx].derivado === 'si') ? 'block' : 'none';
+}
+
+function setAccCampo(campo, valor) { _acc[campo] = valor; }
+function setAccItem(idx, campo, valor) { if (_acc.items[idx]) _acc.items[idx][campo] = valor; }
+
+function agregarAccidente() {
+    _acc.items.push({ tipo:'', fecha_hora:'', persona:'', rut:'', categoria:'', derivado:'', centro_asistencial:'', descripcion:'', atencion:'', observaciones:'' });
+    renderAccidentesItems(false);
+}
+
+function quitarAccidente(idx) {
+    if (!confirm('¿Eliminar este accidente?')) return;
+    _acc.items.splice(idx, 1);
+    renderAccidentesItems(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN IX — BIENESTAR ANIMAL
+// ═════════════════════════════════════════════════════════════════════════════
+
+const BA_CAMPOS = [
+    { key:'sombra_ganado',  label:'Sombra para ganado en corrales' },
+    { key:'sombra_equinos', label:'Sombra para equinos' },
+    { key:'agua_ganado',    label:'Agua para ganado en corrales' },
+    { key:'agua_equinos',   label:'Agua para equinos' },
+    { key:'comida_ganado',  label:'Comida para ganado' },
+    { key:'comida_equinos', label:'Comida para equinos' },
+];
+
+function renderSeccionBienestar(ya) {
+    const cont = document.getElementById('sec-bienestar');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const chkBA = (campo, val) => _ba[campo] === val ? 'checked' : '';
+
+    const filasSiNo = BA_CAMPOS.map(function(f) { return `
+    <tr>
+        <td style="padding:7px 10px;font-size:13px;border:1px solid #e0e8f5;">${sanitizar(f.label)}</td>
+        <td style="padding:7px 10px;border:1px solid #e0e8f5;text-align:center;">
+            <div class="radio-grupo" style="justify-content:center;gap:12px;">
+                <label><input type="radio" name="ba_${f.key}" value="si" ${chkBA(f.key,'si')} ${dis} onchange="setBaCampo('${f.key}','si')"> Sí</label>
+                <label><input type="radio" name="ba_${f.key}" value="no" ${chkBA(f.key,'no')} ${dis} onchange="setBaCampo('${f.key}','no')"> No</label>
+            </div>
+        </td>
+    </tr>`; }).join('');
+
+    const huboLesEq = _ba.hubo_lesiones_equinos === 'si';
+    const huboLesBo = _ba.hubo_lesiones_bovinos === 'si';
+
+    cont.innerHTML = `
+    <div style="overflow-x:auto;margin-bottom:14px;">
+        <table style="border-collapse:collapse;width:100%;">
+            <thead><tr>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Condición de bienestar</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:170px;">¿El recinto cuenta con esto?</th>
+            </tr></thead>
+            <tbody>${filasSiNo}</tbody>
+        </table>
+    </div>
+
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">¿Hubo lesiones en equinos?</label>
+            <div class="radio-grupo">
+                <label><input type="radio" name="ba_les_eq" value="si" ${chkBA('hubo_lesiones_equinos','si')} ${dis} onchange="setBaCampo('hubo_lesiones_equinos','si');toggleBaDetalle()"> Sí</label>
+                <label><input type="radio" name="ba_les_eq" value="no" ${chkBA('hubo_lesiones_equinos','no')} ${dis} onchange="setBaCampo('hubo_lesiones_equinos','no');toggleBaDetalle()"> No</label>
+            </div>
+        </div>
+        <div>
+            <label class="form-label">¿Hubo lesiones en bovinos?</label>
+            <div class="radio-grupo">
+                <label><input type="radio" name="ba_les_bo" value="si" ${chkBA('hubo_lesiones_bovinos','si')} ${dis} onchange="setBaCampo('hubo_lesiones_bovinos','si');toggleBaDetalle()"> Sí</label>
+                <label><input type="radio" name="ba_les_bo" value="no" ${chkBA('hubo_lesiones_bovinos','no')} ${dis} onchange="setBaCampo('hubo_lesiones_bovinos','no');toggleBaDetalle()"> No</label>
+            </div>
+        </div>
+    </div>
+
+    <div id="ba-detalle-wrap" style="display:${(huboLesEq||huboLesBo)?'block':'none'};margin-bottom:12px;">
+        <label class="form-label">Detalle de lesiones (tipo de animal, descripción, atención realizada)</label>
+        <textarea class="form-control" rows="4" ${ro} oninput="setBaCampo('detalle_lesiones',this.value)" placeholder="Describa las lesiones, tipo de animal y atención realizada...">${esc(_ba.detalle_lesiones||'')}</textarea>
+    </div>
+
+    <div>
+        <label class="form-label">Observaciones bienestar animal</label>
+        <textarea class="form-control" rows="3" ${ro} oninput="setBaCampo('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_ba.observaciones||'')}</textarea>
+    </div>`;
+}
+
+function toggleBaDetalle() {
+    const w = document.getElementById('ba-detalle-wrap');
+    if (w) w.style.display = (_ba.hubo_lesiones_equinos === 'si' || _ba.hubo_lesiones_bovinos === 'si') ? 'block' : 'none';
+}
+
+function setBaCampo(campo, valor) { _ba[campo] = valor; }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN X — VETERINARIO
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionVeterinario(ya) {
+    const cont = document.getElementById('sec-veterinario');
+    if (!cont) return;
+    const dis  = ya ? 'disabled' : '';
+    const ro   = ya ? 'readonly' : '';
+    const chkV = (campo, val) => _vet[campo] === val ? 'checked' : '';
+    const prep = _vet.preparacion || '';
+
+    const filasSiNo = BA_CAMPOS.map(function(f) { return `
+    <tr>
+        <td style="padding:7px 10px;font-size:13px;border:1px solid #e0e8f5;">${sanitizar(f.label)}</td>
+        <td style="padding:7px 10px;border:1px solid #e0e8f5;text-align:center;">
+            <div class="radio-grupo" style="justify-content:center;gap:12px;">
+                <label><input type="radio" name="vet_${f.key}" value="si" ${chkV(f.key,'si')} ${dis} onchange="setVetCampo('${f.key}','si')"> Sí</label>
+                <label><input type="radio" name="vet_${f.key}" value="no" ${chkV(f.key,'no')} ${dis} onchange="setVetCampo('${f.key}','no')"> No</label>
+            </div>
+        </td>
+    </tr>`; }).join('');
+
+    cont.innerHTML = `
+    <div class="sec-sub">Datos del veterinario o personal a cargo</div>
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">Nombre</label>
+            <input type="text" class="form-control" value="${esc(_vet.nombre||'')}" ${ro} oninput="setVetCampo('nombre',this.value)" placeholder="Nombre completo">
+        </div>
+        <div>
+            <label class="form-label">Teléfono</label>
+            <input type="tel" class="form-control" value="${esc(_vet.telefono||'')}" ${ro} oninput="setVetCampo('telefono',this.value)" placeholder="+56 9 ...">
+        </div>
+    </div>
+    <div style="margin-bottom:14px;">
+        <label class="form-label">Correo (opcional)</label>
+        <input type="email" class="form-control" value="${esc(_vet.correo||'')}" ${ro} oninput="setVetCampo('correo',this.value)" placeholder="correo@ejemplo.cl">
+    </div>
+
+    <div class="sec-sub">Preparación del personal</div>
+    <div style="margin-bottom:10px;">
+        <label class="form-label">Tipo de preparación</label>
+        <select class="form-control" ${dis} onchange="setVetPrep(this.value)" id="vet-prep-sel">
+            <option value="">— Seleccione —</option>
+            <option value="veterinario" ${prep==='veterinario'?'selected':''}>Veterinario</option>
+            <option value="tecnico"     ${prep==='tecnico'    ?'selected':''}>Técnico</option>
+            <option value="otro"        ${prep==='otro'       ?'selected':''}>Otro</option>
+        </select>
+    </div>
+    <div id="vet-tec-w" style="display:${prep==='tecnico'?'block':'none'};margin-bottom:10px;">
+        <label class="form-label">Especifique técnico</label>
+        <input type="text" class="form-control" value="${esc(_vet.especifica_tecnico||'')}" ${ro} oninput="setVetCampo('especifica_tecnico',this.value)" placeholder="Ej: Técnico veterinario, Paramédico">
+    </div>
+    <div id="vet-otro-w" style="display:${prep==='otro'?'block':'none'};margin-bottom:10px;">
+        <label class="form-label">Especifique otro</label>
+        <input type="text" class="form-control" value="${esc(_vet.especifica_otro||'')}" ${ro} oninput="setVetCampo('especifica_otro',this.value)" placeholder="Especifique qué tipo de personal">
+    </div>
+
+    <div class="sec-sub">Verificación condiciones de bienestar animal (por veterinario)</div>
+    <div style="overflow-x:auto;margin-bottom:14px;">
+        <table style="border-collapse:collapse;width:100%;">
+            <thead><tr>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Condición de bienestar</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:170px;">¿El recinto cuenta con esto?</th>
+            </tr></thead>
+            <tbody>${filasSiNo}</tbody>
+        </table>
+    </div>
+
+    <div>
+        <label class="form-label">Observaciones del veterinario (señalar si hubo lesiones en equinos o bovinos)</label>
+        <textarea class="form-control" rows="4" ${ro} oninput="setVetCampo('observaciones',this.value)" placeholder="Observaciones del veterinario, incluyendo lesiones detectadas...">${esc(_vet.observaciones||'')}</textarea>
+    </div>`;
+}
+
+function setVetPrep(val) {
+    _vet.preparacion = val;
+    const wT = document.getElementById('vet-tec-w');
+    const wO = document.getElementById('vet-otro-w');
+    if (wT) wT.style.display = val === 'tecnico' ? 'block' : 'none';
+    if (wO) wO.style.display = val === 'otro'    ? 'block' : 'none';
+}
+
+function setVetCampo(campo, valor) { _vet[campo] = valor; }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN XI — RECLAMOS O SUGERENCIAS
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionReclamos(ya) {
+    const cont = document.getElementById('sec-reclamos');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const chk = (val) => _recs.hubo_reclamos === val ? 'checked' : '';
+    const huboSi = _recs.hubo_reclamos === 'si';
+
+    cont.innerHTML = `
+    <div style="margin-bottom:14px;">
+        <label class="form-label">¿Hubo reclamos en este Rodeo?</label>
+        <div class="radio-grupo">
+            <label><input type="radio" name="recs_hubo" value="si" ${chk('si')} ${dis} onchange="setRecsCampo('hubo_reclamos','si');toggleRecsTabla()"> Sí</label>
+            <label><input type="radio" name="recs_hubo" value="no" ${chk('no')} ${dis} onchange="setRecsCampo('hubo_reclamos','no');toggleRecsTabla()"> No</label>
+        </div>
+    </div>
+
+    <div id="recs-tabla-wrap" style="display:${huboSi?'block':'none'};">
+        <div class="sec-sub">Reclamos recibidos</div>
+        <div id="recs-items-cont"></div>
+        ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarReclamo()">+ Agregar reclamo</button>`}
+    </div>
+
+    <div style="margin-top:14px;margin-bottom:12px;">
+        <label class="form-label">Sugerencias del delegado</label>
+        <textarea class="form-control" rows="3" ${ro} oninput="setRecsCampo('sugerencias',this.value)" placeholder="Sugerencias para mejorar la organización del rodeo...">${esc(_recs.sugerencias||'')}</textarea>
+    </div>
+    <div>
+        <label class="form-label">Observaciones generales</label>
+        <textarea class="form-control" rows="3" ${ro} oninput="setRecsCampo('observaciones_generales',this.value)" placeholder="Observaciones generales del delegado...">${esc(_recs.observaciones_generales||'')}</textarea>
+    </div>`;
+
+    renderReclamosItems(ya);
+}
+
+function renderReclamosItems(ya) {
+    const cont = document.getElementById('recs-items-cont');
+    if (!cont) return;
+    if (!_recs.items || _recs.items.length === 0) {
+        cont.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin reclamos registrados.</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const optsT = (v) => ['Reglamentario','Conducta','Instalaciones','Organización','Otro'].map(t =>
+        `<option value="${t}" ${v===t?'selected':''}>${t}</option>`).join('');
+
+    cont.innerHTML = _recs.items.map(function(r,i){ return `
+    <div class="sit-card" style="margin-bottom:10px;">
+        <div class="sit-card-hdr">
+            Reclamo N° ${i+1}
+            ${ya ? '' : `<button class="btn-q" onclick="quitarReclamo(${i})">✕ Eliminar</button>`}
+        </div>
+        <div class="sit-card-body">
+            <div class="campo-form-sm">
+                <label>Nombre de quien reclama</label>
+                <input type="text" value="${esc(r.nombre||'')}" ${ro} oninput="setReclamoItem(${i},'nombre',this.value)" placeholder="Si se conoce">
+            </div>
+            <div class="campo-form-sm">
+                <label>RUT o N° de socio</label>
+                <input type="text" value="${esc(r.rut||'')}" ${ro} oninput="setReclamoItem(${i},'rut',this.value)" placeholder="Si se conoce">
+            </div>
+            <div class="campo-form-sm">
+                <label>Tipo de reclamo</label>
+                <select ${dis} onchange="setReclamoItem(${i},'tipo',this.value)"><option value="">—</option>${optsT(r.tipo)}</select>
+            </div>
+            <div class="campo-form-sm">
+                <label>Respuesta entregada</label>
+                <input type="text" value="${esc(r.respuesta||'')}" ${ro} oninput="setReclamoItem(${i},'respuesta',this.value)" placeholder="Respuesta al momento">
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Detalle del reclamo</label>
+                <textarea rows="2" ${ro} oninput="setReclamoItem(${i},'detalle',this.value)">${esc(r.detalle||'')}</textarea>
+            </div>
+            <div class="campo-form-sm sit-card-full">
+                <label>Observaciones / Evidencias</label>
+                <textarea rows="2" ${ro} oninput="setReclamoItem(${i},'observaciones',this.value)">${esc(r.observaciones||'')}</textarea>
+            </div>
+        </div>
+    </div>`; }).join('');
+}
+
+function toggleRecsTabla() {
+    const w = document.getElementById('recs-tabla-wrap');
+    if (w) w.style.display = _recs.hubo_reclamos === 'si' ? 'block' : 'none';
+    renderReclamosItems(_estado === 'enviada');
+}
+
+function setRecsCampo(campo, valor) { _recs[campo] = valor; }
+function setReclamoItem(idx, campo, valor) { if (_recs.items[idx]) _recs.items[idx][campo] = valor; }
+
+function agregarReclamo() {
+    _recs.items.push({ nombre:'', rut:'', tipo:'', detalle:'', respuesta:'', observaciones:'' });
+    renderReclamosItems(false);
+}
+
+function quitarReclamo(idx) {
+    if (!confirm('¿Eliminar este reclamo?')) return;
+    _recs.items.splice(idx, 1);
+    renderReclamosItems(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ADJUNTOS DE LA CARTILLA (ETAPA 4) — reutiliza rodeo_adjuntos + /api/usuario/adjuntos
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionAdjuntos(ya) {
+    const cont = document.getElementById('sec-adjuntos-cd');
+    if (!cont) return;
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 10px;">Adjunte documentos, fotos u otros respaldos relacionados con esta cartilla.</p>
+    <p style="font-size:12px;color:#888;margin:0 0 12px;">Tipos permitidos: PDF, Word, JPG, PNG, WebP — máximo 20 MB por archivo.</p>
+    ${!ya ? `
+    <div style="padding:12px 14px;background:#f7f9fc;border:1px solid #e0e8f5;border-radius:8px;margin-bottom:14px;">
+        <div class="campo-grid" style="margin-bottom:10px;">
+            <div>
+                <label class="form-label">Archivo</label>
+                <input type="file" id="adj-cd-file" class="form-control" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp">
+            </div>
+            <div>
+                <label class="form-label">Descripción (opcional)</label>
+                <input type="text" id="adj-cd-desc" class="form-control" placeholder="Ej: Informe disciplinario firmado">
+            </div>
+        </div>
+        <button class="btn btn-secundario btn-pequeño" onclick="subirAdjuntoCd()">Subir adjunto</button>
+        <span id="adj-cd-subiendo" style="display:none;font-size:12px;color:#555;margin-left:10px;">Subiendo...</span>
+    </div>` : ''}
+    <div id="adj-cd-lista"><p style="font-size:13px;color:#888;font-style:italic;">Cargando adjuntos...</p></div>`;
+    cargarAdjuntosCd();
+}
+
+async function cargarAdjuntosCd() {
+    const cont = document.getElementById('adj-cd-lista');
+    if (!cont) return;
+    try {
+        const lista = await api.get(`/usuario/adjuntos?rodeo_id=${RODEO_ID}`);
+        const propios = (lista || []).filter(function(a){ return a.tipo_adjunto === 'cartilla_delegado'; });
+        if (propios.length === 0) {
+            cont.innerHTML = '<p style="font-size:13px;color:#888;font-style:italic;">Sin adjuntos subidos aún.</p>';
+            return;
+        }
+        const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+        cont.innerHTML = '<div style="border:1px solid #e0e8f5;border-radius:6px;padding:0 12px;">' +
+            propios.map(function(a) {
+                const ico = a.mime_type && a.mime_type.startsWith('image/') ? '🖼️' : '📄';
+                const tam = a.tamano_bytes ? (a.tamano_bytes / 1024).toFixed(0) + ' KB' : '';
+                return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0;flex-wrap:wrap;">
+                    <span style="font-size:20px;">${ico}</span>
+                    <div style="flex:1;min-width:100px;">
+                        <div style="font-size:13px;font-weight:600;">${sanitizar(a.nombre_archivo)}</div>
+                        ${tam ? `<div style="font-size:11px;color:#888;">${tam}</div>` : ''}
+                    </div>
+                    <button class="btn btn-pequeño btn-outline" onclick="verAdjuntoCd('${a.id}')">Ver / Descargar</button>
+                    ${!ya ? `<button class="btn btn-pequeño" style="background:#fdecea;color:#c0392b;border:1px solid #f5c6cb;" onclick="eliminarAdjuntoCd('${a.id}')">Eliminar</button>` : ''}
+                </div>`;
+            }).join('') + '</div>';
+    } catch(e) {
+        const es403 = e.status === 403 || (e.message && e.message.includes('Sin asignación'));
+        cont.innerHTML = es403
+            ? '<p style="font-size:13px;color:#888;font-style:italic;">No se pueden cargar adjuntos para esta cartilla.</p>'
+            : `<p style="font-size:13px;color:#c0392b;">Error al cargar adjuntos: ${sanitizar(e.message)}</p>`;
+    }
+}
+
+async function subirAdjuntoCd() {
+    const fileInput = document.getElementById('adj-cd-file');
+    const descInput = document.getElementById('adj-cd-desc');
+    const spn       = document.getElementById('adj-cd-subiendo');
+    if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+        mostrarToast('Seleccione un archivo primero', 'advertencia');
+        return;
+    }
+    if (!_cartillaId) {
+        mostrarToast('Guarde el borrador primero antes de adjuntar archivos', 'advertencia');
+        return;
+    }
+    const fd = new FormData();
+    fd.append('archivo',      fileInput.files[0]);
+    fd.append('rodeo_id',     RODEO_ID);
+    fd.append('tipo_adjunto', 'cartilla_delegado');
+    if (descInput && descInput.value.trim()) fd.append('descripcion', descInput.value.trim());
+
+    if (spn) spn.style.display = 'inline';
+    try {
+        await api.upload('/usuario/adjuntos', fd);
+        mostrarToast('Archivo subido correctamente', 'exito');
+        fileInput.value = '';
+        if (descInput) descInput.value = '';
+        cargarAdjuntosCd();
+    } catch(e) {
+        mostrarToast(e.message || 'Error al subir archivo', 'error');
+    } finally {
+        if (spn) spn.style.display = 'none';
+    }
+}
+
+async function verAdjuntoCd(id) {
+    try {
+        const r = await api.get(`/usuario/adjuntos/${id}/url`);
+        window.open(r.url, '_blank');
+    } catch(e) {
+        mostrarToast(e.message || 'Error al obtener URL', 'error');
+    }
+}
+
+async function eliminarAdjuntoCd(id) {
+    if (!confirm('¿Eliminar este adjunto? Esta acción no se puede deshacer.')) return;
+    try {
+        await api.delete(`/usuario/adjuntos/${id}`);
+        mostrarToast('Adjunto eliminado', 'exito');
+        cargarAdjuntosCd();
+    } catch(e) {
+        mostrarToast(e.message || 'Error al eliminar', 'error');
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RECOLECTAR DATOS (ETAPA 1 + 2 + 3)
 // ═════════════════════════════════════════════════════════════════════════════
 function recolectarDatos() {
     const radio = (name) => {
@@ -636,23 +1647,31 @@ function recolectarDatos() {
         if (!sel) return null;
         return sel.value === 'si';
     };
-    // Combina respuestas_json existente con los datos actuales de ganado
     const respuestasActualizadas = Object.assign({}, _respuestasJson, {
-        ganado_series: _seriesGanado
+        ganado_series:        _seriesGanado,
+        desempeno_jurado:     _dj,
+        disciplina_informe:   _disc,
+        recinto_deportivo:    _recinto,
+        colleras_invitadas:   _col,
+        reemplazo_jinetes:    _ree,
+        accidentes_informe:   _acc,
+        bienestar_animal:     _ba,
+        informe_veterinario:  _vet,
+        reclamos_sugerencias: _recs
     });
     return {
-        temporada:                       document.getElementById('f-temporada')?.value.trim() || null,
-        fecha_rodeo:                     document.getElementById('f-fecha_rodeo')?.value || null,
-        delegado_nombre:                 document.getElementById('f-delegado_nombre')?.value.trim() || null,
-        delegado_telefono:               document.getElementById('f-delegado_telefono')?.value.trim() || null,
-        secretario_jurado:               document.getElementById('f-secretario_jurado')?.value.trim() || null,
-        secretario_numero_socio:         document.getElementById('f-secretario_numero_socio')?.value.trim() || null,
-        club_asociacion_organizador:     document.getElementById('f-club_asociacion_organizador')?.value.trim() || null,
-        tipo_rodeo:                      document.getElementById('f-tipo_rodeo')?.value.trim() || null,
-        publico_serie_campeones:         document.getElementById('f-publico_serie_campeones')?.value ? parseInt(document.getElementById('f-publico_serie_campeones').value) : null,
-        serie_campeones_dos_vueltas:     radio('serie_campeones_dos_vueltas'),
-        incluye_informe_disciplinario:   radio('incluye_informe_disciplinario'),
-        incluye_informe_ganado_bajo_peso: radio('incluye_informe_ganado_bajo_peso'),
+        temporada:                           document.getElementById('f-temporada')?.value.trim() || null,
+        fecha_rodeo:                         document.getElementById('f-fecha_rodeo')?.value || null,
+        delegado_nombre:                     document.getElementById('f-delegado_nombre')?.value.trim() || null,
+        delegado_telefono:                   document.getElementById('f-delegado_telefono')?.value.trim() || null,
+        secretario_jurado:                   document.getElementById('f-secretario_jurado')?.value.trim() || null,
+        secretario_numero_socio:             document.getElementById('f-secretario_numero_socio')?.value.trim() || null,
+        club_asociacion_organizador:         document.getElementById('f-club_asociacion_organizador')?.value.trim() || null,
+        tipo_rodeo:                          document.getElementById('f-tipo_rodeo')?.value.trim() || null,
+        publico_serie_campeones:             document.getElementById('f-publico_serie_campeones')?.value ? parseInt(document.getElementById('f-publico_serie_campeones').value) : null,
+        serie_campeones_dos_vueltas:         radio('serie_campeones_dos_vueltas'),
+        incluye_informe_disciplinario:       radio('incluye_informe_disciplinario'),
+        incluye_informe_ganado_bajo_peso:    radio('incluye_informe_ganado_bajo_peso'),
         certificacion_medialuna_comuna:      document.getElementById('f-cert_medialuna')?.checked   ?? false,
         certificacion_mas_200_personas:      document.getElementById('f-cert_200')?.checked         ?? false,
         certificacion_mas_250_personas:      document.getElementById('f-cert_250')?.checked         ?? false,
@@ -669,17 +1688,13 @@ async function guardarBorrador() {
     _guardando = true;
     const btn = document.getElementById('btn-borrador');
     if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
-
     try {
         const datos = recolectarDatos();
-
         if (!_cartillaId) {
             const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
             _cartillaId = r.cartilla.id;
         }
-
         await api.patch(`/usuario/cartilla-delegado/${_cartillaId}`, datos);
-        // Actualizar copia local de respuestas_json para fusión futura
         _respuestasJson = datos.respuestas_json;
         mostrarToast('Borrador guardado correctamente', 'exito');
     } catch (err) {
@@ -698,7 +1713,7 @@ async function enviarCartilla() {
 
     const datos = recolectarDatos();
 
-    // Validar campos obligatorios sección I
+    // Campos obligatorios sección I
     const requeridos = {
         temporada:                   'Temporada',
         fecha_rodeo:                 'Fecha del Rodeo',
@@ -715,39 +1730,86 @@ async function enviarCartilla() {
         return;
     }
 
-    // Validación ganado: si hay series, todas deben tener nombre
+    // Validación ganado: series sin nombre
     const seriesSinNombre = _seriesGanado.filter(s => !s.nombre || !s.nombre.trim());
     if (seriesSinNombre.length > 0) {
-        mostrarToast('Todas las series deben tener nombre antes de enviar.', 'advertencia');
+        mostrarToast('Todas las series de ganado deben tener nombre antes de enviar.', 'advertencia');
         return;
     }
 
-    // Validación relación ganado bajo peso
+    // Validación ETAPA 3 — disciplina
+    if (_disc.hubo_informe === 'si' && (!_disc.situaciones || _disc.situaciones.length === 0)) {
+        mostrarToast('Ha indicado que hubo informe de disciplina. Debe agregar al menos una situación disciplinaria.', 'advertencia');
+        return;
+    }
+
+    // Validación ETAPA 3 — reemplazo de jinetes
+    if (_ree.hubo === 'si' && (!_ree.items || _ree.items.length === 0)) {
+        mostrarToast('Ha indicado que hubo reemplazo de jinetes. Debe agregar al menos un registro.', 'advertencia');
+        return;
+    }
+
+    // Validaciones ETAPA 4 — accidentes
+    if (_acc.hubo_accidentes === 'si' && (!_acc.items || _acc.items.length === 0) && !(_acc.observaciones_generales || '').trim()) {
+        mostrarToast('Ha indicado que hubo accidentes. Agregue al menos un accidente o complete el campo de observaciones generales.', 'advertencia');
+        return;
+    }
+    const accConCentroSinNombre = (_acc.items || []).some(function(a){ return a.derivado === 'si' && !a.centro_asistencial && !a.observaciones; });
+    if (accConCentroSinNombre) {
+        mostrarToast('Hay accidentes derivados a centro asistencial sin nombre del centro ni observaciones. Complete esa información.', 'advertencia');
+        return;
+    }
+
+    // Validaciones ETAPA 4 — bienestar animal
+    if ((_ba.hubo_lesiones_equinos === 'si' || _ba.hubo_lesiones_bovinos === 'si') && !(_ba.detalle_lesiones || '').trim() && !(_ba.observaciones || '').trim()) {
+        mostrarToast('Ha indicado lesiones en animales. Ingrese el detalle o las observaciones de bienestar animal.', 'advertencia');
+        return;
+    }
+
+    // Validaciones ETAPA 4 — veterinario
+    if (_vet.preparacion === 'tecnico' && !(_vet.especifica_tecnico || '').trim()) {
+        mostrarToast('Ha seleccionado "Técnico" en preparación del veterinario. Especifique el tipo de técnico.', 'advertencia');
+        return;
+    }
+    if (_vet.preparacion === 'otro' && !(_vet.especifica_otro || '').trim()) {
+        mostrarToast('Ha seleccionado "Otro" en preparación del veterinario. Especifique el tipo de personal.', 'advertencia');
+        return;
+    }
+
+    // Validaciones ETAPA 4 — reclamos
+    if (_recs.hubo_reclamos === 'si' && (!_recs.items || _recs.items.length === 0)) {
+        mostrarToast('Ha indicado que hubo reclamos. Agregue al menos un reclamo registrado.', 'advertencia');
+        return;
+    }
+
+    // Avisos (confirm, no bloquean)
     const sumBaj = _seriesGanado.reduce((acc, s) => acc + numPos(s.fp_baj), 0);
     const sumSob = _seriesGanado.reduce((acc, s) => acc + numPos(s.fp_sob), 0);
     if ((sumBaj > 0 || sumSob > 0) && datos.incluye_informe_ganado_bajo_peso !== true) {
         if (!confirm('Ha ingresado ganado bajo/sobre peso pero no marcó "Sí" en "¿Incluye informe de ganado bajo peso?". ¿Desea continuar de todas formas?')) return;
     }
 
-    if (!confirm('¿Confirma el envío del Informe del Delegado?\n\nUna vez enviado no podrá editarlo sin autorización del Administrador.')) return;
+    const esReenvio = _estado === 'observada';
+    const confirmMsg = esReenvio
+        ? '¿Confirma el reenvío del Informe del Delegado?\n\nEl informe volverá a revisión del Administrador.'
+        : '¿Confirma el envío del Informe del Delegado?\n\nUna vez enviado no podrá editarlo sin autorización del Administrador.';
+    if (!confirm(confirmMsg)) return;
 
     _guardando = true;
     const btn = document.getElementById('btn-enviar');
-    if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
-
+    if (btn) { btn.disabled = true; btn.textContent = esReenvio ? 'Reenviando…' : 'Enviando…'; }
     try {
         if (!_cartillaId) {
             const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
             _cartillaId = r.cartilla.id;
         }
-
         await api.post(`/usuario/cartilla-delegado/${_cartillaId}/enviar`, datos);
-        mostrarToast('Informe enviado correctamente', 'exito');
+        mostrarToast(esReenvio ? 'Informe reenviado correctamente' : 'Informe enviado correctamente', 'exito');
         setTimeout(() => init(), 1200);
     } catch (err) {
         mostrarToast(err.message || 'Error al enviar', 'error');
         _guardando = false;
-        if (btn) { btn.disabled = false; btn.textContent = 'Enviar informe'; }
+        if (btn) { btn.disabled = false; btn.textContent = esReenvio ? 'Reenviar informe' : 'Enviar informe'; }
     }
 }
 </script>
