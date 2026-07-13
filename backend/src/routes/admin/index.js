@@ -36,6 +36,7 @@ router.use('/reportes', require('./reportes'));
 router.use('/dashboard', require('./dashboard'));
 router.use('/adjuntos', require('./adjuntos'));
 router.use('/cartillas-jurado', require('./cartillas-jurado'));
+router.use('/cartillas-delegado', require('./cartillas-delegado'));
 router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/hojavida', require('./hojavida'));
 router.use('/evaluaciones', require('./evaluaciones'));

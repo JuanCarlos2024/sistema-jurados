@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Informe del Delegado Oficial — Sistema de Jurados</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .cartilla-form { max-width: 780px; margin: 0 auto; }
+        .bloque { background:#fff; border:1px solid #ddd; border-radius:10px; margin-bottom:16px; overflow:hidden; }
+        .bloque-header { background:#1a3c6e; color:#fff; padding:11px 18px; font-size:13px; font-weight:700; letter-spacing:.3px; display:flex; justify-content:space-between; align-items:center; }
+        .bloque-header .badge-pendiente { font-size:10px; font-weight:600; background:rgba(255,255,255,.2); padding:2px 8px; border-radius:10px; }
+        .bloque-body { padding:18px; }
+        .campo-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+        .campo-grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+        @media(max-width:580px){ .campo-grid, .campo-grid-3 { grid-template-columns:1fr; } }
+        .form-label { font-size:12px; font-weight:600; color:#555; margin-bottom:4px; display:block; }
+        .req { color:#e74c3c; }
+        .form-control { width:100%; padding:8px 10px; border:1px solid #ccc; border-radius:6px; font-size:14px; box-sizing:border-box; background:#fff; }
+        .form-control:focus { outline:none; border-color:#1a3c6e; box-shadow:0 0 0 2px #d5e6ff; }
+        .form-control[readonly], .form-control:disabled { background:#f5f5f5; color:#555; cursor:default; }
+        .campo-readonly { padding:8px 10px; background:#f5f5f5; border:1px solid #ddd; border-radius:6px; font-size:14px; color:#444; min-height:36px; }
+        .radio-grupo { display:flex; gap:16px; align-items:center; margin-top:4px; }
+        .radio-grupo label { display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer; }
+        .checkbox-grupo { display:flex; flex-direction:column; gap:10px; }
+        .checkbox-item { display:flex; align-items:flex-start; gap:10px; }
+        .checkbox-item input[type=checkbox] { margin-top:3px; width:16px; height:16px; cursor:pointer; flex-shrink:0; }
+        .checkbox-item label { font-size:14px; cursor:pointer; line-height:1.4; }
+        .barra-acciones { position:sticky; bottom:0; background:#fff; border-top:1px solid #ddd; padding:12px 18px; display:flex; gap:10px; justify-content:flex-end; z-index:100; box-shadow:0 -2px 8px rgba(0,0,0,.07); }
+        .estado-badge { display:inline-block; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:700; }
+        .estado-borrador { background:#fff3cd; color:#856404; border:1px solid #ffc107; }
+        .estado-enviada  { background:#d1f2eb; color:#145a32; border:1px solid #27ae60; }
+        .enviada-notice  { background:#d1f2eb; border:1px solid #27ae60; border-radius:8px; padding:14px 18px; margin-bottom:16px; font-size:14px; color:#145a32; }
+        .enviada-notice strong { display:block; font-size:15px; margin-bottom:4px; }
+        .rodeo-info-card { background:#eaf4fb; border:1px solid #aed6f1; border-radius:8px; padding:14px 18px; margin-bottom:16px; }
+        .rodeo-info-card .titulo { font-weight:700; font-size:16px; color:#1a3c6e; margin-bottom:6px; }
+        .rodeo-info-card .meta   { font-size:13px; color:#555; display:flex; flex-wrap:wrap; gap:10px; }
+        .rodeo-info-card .meta span { background:#fff; border:1px solid #d6eaf8; border-radius:4px; padding:2px 8px; }
+        .bloque-futuro { opacity:.6; }
+        .bloque-futuro .bloque-body { display:flex; align-items:center; gap:10px; padding:14px 18px; font-size:13px; color:#777; font-style:italic; }
+        #alerta-global { margin-bottom:14px; }
+        .spinner-wrap { text-align:center; padding:40px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/usuario/dashboard.html" class="nav-item"><span class="icon">🏠</span> Mi Panel</a>
+            <a href="/usuario/resumen.html"   class="nav-item"><span class="icon">💵</span> Mis Pagos</a>
+            <a href="/usuario/perfil.html"    class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+            <a href="/usuario/capacitaciones.html" class="nav-item"><span class="icon">🎓</span> Mis Capacitaciones</a>
+            <a href="/usuario/material-complementario.html" class="nav-item"><span class="icon">📂</span> Material complementario</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Informe del Delegado Oficial del Rodeo</h1>
+            </div>
+            <a href="/usuario/dashboard.html" class="btn btn-secundario btn-pequeño">← Mi Panel</a>
+        </div>
+
+        <div class="page-body">
+            <div class="cartilla-form">
+                <div id="alerta-global"></div>
+                <div id="cuerpo-cartilla">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('usuario_pagado');
+
+// Verificar que el usuario es delegado
+const _usr = api.getUsuario();
+if (_usr?.tipo_persona !== 'delegado_rentado') {
+    window.location.href = '/usuario/dashboard.html';
+}
+document.getElementById('nombre-usr').textContent = _usr?.nombre || '';
+
+const params  = new URLSearchParams(location.search);
+const RODEO_ID = params.get('rodeo_id');
+
+let _cartillaId  = null;
+let _estado      = null;
+let _guardando   = false;
+
+if (!RODEO_ID) {
+    document.getElementById('cuerpo-cartilla').innerHTML =
+        '<div class="alerta alerta-error">Falta el parámetro rodeo_id en la URL.</div>';
+} else {
+    init();
+}
+
+async function init() {
+    try {
+        const r = await api.get(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`);
+        renderCartilla(r);
+    } catch (err) {
+        document.getElementById('cuerpo-cartilla').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar la cartilla')}</div>`;
+    }
+}
+
+function renderCartilla(r) {
+    const { rodeo, perfil, cartilla } = r;
+    _estado     = cartilla ? cartilla.estado : 'nueva';
+    _cartillaId = cartilla ? cartilla.id     : null;
+    const ya    = _estado === 'enviada';
+
+    // Info del rodeo en cabecera
+    const fechaRodeo = rodeo?.fecha ? new Date(rodeo.fecha + 'T12:00:00').toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' }) : '—';
+
+    let html = '';
+
+    // ── Aviso si ya fue enviada ──────────────────────────────────────────────
+    if (ya) {
+        const fechaEnv = cartilla.enviada_en
+            ? new Date(cartilla.enviada_en).toLocaleString('es-CL')
+            : '—';
+        html += `<div class="enviada-notice">
+            <strong>Informe enviado</strong>
+            Esta cartilla fue enviada el ${fechaEnv}. Solo puede ser reabierta por el Administrador.
+        </div>`;
+    }
+
+    // ── Tarjeta del rodeo ────────────────────────────────────────────────────
+    html += `<div class="rodeo-info-card">
+        <div class="titulo">${sanitizar(rodeo?.club || '—')} — ${sanitizar(rodeo?.asociacion || '—')}</div>
+        <div class="meta">
+            <span>📅 ${fechaRodeo}</span>
+            ${rodeo?.tipo_rodeo_nombre ? `<span>🏆 ${sanitizar(rodeo.tipo_rodeo_nombre)}</span>` : ''}
+            ${rodeo?.categoria_rodeo_nombre ? `<span>${sanitizar(rodeo.categoria_rodeo_nombre)}</span>` : ''}
+            <span class="estado-badge ${ya ? 'estado-enviada' : 'estado-borrador'}">${ya ? 'Enviada' : (cartilla ? 'Borrador' : 'Nueva')}</span>
+        </div>
+    </div>`;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SECCIÓN I — Identificación del Rodeo
+    // ═══════════════════════════════════════════════════════════════════════
+    const c = cartilla || {};
+    const fld = (campo, fallback) => {
+        const v = c[campo];
+        return (v !== undefined && v !== null) ? v : (fallback || '');
+    };
+    const bool2radio = (campo) => {
+        if (c[campo] === true)  return 'si';
+        if (c[campo] === false) return 'no';
+        return '';
+    };
+    const bool2check = (campo) => c[campo] === true;
+
+    html += `<div class="bloque">
+        <div class="bloque-header">
+            I. Identificación del Rodeo
+        </div>
+        <div class="bloque-body">
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Temporada <span class="req">*</span></label>
+                    <input type="text" id="f-temporada" class="form-control" placeholder="Ej: 2026" value="${sanitizar(fld('temporada'))}" ${ya ? 'readonly' : ''}>
+                </div>
+                <div>
+                    <label class="form-label">Fecha del Rodeo <span class="req">*</span></label>
+                    <input type="date" id="f-fecha_rodeo" class="form-control" value="${fld('fecha_rodeo')}" ${ya ? 'readonly' : ''}>
+                </div>
+            </div>
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Delegado Oficial <span class="req">*</span></label>
+                    <input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(fld('delegado_nombre', perfil?.nombre_completo || ''))}" ${ya ? 'readonly' : ''}>
+                </div>
+                <div>
+                    <label class="form-label">Teléfono</label>
+                    <input type="tel" id="f-delegado_telefono" class="form-control" placeholder="Ej: +56 9 1234 5678" value="${sanitizar(fld('delegado_telefono', perfil?.telefono || ''))}" ${ya ? 'readonly' : ''}>
+                </div>
+            </div>
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Secretario del Jurado</label>
+                    <input type="text" id="f-secretario_jurado" class="form-control" placeholder="Nombre completo" value="${sanitizar(fld('secretario_jurado'))}" ${ya ? 'readonly' : ''}>
+                </div>
+                <div>
+                    <label class="form-label">N° de Socio (Secretario)</label>
+                    <input type="text" id="f-secretario_numero_socio" class="form-control" placeholder="Ej: 12345" value="${sanitizar(fld('secretario_numero_socio'))}" ${ya ? 'readonly' : ''}>
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label class="form-label">Club y/o Asociación Organizador(a) del Rodeo <span class="req">*</span></label>
+                <input type="text" id="f-club_asociacion_organizador" class="form-control" value="${sanitizar(fld('club_asociacion_organizador'))}" ${ya ? 'readonly' : ''}>
+            </div>
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Tipo de Rodeo <span class="req">*</span></label>
+                    <input type="text" id="f-tipo_rodeo" class="form-control" placeholder="Ej: Regional, Nacional" value="${sanitizar(fld('tipo_rodeo'))}" ${ya ? 'readonly' : ''}>
+                </div>
+                <div>
+                    <label class="form-label">Público en la Serie de Campeones</label>
+                    <input type="number" id="f-publico_serie_campeones" class="form-control" min="0" placeholder="Ej: 350" value="${fld('publico_serie_campeones')}" ${ya ? 'readonly' : ''}>
+                </div>
+            </div>
+
+            <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
+
+            <div style="margin-bottom:14px;">
+                <label class="form-label">¿Serie de Campeones corrida toda a 2 vueltas en el apiñadero (exceptuando desempates)?</label>
+                <div class="radio-grupo">
+                    <label><input type="radio" name="serie_campeones_dos_vueltas" value="si" ${bool2radio('serie_campeones_dos_vueltas') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''}> Sí</label>
+                    <label><input type="radio" name="serie_campeones_dos_vueltas" value="no" ${bool2radio('serie_campeones_dos_vueltas') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label class="form-label">¿Incluye informe disciplinario?</label>
+                <div class="radio-grupo">
+                    <label><input type="radio" name="incluye_informe_disciplinario" value="si" ${bool2radio('incluye_informe_disciplinario') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''}> Sí</label>
+                    <label><input type="radio" name="incluye_informe_disciplinario" value="no" ${bool2radio('incluye_informe_disciplinario') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label class="form-label">¿Incluye informe de ganado bajo peso?</label>
+                <div class="radio-grupo">
+                    <label><input type="radio" name="incluye_informe_ganado_bajo_peso" value="si" ${bool2radio('incluye_informe_ganado_bajo_peso') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''}> Sí</label>
+                    <label><input type="radio" name="incluye_informe_ganado_bajo_peso" value="no" ${bool2radio('incluye_informe_ganado_bajo_peso') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
+                </div>
+            </div>
+
+            <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
+            <div style="font-size:13px; font-weight:700; color:#1a3c6e; margin-bottom:12px;">Certificación del Club Organizador</div>
+            <div class="checkbox-grupo">
+                <div class="checkbox-item">
+                    <input type="checkbox" id="f-cert_medialuna" ${bool2check('certificacion_medialuna_comuna') ? 'checked' : ''} ${ya ? 'disabled' : ''}>
+                    <label for="f-cert_medialuna">Rodeo realizado en la medialuna de la comuna del club organizador</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="f-cert_200" ${bool2check('certificacion_mas_200_personas') ? 'checked' : ''} ${ya ? 'disabled' : ''}>
+                    <label for="f-cert_200">Más de 200 personas de público presente en la Serie de Campeones</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="f-cert_250" ${bool2check('certificacion_mas_250_personas') ? 'checked' : ''} ${ya ? 'disabled' : ''}>
+                    <label for="f-cert_250">Más de 250 personas de público presente en la Serie de Campeones</label>
+                </div>
+                <div class="checkbox-item">
+                    <input type="checkbox" id="f-cert_vinculacion" ${bool2check('certificacion_vinculacion_comunidad') ? 'checked' : ''} ${ya ? 'disabled' : ''}>
+                    <label for="f-cert_vinculacion">Proyecto de vinculación con la comunidad</label>
+                </div>
+            </div>
+        </div>
+    </div>`;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Secciones futuras (placeholders)
+    // ═══════════════════════════════════════════════════════════════════════
+    const seccionesFuturas = [
+        'II. Información sobre ganado utilizado en el rodeo',
+        'III. Informe sobre desempeño del jurado',
+        'IV. Informe de disciplina',
+        'V. Estado del recinto deportivo',
+        'VI. Colleras invitadas',
+        'VII. Reemplazo de jinetes',
+        'VIII. Accidentes',
+        'IX. Bienestar animal e informe veterinario',
+        'X. Reclamos o sugerencias',
+        'Adjuntos (fotos, videos, documentos)'
+    ];
+    seccionesFuturas.forEach(function(titulo) {
+        html += `<div class="bloque bloque-futuro">
+            <div class="bloque-header">${sanitizar(titulo)} <span class="badge-pendiente">Próximamente</span></div>
+            <div class="bloque-body">
+                <span style="font-size:20px;">🔒</span> Esta sección se habilitará en una etapa posterior.
+            </div>
+        </div>`;
+    });
+
+    document.getElementById('cuerpo-cartilla').innerHTML = html;
+
+    // Barra de acciones fija (solo si no está enviada)
+    if (!ya) {
+        const barra = document.createElement('div');
+        barra.className = 'barra-acciones';
+        barra.innerHTML = `
+            <button class="btn btn-secundario" onclick="guardarBorrador()" id="btn-borrador">Guardar borrador</button>
+            <button class="btn btn-primario"   onclick="enviarCartilla()" id="btn-enviar">Enviar informe</button>`;
+        document.getElementById('cuerpo-cartilla').appendChild(barra);
+    }
+}
+
+// ─── Recolectar datos del formulario ─────────────────────────────────────────
+function recolectarDatos() {
+    const radio = (name) => {
+        const sel = document.querySelector(`input[name="${name}"]:checked`);
+        if (!sel) return null;
+        return sel.value === 'si';
+    };
+    return {
+        temporada:                       document.getElementById('f-temporada')?.value.trim() || null,
+        fecha_rodeo:                     document.getElementById('f-fecha_rodeo')?.value || null,
+        delegado_nombre:                 document.getElementById('f-delegado_nombre')?.value.trim() || null,
+        delegado_telefono:               document.getElementById('f-delegado_telefono')?.value.trim() || null,
+        secretario_jurado:               document.getElementById('f-secretario_jurado')?.value.trim() || null,
+        secretario_numero_socio:         document.getElementById('f-secretario_numero_socio')?.value.trim() || null,
+        club_asociacion_organizador:     document.getElementById('f-club_asociacion_organizador')?.value.trim() || null,
+        tipo_rodeo:                      document.getElementById('f-tipo_rodeo')?.value.trim() || null,
+        publico_serie_campeones:         document.getElementById('f-publico_serie_campeones')?.value ? parseInt(document.getElementById('f-publico_serie_campeones').value) : null,
+        serie_campeones_dos_vueltas:     radio('serie_campeones_dos_vueltas'),
+        incluye_informe_disciplinario:   radio('incluye_informe_disciplinario'),
+        incluye_informe_ganado_bajo_peso: radio('incluye_informe_ganado_bajo_peso'),
+        certificacion_medialuna_comuna:      document.getElementById('f-cert_medialuna')?.checked   ?? false,
+        certificacion_mas_200_personas:      document.getElementById('f-cert_200')?.checked         ?? false,
+        certificacion_mas_250_personas:      document.getElementById('f-cert_250')?.checked         ?? false,
+        certificacion_vinculacion_comunidad: document.getElementById('f-cert_vinculacion')?.checked ?? false
+    };
+}
+
+// ─── Guardar borrador ─────────────────────────────────────────────────────────
+async function guardarBorrador() {
+    if (_guardando) return;
+    _guardando = true;
+    const btn = document.getElementById('btn-borrador');
+    if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+
+    try {
+        const datos = recolectarDatos();
+
+        if (!_cartillaId) {
+            // Primera vez: crear cartilla
+            const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
+            _cartillaId = r.cartilla.id;
+        }
+
+        await api.patch(`/usuario/cartilla-delegado/${_cartillaId}`, datos);
+        mostrarToast('Borrador guardado correctamente', 'exito');
+    } catch (err) {
+        mostrarToast(err.message || 'Error al guardar', 'error');
+    } finally {
+        _guardando = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Guardar borrador'; }
+    }
+}
+
+// ─── Enviar cartilla ──────────────────────────────────────────────────────────
+async function enviarCartilla() {
+    if (_guardando) return;
+
+    const datos = recolectarDatos();
+
+    // Validar campos mínimos en frontend antes de llamar al backend
+    const requeridos = {
+        temporada:                   'Temporada',
+        fecha_rodeo:                 'Fecha del Rodeo',
+        delegado_nombre:             'Delegado Oficial',
+        club_asociacion_organizador: 'Club / Asociación organizador',
+        tipo_rodeo:                  'Tipo de Rodeo'
+    };
+    const faltantes = Object.entries(requeridos)
+        .filter(([k]) => !datos[k] || String(datos[k]).trim() === '')
+        .map(([, label]) => label);
+
+    if (faltantes.length > 0) {
+        mostrarToast('Complete los campos obligatorios: ' + faltantes.join(', '), 'advertencia');
+        return;
+    }
+
+    if (!confirm('¿Confirma el envío del Informe del Delegado?\n\nUna vez enviado no podrá editarlo sin autorización del Administrador.')) return;
+
+    _guardando = true;
+    const btn = document.getElementById('btn-enviar');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+
+    try {
+        if (!_cartillaId) {
+            const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
+            _cartillaId = r.cartilla.id;
+        }
+
+        await api.post(`/usuario/cartilla-delegado/${_cartillaId}/enviar`, datos);
+        mostrarToast('Informe enviado correctamente', 'exito');
+
+        // Recargar para mostrar la vista de solo lectura
+        setTimeout(() => init(), 1200);
+    } catch (err) {
+        mostrarToast(err.message || 'Error al enviar', 'error');
+        _guardando = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Enviar informe'; }
+    }
+}
+</script>
+</body>
+</html>

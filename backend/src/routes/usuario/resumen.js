@@ -133,25 +133,48 @@ router.get('/', async (req, res) => {
 
         // Adjuntar notas y estado de cartilla por asignación
         const esDelegado = req.usuario.tipo_persona === 'delegado_rentado';
-        const asigIds = (resumen.asignaciones || []).map(a => a.id);
+        const asigIds  = (resumen.asignaciones || []).map(a => a.id);
+        const rodeoIds = (resumen.asignaciones || []).map(a => a.rodeo_id).filter(Boolean);
         if (asigIds.length > 0) {
-            // Los delegados no tienen cartilla digital — no se consulta ni se devuelve
-            const queries = [
+            // Nota siempre; cartilla depende del perfil
+            const promesas = [
                 supabase.from('notas_rodeo').select('asignacion_id, nota, comentario').in('asignacion_id', asigIds)
             ];
-            if (!esDelegado) {
-                queries.push(supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds).eq('es_actual', true));
+            if (esDelegado && rodeoIds.length > 0) {
+                // Delegados: cartilla propia por rodeo
+                promesas.push(
+                    supabase.from('cartillas_delegado')
+                        .select('rodeo_id, estado')
+                        .eq('delegado_id', req.usuario.id)
+                        .in('rodeo_id', rodeoIds)
+                );
+            } else if (!esDelegado) {
+                // Jurados: cartilla digital por asignación
+                promesas.push(
+                    supabase.from('cartillas_jurado').select('asignacion_id, estado').in('asignacion_id', asigIds).eq('es_actual', true)
+                );
             }
-            const [{ data: notas }, cartillasRes] = await Promise.all(queries);
+
+            const [notasRes, cartillasRes] = await Promise.all(promesas);
             const notasMap     = {};
             const cartillasMap = {};
-            (notas                      || []).forEach(n => { notasMap[n.asignacion_id]     = n; });
-            ((cartillasRes?.data) || []).forEach(c => { cartillasMap[c.asignacion_id] = c.estado; });
-            resumen.asignaciones = resumen.asignaciones.map(a => ({
-                ...a,
-                nota_rodeo:      notasMap[a.id]     || null,
-                cartilla_estado: esDelegado ? null : (cartillasMap[a.id] || null)
-            }));
+            (notasRes.data || []).forEach(n => { notasMap[n.asignacion_id] = n; });
+
+            if (esDelegado) {
+                (cartillasRes?.data || []).forEach(c => { cartillasMap[c.rodeo_id] = c.estado; });
+                resumen.asignaciones = resumen.asignaciones.map(a => ({
+                    ...a,
+                    nota_rodeo:      notasMap[a.id]      || null,
+                    cartilla_estado: cartillasMap[a.rodeo_id] || null
+                }));
+            } else {
+                (cartillasRes?.data || []).forEach(c => { cartillasMap[c.asignacion_id] = c.estado; });
+                resumen.asignaciones = resumen.asignaciones.map(a => ({
+                    ...a,
+                    nota_rodeo:      notasMap[a.id] || null,
+                    cartilla_estado: cartillasMap[a.id] || null
+                }));
+            }
         }
 
         res.json({ año: parseInt(año), mes: parseInt(mes), ...resumen });

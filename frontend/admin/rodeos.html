@@ -1439,6 +1439,82 @@ function cerrarModalReabrir() {
     if (el) el.style.display = 'none';
 }
 
+// ─── Ver Cartilla Delegado Digital ───────────────────────────────────────────
+async function verCartillaDelegadoDigital(cartillaId) {
+    let modal = document.getElementById('modal-cartilla-delegado');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-cartilla-delegado';
+        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1200;align-items:center;justify-content:center;padding:16px;';
+        modal.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:680px;width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #ddd;background:#1a3c6e;color:#fff;border-radius:10px 10px 0 0;">
+                <span style="font-weight:700;font-size:15px;">Informe del Delegado Oficial del Rodeo</span>
+                <button onclick="document.getElementById('modal-cartilla-delegado').style.display='none'" style="background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;">×</button>
+            </div>
+            <div id="modal-cartilla-delegado-body" style="flex:1;overflow-y:auto;padding:20px;"></div>
+        </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display = 'none'; });
+    }
+
+    modal.style.display = 'flex';
+    document.getElementById('modal-cartilla-delegado-body').innerHTML = '<div style="text-align:center;padding:30px;"><div class="spinner"></div></div>';
+
+    try {
+        const d = await api.get('/admin/cartillas-delegado/' + cartillaId);
+        const c = d;
+        const fld = (v) => (v !== undefined && v !== null && v !== '') ? sanitizar(String(v)) : '<em style="color:#bbb;">Sin información</em>';
+        const bool2txt = (v) => v === true ? '<span style="color:#27ae60;font-weight:600;">Sí</span>' : v === false ? '<span style="color:#e74c3c;">No</span>' : '<em style="color:#bbb;">No indicado</em>';
+        const check2txt = (v) => v === true ? '✅' : '☐';
+
+        const estadoColor = { borrador:'#f39c12', enviada:'#27ae60', observada:'#e67e22', aprobada:'#1a5276', cerrada:'#888' }[c.estado] || '#888';
+        const estadoLabel = { borrador:'Borrador', enviada:'Enviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[c.estado] || c.estado;
+        const fechaEnv = c.enviada_en ? new Date(c.enviada_en).toLocaleString('es-CL') : '—';
+
+        const fila = (label, val) => `<tr>
+            <td style="padding:6px 10px;font-size:12px;font-weight:600;color:#555;white-space:nowrap;border-bottom:1px solid #f0f0f0;width:45%;">${label}</td>
+            <td style="padding:6px 10px;font-size:13px;border-bottom:1px solid #f0f0f0;">${val}</td>
+        </tr>`;
+
+        document.getElementById('modal-cartilla-delegado-body').innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                <span style="font-size:20px;font-weight:700;color:#1a3c6e;">${fld(c.rodeo?.club)} — ${fld(c.rodeo?.asociacion)}</span>
+                <span style="padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:${estadoColor}20;color:${estadoColor};border:1px solid ${estadoColor};">${estadoLabel}</span>
+            </div>
+            <div style="font-size:12px;color:#888;margin-bottom:16px;">
+                Delegado: <strong>${fld(c.delegado?.nombre_completo || c.delegado_nombre)}</strong>
+                &nbsp;|&nbsp; Enviada: <strong>${fechaEnv}</strong>
+            </div>
+            <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">I. Identificación del Rodeo</div>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:#fafafa;border-radius:6px;overflow:hidden;border:1px solid #eee;">
+                ${fila('Temporada', fld(c.temporada))}
+                ${fila('Fecha del Rodeo', c.fecha_rodeo ? new Date(c.fecha_rodeo + 'T12:00:00').toLocaleDateString('es-CL') : '—')}
+                ${fila('Delegado Oficial', fld(c.delegado_nombre))}
+                ${fila('Teléfono', fld(c.delegado_telefono))}
+                ${fila('Secretario del Jurado', fld(c.secretario_jurado))}
+                ${fila('N° de Socio (Secretario)', fld(c.secretario_numero_socio))}
+                ${fila('Club / Asociación Organizador', fld(c.club_asociacion_organizador))}
+                ${fila('Tipo de Rodeo', fld(c.tipo_rodeo))}
+                ${fila('Público en la Serie de Campeones', fld(c.publico_serie_campeones))}
+            </table>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:#fafafa;border-radius:6px;overflow:hidden;border:1px solid #eee;">
+                ${fila('Serie Campeones a 2 vueltas', bool2txt(c.serie_campeones_dos_vueltas))}
+                ${fila('Incluye informe disciplinario', bool2txt(c.incluye_informe_disciplinario))}
+                ${fila('Incluye informe ganado bajo peso', bool2txt(c.incluye_informe_ganado_bajo_peso))}
+            </table>
+            <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Certificación del Club Organizador</div>
+            <table style="width:100%;border-collapse:collapse;background:#fafafa;border-radius:6px;overflow:hidden;border:1px solid #eee;">
+                ${fila('Medialuna de la comuna del club', check2txt(c.certificacion_medialuna_comuna) + ' ' + (c.certificacion_medialuna_comuna ? 'Sí' : 'No'))}
+                ${fila('Más de 200 personas (Serie Campeones)', check2txt(c.certificacion_mas_200_personas) + ' ' + (c.certificacion_mas_200_personas ? 'Sí' : 'No'))}
+                ${fila('Más de 250 personas (Serie Campeones)', check2txt(c.certificacion_mas_250_personas) + ' ' + (c.certificacion_mas_250_personas ? 'Sí' : 'No'))}
+                ${fila('Proyecto vinculación con la comunidad', check2txt(c.certificacion_vinculacion_comunidad) + ' ' + (c.certificacion_vinculacion_comunidad ? 'Sí' : 'No'))}
+            </table>`;
+    } catch (err) {
+        document.getElementById('modal-cartilla-delegado-body').innerHTML =
+            `<div class="alerta alerta-error">${sanitizar(err.message || 'Error al cargar la cartilla')}</div>`;
+    }
+}
+
 async function confirmarReabrir() {
     const motivo = (document.getElementById('reabrir-motivo')?.value || '').trim();
     if (!motivo) { mostrarToast('El motivo de reapertura es obligatorio', 'error'); return; }
@@ -1472,9 +1548,10 @@ async function confirmarReabrir() {
 
 async function renderAdjuntosAdmin() {
     try {
-        const [res, cartillasVersiones] = await Promise.all([
+        const [res, cartillasVersiones, cartillasDelegado] = await Promise.all([
             api.get('/admin/adjuntos?rodeo_id=' + adjAdminRodeoId),
-            api.get('/admin/cartillas-jurado/by-rodeo/' + adjAdminRodeoId).catch(() => [])
+            api.get('/admin/cartillas-jurado/by-rodeo/' + adjAdminRodeoId).catch(() => []),
+            api.get('/admin/cartillas-delegado/by-rodeo/' + adjAdminRodeoId).catch(() => [])
         ]);
         const adjuntos = res.adjuntos || [];
         const links    = res.links    || [];
@@ -1552,6 +1629,34 @@ async function renderAdjuntosAdmin() {
                         + '</div>';
                 });
                 html += '</div></div>';
+            });
+            html += '<hr style="margin:10px 0;">';
+        }
+
+        // ── Cartilla Digital — Delegado ────────────────────────────────────
+        if (cartillasDelegado && cartillasDelegado.length > 0) {
+            html += '<div style="font-weight:600;margin-bottom:8px;color:#1a3c6e;">&#128203; Cartilla Delegado — Informe Digital</div>';
+            cartillasDelegado.forEach(function(cd) {
+                const estadoColor = cd.estado === 'enviada'   ? '#27ae60'
+                                  : cd.estado === 'aprobada'  ? '#1a5276'
+                                  : cd.estado === 'observada' ? '#e67e22'
+                                  : '#f39c12';
+                const estadoText  = { borrador:'Borrador', enviada:'Enviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[cd.estado] || cd.estado;
+                const nombre      = cd.delegado?.nombre_completo || cd.delegado_nombre || 'Delegado';
+                const fechaStr    = cd.enviada_en
+                    ? 'Enviada: ' + new Date(cd.enviada_en).toLocaleString('es-CL')
+                    : 'Última modificación: ' + new Date(cd.updated_at).toLocaleString('es-CL');
+                const btnVer      = `<button class="btn btn-pequeño btn-outline" onclick="verCartillaDelegadoDigital('${cd.id}')">&#128203; Ver detalle</button>`;
+                html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid ' + estadoColor + ';margin-bottom:6px;">'
+                    + '<div style="flex:1;min-width:0;">'
+                    + '<div style="font-size:13px;font-weight:600;color:#333;">' + sanitizar(nombre) + '</div>'
+                    + '<div style="font-size:11px;color:#888;">'
+                    + '<span style="font-weight:700;color:' + estadoColor + ';">' + estadoText + '</span>'
+                    + ' &mdash; ' + sanitizar(fechaStr)
+                    + '</div>'
+                    + '</div>'
+                    + btnVer
+                    + '</div>';
             });
             html += '<hr style="margin:10px 0;">';
         }

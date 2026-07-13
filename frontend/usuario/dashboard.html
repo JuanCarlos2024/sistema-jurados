@@ -342,7 +342,7 @@ function renderRodeos(asignaciones) {
     div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Días</th><th>Cat.</th>
-            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th>${ES_DELEGADO ? '' : '<th>Cartilla</th>'}
+            <th>Nota</th><th>Designación</th><th>Bono km</th><th>Adjuntos</th><th>Cartilla</th>
         </tr></thead>
         <tbody>
         ${asignaciones.map(a => {
@@ -409,18 +409,31 @@ function renderRodeos(asignaciones) {
                 ? '<span style="color:#aaa; font-size:12px;">—</span>'
                 : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntos('${a.rodeo_id}', '${sanitizar(a.rodeos?.club||'')}')">📎</button>`;
 
-            // Columna Cartilla — solo para jurados
+            // Columna Cartilla
             let cartillaHtml = '<span style="color:#aaa; font-size:12px;">—</span>';
-            if (!ES_DELEGADO && !esRechazada) {
+            if (!esRechazada) {
                 const cest = a.cartilla_estado;
-                if (cest === 'enviada') {
-                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#27ae60; color:#fff; text-decoration:none;">✓ Enviada</a>`;
-                } else if (cest === 'reabierta') {
-                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#e67e22; color:#fff; text-decoration:none;">⚠ Corregir</a>`;
-                } else if (cest === 'borrador') {
-                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#f39c12; color:#fff; text-decoration:none;">Borrador</a>`;
+                if (ES_DELEGADO) {
+                    // Delegado: cartilla del delegado por rodeo
+                    const urlCartDel = `/usuario/cartilla-delegado.html?rodeo_id=${a.rodeo_id}`;
+                    if (cest === 'enviada') {
+                        cartillaHtml = `<a href="${urlCartDel}" class="btn btn-pequeño" style="background:#27ae60; color:#fff; text-decoration:none;">✓ Enviada</a>`;
+                    } else if (cest === 'borrador') {
+                        cartillaHtml = `<a href="${urlCartDel}" class="btn btn-pequeño" style="background:#f39c12; color:#fff; text-decoration:none;">Borrador</a>`;
+                    } else {
+                        cartillaHtml = `<a href="${urlCartDel}" class="btn btn-pequeño btn-outline" style="text-decoration:none;">Completar cartilla</a>`;
+                    }
                 } else {
-                    cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño btn-outline" style="text-decoration:none;">Completar</a>`;
+                    // Jurado: cartilla del jurado por asignación
+                    if (cest === 'enviada') {
+                        cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#27ae60; color:#fff; text-decoration:none;">✓ Enviada</a>`;
+                    } else if (cest === 'reabierta') {
+                        cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#e67e22; color:#fff; text-decoration:none;">⚠ Corregir</a>`;
+                    } else if (cest === 'borrador') {
+                        cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño" style="background:#f39c12; color:#fff; text-decoration:none;">Borrador</a>`;
+                    } else {
+                        cartillaHtml = `<a href="/usuario/cartilla.html?asignacion_id=${a.id}" class="btn btn-pequeño btn-outline" style="text-decoration:none;">Completar</a>`;
+                    }
                 }
             }
 
@@ -440,7 +453,7 @@ function renderRodeos(asignaciones) {
                 <td>${designHtml}</td>
                 <td>${bonoHtml}</td>
                 <td>${adjHtml}</td>
-                ${ES_DELEGADO ? '' : `<td>${cartillaHtml}</td>`}
+                <td>${cartillaHtml}</td>
             </tr>`;
         }).join('')}
         </tbody>
