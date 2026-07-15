@@ -389,92 +389,170 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
 // ─── POST /intentos/:id/responder ─── guardar una respuesta ──────────────────
 
 router.post('/intentos/:id/responder', async (req, res) => {
+    const _t0       = Date.now();
+    const intentoId = req.params.id;
     const { pregunta_id, alternativa_id } = req.body;
+    const _log = (msg) => console.log(`[cap/responder] ${msg} intento=${intentoId} preg=${pregunta_id} alt=${alternativa_id ?? 'null'} dur=${Date.now() - _t0}ms`);
 
-    if (!pregunta_id) return res.status(400).json({ error: 'pregunta_id es obligatorio' });
+    try {
+        if (!pregunta_id) return res.status(400).json({ error: 'pregunta_id es obligatorio' });
 
-    // Verificar que el intento pertenece al usuario
-    const { data: intento } = await supabase
-        .from('capacitacion_intentos')
-        .select(`
-            id, estado, asignacion_id, vence_en,
-            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
-                usuario_pagado_id, prueba_id,
-                prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
-                    puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+        // Verificar que el intento pertenece al usuario
+        const { data: intento } = await supabase
+            .from('capacitacion_intentos')
+            .select(`
+                id, estado, asignacion_id, vence_en,
+                asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                    usuario_pagado_id, prueba_id,
+                    prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
+                        puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+                    )
                 )
-            )
-        `)
-        .eq('id', req.params.id)
-        .single();
-
-    if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
-        return res.status(403).json({ error: 'No autorizado' });
-    }
-    if (intento.estado !== 'en_curso') {
-        return res.status(400).json({ error: 'Este intento ya no está en curso' });
-    }
-
-    // Validar tiempo global: rechazar si el intento ya venció
-    if (intento.vence_en && new Date() > new Date(intento.vence_en)) {
-        const { count: totalPregCount } = await supabase
-            .from('capacitacion_preguntas')
-            .select('id', { count: 'exact', head: true })
-            .eq('prueba_id', intento.asignacion.prueba_id);
-        const { count: correctasCount } = await supabase
-            .from('capacitacion_respuestas')
-            .select('id', { count: 'exact', head: true })
-            .eq('intento_id', intento.id)
-            .eq('es_correcta', true);
-
-        const total      = totalPregCount || 0;
-        const correctas  = correctasCount || 0;
-        const puntaje    = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
-        const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
-        const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
-        const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
-        const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
-        const nota    = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
-        const aprobado = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
-
-        await supabase.from('capacitacion_intentos').update({
-            estado:                'completado',
-            finalizado_en:         new Date().toISOString(),
-            puntaje_obtenido:      puntaje,
-            nota,
-            aprobado,
-            finalizado_por_tiempo: true
-        }).eq('id', intento.id);
-
-        return res.status(408).json({ error: 'Tiempo expirado', intento_id: intento.id });
-    }
-
-    // Verificar si la alternativa es correcta
-    let es_correcta = null;
-    if (alternativa_id) {
-        const { data: alt } = await supabase
-            .from('capacitacion_alternativas')
-            .select('es_correcta')
-            .eq('id', alternativa_id)
+            `)
+            .eq('id', intentoId)
             .single();
-        es_correcta = alt ? alt.es_correcta : null;
+
+        if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
+            _log('403-no-autorizado');
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+        if (intento.estado !== 'en_curso') {
+            _log('400-no-en-curso');
+            return res.status(400).json({ error: 'Este intento ya no está en curso' });
+        }
+
+        // Validar tiempo global: rechazar si el intento ya venció
+        if (intento.vence_en && new Date() > new Date(intento.vence_en)) {
+            const { count: totalPregCount } = await supabase
+                .from('capacitacion_preguntas')
+                .select('id', { count: 'exact', head: true })
+                .eq('prueba_id', intento.asignacion.prueba_id);
+            const { count: correctasCount } = await supabase
+                .from('capacitacion_respuestas')
+                .select('id', { count: 'exact', head: true })
+                .eq('intento_id', intento.id)
+                .eq('es_correcta', true);
+
+            const total      = totalPregCount || 0;
+            const correctas  = correctasCount || 0;
+            const puntaje    = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
+            const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
+            const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
+            const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
+            const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
+            const nota    = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
+            const aprobado = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
+
+            await supabase.from('capacitacion_intentos').update({
+                estado:                'completado',
+                finalizado_en:         new Date().toISOString(),
+                puntaje_obtenido:      puntaje,
+                nota,
+                aprobado,
+                finalizado_por_tiempo: true
+            }).eq('id', intento.id);
+
+            _log('408-vencido');
+            return res.status(408).json({ error: 'Tiempo expirado', intento_id: intento.id });
+        }
+
+        // Verificar si la alternativa es correcta y que pertenece a la pregunta
+        let es_correcta = null;
+        if (alternativa_id) {
+            const { data: alt } = await supabase
+                .from('capacitacion_alternativas')
+                .select('es_correcta, pregunta_id')
+                .eq('id', alternativa_id)
+                .maybeSingle();
+            if (!alt) {
+                _log('400-alt-no-existe');
+                return res.status(400).json({ error: 'Alternativa no encontrada' });
+            }
+            if (alt.pregunta_id !== pregunta_id) {
+                _log(`400-alt-cruzada alt_preg=${alt.pregunta_id}`);
+                return res.status(400).json({ error: 'La alternativa no corresponde a esta pregunta' });
+            }
+            es_correcta = alt.es_correcta;
+        }
+
+        // Upsert respuesta
+        const { data, error } = await supabase
+            .from('capacitacion_respuestas')
+            .upsert({
+                intento_id: intento.id,
+                pregunta_id,
+                alternativa_id: alternativa_id || null,
+                es_correcta,
+                respondida_en: new Date().toISOString()
+            }, { onConflict: 'intento_id,pregunta_id' })
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                _log('409-23505');
+                const { data: exist } = await supabase
+                    .from('capacitacion_respuestas')
+                    .select('id, intento_id, pregunta_id, alternativa_id, respondida_en')
+                    .eq('intento_id', intento.id)
+                    .eq('pregunta_id', pregunta_id)
+                    .maybeSingle();
+                return res.status(409).json({ error: 'Respuesta ya registrada', guardada: true, respuesta: exist });
+            }
+            _log(`500-db err=${error.code}`);
+            return res.status(500).json({ error: error.message });
+        }
+
+        _log(`200-ok respuesta=${data.id}`);
+        res.json({
+            id:             data.id,
+            intento_id:     data.intento_id,
+            pregunta_id:    data.pregunta_id,
+            alternativa_id: data.alternativa_id,
+            respondida_en:  data.respondida_en,
+            guardada:       true
+        });
+
+    } catch (err) {
+        console.error(`[cap/responder] excepcion intento=${intentoId} dur=${Date.now() - _t0}ms`, err.message || err);
+        if (!res.headersSent) res.status(500).json({ error: 'Error interno al guardar la respuesta' });
     }
+});
 
-    // Upsert respuesta
-    const { data, error } = await supabase
-        .from('capacitacion_respuestas')
-        .upsert({
-            intento_id: intento.id,
-            pregunta_id,
-            alternativa_id: alternativa_id || null,
-            es_correcta,
-            respondida_en: new Date().toISOString()
-        }, { onConflict: 'intento_id,pregunta_id' })
-        .select()
-        .single();
+// ─── GET /intentos/:id/respuestas/:preguntaId ─── verificar respuesta guardada ─
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+router.get('/intentos/:id/respuestas/:preguntaId', async (req, res) => {
+    try {
+        const { data: intento } = await supabase
+            .from('capacitacion_intentos')
+            .select(`
+                id,
+                asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                    usuario_pagado_id
+                )
+            `)
+            .eq('id', req.params.id)
+            .single();
+
+        if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        const { data: resp } = await supabase
+            .from('capacitacion_respuestas')
+            .select('id, pregunta_id, alternativa_id, respondida_en')
+            .eq('intento_id', intento.id)
+            .eq('pregunta_id', req.params.preguntaId)
+            .maybeSingle();
+
+        res.json(resp
+            ? { guardada: true, id: resp.id, pregunta_id: resp.pregunta_id, alternativa_id: resp.alternativa_id, respondida_en: resp.respondida_en }
+            : { guardada: false }
+        );
+    } catch (err) {
+        console.error('[cap/verificar-resp] excepcion', err.message || err);
+        if (!res.headersSent) res.status(500).json({ error: 'Error al verificar respuesta' });
+    }
 });
 
 // ─── POST /intentos/:id/finalizar ─── enviar y calcular puntaje ──────────────

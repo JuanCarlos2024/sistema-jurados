@@ -201,6 +201,9 @@
             font-size: 13px; font-weight: 600; cursor: pointer;
         }
         .btn-salir-confirmar:disabled { opacity: .6; cursor: not-allowed; }
+        .guardando-estado { font-size: 12px; margin-top: 8px; padding: 5px 10px; border-radius: 6px; background: #f0f4ff; color: var(--gris); }
+        .guardando-estado.ok    { background: #e8f8f0; color: #1a6634; }
+        .guardando-estado.error { background: #fdedec; color: #922b21; }
     </style>
 </head>
 <body class="bloqueado" oncontextmenu="return false;">
@@ -287,6 +290,9 @@ var _tiempoPorPregunta    = 0;    // segundos por pregunta (0 = sin límite)
 var _enviando             = false;
 var _asigId               = null;
 var _preguntaBloqueada    = false; // impide doble-click durante avance
+var _avanceEnCurso        = false; // impide doble-click en Siguiente
+var _promesaGuardado      = null;  // Promise del último api.post de responder()
+var TIMEOUT_GUARDAR_CAP_MS = 15000;
 
 // Timer global de prueba
 var _venceEnMs           = null;  // ms timestamp cuando expira el intento (null = sin límite)
@@ -589,6 +595,7 @@ function youtubeEmbed(url, muted) {
 function mostrarPregunta(idx) {
     _actual            = idx;
     _preguntaBloqueada = false;
+    _promesaGuardado   = null;
     var total = _preguntas.length;
     var pct   = total > 0 ? Math.round((respondidas() / total) * 100) : 0;
 
@@ -628,7 +635,7 @@ function mostrarPregunta(idx) {
     // Botón de avance — nunca hay botón "Anterior"
     var btnAvance = '';
     if (!esUltima) {
-        btnAvance = '<button class="btn btn-primario" onclick="avanzarSiguiente()">Siguiente →</button>';
+        btnAvance = '<button class="btn btn-primario" id="btn-siguiente-actual" onclick="avanzarSiguiente()">Siguiente →</button>';
     } else {
         btnAvance = '<button class="btn btn-primario" onclick="finalizarPrueba(false)" id="btn-finalizar">'
             + (todasRespondidas ? 'Finalizar y enviar' : 'Omitir restantes y finalizar')
@@ -644,6 +651,7 @@ function mostrarPregunta(idx) {
         + videoHtml
         + '<div class="pregunta-enunciado-lbl">' + sanitizar(p.enunciado) + '</div>'
         + '<div>' + altsHtml + '</div>'
+        + '<div id="guardando-estado" class="guardando-estado" style="display:none;"></div>'
         + '<div class="nav-pregunta">' + btnAvance + '</div>';
 
     // Iniciar timer al mostrar la pregunta
@@ -664,23 +672,119 @@ function respondidas() {
     return _preguntas.filter(function (p) { return _respuestas[p.id] != null; }).length;
 }
 
+// ─── Guardar respuesta con timeout (fetch directo para no redirigir en 401) ───
+
+function _guardarRespuesta(preguntaId, alternativaId) {
+    var controller = new AbortController();
+    var tid = setTimeout(function () { controller.abort(); }, TIMEOUT_GUARDAR_CAP_MS);
+    var token = api.getToken();
+    return fetch('/api/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
+        method:  'POST',
+        headers: Object.assign(
+            { 'Content-Type': 'application/json' },
+            token ? { 'Authorization': 'Bearer ' + token } : {}
+        ),
+        body:    JSON.stringify({ pregunta_id: preguntaId, alternativa_id: alternativaId }),
+        signal:  controller.signal
+    }).then(function (resp) {
+        clearTimeout(tid);
+        if (resp.status === 401 || resp.status === 403) {
+            return resp.json().catch(function () { return {}; }).then(function (d) {
+                throw { status: resp.status, message: d.error || 'Sesión vencida' };
+            });
+        }
+        return resp.json().catch(function () { return null; }).then(function (data) {
+            if (resp.status === 409) return Object.assign({ guardada: true, ya_existia: true }, data);
+            if (!resp.ok) throw { status: resp.status, message: (data && data.error) || 'Error al guardar' };
+            return data;
+        });
+    }).catch(function (e) {
+        clearTimeout(tid);
+        if (e && e.name === 'AbortError') throw { status: 'timeout', message: 'El servidor tardó demasiado' };
+        throw e;
+    });
+}
+
+function _verificarRespuesta(preguntaId) {
+    return api.get('/usuario/capacitaciones/intentos/' + _intentoId + '/respuestas/' + preguntaId)
+        .catch(function () { return null; });
+}
+
 // ─── Avanzar — solo hacia adelante ───────────────────────────────────────────
 
-function avanzarSiguiente() {
-    detenerTimer();
-    // Si el jurado no seleccionó nada, registrar como no respondida (fire-and-forget)
-    var p = _preguntas[_actual];
-    if (p && !_respuestas[p.id] && _intentoId) {
-        api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
-            pregunta_id:    p.id,
-            alternativa_id: null
-        }).catch(function () {});
-    }
-    var total = _preguntas.length;
-    if (_actual < total - 1) {
-        mostrarPregunta(_actual + 1);
-    } else {
-        finalizarPrueba(false);
+async function avanzarSiguiente() {
+    if (_avanceEnCurso) return;
+    _avanceEnCurso = true;
+
+    var btnSig = document.getElementById('btn-siguiente-actual');
+    if (btnSig) { btnSig.disabled = true; btnSig.textContent = 'Verificando...'; }
+
+    try {
+        // Aguardar guardado pendiente si existe
+        if (_promesaGuardado) {
+            var promesa = _promesaGuardado;
+            _promesaGuardado = null;
+            try {
+                await promesa;
+            } catch (eGuard) {
+                if (eGuard && (eGuard.status === 401 || eGuard.status === 403)) {
+                    var eEl = document.getElementById('guardando-estado');
+                    if (eEl) { eEl.textContent = (eGuard.message || 'Sesión vencida') + ' Recarga la página.'; eEl.className = 'guardando-estado error'; eEl.style.display = ''; }
+                    return;
+                }
+                if (eGuard && eGuard.status === 'timeout') {
+                    var pActual = _preguntas[_actual];
+                    var vEl = document.getElementById('guardando-estado');
+                    if (vEl) { vEl.textContent = 'Verificando en servidor...'; vEl.className = 'guardando-estado'; vEl.style.display = ''; }
+                    var respVerif = null;
+                    try { respVerif = await _verificarRespuesta(pActual.id); } catch (_eV) {}
+                    if (respVerif && respVerif.guardada) {
+                        if (vEl) { vEl.textContent = '✓ Respuesta verificada'; vEl.className = 'guardando-estado ok'; }
+                        // verificado — continuar avance
+                    } else if (_respuestas[pActual.id]) {
+                        // No confirmado y había alternativa seleccionada — reintentar
+                        _promesaGuardado = _guardarRespuesta(pActual.id, _respuestas[pActual.id]);
+                        if (vEl) { vEl.textContent = 'Sin confirmación del servidor. Reintentando...'; vEl.className = 'guardando-estado error'; vEl.style.display = ''; }
+                        return;
+                    }
+                    // pregunta sin respuesta con timeout — avanzar igual
+                } else {
+                    var errP = _preguntas[_actual];
+                    var errAlt = errP && _respuestas[errP.id];
+                    if (errAlt) {
+                        _promesaGuardado = _guardarRespuesta(errP.id, errAlt);
+                        var errEl = document.getElementById('guardando-estado');
+                        if (errEl) { errEl.textContent = ((eGuard && eGuard.message) || 'Error al guardar') + ' Intenta nuevamente.'; errEl.className = 'guardando-estado error'; errEl.style.display = ''; }
+                        return;
+                    }
+                    // pregunta sin respuesta con error — avanzar igual
+                }
+            }
+        }
+
+        detenerTimer();
+
+        // Si no respondida, guardar null (fire-and-forget, comportamiento original)
+        var p = _preguntas[_actual];
+        if (p && !_respuestas[p.id] && _intentoId) {
+            api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
+                pregunta_id:    p.id,
+                alternativa_id: null
+            }).catch(function () {});
+        }
+
+        var total = _preguntas.length;
+        if (_actual < total - 1) {
+            mostrarPregunta(_actual + 1);
+        } else {
+            finalizarPrueba(false);
+        }
+
+    } finally {
+        _avanceEnCurso = false;
+        // Re-habilitar solo si el botón sigue en el DOM (no fue reemplazado por mostrarPregunta)
+        var btnCheck = document.getElementById('btn-siguiente-actual');
+        if (btnCheck) { btnCheck.disabled = false; btnCheck.textContent = 'Siguiente →'; }
     }
 }
 
@@ -704,13 +808,34 @@ async function responder(preguntaId, alternativaId) {
         if (btns[altIdx]) btns[altIdx].classList.add('seleccionada');
     }
 
+    // Mostrar indicador de guardado
+    var estadoEl = document.getElementById('guardando-estado');
+    if (estadoEl) { estadoEl.textContent = 'Guardando...'; estadoEl.className = 'guardando-estado'; estadoEl.style.display = ''; }
+
+    // Iniciar/sobrescribir promesa de guardado pendiente
+    _promesaGuardado = _guardarRespuesta(preguntaId, alternativaId);
+
     try {
-        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
-            pregunta_id:    preguntaId,
-            alternativa_id: alternativaId
-        });
-    } catch (err) {
-        console.error('[rendir] error guardando respuesta:', err);
+        var resultado = await _promesaGuardado;
+        var el = document.getElementById('guardando-estado');
+        if (el) {
+            el.textContent = (resultado && resultado.ya_existia) ? '✓ Ya guardada' : '✓ Guardado';
+            el.className   = 'guardando-estado ok';
+            el.style.display = '';
+        }
+    } catch (e) {
+        var elErr = document.getElementById('guardando-estado');
+        if (elErr) {
+            if (e && e.status === 'timeout') {
+                elErr.textContent = 'Tardó en responder. Presiona Siguiente para continuar.';
+            } else if (e && (e.status === 401 || e.status === 403)) {
+                elErr.textContent = e.message || 'Sesión vencida.';
+            } else {
+                elErr.textContent = (e && e.message) || 'No se pudo guardar.';
+            }
+            elErr.className  = 'guardando-estado error';
+            elErr.style.display = '';
+        }
     }
 
     // Actualizar texto del botón Finalizar si estamos en la última pregunta
