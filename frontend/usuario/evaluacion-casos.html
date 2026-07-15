@@ -264,17 +264,97 @@ if (api.getUsuario()?.tipo_persona !== 'jurado') {
     cargar();
 }
 
-const _respondidos = new Set();
-let   _modoFlujo   = 'apelacion_jurado';
+const _respondidos   = new Set();
+const _envioEnCurso  = new Set();   // evita doble-submit aunque el botón no se haya deshabilitado aún
+let   _modoFlujo     = 'apelacion_jurado';
+
+// ── Timeout máximo para guardar respuesta (ms) ─────────────────────
+const TIMEOUT_GUARDAR_MS = 20000;
 
 async function cargar() {
     try {
         const data = await api.get(`/usuario/evaluaciones/${evalId}/casos`);
         render(data);
     } catch(e) {
+        const msg = e.message || 'Error al cargar los casos de la evaluación.';
         document.getElementById('contenido').innerHTML =
-            `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar casos')}</div>`;
+            `<div class="alerta alerta-error">
+                <strong>No se pudo cargar la evaluación.</strong> ${sanitizar(msg)}<br><br>
+                <button class="btn btn-secundario btn-pequeño" onclick="cargar()">Reintentar</button>
+            </div>`;
     }
+}
+
+// ── Envío de respuesta con timeout y recuperación ──────────────────
+async function _postarRespuesta(casoId, payload) {
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), TIMEOUT_GUARDAR_MS);
+    try {
+        const token = api.getToken();
+        const resp  = await fetch(`/api/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
+            method:  'POST',
+            headers: {
+                'Content-Type':  'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body:   JSON.stringify(payload),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (resp.status === 401) {
+            throw { status: 401, message: 'Tu sesión ha vencido. Recarga la página e inicia sesión nuevamente para guardar tu respuesta.' };
+        }
+
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok) {
+            throw { status: resp.status, message: data?.error || 'Error al guardar la respuesta.', extra: data };
+        }
+        return data;
+    } catch(e) {
+        clearTimeout(timeoutId);
+        if (e.name === 'AbortError') {
+            throw { status: 'timeout', message: 'El servidor está tardando más de lo esperado. Estamos verificando si tu respuesta fue guardada. No cierres ni actualices la evaluación.' };
+        }
+        throw e;
+    }
+}
+
+// ── Verifica si un caso ya tiene respuesta en el servidor ──────────
+async function _verificarEstadoCaso(casoId) {
+    try {
+        const data = await api.get(`/usuario/evaluaciones/${evalId}/casos`);
+        const todos = [...(data?.ciclo1?.casos || []), ...(data?.ciclo2?.casos || [])];
+        const caso  = todos.find(function(c) { return c.id === casoId; });
+        return (caso && caso.mi_respuesta && caso.mi_respuesta.id) ? caso.mi_respuesta : null;
+    } catch(e) {
+        return null;
+    }
+}
+
+// ── Recuperación tras timeout ──────────────────────────────────────
+function _manejarTimeout(casoId, btn, errEl, btnLabel) {
+    if (errEl) {
+        errEl.textContent = 'El servidor está tardando más de lo esperado. Verificando si tu respuesta fue guardada…';
+        errEl.classList.remove('oculto');
+    }
+    setTimeout(async function() {
+        const respuesta = await _verificarEstadoCaso(casoId);
+        if (respuesta) {
+            _respondidos.add(casoId);
+            _envioEnCurso.delete(casoId);
+            if (errEl) errEl.classList.add('oculto');
+            mostrarToast('Tu respuesta fue guardada correctamente.', 'exito');
+            cargar();
+        } else {
+            _envioEnCurso.delete(casoId);
+            if (errEl) {
+                errEl.textContent = 'No pudimos confirmar que tu respuesta fue guardada. Puedes intentar enviarla de nuevo.';
+                errEl.classList.remove('oculto');
+            }
+            if (btn) { btn.disabled = false; btn.textContent = btnLabel || 'Enviar respuesta'; }
+        }
+    }, 2500);
 }
 
 // ── Etiquetas de estado ciclo ───────────────────────────────────────
@@ -760,39 +840,49 @@ document.addEventListener('change', function(e) {
 
 // ── Enviar decisión ────────────────────────────────────────────────
 async function enviarDecision(casoId) {
-    if (_respondidos.has(casoId)) return;
-    const radios   = document.querySelectorAll(`input[name="dec-${casoId}"]`);
-    const decision = [...radios].find(r => r.checked)?.value || null;
-    const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
-    const errEl    = document.getElementById(`error-${casoId}`);
+    if (_respondidos.has(casoId) || _envioEnCurso.has(casoId)) return;
 
-    errEl.classList.add('oculto');
+    const radios     = document.querySelectorAll(`input[name="dec-${casoId}"]`);
+    const decision   = [...radios].find(r => r.checked)?.value || null;
+    const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
+    const errEl      = document.getElementById(`error-${casoId}`);
+
+    if (errEl) errEl.classList.add('oculto');
     if (!decision) {
-        errEl.textContent = 'Selecciona Acepta o Rechaza.';
-        errEl.classList.remove('oculto');
+        if (errEl) { errEl.textContent = 'Selecciona Acepta o Rechaza.'; errEl.classList.remove('oculto'); }
         return;
     }
     if (decision === 'rechaza' && !comentario) {
-        errEl.textContent = 'El comentario es obligatorio cuando rechazas.';
-        errEl.classList.remove('oculto');
+        if (errEl) { errEl.textContent = 'El comentario es obligatorio cuando rechazas.'; errEl.classList.remove('oculto'); }
         return;
     }
 
+    _envioEnCurso.add(casoId);
     const btn = document.querySelector(`#card-${casoId} .btn-primario`);
     if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
 
     try {
-        await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
-            decision, comentario: comentario || undefined
-        });
+        await _postarRespuesta(casoId, { decision, comentario: comentario || undefined });
         _respondidos.add(casoId);
+        _envioEnCurso.delete(casoId);
         mostrarToast('Respuesta registrada', 'exito');
         cargar();
     } catch(e) {
-        if (e.status === 409) { mostrarToast('Ya respondiste este caso', 'warning'); cargar(); }
-        else {
-            errEl.textContent = e.message || 'Error al enviar. Intenta de nuevo.';
-            errEl.classList.remove('oculto');
+        if (e.status === 409) {
+            // Respuesta ya guardada (incluyendo race condition resuelta en servidor)
+            _respondidos.add(casoId);
+            _envioEnCurso.delete(casoId);
+            mostrarToast('Ya respondiste este caso', 'warning');
+            cargar();
+        } else if (e.status === 'timeout') {
+            _manejarTimeout(casoId, btn, errEl, 'Enviar respuesta');
+        } else if (e.status === 401) {
+            _envioEnCurso.delete(casoId);
+            if (btn) { btn.disabled = false; btn.textContent = 'Enviar respuesta'; }
+            if (errEl) { errEl.textContent = e.message; errEl.classList.remove('oculto'); }
+        } else {
+            _envioEnCurso.delete(casoId);
+            if (errEl) { errEl.textContent = e.message || 'Error al enviar. Intenta de nuevo.'; errEl.classList.remove('oculto'); }
             if (btn) { btn.disabled = false; btn.textContent = 'Enviar respuesta'; }
         }
     }
@@ -800,26 +890,37 @@ async function enviarDecision(casoId) {
 
 // ── Enviar informativo ─────────────────────────────────────────────
 async function enviarInformativo(casoId) {
-    if (_respondidos.has(casoId)) return;
+    if (_respondidos.has(casoId) || _envioEnCurso.has(casoId)) return;
+
     const comentario = document.getElementById(`comentario-${casoId}`)?.value.trim() || '';
     const errEl      = document.getElementById(`error-${casoId}`);
-    errEl.classList.add('oculto');
+    if (errEl) errEl.classList.add('oculto');
 
+    _envioEnCurso.add(casoId);
     const btn = document.querySelector(`#card-${casoId} .btn-primario`);
     if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
 
     try {
-        await api.post(`/usuario/evaluaciones/${evalId}/casos/${casoId}/responder`, {
-            comentario: comentario || undefined
-        });
+        await _postarRespuesta(casoId, { comentario: comentario || undefined });
         _respondidos.add(casoId);
+        _envioEnCurso.delete(casoId);
         mostrarToast('Caso informativo reconocido', 'exito');
         cargar();
     } catch(e) {
-        if (e.status === 409) { mostrarToast('Ya reconociste este caso', 'warning'); cargar(); }
-        else {
-            errEl.textContent = e.message || 'Error al enviar.';
-            errEl.classList.remove('oculto');
+        if (e.status === 409) {
+            _respondidos.add(casoId);
+            _envioEnCurso.delete(casoId);
+            mostrarToast('Ya reconociste este caso', 'warning');
+            cargar();
+        } else if (e.status === 'timeout') {
+            _manejarTimeout(casoId, btn, errEl, 'Reconocer caso');
+        } else if (e.status === 401) {
+            _envioEnCurso.delete(casoId);
+            if (btn) { btn.disabled = false; btn.textContent = 'Reconocer caso'; }
+            if (errEl) { errEl.textContent = e.message; errEl.classList.remove('oculto'); }
+        } else {
+            _envioEnCurso.delete(casoId);
+            if (errEl) { errEl.textContent = e.message || 'Error al enviar.'; errEl.classList.remove('oculto'); }
             if (btn) { btn.disabled = false; btn.textContent = 'Reconocer caso'; }
         }
     }

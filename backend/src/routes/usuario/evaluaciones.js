@@ -424,92 +424,139 @@ router.post('/:id/comentario-final', async (req, res) => {
 
 // POST /:id/casos/:casoId/responder
 router.post('/:id/casos/:casoId/responder', async (req, res) => {
+    const _t0     = Date.now();
     const { decision, comentario } = req.body;
     const evalId  = req.params.id;
     const casoId  = req.params.casoId;
+    const uid     = req.usuario?.id || 'desconocido';
 
-    // Verificar asignación activa
-    const { data: ev } = await supabase
-        .from('evaluaciones')
-        .select('id, rodeo_id, modo_flujo')
-        .eq('id', evalId)
-        .single();
-    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
-    if (ev.modo_flujo === 'descuento_automatico') {
-        return res.status(409).json({ error: 'En modo Descuento Automático los casos se resuelven automáticamente al cierre del ciclo' });
-    }
-
-    const { data: asignacion } = await supabase
-        .from('asignaciones')
-        .select('id')
-        .eq('usuario_pagado_id', req.usuario.id)
-        .eq('rodeo_id', ev.rodeo_id)
-        .eq('estado', 'activo')
-        .neq('estado_designacion', 'rechazado')
-        .limit(1)
-        .single();
-    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa' });
-
-    // Verificar caso
-    const { data: caso } = await supabase
-        .from('evaluacion_casos')
-        .select('id, tipo_caso, estado, ciclo_id, descuento_puntos')
-        .eq('id', casoId)
-        .eq('evaluacion_id', evalId)
-        .single();
-    if (!caso) return res.status(404).json({ error: 'Caso no encontrado' });
-    if (caso.estado !== 'visible_jurado') return res.status(409).json({ error: 'El caso no está disponible para responder' });
-
-    // Verificar ciclo abierto
-    const { data: ciclo } = await supabase
-        .from('evaluacion_ciclos')
-        .select('estado')
-        .eq('id', caso.ciclo_id)
-        .single();
-    if (!ciclo || ciclo.estado !== 'abierto') return res.status(409).json({ error: 'El ciclo ya no está abierto' });
-
-    const esInformativo = caso.tipo_caso === 'informativo';
-
-    if (!esInformativo) {
-        if (!decision || !['acepta', 'rechaza'].includes(decision)) {
-            return res.status(400).json({ error: 'decision debe ser acepta o rechaza' });
-        }
-        if (decision === 'rechaza' && (!comentario || !comentario.trim())) {
-            return res.status(400).json({ error: 'comentario es obligatorio cuando rechazas' });
-        }
-    }
-
-    // Auto-aprobación si acepta
-    const decisionAnalista = (!esInformativo && decision === 'acepta') ? 'aprobada_auto' : null;
-    const descuentoFinal   = decisionAnalista === 'aprobada_auto' ? caso.descuento_puntos : null;
-
-    const payload = {
-        caso_id:          casoId,
-        asignacion_id:    asignacion.id,
-        decision:         esInformativo ? 'acepta' : decision,
-        comentario:       comentario?.trim() || null,
-        decision_analista: decisionAnalista,
-        descuento_final:  descuentoFinal
+    const _log = (estado, extra = '') => {
+        const dur = Date.now() - _t0;
+        console.log(`[eval/responder] ${estado} eval=${evalId} caso=${casoId} uid=${uid} dur=${dur}ms${extra ? ' ' + extra : ''}`);
     };
 
-    const { data: existing } = await supabase
-        .from('evaluacion_respuestas_jurado')
-        .select('id')
-        .eq('caso_id', casoId)
-        .eq('asignacion_id', asignacion.id)
-        .single();
+    try {
+        // Verificar asignación activa
+        const { data: ev } = await supabase
+            .from('evaluaciones')
+            .select('id, rodeo_id, modo_flujo')
+            .eq('id', evalId)
+            .single();
+        if (!ev) { _log('404-eval'); return res.status(404).json({ error: 'Evaluación no encontrada' }); }
+        if (ev.modo_flujo === 'descuento_automatico') {
+            _log('409-modoDA');
+            return res.status(409).json({ error: 'En modo Descuento Automático los casos se resuelven automáticamente al cierre del ciclo' });
+        }
 
-    if (existing) return res.status(409).json({ error: 'Ya respondiste este caso' });
+        const { data: asignacion } = await supabase
+            .from('asignaciones')
+            .select('id')
+            .eq('usuario_pagado_id', req.usuario.id)
+            .eq('rodeo_id', ev.rodeo_id)
+            .eq('estado', 'activo')
+            .neq('estado_designacion', 'rechazado')
+            .limit(1)
+            .single();
+        if (!asignacion) { _log('403-asig'); return res.status(403).json({ error: 'No tienes asignación activa' }); }
 
-    const { data, error } = await supabase
-        .from('evaluacion_respuestas_jurado')
-        .insert(payload)
-        .select()
-        .single();
+        // Verificar caso
+        const { data: caso } = await supabase
+            .from('evaluacion_casos')
+            .select('id, tipo_caso, estado, ciclo_id, descuento_puntos')
+            .eq('id', casoId)
+            .eq('evaluacion_id', evalId)
+            .single();
+        if (!caso) { _log('404-caso'); return res.status(404).json({ error: 'Caso no encontrado' }); }
+        if (caso.estado !== 'visible_jurado') {
+            _log(`409-estado(${caso.estado})`);
+            return res.status(409).json({ error: 'El caso no está disponible para responder' });
+        }
 
-    if (error) return res.status(500).json({ error: error.message });
+        // Verificar ciclo abierto y plazo
+        const { data: ciclo } = await supabase
+            .from('evaluacion_ciclos')
+            .select('estado, fecha_limite_respuesta')
+            .eq('id', caso.ciclo_id)
+            .single();
+        if (!ciclo || ciclo.estado !== 'abierto') {
+            _log(`409-ciclo(${ciclo?.estado})`);
+            return res.status(409).json({ error: 'El ciclo ya no está abierto' });
+        }
+        if (ciclo.fecha_limite_respuesta && new Date(ciclo.fecha_limite_respuesta) < new Date()) {
+            _log('409-plazo-vencido');
+            return res.status(409).json({ error: 'El plazo para responder este ciclo ha vencido.' });
+        }
 
-    res.status(201).json(data);
+        const esInformativo = caso.tipo_caso === 'informativo';
+
+        if (!esInformativo) {
+            if (!decision || !['acepta', 'rechaza'].includes(decision)) {
+                _log('400-decision');
+                return res.status(400).json({ error: 'decision debe ser acepta o rechaza' });
+            }
+            if (decision === 'rechaza' && (!comentario || !comentario.trim())) {
+                _log('400-comentario');
+                return res.status(400).json({ error: 'comentario es obligatorio cuando rechazas' });
+            }
+        }
+
+        // Auto-aprobación si acepta
+        const decisionAnalista = (!esInformativo && decision === 'acepta') ? 'aprobada_auto' : null;
+        const descuentoFinal   = decisionAnalista === 'aprobada_auto' ? caso.descuento_puntos : null;
+
+        const payload = {
+            caso_id:           casoId,
+            asignacion_id:     asignacion.id,
+            decision:          esInformativo ? 'acepta' : decision,
+            comentario:        comentario?.trim() || null,
+            decision_analista: decisionAnalista,
+            descuento_final:   descuentoFinal
+        };
+
+        // Verificación rápida de respuesta previa (evita INSERT innecesario)
+        const { data: existing } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .select('id')
+            .eq('caso_id', casoId)
+            .eq('asignacion_id', asignacion.id)
+            .maybeSingle();
+
+        if (existing) {
+            _log(`409-ya-respondido id=${existing.id}`);
+            return res.status(409).json({ error: 'Ya respondiste este caso', respuesta_id: existing.id, guardada: true });
+        }
+
+        const { data, error } = await supabase
+            .from('evaluacion_respuestas_jurado')
+            .insert(payload)
+            .select()
+            .single();
+
+        if (error) {
+            // Race condition: otro request guardó justo antes del INSERT
+            if (error.code === '23505') {
+                _log('409-race-condition');
+                const { data: dup } = await supabase
+                    .from('evaluacion_respuestas_jurado')
+                    .select('id')
+                    .eq('caso_id', casoId)
+                    .eq('asignacion_id', asignacion.id)
+                    .maybeSingle();
+                return res.status(409).json({ error: 'Ya respondiste este caso', respuesta_id: dup?.id, guardada: true });
+            }
+            _log(`500-db error=${error.code}`);
+            console.error('[eval/responder] DB error:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        _log(`201-ok decision=${payload.decision} respuesta=${data.id}`);
+        res.status(201).json({ success: true, caso_id: casoId, respuesta_id: data.id, guardada: true });
+
+    } catch (err) {
+        _log(`500-excepcion error=${err.message}`);
+        console.error('[eval/responder] Excepción inesperada:', err);
+        res.status(500).json({ error: 'Error interno al guardar la respuesta.' });
+    }
 });
 
 // POST /:id/ciclos/:cicloId/comentario — enviar comentario de ciclo (modo descuento_automatico)
