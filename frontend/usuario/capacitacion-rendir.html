@@ -494,17 +494,16 @@ async function tiempoAgotado() {
     _preguntaBloqueada = true;
 
     var p = _preguntas[_actual];
-    // Registrar como no respondida si no tiene respuesta
-    if (!_respuestas[p.id]) {
-        try {
-            await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
-                pregunta_id:    p.id,
-                alternativa_id: null
-            });
-        } catch (e) { /* continúa aunque falle la red */ }
-    }
 
-    avanzarSiguiente();
+    // Si hay guardado pendiente con alternativa seleccionada, esperar su resolución
+    if (_promesaGuardado && _respuestas[p.id]) {
+        try { await _promesaGuardado; } catch (_eT) {}
+        _promesaGuardado = null;
+    }
+    // Si pregunta sin respuesta: avanzarSiguiente() se encarga del null fire-and-forget
+    // No enviamos null si hay alternativa ya seleccionada (aunque no confirmada)
+
+    await avanzarSiguiente();
 }
 
 // ─── Timer GLOBAL de prueba ───────────────────────────────────────────────────
@@ -848,6 +847,41 @@ async function responder(preguntaId, alternativaId) {
     }
 }
 
+// ─── Helpers de finalización con timeout ─────────────────────────────────────
+
+function _finalizarConTimeout(porTiempo) {
+    var controller = new AbortController();
+    var tid = setTimeout(function () { controller.abort(); }, 20000);
+    var token = api.getToken();
+    return fetch('/api/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar', {
+        method:  'POST',
+        headers: Object.assign(
+            { 'Content-Type': 'application/json' },
+            token ? { 'Authorization': 'Bearer ' + token } : {}
+        ),
+        body:    JSON.stringify(porTiempo ? { por_tiempo: true } : {}),
+        signal:  controller.signal
+    }).then(function (resp) {
+        clearTimeout(tid);
+        return resp.json().catch(function () { return null; }).then(function (data) {
+            if (resp.status === 401 || resp.status === 403) {
+                throw { status: resp.status, message: (data && data.error) || 'Sesión vencida' };
+            }
+            if (resp.ok) return Object.assign({ ok: true }, data);
+            throw { status: resp.status, message: (data && data.error) || 'Error al finalizar' };
+        });
+    }).catch(function (e) {
+        clearTimeout(tid);
+        if (e && e.name === 'AbortError') throw { status: 'timeout', message: 'El servidor tardó demasiado' };
+        throw e;
+    });
+}
+
+function _verificarEstadoIntento() {
+    return api.get('/usuario/capacitaciones/intentos/' + _intentoId + '/estado')
+        .catch(function () { return null; });
+}
+
 // ─── Modal de salida / abandono ──────────────────────────────────────────────
 
 function mostrarModalSalida() {
@@ -870,21 +904,66 @@ async function abandonarYSalir() {
     var btn = document.getElementById('btn-confirmar-salida');
     if (btn) { btn.disabled = true; btn.textContent = 'Finalizando…'; }
 
-    _pruebaActiva = false; // desactivar protección ANTES de navegar
+    _pruebaActiva = false;
     detenerTimer();
     detenerTimerGlobal();
 
+    var redirigido = false;
+
     try {
-        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/abandonar', {});
-        try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (e) {}
-        window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+        var controller = new AbortController();
+        var tid = setTimeout(function () { controller.abort(); }, 15000);
+        var token = api.getToken();
+
+        var resp;
+        try {
+            resp = await fetch('/api/usuario/capacitaciones/intentos/' + _intentoId + '/abandonar', {
+                method:  'POST',
+                headers: Object.assign(
+                    { 'Content-Type': 'application/json' },
+                    token ? { 'Authorization': 'Bearer ' + token } : {}
+                ),
+                body:   '{}',
+                signal: controller.signal
+            });
+            clearTimeout(tid);
+        } catch (eFetch) {
+            clearTimeout(tid);
+            if (eFetch && eFetch.name === 'AbortError') {
+                // Timeout: verificar si el intento fue completado igual
+                if (btn) { btn.textContent = 'Verificando…'; }
+                var estadoAband = null;
+                try { estadoAband = await _verificarEstadoIntento(); } catch (_eVA) {}
+                if (estadoAband && estadoAband.estado === 'completado') {
+                    try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (_) {}
+                    redirigido = true;
+                    window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+                    return;
+                }
+                mostrarToast('El servidor tardó en responder. Intenta salir nuevamente.', 'error');
+                return;
+            }
+            throw eFetch;
+        }
+
+        if (resp && (resp.ok || resp.status === 200)) {
+            try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (_) {}
+            redirigido = true;
+            window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+        } else {
+            var data = await resp.json().catch(function () { return {}; });
+            mostrarToast((data && data.error) || 'Error al salir. Intenta nuevamente.', 'error');
+        }
     } catch (err) {
-        // Si falla, re-activar la prueba para que el jurado pueda continuar
-        _enviandoAbandono = false;
-        _pruebaActiva     = true;
-        cerrarModalSalida();
-        iniciarTimerPregunta();
-        mostrarToast(err.message || 'Error al finalizar. Puedes continuar respondiendo.', 'error');
+        mostrarToast((err && err.message) || 'Error al finalizar. Puedes continuar respondiendo.', 'error');
+    } finally {
+        if (!redirigido) {
+            _enviandoAbandono = false;
+            _pruebaActiva     = true;
+            if (btn) { btn.disabled = false; btn.textContent = 'Salir y finalizar prueba'; }
+            iniciarTimerPregunta();
+            if (_venceEnMs) iniciarTimerGlobal();
+        }
     }
 }
 
@@ -896,11 +975,11 @@ async function finalizarPrueba(porTiempo) {
     detenerTimer();
     detenerTimerGlobal();
 
+    // Confirmar si hay preguntas sin responder (solo en finalización manual)
     var sinResponder = _preguntas.length - respondidas();
     if (!porTiempo && sinResponder > 0) {
         var ok = confirm('Tienes ' + sinResponder + ' pregunta(s) sin responder. ¿Finalizar de todas formas?');
         if (!ok) {
-            // Reanudar timers si el usuario cancela en la última pregunta
             iniciarTimerPregunta();
             if (_venceEnMs) iniciarTimerGlobal();
             return;
@@ -908,20 +987,76 @@ async function finalizarPrueba(porTiempo) {
     }
 
     _enviando     = true;
-    _pruebaActiva = false; // desactivar protección ANTES de navegar
+    _pruebaActiva = false;
     var btn = document.getElementById('btn-finalizar');
     if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
 
+    var redirigido = false;
+
     try {
-        await api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/finalizar',
-            porTiempo ? { por_tiempo: true } : {});
-        try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (e) {}
-        window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
-    } catch (err) {
-        _enviando     = false;
-        _pruebaActiva = true; // re-activar si falla el envío
-        if (btn) { btn.disabled = false; btn.textContent = 'Finalizar y enviar'; }
-        mostrarToast(err.message || 'Error al enviar la prueba', 'error');
+        // 1. Resolver guardado pendiente antes de finalizar
+        if (_promesaGuardado) {
+            var promesaFin = _promesaGuardado;
+            _promesaGuardado = null;
+            if (btn) { btn.textContent = 'Guardando última respuesta…'; }
+            try {
+                await promesaFin;
+            } catch (eGuardFin) {
+                if (eGuardFin && (eGuardFin.status === 401 || eGuardFin.status === 403)) {
+                    mostrarToast((eGuardFin.message || 'Sesión vencida') + ' Recarga la página.', 'error');
+                    return;
+                }
+                if (eGuardFin && eGuardFin.status === 'timeout') {
+                    // Verificar si la respuesta quedó guardada
+                    var pFin = _preguntas[_actual];
+                    var respFin = null;
+                    try { respFin = await _verificarRespuesta(pFin.id); } catch (_eFin) {}
+                    // Si no quedó: el backend calculará con lo que tenga en DB
+                }
+                // Otros errores: continuar finalizando igual
+            }
+        }
+
+        // 2. Enviar finalización con timeout
+        if (btn) { btn.textContent = 'Finalizando…'; }
+        try {
+            await _finalizarConTimeout(porTiempo);
+            try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (_) {}
+            redirigido = true;
+            window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+        } catch (eFinal) {
+            if (eFinal && eFinal.status === 'timeout') {
+                // Verificar si el backend completó el intento antes de que expirara el timeout
+                if (btn) { btn.textContent = 'Verificando…'; }
+                var estadoFin = null;
+                try { estadoFin = await _verificarEstadoIntento(); } catch (_eEst) {}
+                if (estadoFin && estadoFin.estado === 'completado') {
+                    try { localStorage.removeItem('cap_abandono_' + _asigId); } catch (_) {}
+                    redirigido = true;
+                    window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+                    return;
+                }
+                mostrarToast('El tiempo de espera terminó. Presiona Finalizar nuevamente.', 'error');
+            } else if (eFinal && (eFinal.status === 401 || eFinal.status === 403)) {
+                mostrarToast((eFinal.message || 'Sesión vencida') + ' Recarga la página.', 'error');
+            } else {
+                mostrarToast((eFinal && eFinal.message) || 'Error al enviar la prueba. Intenta nuevamente.', 'error');
+            }
+        }
+
+    } finally {
+        if (!redirigido) {
+            _enviando     = false;
+            _pruebaActiva = true;
+            if (btn) {
+                btn.disabled  = false;
+                btn.textContent = porTiempo ? 'Reintentar finalizar' : 'Finalizar y enviar';
+            }
+            if (!porTiempo) {
+                iniciarTimerPregunta();
+                if (_venceEnMs) iniciarTimerGlobal();
+            }
+        }
     }
 }
 // ─── Protección de salida ─────────────────────────────────────────────────────

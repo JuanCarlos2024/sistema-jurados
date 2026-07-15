@@ -555,82 +555,145 @@ router.get('/intentos/:id/respuestas/:preguntaId', async (req, res) => {
     }
 });
 
+// ─── GET /intentos/:id/estado ─── consultar estado real del intento ──────────
+
+router.get('/intentos/:id/estado', async (req, res) => {
+    try {
+        const { data: intento } = await supabase
+            .from('capacitacion_intentos')
+            .select(`
+                id, estado, iniciado_en, finalizado_en, vence_en, finalizado_por_tiempo,
+                asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                    usuario_pagado_id
+                )
+            `)
+            .eq('id', req.params.id)
+            .single();
+
+        if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        const venceMs = intento.vence_en ? new Date(intento.vence_en).getTime() : null;
+        const tiempoRestanteSegundos = venceMs ? Math.max(0, Math.floor((venceMs - Date.now()) / 1000)) : null;
+
+        res.json({
+            id:                       intento.id,
+            estado:                   intento.estado,
+            iniciado_en:              intento.iniciado_en,
+            finalizado_en:            intento.finalizado_en,
+            finalizado_por_tiempo:    intento.finalizado_por_tiempo,
+            vence_en:                 intento.vence_en,
+            tiempo_restante_segundos: tiempoRestanteSegundos
+        });
+    } catch (err) {
+        console.error('[cap/estado] excepcion', err.message || err);
+        if (!res.headersSent) res.status(500).json({ error: 'Error al obtener estado del intento' });
+    }
+});
+
 // ─── POST /intentos/:id/finalizar ─── enviar y calcular puntaje ──────────────
 
 router.post('/intentos/:id/finalizar', async (req, res) => {
-    const { por_tiempo = false } = req.body;
-    const { data: intento } = await supabase
-        .from('capacitacion_intentos')
-        .select(`
-            id, estado, asignacion_id,
-            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
-                usuario_pagado_id, prueba_id,
-                prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
-                    puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+    const _t0       = Date.now();
+    const intentoId = req.params.id;
+    const _log = (msg) => console.log(`[cap/finalizar] ${msg} intento=${intentoId} uid=${req.usuario?.id} dur=${Date.now() - _t0}ms`);
+
+    try {
+        const { por_tiempo = false } = req.body;
+
+        const { data: intento } = await supabase
+            .from('capacitacion_intentos')
+            .select(`
+                id, estado, asignacion_id,
+                asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                    usuario_pagado_id, prueba_id,
+                    prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
+                        puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+                    )
                 )
-            )
-        `)
-        .eq('id', req.params.id)
-        .single();
+            `)
+            .eq('id', intentoId)
+            .single();
 
-    if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
-        return res.status(403).json({ error: 'No autorizado' });
+        if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
+            _log('403-no-autorizado');
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        // Idempotente: si ya está completado, devolver OK sin recalcular nota
+        if (intento.estado === 'completado') {
+            _log('200-ya-completado idempotente');
+            return res.json({ ok: true, ya_completado: true, intento_id: intento.id, estado: 'completado' });
+        }
+
+        if (intento.estado !== 'en_curso') {
+            _log('400-estado-invalido estado=' + intento.estado);
+            return res.status(400).json({ error: 'Este intento no está en curso' });
+        }
+
+        _log('inicio por_tiempo=' + por_tiempo);
+
+        // Total de preguntas de la prueba
+        const { count: totalPregCount } = await supabase
+            .from('capacitacion_preguntas')
+            .select('id', { count: 'exact', head: true })
+            .eq('prueba_id', intento.asignacion.prueba_id);
+
+        // Respuestas correctas
+        const { count: correctasCount } = await supabase
+            .from('capacitacion_respuestas')
+            .select('id', { count: 'exact', head: true })
+            .eq('intento_id', intento.id)
+            .eq('es_correcta', true);
+
+        // Total de respuestas registradas (para deducir no_respondidas)
+        const { count: respondidasCount } = await supabase
+            .from('capacitacion_respuestas')
+            .select('id', { count: 'exact', head: true })
+            .eq('intento_id', intento.id);
+
+        const total          = totalPregCount  || 0;
+        const correctas      = correctasCount  || 0;
+        const respondidas    = respondidasCount || 0;
+        const incorrectas    = respondidas - correctas;
+        const no_respondidas = total - respondidas;
+        const puntaje        = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
+        const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
+        const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
+        const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
+        const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
+        const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
+        const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
+
+        const updateData = {
+            estado:           'completado',
+            finalizado_en:    new Date().toISOString(),
+            puntaje_obtenido: puntaje,
+            nota,
+            aprobado
+        };
+        if (por_tiempo) updateData.finalizado_por_tiempo = true;
+
+        const { data, error } = await supabase
+            .from('capacitacion_intentos')
+            .update(updateData)
+            .eq('id', intentoId)
+            .select()
+            .single();
+
+        if (error) {
+            _log(`500-db err=${error.code}`);
+            return res.status(500).json({ error: error.message });
+        }
+
+        _log(`200-ok puntaje=${puntaje} correctas=${correctas}/${total} no_resp=${no_respondidas}`);
+        res.json({ ...data, correctas, incorrectas, no_respondidas, total_preguntas: total });
+
+    } catch (err) {
+        console.error(`[cap/finalizar] excepcion intento=${intentoId} dur=${Date.now() - _t0}ms`, err.message || err);
+        if (!res.headersSent) res.status(500).json({ error: 'Error interno al finalizar la prueba' });
     }
-    if (intento.estado !== 'en_curso') {
-        return res.status(400).json({ error: 'Este intento ya fue finalizado' });
-    }
-
-    // Total de preguntas de la prueba
-    const { count: totalPregCount } = await supabase
-        .from('capacitacion_preguntas')
-        .select('id', { count: 'exact', head: true })
-        .eq('prueba_id', intento.asignacion.prueba_id);
-
-    // Respuestas correctas
-    const { count: correctasCount } = await supabase
-        .from('capacitacion_respuestas')
-        .select('id', { count: 'exact', head: true })
-        .eq('intento_id', intento.id)
-        .eq('es_correcta', true);
-
-    // Total de respuestas registradas (para deducir no_respondidas)
-    const { count: respondidasCount } = await supabase
-        .from('capacitacion_respuestas')
-        .select('id', { count: 'exact', head: true })
-        .eq('intento_id', intento.id);
-
-    const total          = totalPregCount  || 0;
-    const correctas      = correctasCount  || 0;
-    const respondidas    = respondidasCount || 0;
-    const incorrectas    = respondidas - correctas;
-    const no_respondidas = total - respondidas;
-    // Las no respondidas cuentan como incorrectas: denominador es total de preguntas
-    const puntaje        = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
-    const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
-    const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
-    const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
-    const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
-    const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
-    const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
-
-    const updateData = {
-        estado:           'completado',
-        finalizado_en:    new Date().toISOString(),
-        puntaje_obtenido: puntaje,
-        nota,
-        aprobado
-    };
-    if (por_tiempo) updateData.finalizado_por_tiempo = true;
-
-    const { data, error } = await supabase
-        .from('capacitacion_intentos')
-        .update(updateData)
-        .eq('id', req.params.id)
-        .select()
-        .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ...data, correctas, incorrectas, no_respondidas, total_preguntas: total });
 });
 
 // ─── POST /intentos/:id/abandonar ─── finalizar por salida/abandono ──────────
@@ -639,87 +702,105 @@ router.post('/intentos/:id/finalizar', async (req, res) => {
 // Idempotente: si el intento ya está completado devuelve 200 sin recalcular.
 
 router.post('/intentos/:id/abandonar', async (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const rawToken   = authHeader
-        ? authHeader.split(' ')[1]
-        : (req.query.t || null);
+    const _t0       = Date.now();
+    const intentoId = req.params.id;
 
-    if (!rawToken) return res.status(401).json({ error: 'Token requerido' });
-
-    let usuario;
     try {
-        usuario = jwt.verify(rawToken, JWT_SECRET_CAP);
-    } catch (e) {
-        return res.status(401).json({ error: 'Token inválido o expirado' });
-    }
-    if (usuario.tipo !== 'usuario_pagado') {
-        return res.status(403).json({ error: 'Sin permisos' });
-    }
+        const authHeader = req.headers['authorization'];
+        const rawToken   = authHeader
+            ? authHeader.split(' ')[1]
+            : (req.query.t || null);
 
-    const { data: intento } = await supabase
-        .from('capacitacion_intentos')
-        .select(`
-            id, estado, asignacion_id,
-            asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
-                usuario_pagado_id, prueba_id,
-                prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
-                    puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+        if (!rawToken) return res.status(401).json({ error: 'Token requerido' });
+
+        let usuario;
+        try {
+            usuario = jwt.verify(rawToken, JWT_SECRET_CAP);
+        } catch (e) {
+            return res.status(401).json({ error: 'Token inválido o expirado' });
+        }
+        if (usuario.tipo !== 'usuario_pagado') {
+            return res.status(403).json({ error: 'Sin permisos' });
+        }
+
+        const _log = (msg) => console.log(`[cap/abandonar] ${msg} intento=${intentoId} uid=${usuario.id} dur=${Date.now() - _t0}ms`);
+
+        const { data: intento } = await supabase
+            .from('capacitacion_intentos')
+            .select(`
+                id, estado, asignacion_id,
+                asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
+                    usuario_pagado_id, prueba_id,
+                    prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
+                        puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+                    )
                 )
-            )
-        `)
-        .eq('id', req.params.id)
-        .single();
+            `)
+            .eq('id', intentoId)
+            .single();
 
-    if (!intento || intento.asignacion?.usuario_pagado_id !== usuario.id) {
-        return res.status(403).json({ error: 'No autorizado' });
+        if (!intento || intento.asignacion?.usuario_pagado_id !== usuario.id) {
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        // Idempotente: si ya está completado no recalcular
+        if (intento.estado === 'completado') {
+            _log('200-ya-completado idempotente');
+            return res.json({ ok: true, ya_completado: true, intento_id: intento.id });
+        }
+        if (intento.estado !== 'en_curso') {
+            _log('400-estado-invalido estado=' + intento.estado);
+            return res.status(400).json({ error: 'El intento no está en curso' });
+        }
+
+        _log('inicio');
+
+        // Calcular puntaje con las respuestas guardadas hasta el momento
+        const { count: totalPregCount } = await supabase
+            .from('capacitacion_preguntas')
+            .select('id', { count: 'exact', head: true })
+            .eq('prueba_id', intento.asignacion.prueba_id);
+
+        const { count: correctasCount } = await supabase
+            .from('capacitacion_respuestas')
+            .select('id', { count: 'exact', head: true })
+            .eq('intento_id', intento.id)
+            .eq('es_correcta', true);
+
+        const total     = totalPregCount || 0;
+        const correctas = correctasCount || 0;
+        const puntaje   = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
+
+        const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
+        const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
+        const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
+        const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
+        const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
+        const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
+
+        const { error } = await supabase
+            .from('capacitacion_intentos')
+            .update({
+                estado:           'completado',
+                finalizado_en:    new Date().toISOString(),
+                puntaje_obtenido: puntaje,
+                nota,
+                aprobado
+            })
+            .eq('id', intentoId);
+
+        if (error) {
+            _log(`500-db err=${error.code}`);
+            return res.status(500).json({ error: error.message });
+        }
+
+        _log(`200-ok puntaje=${puntaje} correctas=${correctas}/${total}`);
+        res.json({ ok: true, intento_id: intento.id, puntaje, nota, aprobado });
+
+    } catch (err) {
+        console.error(`[cap/abandonar] excepcion intento=${intentoId} dur=${Date.now() - _t0}ms`, err.message || err);
+        if (!res.headersSent) res.status(500).json({ error: 'Error interno al procesar el abandono' });
     }
-
-    // Idempotente: si ya está completado no recalcular
-    if (intento.estado === 'completado') {
-        return res.json({ ok: true, ya_completado: true, intento_id: intento.id });
-    }
-    if (intento.estado !== 'en_curso') {
-        return res.status(400).json({ error: 'El intento no está en curso' });
-    }
-
-    // Calcular puntaje con las respuestas guardadas hasta el momento
-    // Las preguntas sin respuesta cuentan como incorrectas (misma lógica que /finalizar)
-    const { count: totalPregCount } = await supabase
-        .from('capacitacion_preguntas')
-        .select('id', { count: 'exact', head: true })
-        .eq('prueba_id', intento.asignacion.prueba_id);
-
-    const { count: correctasCount } = await supabase
-        .from('capacitacion_respuestas')
-        .select('id', { count: 'exact', head: true })
-        .eq('intento_id', intento.id)
-        .eq('es_correcta', true);
-
-    const total     = totalPregCount || 0;
-    const correctas = correctasCount || 0;
-    const puntaje   = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
-
-    const exigencia      = parseFloat(intento.asignacion.prueba?.puntaje_minimo_aprobacion ?? 60);
-    const notaMinima     = parseFloat(intento.asignacion.prueba?.nota_minima    ?? 1.0);
-    const notaMaxima     = parseFloat(intento.asignacion.prueba?.nota_maxima    ?? 7.0);
-    const notaAprobacion = parseFloat(intento.asignacion.prueba?.nota_aprobacion ?? 4.0);
-    const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
-    const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
-
-    const { error } = await supabase
-        .from('capacitacion_intentos')
-        .update({
-            estado:           'completado',
-            finalizado_en:    new Date().toISOString(),
-            puntaje_obtenido: puntaje,
-            nota,
-            aprobado
-        })
-        .eq('id', req.params.id);
-
-    if (error) return res.status(500).json({ error: error.message });
-
-    res.json({ ok: true, intento_id: intento.id, puntaje, nota, aprobado });
 });
 
 // ─── GET /intentos/:id/resultado ─── ver resultado con correcciones ──────────
