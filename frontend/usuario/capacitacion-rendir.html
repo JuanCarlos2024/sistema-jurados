@@ -305,6 +305,10 @@ var _pruebaActiva       = false; // true solo mientras el jurado está respondie
 var _enviandoAbandono   = false; // guard contra doble acción en modal de salida
 var _modalSalidaVisible = false;
 
+// Sincronización de reloj con el servidor
+var _desfaseServidor  = 0;    // ms: corrección entre reloj local y servidor (Date.now() + _desfaseServidor ≈ hora servidor)
+var _resincIntervalId = null; // setInterval para resincronización periódica del reloj
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 protegerRuta('usuario_pagado');
@@ -360,6 +364,17 @@ async function iniciarPrueba() {
         if (data.vence_en) {
             _venceEnMs = new Date(data.vence_en).getTime();
             iniciarTimerGlobal();
+        }
+
+        // Calcular desfase entre reloj local y servidor para el countdown
+        if (data.server_now) {
+            _desfaseServidor = new Date(data.server_now).getTime() - Date.now();
+        }
+
+        // Resincronizar reloj cada 5 min y al recuperar foco de pestaña
+        if (_venceEnMs) {
+            _resincIntervalId = setInterval(_resincronizarReloj, 300000);
+            document.addEventListener('visibilitychange', _onVisibilityChange);
         }
 
         _preguntas.forEach(function (p) {
@@ -528,7 +543,7 @@ function iniciarTimerGlobal() {
 
 function actualizarDisplayTimerGlobal() {
     if (!_venceEnMs) return;
-    var leftMs  = _venceEnMs - Date.now();
+    var leftMs  = _venceEnMs - (Date.now() + _desfaseServidor);
     var leftSec = Math.max(0, Math.floor(leftMs / 1000));
     var mm = String(Math.floor(leftSec / 60)).padStart(2, '0');
     var ss = String(leftSec % 60).padStart(2, '0');
@@ -557,6 +572,31 @@ async function tiempoGlobalAgotado() {
     detenerTimer();
     mostrarToast('Tiempo agotado. Finalizando prueba…', 'error');
     await finalizarPrueba(true);
+}
+
+// ─── Sincronización de reloj con el servidor ─────────────────────────────────
+
+async function _resincronizarReloj() {
+    if (!_venceEnMs || !_intentoId || !_pruebaActiva) return;
+    try {
+        var estado = await _verificarEstadoIntento();
+        if (!estado) return;
+        if (estado.server_now) {
+            var nuevoDesfase = new Date(estado.server_now).getTime() - Date.now();
+            // Actualizar solo si la diferencia supera 5 segundos (evita ajustes ruidosos)
+            if (Math.abs(nuevoDesfase - _desfaseServidor) > 5000) {
+                _desfaseServidor = nuevoDesfase;
+            }
+        }
+        // Si el intento fue completado en otra pestaña o contexto, redirigir
+        if (estado.estado !== 'en_curso' && !_enviando && _pruebaActiva) {
+            window.location.href = '/usuario/capacitacion-resultado.html?id=' + _intentoId;
+        }
+    } catch (_) {}
+}
+
+function _onVisibilityChange() {
+    if (!document.hidden && _pruebaActiva) _resincronizarReloj();
 }
 
 // ─── Render pregunta ──────────────────────────────────────────────────────────
@@ -693,7 +733,12 @@ function _guardarRespuesta(preguntaId, alternativaId) {
             });
         }
         return resp.json().catch(function () { return null; }).then(function (data) {
-            if (resp.status === 409) return Object.assign({ guardada: true, ya_existia: true }, data);
+            if (resp.status === 409) {
+                if (data && data.codigo === 'TIEMPO_AGOTADO') {
+                    throw { status: 'tiempo_agotado', message: data.error || 'Tiempo expirado', intento_id: data.intento_id };
+                }
+                return Object.assign({ guardada: true, ya_existia: true }, data);
+            }
             if (!resp.ok) throw { status: resp.status, message: (data && data.error) || 'Error al guardar' };
             return data;
         });
@@ -726,6 +771,13 @@ async function avanzarSiguiente() {
             try {
                 await promesa;
             } catch (eGuard) {
+                if (eGuard && eGuard.status === 'tiempo_agotado') {
+                    // El backend rechazó la respuesta por tiempo: finalizar por tiempo
+                    mostrarToast('Tiempo agotado. La prueba se finalizará.', 'error');
+                    detenerTimer();
+                    await finalizarPrueba(true);
+                    return;
+                }
                 if (eGuard && (eGuard.status === 401 || eGuard.status === 403)) {
                     var eEl = document.getElementById('guardando-estado');
                     if (eEl) { eEl.textContent = (eGuard.message || 'Sesión vencida') + ' Recarga la página.'; eEl.className = 'guardando-estado error'; eEl.style.display = ''; }
@@ -762,15 +814,6 @@ async function avanzarSiguiente() {
         }
 
         detenerTimer();
-
-        // Si no respondida, guardar null (fire-and-forget, comportamiento original)
-        var p = _preguntas[_actual];
-        if (p && !_respuestas[p.id] && _intentoId) {
-            api.post('/usuario/capacitaciones/intentos/' + _intentoId + '/responder', {
-                pregunta_id:    p.id,
-                alternativa_id: null
-            }).catch(function () {});
-        }
 
         var total = _preguntas.length;
         if (_actual < total - 1) {
@@ -825,15 +868,18 @@ async function responder(preguntaId, alternativaId) {
     } catch (e) {
         var elErr = document.getElementById('guardando-estado');
         if (elErr) {
-            if (e && e.status === 'timeout') {
+            elErr.className     = 'guardando-estado error';
+            elErr.style.display = '';
+            if (e && e.status === 'tiempo_agotado') {
+                elErr.textContent = 'Tiempo agotado. La prueba se finalizará automáticamente.';
+                if (!_enviando) { _preguntaBloqueada = true; setTimeout(function () { finalizarPrueba(true); }, 500); }
+            } else if (e && e.status === 'timeout') {
                 elErr.textContent = 'Tardó en responder. Presiona Siguiente para continuar.';
             } else if (e && (e.status === 401 || e.status === 403)) {
                 elErr.textContent = e.message || 'Sesión vencida.';
             } else {
                 elErr.textContent = (e && e.message) || 'No se pudo guardar.';
             }
-            elErr.className  = 'guardando-estado error';
-            elErr.style.display = '';
         }
     }
 
@@ -1006,12 +1052,28 @@ async function finalizarPrueba(porTiempo) {
                     mostrarToast((eGuardFin.message || 'Sesión vencida') + ' Recarga la página.', 'error');
                     return;
                 }
-                if (eGuardFin && eGuardFin.status === 'timeout') {
-                    // Verificar si la respuesta quedó guardada
-                    var pFin = _preguntas[_actual];
-                    var respFin = null;
-                    try { respFin = await _verificarRespuesta(pFin.id); } catch (_eFin) {}
-                    // Si no quedó: el backend calculará con lo que tenga en DB
+                if (eGuardFin && eGuardFin.status === 'tiempo_agotado') {
+                    // El backend ya finalizó por tiempo al rechazar la respuesta — continuar al redirect
+                } else if (eGuardFin && eGuardFin.status === 'timeout') {
+                    if (!porTiempo) {
+                        // Finalización MANUAL con timeout de guardado:
+                        // verificar si la respuesta quedó en DB antes de finalizar
+                        var pFin = _preguntas[_actual];
+                        if (pFin && _respuestas[pFin.id]) {
+                            if (btn) btn.textContent = 'Verificando respuesta…';
+                            var respFin = null;
+                            try { respFin = await _verificarRespuesta(pFin.id); } catch (_eFin) {}
+                            if (!respFin || !respFin.guardada) {
+                                // No confirmada en DB: reintentar guardado y bloquear finalización
+                                _promesaGuardado = _guardarRespuesta(pFin.id, _respuestas[pFin.id]);
+                                mostrarToast('Tu última respuesta no fue confirmada por el servidor. Reintentando. Vuelve a presionar Finalizar una vez que aparezca "✓ Guardado".', 'error');
+                                return; // finally re-habilitará el botón
+                            }
+                            // Confirmada en DB: continuar finalizando con ella incluida
+                        }
+                        // Pregunta sin respuesta seleccionada o confirmada: continuar
+                    }
+                    // porTiempo=true: no bloqueamos, finalizamos con lo que hay en DB
                 }
                 // Otros errores: continuar finalizando igual
             }

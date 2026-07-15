@@ -372,6 +372,7 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
     res.json({
         intento_id:  intento.id,
         vence_en:    intento.vence_en || null,
+        server_now:  new Date().toISOString(),
         prueba: {
             id:                           prueba.id,
             titulo:                       prueba.titulo,
@@ -405,7 +406,7 @@ router.post('/intentos/:id/responder', async (req, res) => {
                 asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
                     usuario_pagado_id, prueba_id,
                     prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
-                        puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion
+                        puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion, fecha_fin
                     )
                 )
             `)
@@ -452,8 +453,15 @@ router.post('/intentos/:id/responder', async (req, res) => {
                 finalizado_por_tiempo: true
             }).eq('id', intento.id);
 
-            _log('408-vencido');
-            return res.status(408).json({ error: 'Tiempo expirado', intento_id: intento.id });
+            _log('409-TIEMPO_AGOTADO-vence_en');
+            return res.status(409).json({ codigo: 'TIEMPO_AGOTADO', error: 'Tiempo expirado', intento_id: intento.id });
+        }
+
+        // Validar fecha de cierre de la prueba
+        const fechaFinPrueba = intento.asignacion?.prueba?.fecha_fin;
+        if (fechaFinPrueba && new Date() > new Date(fechaFinPrueba)) {
+            _log('409-TIEMPO_AGOTADO-fecha_fin');
+            return res.status(409).json({ codigo: 'TIEMPO_AGOTADO', error: 'El plazo de la prueba ha vencido', intento_id: intento.id });
         }
 
         // Verificar si la alternativa es correcta y que pertenece a la pregunta
@@ -584,7 +592,8 @@ router.get('/intentos/:id/estado', async (req, res) => {
             finalizado_en:            intento.finalizado_en,
             finalizado_por_tiempo:    intento.finalizado_por_tiempo,
             vence_en:                 intento.vence_en,
-            tiempo_restante_segundos: tiempoRestanteSegundos
+            tiempo_restante_segundos: tiempoRestanteSegundos,
+            server_now:               new Date().toISOString()
         });
     } catch (err) {
         console.error('[cap/estado] excepcion', err.message || err);
@@ -679,10 +688,21 @@ router.post('/intentos/:id/finalizar', async (req, res) => {
             .from('capacitacion_intentos')
             .update(updateData)
             .eq('id', intentoId)
+            .eq('estado', 'en_curso')   // Actualización atómica: solo si sigue en_curso
             .select()
             .single();
 
         if (error) {
+            if (error.code === 'PGRST116') {
+                // 0 filas actualizadas: otro proceso ya finalizó el intento (race condition)
+                const { data: actual } = await supabase
+                    .from('capacitacion_intentos')
+                    .select('id, estado, puntaje_obtenido, nota, aprobado, finalizado_en, finalizado_por_tiempo')
+                    .eq('id', intentoId)
+                    .single();
+                _log('200-ya-completado-concurrente');
+                return res.json({ ok: true, ya_completado: true, intento_id: intentoId, estado: actual?.estado || 'completado' });
+            }
             _log(`500-db err=${error.code}`);
             return res.status(500).json({ error: error.message });
         }
@@ -728,7 +748,7 @@ router.post('/intentos/:id/abandonar', async (req, res) => {
         const { data: intento } = await supabase
             .from('capacitacion_intentos')
             .select(`
-                id, estado, asignacion_id,
+                id, estado, asignacion_id, finalizado_por_tiempo,
                 asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
                     usuario_pagado_id, prueba_id,
                     prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
@@ -743,10 +763,10 @@ router.post('/intentos/:id/abandonar', async (req, res) => {
             return res.status(403).json({ error: 'No autorizado' });
         }
 
-        // Idempotente: si ya está completado no recalcular
-        if (intento.estado === 'completado') {
-            _log('200-ya-completado idempotente');
-            return res.json({ ok: true, ya_completado: true, intento_id: intento.id });
+        // Idempotente: si ya fue finalizado (completado o abandonado) no recalcular
+        if (intento.estado === 'completado' || intento.estado === 'abandonado') {
+            _log('200-ya-finalizado idempotente estado=' + intento.estado + ' por_tiempo=' + (intento.finalizado_por_tiempo ? 'true' : 'false'));
+            return res.json({ ok: true, ya_completado: true, intento_id: intento.id, estado: intento.estado, finalizado_por_tiempo: intento.finalizado_por_tiempo || false });
         }
         if (intento.estado !== 'en_curso') {
             _log('400-estado-invalido estado=' + intento.estado);
