@@ -9,6 +9,29 @@ const router   = express.Router();
 const multer   = require('multer');
 const supabase = require('../../config/supabase');
 
+// Valida y extrae el ID de YouTube de una URL.
+// Acepta: youtu.be/ID, watch?v=ID, /embed/ID, /shorts/ID, /live/ID, /v/ID
+// Rechaza dominios ajenos a YouTube y URLs con múltiples esquemas http.
+function _extraerIdYoutube(url) {
+    if (!url || typeof url !== 'string') return null;
+    const u = url.trim().split('#')[0];
+    if ((u.match(/https?:\/\//g) || []).length > 1) return null;
+    if (!/^https?:\/\/(www\.|m\.|music\.)?youtu(be\.com|\.be)/.test(u)) return null;
+    const pats = [
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /[?&]v=([a-zA-Z0-9_-]{11})/,
+        /\/embed\/([a-zA-Z0-9_-]{11})/,
+        /\/shorts\/([a-zA-Z0-9_-]{11})/,
+        /\/live\/([a-zA-Z0-9_-]{11})/,
+        /\/v\/([a-zA-Z0-9_-]{11})/
+    ];
+    for (const pat of pats) {
+        const m = u.match(pat);
+        if (m) return m[1];
+    }
+    return null;
+}
+
 const _uploadImagen = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
@@ -433,6 +456,14 @@ router.post('/pruebas/:id/preguntas', async (req, res) => {
     const tieneImagen = tipoFinal === 'imagen_alternativas' || tipoFinal === 'verdadero_falso_imagen';
     const tieneVideo  = tipoFinal === 'video_alternativas'  || tipoFinal === 'verdadero_falso_video';
 
+    // Validación sintáctica de URL de video
+    let videoUrlFinal = null;
+    if (tieneVideo && video_url) {
+        const ytId = _extraerIdYoutube(video_url);
+        if (!ytId) return res.status(400).json({ error: 'La URL del video no es un enlace de YouTube válido.' });
+        videoUrlFinal = video_url.trim();
+    }
+
     const { data, error } = await supabase
         .from('capacitacion_preguntas')
         .insert({
@@ -440,7 +471,7 @@ router.post('/pruebas/:id/preguntas', async (req, res) => {
             orden,
             enunciado: enunciado.trim(),
             tipo: tipoFinal,
-            video_url:       tieneVideo  ? (video_url  || null) : null,
+            video_url:       tieneVideo  ? (videoUrlFinal || null) : null,
             video_sin_audio: tieneVideo  ? (video_sin_audio === true || video_sin_audio === 'true') : false,
             imagen_url:      tieneImagen ? (imagen_url || null) : null,
             es_favorita: es_favorita === true || es_favorita === 'true'
@@ -460,7 +491,12 @@ router.put('/preguntas/:id', async (req, res) => {
     const updates = { updated_at: new Date().toISOString() };
     if (enunciado !== undefined)       updates.enunciado = enunciado.trim();
     if (tipo !== undefined)            updates.tipo = tipo;
-    if (video_url !== undefined)       updates.video_url = video_url || null;
+    if (video_url !== undefined) {
+        if (video_url && !_extraerIdYoutube(video_url)) {
+            return res.status(400).json({ error: 'La URL del video no es un enlace de YouTube válido.' });
+        }
+        updates.video_url = video_url || null;
+    }
     if (video_sin_audio !== undefined) updates.video_sin_audio = Boolean(video_sin_audio);
     if (imagen_url !== undefined)      updates.imagen_url = imagen_url || null;
     if (es_favorita !== undefined)     updates.es_favorita = Boolean(es_favorita);

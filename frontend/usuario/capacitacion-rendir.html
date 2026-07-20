@@ -77,8 +77,13 @@
             background: #000;
             border-radius: 10px;
             overflow: hidden;
+            position: relative;
         }
-        .video-preg iframe {
+        /* El iframe creado por YT.Player hereda este ID y estas reglas */
+        .video-preg iframe,
+        #yt-player {
+            position: absolute;
+            top: 0; left: 0;
             width: 100%;
             height: 100%;
             border: 0;
@@ -86,6 +91,30 @@
         }
         @media (max-width: 900px) {
             .video-preg { max-width: 100%; }
+        }
+        /* Estado de carga / error del video */
+        .yt-status {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,.88);
+            color: #fff;
+            z-index: 5;
+            gap: 10px;
+            text-align: center;
+            padding: 20px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .yt-btn-fila {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 4px;
         }
         .imagen-preg {
             width: 100%;
@@ -279,6 +308,13 @@
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
+// Cargar YouTube IFrame API para detección de errores del reproductor
+(function() {
+    var s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(s);
+})();
+
 // ─── Estado global ────────────────────────────────────────────────────────────
 var _intentoId            = null;
 var _preguntas            = [];
@@ -308,6 +344,13 @@ var _modalSalidaVisible = false;
 // Sincronización de reloj con el servidor
 var _desfaseServidor  = 0;    // ms: corrección entre reloj local y servidor (Date.now() + _desfaseServidor ≈ hora servidor)
 var _resincIntervalId = null; // setInterval para resincronización periódica del reloj
+
+// Video: anti-cruce visual y reproducción via YouTube IFrame API
+var _videoRenderSeq = 0;    // incrementa con cada mostrarPregunta; cancela callbacks de renders anteriores
+var _ytApiReady     = false; // true cuando YouTube IFrame API esté disponible
+var _ytPlayer       = null;  // instancia activa de YT.Player
+var _ytPending      = null;  // { videoId, muted, seq, pregId } — video en espera si la API aún no cargó
+var _ytLoadTimerId  = null;  // setTimeout de "tardando más de lo esperado"
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -601,37 +644,197 @@ function _onVisibilityChange() {
 
 // ─── Render pregunta ──────────────────────────────────────────────────────────
 
-function youtubeEmbed(url, muted) {
-    if (!url) return null;
-    url = url.trim();
-    var idMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-    if (!idMatch) return null;
-    var videoId  = idMatch[1];
-    var startSec = 0;
-    // start= (formato embed)
-    var startMatch = url.match(/[?&]start=(\d+)/);
-    if (startMatch) {
-        startSec = parseInt(startMatch[1], 10);
-    } else {
-        // t= (formatos watch y youtu.be): 90, 120s, 2m30s, 1h30m20s
-        var tMatch = url.match(/[?&]t=([0-9hms]+)/);
-        if (tMatch) {
-            var parts = tMatch[1].match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
-            if (parts) {
-                startSec = (parseInt(parts[1] || 0) * 3600)
-                         + (parseInt(parts[2] || 0) * 60)
-                         +  parseInt(parts[3] || 0);
-            }
-        }
+// Extrae el ID de YouTube (11 chars) de cualquier formato de URL soportado.
+// Reconoce: youtu.be/ID, watch?v=ID, /embed/ID, /shorts/ID, /live/ID, /v/ID
+// Rechaza cualquier dominio que no sea YouTube.
+// Función compartida: usada en participante y en previsualización admin.
+function youtubeExtraerId(url) {
+    if (!url || typeof url !== 'string') return null;
+    url = url.trim().split('#')[0]; // eliminar fragmento
+    if (!/^https?:\/\/(www\.|m\.|music\.)?youtu(be\.com|\.be)/.test(url)) return null;
+    var pats = [
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /[?&]v=([a-zA-Z0-9_-]{11})/,
+        /\/embed\/([a-zA-Z0-9_-]{11})/,
+        /\/shorts\/([a-zA-Z0-9_-]{11})/,
+        /\/live\/([a-zA-Z0-9_-]{11})/,
+        /\/v\/([a-zA-Z0-9_-]{11})/
+    ];
+    for (var i = 0; i < pats.length; i++) {
+        var m = url.match(pats[i]);
+        if (m) return m[1];
     }
-    var params = [];
-    if (startSec > 0) params.push('start=' + startSec);
-    if (muted)        params.push('mute=1');
-    return 'https://www.youtube-nocookie.com/embed/' + videoId
-         + (params.length > 0 ? '?' + params.join('&') : '');
+    return null;
+}
+
+function _ytStartSec(url) {
+    if (!url) return 0;
+    var sm = url.match(/[?&]start=(\d+)/);
+    if (sm) return parseInt(sm[1], 10);
+    var tm = url.match(/[?&]t=([0-9hms]+)/);
+    if (tm) {
+        var v = tm[1];
+        if (/^\d+$/.test(v)) return parseInt(v, 10);
+        var p = v.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+        if (p) return (parseInt(p[1] || 0) * 3600) + (parseInt(p[2] || 0) * 60) + parseInt(p[3] || 0);
+    }
+    return 0;
+}
+
+// Genera URL embed compatible con youtube-nocookie.com (fallback y admin)
+function youtubeEmbed(url, muted) {
+    var id = youtubeExtraerId(url);
+    if (!id) return null;
+    var ss = _ytStartSec(url || '');
+    var params = ['playsinline=1', 'rel=0', 'enablejsapi=1'];
+    if (ss > 0)  params.push('start=' + ss);
+    if (muted)   params.push('mute=1');
+    return 'https://www.youtube-nocookie.com/embed/' + id + '?' + params.join('&');
+}
+
+// ─── YouTube IFrame API ───────────────────────────────────────────────────────
+
+window.onYouTubeIframeAPIReady = function() {
+    _ytApiReady = true;
+    if (_ytPending) {
+        var p = _ytPending;
+        _ytPending = null;
+        _ytCrearPlayer(p.videoId, p.muted, p.seq, p.pregId);
+    }
+};
+
+function _ytDestruirPlayer() {
+    if (_ytLoadTimerId) { clearTimeout(_ytLoadTimerId); _ytLoadTimerId = null; }
+    if (_ytPlayer) {
+        try { _ytPlayer.stopVideo(); } catch(e) {}
+        try { _ytPlayer.destroy(); } catch(e) {}
+        _ytPlayer = null;
+    }
+}
+
+var _ytErrMsgs = {
+    2:   'URL del video inválida.',
+    5:   'Error en el reproductor HTML5.',
+    100: 'Este video no existe o fue eliminado.',
+    101: 'Este video no puede reproducirse aquí (inserción desactivada por el autor).',
+    150: 'Este video no puede reproducirse aquí (inserción desactivada por el autor).'
+};
+
+function _ytMostrarError(code, videoId, pregId) {
+    var msg = _ytErrMsgs[code] || 'Este video no puede reproducirse dentro de la plataforma.';
+    var el = document.getElementById('yt-status');
+    if (!el) return;
+    el.innerHTML =
+        '<p style="margin:0 0 6px;font-size:15px;">' + sanitizar(msg) + '</p>'
+        + '<p style="margin:0 0 14px;font-size:11px;color:#bbb;">Informa al encargado antes de continuar con la siguiente pregunta.</p>'
+        + '<div class="yt-btn-fila">'
+        + '<button class="btn btn-secundario btn-sm" onclick="_ytReintentar()">⟳ Reintentar video</button>'
+        + '<a class="btn btn-secundario btn-sm"'
+        + ' href="https://youtu.be/' + encodeURIComponent(videoId) + '"'
+        + ' target="_blank" rel="noopener noreferrer"'
+        + ' onclick="mostrarToast(\'Se abrirá en otra pestaña. Tu prueba continúa aquí.\',\'info\')">Abrir en YouTube ↗</a>'
+        + '</div>';
+    el.style.display = '';
+    console.warn('[video] error=' + code + ' videoId=' + videoId + ' pregId=' + pregId);
+}
+
+function _ytCrearPlayer(videoId, muted, seq, pregId) {
+    if (seq !== _videoRenderSeq) return;
+    if (!document.getElementById('yt-player')) return;
+    try {
+        _ytPlayer = new YT.Player('yt-player', {
+            videoId: videoId,
+            host:    'https://www.youtube-nocookie.com',
+            playerVars: { mute: muted ? 1 : 0, playsinline: 1, rel: 0 },
+            events: {
+                onReady: function() {
+                    if (seq !== _videoRenderSeq) return;
+                    if (_ytLoadTimerId) { clearTimeout(_ytLoadTimerId); _ytLoadTimerId = null; }
+                    var el = document.getElementById('yt-status');
+                    if (el) el.style.display = 'none';
+                },
+                onError: function(ev) {
+                    if (seq !== _videoRenderSeq) return;
+                    if (_ytLoadTimerId) { clearTimeout(_ytLoadTimerId); _ytLoadTimerId = null; }
+                    var el = document.getElementById('yt-status');
+                    if (el) el.style.display = '';
+                    _ytMostrarError(ev.data, videoId, pregId);
+                }
+            }
+        });
+    } catch(e) {
+        // Fallback: iframe manual si YT.Player no está disponible
+        console.error('[video] YT.Player falló, usando iframe manual:', e && e.message);
+        if (seq !== _videoRenderSeq) return;
+        var container = document.getElementById('yt-player');
+        if (!container) return;
+        var src = youtubeEmbed('https://youtu.be/' + videoId, muted);
+        var fr = document.createElement('iframe');
+        fr.src = src;
+        fr.setAttribute('allowfullscreen', '');
+        fr.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+        fr.setAttribute('title', 'Video de la pregunta');
+        fr.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+        fr.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;display:block;';
+        container.parentNode.replaceChild(fr, container);
+        setTimeout(function() {
+            if (seq !== _videoRenderSeq) return;
+            var el = document.getElementById('yt-status');
+            if (el) el.style.display = 'none';
+        }, 3000);
+    }
+}
+
+function _ytIniciarCarga(videoId, muted, seq, pregId) {
+    _ytDestruirPlayer();
+    _ytLoadTimerId = setTimeout(function() {
+        if (seq !== _videoRenderSeq) return;
+        var el = document.getElementById('yt-status');
+        if (el && el.style.display !== 'none' && el.querySelector('.yt-btn-fila') === null) {
+            el.innerHTML =
+                '<p style="margin:0 0 14px;">El video está tardando más de lo esperado.</p>'
+                + '<div class="yt-btn-fila">'
+                + '<button class="btn btn-secundario btn-sm" onclick="_ytReintentar()">⟳ Reintentar video</button>'
+                + '</div>';
+        }
+    }, 12000);
+    if (_ytApiReady) {
+        _ytCrearPlayer(videoId, muted, seq, pregId);
+    } else {
+        _ytPending = { videoId: videoId, muted: muted, seq: seq, pregId: pregId };
+    }
+}
+
+function _ytReintentar() {
+    var p = _preguntas[_actual];
+    if (!p) return;
+    var videoId = youtubeExtraerId(p.video_url);
+    if (!videoId) return;
+
+    var statusEl = document.getElementById('yt-status');
+    if (statusEl) { statusEl.innerHTML = '⏳ Cargando video…'; statusEl.style.display = ''; }
+
+    // Recrear el contenedor del player (YT.destroy() elimina el iframe pero no restaura el div)
+    var wrap = statusEl ? statusEl.closest('.video-preg') : null;
+    if (wrap) {
+        var viejo = document.getElementById('yt-player');
+        if (viejo) viejo.remove();
+        var nuevo = document.createElement('div');
+        nuevo.id = 'yt-player';
+        wrap.appendChild(nuevo);
+    }
+
+    _videoRenderSeq++;
+    var newSeq = _videoRenderSeq;
+    _ytIniciarCarga(videoId, !!p.video_sin_audio, newSeq, p.id);
 }
 
 function mostrarPregunta(idx) {
+    // Anti-cruce visual: incrementar secuencia ANTES de modificar el DOM
+    // Cualquier callback de video del render anterior que llegue tardíamente será ignorado
+    _videoRenderSeq++;
+    var seqVideo = _videoRenderSeq;
+
     _actual            = idx;
     _preguntaBloqueada = false;
     _promesaGuardado   = null;
@@ -649,9 +852,20 @@ function mostrarPregunta(idx) {
 
     // Video de la pregunta
     var videoHtml = '';
-    var embedSrc  = youtubeEmbed(p.video_url, p.video_sin_audio);
-    if (embedSrc) {
-        videoHtml = '<div class="video-preg"><iframe src="' + embedSrc + '" allowfullscreen></iframe></div>';
+    var videoId   = youtubeExtraerId(p.video_url);
+    if (videoId) {
+        // Contenedor con overlay de carga; el reproductor YT.Player se crea después
+        videoHtml = '<div class="video-preg">'
+            + '<div class="yt-status" id="yt-status">⏳ Cargando video…</div>'
+            + '<div id="yt-player"></div>'
+            + '</div>';
+    } else if (p.video_url) {
+        // URL guardada pero ID no reconocible: aviso inmediato sin bloquear
+        videoHtml = '<div class="video-preg">'
+            + '<div class="yt-status" id="yt-status" style="gap:8px;">'
+            + '<span>No se pudo cargar el video.</span>'
+            + '<span style="font-size:11px;color:#bbb;">Informa al encargado antes de continuar.</span>'
+            + '</div></div>';
     }
 
     // Imagen de la pregunta
@@ -692,6 +906,12 @@ function mostrarPregunta(idx) {
         + '<div>' + altsHtml + '</div>'
         + '<div id="guardando-estado" class="guardando-estado" style="display:none;"></div>'
         + '<div class="nav-pregunta">' + btnAvance + '</div>';
+
+    // Iniciar reproductor de video (después de que el DOM esté listo)
+    // seqVideo asegura que callbacks de renders anteriores no contaminen esta pregunta
+    if (videoId) {
+        _ytIniciarCarga(videoId, !!p.video_sin_audio, seqVideo, p.id);
+    }
 
     // Iniciar timer al mostrar la pregunta
     iniciarTimerPregunta();

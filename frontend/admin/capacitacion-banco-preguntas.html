@@ -515,43 +515,58 @@ function agregarAltRow(texto, esCorrecta, altId, soloTexto) {
     container.appendChild(div);
 }
 
-// ─── YouTube helpers ──────────────────────────────────────────────────────────
+// ─── YouTube helpers (misma lógica que capacitacion-rendir.html) ─────────────
+function youtubeExtraerId(url) {
+    if (!url || typeof url !== 'string') return null;
+    url = url.trim().split('#')[0];
+    if (!/^https?:\/\/(www\.|m\.|music\.)?youtu(be\.com|\.be)/.test(url)) return null;
+    var pats = [
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /[?&]v=([a-zA-Z0-9_-]{11})/,
+        /\/embed\/([a-zA-Z0-9_-]{11})/,
+        /\/shorts\/([a-zA-Z0-9_-]{11})/,
+        /\/live\/([a-zA-Z0-9_-]{11})/,
+        /\/v\/([a-zA-Z0-9_-]{11})/
+    ];
+    for (var i = 0; i < pats.length; i++) {
+        var m = url.match(pats[i]);
+        if (m) return m[1];
+    }
+    return null;
+}
+
 function youtubeEmbed(url) {
-    if (!url) return null;
-    url = url.trim();
-    var idMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-    if (!idMatch) return null;
-    var videoId  = idMatch[1];
-    var startSec = 0;
-    var startMatch = url.match(/[?&]start=(\d+)/);
-    if (startMatch) {
-        startSec = parseInt(startMatch[1], 10);
-    } else {
-        var tMatch = url.match(/[?&]t=([0-9hms]+)/);
-        if (tMatch) {
-            var parts = tMatch[1].match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
-            if (parts) {
-                startSec = (parseInt(parts[1] || 0) * 3600)
-                         + (parseInt(parts[2] || 0) * 60)
-                         +  parseInt(parts[3] || 0);
+    var id = youtubeExtraerId(url);
+    if (!id) return null;
+    var ss = 0;
+    var sm = (url || '').match(/[?&]start=(\d+)/);
+    if (sm) { ss = parseInt(sm[1], 10); }
+    else {
+        var tm = (url || '').match(/[?&]t=([0-9hms]+)/);
+        if (tm) {
+            var v = tm[1];
+            if (/^\d+$/.test(v)) ss = parseInt(v, 10);
+            else {
+                var p = v.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+                if (p) ss = (parseInt(p[1]||0)*3600)+(parseInt(p[2]||0)*60)+parseInt(p[3]||0);
             }
         }
     }
-    return 'https://www.youtube-nocookie.com/embed/' + videoId
-         + (startSec > 0 ? '?start=' + startSec : '');
+    var params = ['playsinline=1', 'rel=0'];
+    if (ss > 0) params.push('start=' + ss);
+    return 'https://www.youtube-nocookie.com/embed/' + id + '?' + params.join('&');
 }
 
 function esUrlYoutubeValida(url) {
     if (!url || typeof url !== 'string') return false;
-    url = url.trim();
     var contadorHttp = (url.match(/https?:\/\//g) || []).length;
     if (contadorHttp > 1) return false;
-    return /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}/.test(url);
+    return youtubeExtraerId(url) !== null;
 }
 
 function actualizarPreviewVideo() {
-    var url = document.getElementById('preg-video').value.trim();
-    var src = youtubeEmbed(url);
+    var url     = document.getElementById('preg-video').value.trim();
+    var src     = youtubeEmbed(url);
     var preview = document.getElementById('preg-video-preview');
     var iframe  = document.getElementById('preg-video-iframe');
     if (src) {
