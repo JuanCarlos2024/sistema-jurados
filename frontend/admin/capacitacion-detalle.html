@@ -1752,8 +1752,9 @@ var _vvalGen = 0;
 // Estado de la API de YouTube
 var _vvalYtApiReady   = !!(window.YT && window.YT.Player);
 var _vvalYtPending    = null;
-var _vvalYtPlayer     = null;        // player de validación (sandbox oculto)
-var _vvalPreviewPlayer = null;       // player del modal de previsualización
+var _vvalYtPlayer      = null;        // player de validación (sandbox oculto)
+var _vvalPreviewPlayer = null;        // player del modal de previsualización
+var _vvalPreviewSourceBtn = null;     // botón "Ver" que abrió el preview (para restaurar foco)
 
 window.onYouTubeIframeAPIReady = function() {
     _vvalYtApiReady = true;
@@ -2101,7 +2102,7 @@ function _vvalRenderTabla() {
         var cod  = item.codigo_yt != null ? item.codigo_yt : '—';
         var acciones = '';
         if (item.yt_id) {
-            acciones += '<button class="btn btn-pequeño btn-outline" style="font-size:10px;padding:2px 7px;" onclick="vvalPreviewVideo(' + item.idx + ')">Ver</button> ';
+            acciones += '<button class="btn btn-pequeño btn-outline" style="font-size:10px;padding:2px 7px;" onclick="vvalPreviewVideo(' + item.idx + ', this)">Ver</button> ';
         }
         if (item.estado !== 'pendiente' && item.estado !== 'validando' && item.yt_id) {
             acciones += '<button class="btn btn-pequeño btn-outline" style="font-size:10px;padding:2px 7px;" onclick="vvalReintentarUno(' + item.idx + ')">Reintentar</button> ';
@@ -2187,18 +2188,24 @@ function _vvalCrearPreviewPlayer(ytId, overlay) {
     }
 }
 
-function vvalPreviewVideo(idx) {
+function vvalPreviewVideo(idx, btn) {
     var item = _vval.items[idx];
     if (!item || !item.yt_id) return;
 
     _vvalDestruirPreviewPlayer();
+    _vvalPreviewSourceBtn = btn || null;
 
     var title   = document.getElementById('vval-preview-title');
+    var estado  = document.getElementById('vval-preview-estado');
     var overlay = document.getElementById('vval-preview-overlay');
     if (title) {
         var orden = item.orden || (item.idx + 1);
         title.textContent = 'Pregunta ' + orden + ': '
             + item.enunciado.substring(0, 60) + (item.enunciado.length > 60 ? '…' : '');
+    }
+    if (estado) {
+        estado.textContent = item.estado || '';
+        estado.className   = 'vval-badge ' + (item.estado || '');
     }
     if (overlay) { overlay.textContent = 'Cargando video…'; overlay.style.display = ''; }
 
@@ -2208,14 +2215,34 @@ function vvalPreviewVideo(idx) {
         _vvalYtPending = function() { _vvalCrearPreviewPlayer(item.yt_id, overlay); };
     }
 
-    document.getElementById('vval-preview-modal').style.display = 'flex';
+    var modal = document.getElementById('vval-preview-modal');
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+
+    // Mover foco al botón de cierre para que Escape sea manejable por teclado
+    var closeBtn = modal.querySelector('.modal-cerrar');
+    if (closeBtn) setTimeout(function() { closeBtn.focus(); }, 50);
 }
 
 function vvalCerrarPreview() {
     _vvalDestruirPreviewPlayer();
     var modal = document.getElementById('vval-preview-modal');
     if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+    if (_vvalPreviewSourceBtn) {
+        try { _vvalPreviewSourceBtn.focus(); } catch(e) {}
+        _vvalPreviewSourceBtn = null;
+    }
 }
+
+// Escape cierra el preview primero; si no hay preview, no hace nada aquí
+document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    var preview = document.getElementById('vval-preview-modal');
+    if (preview && preview.style.display !== 'none') {
+        vvalCerrarPreview();
+    }
+});
 
 function abrirValidadorVideos() {
     var pregVideo = _preguntas.filter(function(p) { return p.video_url; });
@@ -2276,6 +2303,7 @@ function cerrarValidadorVideos() {
     _vval.activa           = false;
     _vval.esperandoTestRed = false;
     _vvalDestruirPlayer();
+    vvalCerrarPreview();  // limpia preview y restaura body.overflow si estaba abierto
     document.getElementById('modal-validar-videos').style.display = 'none';
 }
 
@@ -2620,11 +2648,14 @@ async function confirmarReplicar() {
 </div>
 
 <!-- ═══ Modal preview video (ETAPA 3.2) ══════════════════════════════════════ -->
-<div id="vval-preview-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)vvalCerrarPreview()">
+<div id="vval-preview-modal" class="modal-overlay" style="display:none;z-index:3000;" onclick="if(event.target===this)vvalCerrarPreview()">
     <div class="modal" style="max-width:860px;" onclick="event.stopPropagation()">
-        <div class="modal-header">
-            <h3 id="vval-preview-title" style="font-size:13px;font-weight:600;max-width:740px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;"></h3>
-            <button class="modal-cerrar" onclick="vvalCerrarPreview()">✕</button>
+        <div class="modal-header" style="flex-wrap:wrap;gap:6px;">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
+                <h3 id="vval-preview-title" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;"></h3>
+                <span id="vval-preview-estado" class="vval-badge" style="flex-shrink:0;"></span>
+            </div>
+            <button class="modal-cerrar" onclick="vvalCerrarPreview()" aria-label="Cerrar previsualización">✕</button>
         </div>
         <div style="width:100%;aspect-ratio:16/9;background:#000;border-radius:0 0 8px 8px;overflow:hidden;position:relative;">
             <div id="vval-preview-overlay"
