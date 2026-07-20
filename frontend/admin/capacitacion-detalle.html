@@ -180,6 +180,7 @@
         .vval-badge.timeout            { background:#fff3e0;color:#e65100; }
         .vval-badge.no_concluyente     { background:#fff3e0;color:#e65100; }
         .vval-footer { padding:12px 20px;border-top:1px solid var(--gris-borde);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap; }
+        .alerta-advertencia { background:#fef9e7;color:#7d6608;padding:12px 14px;border-radius:6px;border:1px solid #f0c040;line-height:1.5; }
     </style>
 </head>
 <body>
@@ -671,24 +672,40 @@ async function validarYPublicar() {
     var tiempoGlobal = document.getElementById('cfg-tiempo-global').value;
     if (!tiempoPreg && !tiempoGlobal) { mostrarToast('Define al menos un temporizador antes de publicar', 'advertencia'); return; }
 
-    // ETAPA 3.1 — Verificación de videos
+    // ETAPA 3.2 — Verificación de videos
     var preguntasVideo = _preguntas.filter(function(p) { return p.video_url; });
-    if (preguntasVideo.length > 0) {
-        if (_vval.items.length > 0) {
-            var criticos = _vval.items.filter(function(item) {
-                return ['url_invalida','video_no_disponible','embedding_bloqueado','error_html5','error_parametro'].indexOf(item.estado) !== -1;
-            });
-            var noConc = _vval.items.filter(function(item) {
-                return item.estado === 'timeout' || item.estado === 'no_concluyente';
-            });
-            if (criticos.length > 0) {
-                if (!confirm(criticos.length + ' video(s) con error crítico (no reproducibles). ¿Publicar de todas formas?')) return;
-            } else if (noConc.length > 0) {
-                if (!confirm(noConc.length + ' video(s) con resultado no concluyente (timeout). ¿Publicar de todas formas?')) return;
-            }
-        } else {
-            if (!confirm('Esta prueba tiene ' + preguntasVideo.length + ' pregunta(s) con video que no han sido validadas. Se recomienda usar "Validar videos" antes de publicar. ¿Publicar de todas formas?')) return;
+    if (preguntasVideo.length > 0 && _vval.items.length > 0) {
+        // Detectar resultados desactualizados (URL editada después de validar)
+        var desactualizados = _vval.items.filter(function(item) {
+            if (item.estado !== 'correcto') return false;
+            var pregActual = _preguntas.find(function(p) { return p.id === item.pregunta_id; });
+            var urlActual  = (pregActual && pregActual.video_url) || null;
+            return urlActual !== item.validated_url;
+        });
+        if (desactualizados.length > 0) {
+            mostrarToast(desactualizados.length + ' video(s) validado(s) con URL desactualizada. Usa "Validar videos" antes de publicar.', 'error');
+            return;
         }
+
+        // Errores críticos → bloqueo duro (sin posibilidad de saltar)
+        var criticos = _vval.items.filter(function(item) {
+            return ['url_invalida','video_no_disponible','embedding_bloqueado',
+                    'error_html5','error_parametro'].indexOf(item.estado) !== -1;
+        });
+        if (criticos.length > 0) {
+            mostrarModalBloqueoPublicar(criticos);
+            return;
+        }
+
+        // Advertencias → confirmación explícita
+        var noConc = _vval.items.filter(function(item) {
+            return item.estado === 'timeout' || item.estado === 'no_concluyente';
+        });
+        if (noConc.length > 0) {
+            if (!confirm(noConc.length + ' video(s) sin validación concluyente (timeout o no concluyente). ¿Publicar de todas formas?')) return;
+        }
+    } else if (preguntasVideo.length > 0 && _vval.items.length === 0) {
+        if (!confirm('Esta prueba tiene ' + preguntasVideo.length + ' pregunta(s) con video sin validar. Se recomienda usar "Validar videos" antes. ¿Publicar de todas formas?')) return;
     }
 
     // Advertencia si no hay asignados (no bloquea)
@@ -999,12 +1016,9 @@ function agregarAltRow(texto, esCorrecta, altId, soloTexto) {
 
 function esUrlYoutubeValida(url) {
     if (!url || typeof url !== 'string') return false;
-    url = url.trim();
-    // Rechaza URLs duplicadas pegadas (sin espacio entre ellas)
     var contadorHttp = (url.match(/https?:\/\//g) || []).length;
     if (contadorHttp > 1) return false;
-    // Acepta: youtube.com/watch?v=, youtu.be/, youtube.com/embed/
-    return /^https?:\/\/(www\.)?(youtube\.com\/(watch\?.*v=|embed\/)|youtu\.be\/)[a-zA-Z0-9_-]{11}/.test(url);
+    return youtubeExtraerId(url) !== null;
 }
 
 async function guardarPregunta() {
@@ -1100,6 +1114,27 @@ async function guardarPregunta() {
         var data = await api.get('/admin/capacitaciones/pruebas/' + _pruebaId);
         _preguntas = data.preguntas || [];
         renderPreguntas();
+
+        // ETAPA 3.2 — Invalidar resultado de validación si cambió la URL del video
+        if (_vval.items.length > 0) {
+            var itemVal = _vval.items.find(function(it) { return it.pregunta_id === savedId; });
+            if (itemVal) {
+                var pregActual = _preguntas.find(function(p) { return p.id === savedId; });
+                var urlActual  = (pregActual && pregActual.video_url) || null;
+                if (urlActual !== itemVal.validated_url || urlActual !== itemVal.video_url) {
+                    var ytActual        = urlActual ? youtubeExtraerId(urlActual) : null;
+                    itemVal.video_url    = urlActual || '';
+                    itemVal.yt_id        = ytActual;
+                    itemVal.estado       = (urlActual && ytActual) ? 'pendiente' : 'url_invalida';
+                    itemVal.codigo_yt    = null;
+                    itemVal.mensaje      = urlActual
+                        ? 'URL modificada — requiere nueva validación'
+                        : 'Pregunta sin URL de video';
+                    itemVal.validated_at  = null;
+                    itemVal.validated_url = null;
+                }
+            }
+        }
 
         // Si marcó favorita y la pregunta aún no está en el banco, abrir modal de banco
         if (esFavorita && !yaEnBanco) {
@@ -1704,11 +1739,21 @@ function cerrarModalReplicar() {
     document.getElementById('modal-replicar').style.display = 'none';
 }
 
-// ─── ETAPA 3.1: Validador de videos ──────────────────────────────────────────
+// ─── ETAPA 3.2: Motor de validación de videos (corregido) ────────────────────
 
-var _vvalYtApiReady = !!(window.YT && window.YT.Player);
-var _vvalYtPending  = null;
-var _vvalYtPlayer   = null;
+// Video de prueba de conectividad:
+// "Me at the zoo" (2005-04-23) — primer video subido a YouTube.
+// Siempre disponible y embebible. Actualizar si deja de estarlo.
+var _VVAL_PROBE_ID = 'jNQXAC9IVRw';
+
+// Token global — descarta callbacks tardíos de items anteriores
+var _vvalGen = 0;
+
+// Estado de la API de YouTube
+var _vvalYtApiReady   = !!(window.YT && window.YT.Player);
+var _vvalYtPending    = null;
+var _vvalYtPlayer     = null;        // player de validación (sandbox oculto)
+var _vvalPreviewPlayer = null;       // player del modal de previsualización
 
 window.onYouTubeIframeAPIReady = function() {
     _vvalYtApiReady = true;
@@ -1732,12 +1777,13 @@ var _vvalErrMap = {
 };
 
 var _vval = {
-    activa:              false,
-    parada:              false,
-    items:               [],
-    filtro:              'todos',
-    redBloqueada:        false,
-    fallosConsecutivos:  0
+    activa:             false,
+    parada:             false,
+    esperandoTestRed:   false,
+    items:              [],
+    filtro:             'todos',
+    redBloqueada:       false,
+    fallosConsecutivos: 0
 };
 
 function _vvalSandbox() {
@@ -1761,15 +1807,22 @@ function _vvalDestruirPlayer() {
 }
 
 function _vvalValidarUno(idx, callback) {
+    _vvalGen++;                  // Nuevo token: invalida callbacks de items anteriores
+    var miGen = _vvalGen;
+
     var item = _vval.items[idx];
     if (!item) { callback(); return; }
+
     item.estado = 'validando';
     _vvalRenderTabla();
     _vvalActualizarProgreso();
 
+    // URL inválida: resolver inmediatamente sin crear player
     if (!item.yt_id) {
-        item.estado  = 'url_invalida';
-        item.mensaje = 'URL no reconocida como enlace de YouTube';
+        item.estado        = 'url_invalida';
+        item.mensaje       = 'URL no reconocida como enlace de YouTube';
+        item.validated_at  = new Date().toISOString();
+        item.validated_url = null;
         _vvalRenderTabla();
         callback();
         return;
@@ -1782,19 +1835,42 @@ function _vvalValidarUno(idx, callback) {
     div.id    = divId;
     sb.appendChild(div);
 
-    var terminado = false;
+    var finalizado = false;
+
+    function terminar(resultado) {
+        if (finalizado)         return;  // guard: solo una vez por item
+        if (miGen !== _vvalGen) return;  // guard: callback tardío de item anterior
+        finalizado = true;
+        clearTimeout(timer);
+        _vvalDestruirPlayer();
+
+        item.estado        = resultado.estado;
+        item.codigo_yt     = resultado.codigo_yt != null ? resultado.codigo_yt : null;
+        item.mensaje       = resultado.mensaje;
+        item.validated_at  = new Date().toISOString();
+        item.validated_url = item.video_url;
+
+        if (resultado.estado === 'correcto') {
+            _vval.fallosConsecutivos = 0;
+        } else {
+            _vval.fallosConsecutivos++;
+        }
+
+        _vvalRenderTabla();
+
+        // Tras 3 timeouts consecutivos: probar conectividad antes de continuar
+        if (resultado.estado === 'timeout'
+            && _vval.fallosConsecutivos >= 3
+            && !_vval.redBloqueada
+            && !_vval.esperandoTestRed) {
+            _vvalIniciarTestConectividad(callback);
+        } else {
+            callback();
+        }
+    }
 
     var timer = setTimeout(function() {
-        if (terminado) return;
-        terminado = true;
-        _vvalDestruirPlayer();
-        item.estado    = 'timeout';
-        item.codigo_yt = null;
-        item.mensaje   = 'No respondió en 15 segundos';
-        _vval.fallosConsecutivos++;
-        _vvalChequearRedBloqueada();
-        _vvalRenderTabla();
-        callback();
+        terminar({ estado: 'timeout', codigo_yt: null, mensaje: 'No respondió en 15 segundos' });
     }, 15000);
 
     function crearPlayer() {
@@ -1803,66 +1879,145 @@ function _vvalValidarUno(idx, callback) {
                 width: '1', height: '1',
                 videoId: item.yt_id,
                 host: 'https://www.youtube-nocookie.com',
-                playerVars: { autoplay: 0, mute: 1, enablejsapi: 1, playsinline: 1 },
+                playerVars: { autoplay: 0, mute: 1, controls: 0, enablejsapi: 1, playsinline: 1 },
                 events: {
-                    onReady: function() {
-                        if (terminado) return;
-                        clearTimeout(timer);
-                        terminado = true;
-                        _vvalDestruirPlayer();
-                        item.estado    = 'correcto';
-                        item.codigo_yt = null;
-                        item.mensaje   = 'Reproducible';
-                        _vval.fallosConsecutivos = 0;
-                        _vvalRenderTabla();
-                        callback();
+                    onReady: function(e) {
+                        if (finalizado || miGen !== _vvalGen) return;
+                        // onReady solo confirma que el iframe existe.
+                        // cueVideoById fuerza la carga de metadatos del video sin reproducirlo.
+                        // Si no existe (100) o embedding está bloqueado (101/150), YT
+                        // dispara onError antes de alcanzar el estado CUED (5).
+                        try {
+                            e.target.mute();
+                            e.target.cueVideoById({ videoId: item.yt_id, suggestedQuality: 'small' });
+                        } catch(ex) {
+                            terminar({ estado: 'no_concluyente', codigo_yt: null,
+                                mensaje: 'Error al solicitar metadatos: ' + (ex.message || ex) });
+                        }
+                    },
+                    onStateChange: function(e) {
+                        if (finalizado || miGen !== _vvalGen) return;
+                        // Estado 5 (CUED): video accesible y embebible → correcto
+                        // Estado 1/2/0: reproduciendo/pausado/terminado → también válidos
+                        // Estado 3 (BUFFERING) y -1 (UNSTARTED): seguir esperando
+                        var s = e.data;
+                        if (s === 5 || s === 1 || s === 2 || s === 0) {
+                            terminar({ estado: 'correcto', codigo_yt: null,
+                                mensaje: 'Reproducible (estado YT: ' + s + ')' });
+                        }
                     },
                     onError: function(e) {
-                        if (terminado) return;
-                        clearTimeout(timer);
-                        terminado = true;
-                        _vvalDestruirPlayer();
-                        var err        = _vvalErrMap[e.data] || { cls: 'no_concluyente', msg: 'Error desconocido (código ' + e.data + ')' };
-                        item.estado    = err.cls;
-                        item.codigo_yt = e.data;
-                        item.mensaje   = err.msg;
-                        _vval.fallosConsecutivos++;
-                        _vvalChequearRedBloqueada();
-                        _vvalRenderTabla();
-                        callback();
+                        if (finalizado || miGen !== _vvalGen) return;
+                        var err = _vvalErrMap[e.data] || { cls: 'no_concluyente',
+                            msg: 'Error desconocido (código ' + e.data + ')' };
+                        terminar({ estado: err.cls, codigo_yt: e.data, mensaje: err.msg });
                     }
                 }
             });
         } catch(ex) {
-            if (terminado) return;
-            clearTimeout(timer);
-            terminado = true;
-            _vvalDestruirPlayer();
-            item.estado  = 'no_concluyente';
-            item.mensaje = 'Error al crear reproductor: ' + (ex.message || String(ex));
-            _vval.fallosConsecutivos++;
-            _vvalRenderTabla();
-            callback();
+            if (finalizado || miGen !== _vvalGen) return;
+            terminar({ estado: 'no_concluyente', codigo_yt: null,
+                mensaje: 'Error al crear reproductor: ' + (ex.message || String(ex)) });
         }
     }
 
-    if (_vvalYtApiReady) {
-        crearPlayer();
-    } else {
-        _vvalYtPending = crearPlayer;
-    }
+    if (_vvalYtApiReady) { crearPlayer(); } else { _vvalYtPending = crearPlayer; }
 }
 
-function _vvalChequearRedBloqueada() {
-    if (_vval.redBloqueada) return;
-    if (_vval.fallosConsecutivos >= 3) {
-        _vval.redBloqueada = true;
-        var w = document.getElementById('vval-red-advertencia');
-        if (w) w.style.display = '';
+function _vvalIniciarTestConectividad(callbackSiOK) {
+    _vval.esperandoTestRed = true;
+
+    var probeGen = ++_vvalGen;
+    _vvalDestruirPlayer();
+
+    var sb    = _vvalSandbox();
+    var divId = 'vval-probe-' + Date.now();
+    var div   = document.createElement('div');
+    div.id    = divId;
+    sb.appendChild(div);
+
+    var finalizado = false;
+
+    function terminarProbe(redOK) {
+        if (finalizado)            return;
+        if (_vvalGen !== probeGen) return;
+        finalizado = true;
+        clearTimeout(timer);
+        _vvalDestruirPlayer();
+        _vval.esperandoTestRed = false;
+
+        if (redOK) {
+            // La red funciona: los fallos anteriores son errores reales del video
+            _vval.fallosConsecutivos = 0;
+            callbackSiOK();
+        } else {
+            // Red bloqueada: detener cola, mostrar alerta y botón "Continuar"
+            _vval.redBloqueada = true;
+            _vval.parada       = true;
+            _vval.activa       = false;
+            var w = document.getElementById('vval-red-advertencia');
+            if (w) w.style.display = '';
+            var bi = document.getElementById('vval-btn-iniciar');
+            if (bi) bi.style.display = 'none';
+            var bc = document.getElementById('vval-red-btn-continuar');
+            if (bc) bc.style.display = '';
+            var bp = document.getElementById('vval-btn-parar');
+            if (bp) { bp.style.display = 'none'; bp.disabled = false; }
+            var lbl = document.getElementById('vval-progreso-label');
+            if (lbl) lbl.textContent = 'Pausado — posible bloqueo de red detectado';
+            _vvalActualizarProgreso();
+            _vvalRenderTabla();
+        }
     }
+
+    var timer = setTimeout(function() { terminarProbe(false); }, 12000);
+
+    function crearProbe() {
+        try {
+            _vvalYtPlayer = new YT.Player(divId, {
+                width: '1', height: '1',
+                videoId: _VVAL_PROBE_ID,
+                host: 'https://www.youtube-nocookie.com',
+                playerVars: { autoplay: 0, mute: 1, controls: 0, enablejsapi: 1, playsinline: 1 },
+                events: {
+                    onReady: function(e) {
+                        if (finalizado || _vvalGen !== probeGen) return;
+                        try { e.target.mute(); e.target.cueVideoById({ videoId: _VVAL_PROBE_ID }); }
+                        catch(ex) { terminarProbe(false); }
+                    },
+                    onStateChange: function(e) {
+                        if (finalizado || _vvalGen !== probeGen) return;
+                        if (e.data === 5 || e.data === 1 || e.data === 2) terminarProbe(true);
+                    },
+                    onError: function() {
+                        if (finalizado || _vvalGen !== probeGen) return;
+                        terminarProbe(false);
+                    }
+                }
+            });
+        } catch(ex) { terminarProbe(false); }
+    }
+
+    if (_vvalYtApiReady) { crearProbe(); } else { _vvalYtPending = crearProbe; }
+}
+
+function vvalReanudarTrasRed() {
+    _vval.parada             = false;
+    _vval.activa             = true;
+    _vval.fallosConsecutivos = 0;
+    var bi = document.getElementById('vval-btn-iniciar');
+    if (bi) bi.style.display = 'none';
+    var bp = document.getElementById('vval-btn-parar');
+    if (bp) { bp.style.display = ''; bp.disabled = false; }
+    var bc = document.getElementById('vval-red-btn-continuar');
+    if (bc) bc.style.display = 'none';
+    var lbl = document.getElementById('vval-progreso-label');
+    if (lbl) lbl.textContent = 'Validando (posible red limitada)…';
+    _vvalProcesarCola();
 }
 
 function _vvalProcesarCola() {
+    if (_vval.esperandoTestRed) return; // esperando resultado del probe de red
     if (_vval.parada) { _vvalFinalizarValidacion(); return; }
     var siguiente = -1;
     for (var i = 0; i < _vval.items.length; i++) {
@@ -1882,10 +2037,15 @@ function _vvalFinalizarValidacion() {
     _vvalRenderTabla();
     var bi = document.getElementById('vval-btn-iniciar');
     var bp = document.getElementById('vval-btn-parar');
-    if (bi) { bi.style.display = ''; bi.disabled = false; }
+    // No mostrar "Iniciar" si ya se muestra "Continuar" (pausa por red)
+    var bc = document.getElementById('vval-red-btn-continuar');
+    var continuarVisible = bc && bc.style.display !== 'none';
+    if (bi) { bi.style.display = continuarVisible ? 'none' : ''; bi.disabled = false; }
     if (bp) { bp.style.display = 'none'; bp.disabled = false; }
     var lbl = document.getElementById('vval-progreso-label');
-    if (lbl) lbl.textContent = _vval.parada ? 'Validación interrumpida' : 'Validación completada';
+    if (lbl && !_vval.esperandoTestRed && !continuarVisible) {
+        lbl.textContent = _vval.parada ? 'Validación interrumpida' : 'Validación completada';
+    }
 }
 
 function _vvalActualizarProgreso() {
@@ -1969,9 +2129,11 @@ function vvalCambiarFiltro(filtro, btn) {
 function vvalReintentarUno(idx) {
     var item = _vval.items[idx];
     if (!item || item.estado === 'pendiente' || item.estado === 'validando') return;
-    item.estado    = 'pendiente';
-    item.codigo_yt = null;
-    item.mensaje   = '';
+    item.estado        = 'pendiente';
+    item.codigo_yt     = null;
+    item.mensaje       = '';
+    item.validated_at  = null;
+    item.validated_url = null;
     _vvalRenderTabla();
     if (!_vval.activa) {
         _vval.activa = true;
@@ -1986,24 +2148,73 @@ function vvalReintentarUno(idx) {
     }
 }
 
+function _vvalDestruirPreviewPlayer() {
+    if (_vvalPreviewPlayer) {
+        try { _vvalPreviewPlayer.stopVideo(); } catch(e) {}
+        try { _vvalPreviewPlayer.destroy(); } catch(e) {}
+        _vvalPreviewPlayer = null;
+    }
+    var c = document.getElementById('vval-preview-contenedor');
+    if (c) c.innerHTML = '';
+}
+
+function _vvalCrearPreviewPlayer(ytId, overlay) {
+    var c = document.getElementById('vval-preview-contenedor');
+    if (!c) return;
+    c.innerHTML = '';
+    var div = document.createElement('div');
+    div.id  = 'vval-preview-yt';
+    div.style.cssText = 'width:100%;height:100%;';
+    c.appendChild(div);
+    try {
+        _vvalPreviewPlayer = new YT.Player('vval-preview-yt', {
+            width: '100%', height: '100%',
+            videoId: ytId,
+            host: 'https://www.youtube-nocookie.com',
+            playerVars: { autoplay: 0, controls: 1, rel: 0, playsinline: 1 },
+            events: {
+                onReady: function() {
+                    if (overlay) overlay.style.display = 'none';
+                },
+                onError: function(e) {
+                    var err = _vvalErrMap[e.data] || { msg: 'Error al cargar el video (código ' + e.data + ')' };
+                    if (overlay) { overlay.textContent = err.msg; overlay.style.display = ''; }
+                }
+            }
+        });
+    } catch(ex) {
+        if (overlay) { overlay.textContent = 'Error al inicializar el reproductor'; overlay.style.display = ''; }
+    }
+}
+
 function vvalPreviewVideo(idx) {
     var item = _vval.items[idx];
     if (!item || !item.yt_id) return;
-    var src   = 'https://www.youtube-nocookie.com/embed/' + item.yt_id + '?autoplay=1&rel=0&playsinline=1';
-    var modal  = document.getElementById('vval-preview-modal');
-    var iframe = document.getElementById('vval-preview-iframe');
-    var title  = document.getElementById('vval-preview-title');
-    var orden  = item.orden || (item.idx + 1);
-    if (title)  title.textContent = 'Pregunta ' + orden + ': ' + item.enunciado.substring(0, 60) + (item.enunciado.length > 60 ? '…' : '');
-    if (iframe) iframe.src = src;
-    if (modal)  modal.style.display = 'flex';
+
+    _vvalDestruirPreviewPlayer();
+
+    var title   = document.getElementById('vval-preview-title');
+    var overlay = document.getElementById('vval-preview-overlay');
+    if (title) {
+        var orden = item.orden || (item.idx + 1);
+        title.textContent = 'Pregunta ' + orden + ': '
+            + item.enunciado.substring(0, 60) + (item.enunciado.length > 60 ? '…' : '');
+    }
+    if (overlay) { overlay.textContent = 'Cargando video…'; overlay.style.display = ''; }
+
+    if (_vvalYtApiReady) {
+        _vvalCrearPreviewPlayer(item.yt_id, overlay);
+    } else {
+        _vvalYtPending = function() { _vvalCrearPreviewPlayer(item.yt_id, overlay); };
+    }
+
+    document.getElementById('vval-preview-modal').style.display = 'flex';
 }
 
 function vvalCerrarPreview() {
-    var iframe = document.getElementById('vval-preview-iframe');
-    var modal  = document.getElementById('vval-preview-modal');
-    if (iframe) iframe.src = '';
-    if (modal)  modal.style.display = 'none';
+    _vvalDestruirPreviewPlayer();
+    var modal = document.getElementById('vval-preview-modal');
+    if (modal) modal.style.display = 'none';
 }
 
 function abrirValidadorVideos() {
@@ -2016,19 +2227,22 @@ function abrirValidadorVideos() {
     _vval.items = pregVideo.map(function(p, i) {
         var ytId = youtubeExtraerId(p.video_url);
         return {
-            idx:         i,
-            pregunta_id: p.id,
-            orden:       p.orden || (i + 1),
-            enunciado:   p.enunciado || '',
-            video_url:   p.video_url || '',
-            yt_id:       ytId,
-            estado:      ytId ? 'pendiente' : 'url_invalida',
-            codigo_yt:   null,
-            mensaje:     ytId ? '' : 'URL no es un enlace de YouTube válido'
+            idx:           i,
+            pregunta_id:   p.id,
+            orden:         p.orden || (i + 1),
+            enunciado:     p.enunciado || '',
+            video_url:     p.video_url || '',
+            yt_id:         ytId,
+            estado:        ytId ? 'pendiente' : 'url_invalida',
+            codigo_yt:     null,
+            mensaje:       ytId ? '' : 'URL no es un enlace de YouTube válido',
+            validated_at:  null,
+            validated_url: null
         };
     });
     _vval.activa             = false;
     _vval.parada             = false;
+    _vval.esperandoTestRed   = false;
     _vval.filtro             = 'todos';
     _vval.redBloqueada       = false;
     _vval.fallosConsecutivos = 0;
@@ -2046,6 +2260,8 @@ function abrirValidadorVideos() {
     if (bp) { bp.style.display = 'none'; bp.disabled = false; }
     var w = document.getElementById('vval-red-advertencia');
     if (w) w.style.display = 'none';
+    var bc = document.getElementById('vval-red-btn-continuar');
+    if (bc) bc.style.display = 'none';
 
     document.querySelectorAll('.vval-filtro-btn').forEach(function(b, i) { b.classList.toggle('activo', i === 0); });
 
@@ -2053,12 +2269,13 @@ function abrirValidadorVideos() {
 }
 
 function cerrarValidadorVideos() {
-    if (_vval.activa) {
+    if (_vval.activa || _vval.esperandoTestRed) {
         if (!confirm('La validación está en curso. ¿Cerrar de todas formas?')) return;
-        _vval.parada = true;
-        _vvalDestruirPlayer();
-        _vval.activa = false;
     }
+    _vval.parada           = true;
+    _vval.activa           = false;
+    _vval.esperandoTestRed = false;
+    _vvalDestruirPlayer();
     document.getElementById('modal-validar-videos').style.display = 'none';
 }
 
@@ -2066,14 +2283,20 @@ function vvalIniciarValidacion() {
     if (_vval.activa) return;
     _vval.fallosConsecutivos = 0;
     _vval.redBloqueada       = false;
+    _vval.esperandoTestRed   = false;
     var w = document.getElementById('vval-red-advertencia');
     if (w) w.style.display = 'none';
+    var bc = document.getElementById('vval-red-btn-continuar');
+    if (bc) bc.style.display = 'none';
 
+    // Reinicio completo: todos los items a 'pendiente' (salvo url_invalida)
     _vval.items.forEach(function(item) {
         if (item.estado !== 'url_invalida') {
-            item.estado    = 'pendiente';
-            item.codigo_yt = null;
-            item.mensaje   = '';
+            item.estado        = 'pendiente';
+            item.codigo_yt     = null;
+            item.mensaje       = '';
+            item.validated_at  = null;
+            item.validated_url = null;
         }
     });
     _vvalRenderTabla();
@@ -2099,18 +2322,27 @@ function vvalPararValidacion() {
 
 function vvalExportarCSV() {
     if (_vval.items.length === 0) { mostrarToast('No hay datos para exportar', 'info'); return; }
-    var filas = [['#','Pregunta ID','Orden','Enunciado','URL','YT ID','Estado','Codigo YT','Mensaje']];
+    var esc = function(s) {
+        return '"' + String(s || '').replace(/"/g, '""').replace(/\r?\n/g, ' ') + '"';
+    };
+    var filas = [[
+        '#','Pregunta ID','Orden','Enunciado',
+        'URL original','URL validada','YT ID',
+        'Estado','Codigo YT','Mensaje','Validado en'
+    ]];
     _vval.items.forEach(function(item, i) {
         filas.push([
             i + 1,
             item.pregunta_id,
             item.orden,
-            '"' + (item.enunciado || '').replace(/"/g, '""') + '"',
-            '"' + (item.video_url  || '').replace(/"/g, '""') + '"',
-            item.yt_id       || '',
+            esc(item.enunciado),
+            esc(item.video_url),
+            esc(item.validated_url || ''),
+            item.yt_id      || '',
             item.estado,
-            item.codigo_yt != null ? item.codigo_yt : '',
-            '"' + (item.mensaje   || '').replace(/"/g, '""') + '"'
+            item.codigo_yt  != null ? item.codigo_yt : '',
+            esc(item.mensaje || ''),
+            item.validated_at || ''
         ]);
     });
     var csv  = filas.map(function(f) { return f.join(','); }).join('\r\n');
@@ -2123,6 +2355,29 @@ function vvalExportarCSV() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+// ─── Bloqueo de publicación ───────────────────────────────────────────────────
+
+function mostrarModalBloqueoPublicar(criticos) {
+    var lista = document.getElementById('bloqueo-lista-errores');
+    if (!lista) return;
+    lista.innerHTML = criticos.map(function(item) {
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--gris-borde);">'
+            + '<span class="vval-badge ' + item.estado + '" style="white-space:nowrap;flex-shrink:0;">'
+            + item.estado.replace(/_/g, ' ') + '</span>'
+            + '<span style="flex:1;font-size:13px;"><strong>Preg. ' + (item.orden || (item.idx + 1)) + ':</strong> '
+            + (item.enunciado.substring(0, 55)) + (item.enunciado.length > 55 ? '…' : '') + '</span>'
+            + '<button class="btn btn-pequeño btn-outline" style="font-size:11px;white-space:nowrap;" '
+            + 'onclick="cerrarBloqueoPublicar();abrirModalPregunta(\'' + item.pregunta_id + '\')">'
+            + 'Editar</button>'
+            + '</div>';
+    }).join('');
+    document.getElementById('modal-bloqueo-publicar').style.display = 'flex';
+}
+
+function cerrarBloqueoPublicar() {
+    document.getElementById('modal-bloqueo-publicar').style.display = 'none';
 }
 
 async function confirmarReplicar() {
@@ -2305,6 +2560,8 @@ async function confirmarReplicar() {
             <div id="vval-red-advertencia" class="alerta alerta-advertencia" style="display:none;margin-bottom:12px;font-size:13px;">
                 <strong>Posible bloqueo de red:</strong> la red actual podría estar bloqueando
                 <code>youtube-nocookie.com</code>. Los timeouts pueden ser falsos negativos — prueba desde otra conexión antes de publicar.
+                <br><small style="color:var(--gris);">Los videos pendientes no fueron marcados como defectuosos. Puedes continuar o publicar desde otra red.</small>
+                <br><button id="vval-red-btn-continuar" class="btn btn-outline btn-pequeño" style="margin-top:8px;display:none;" onclick="vvalReanudarTrasRed()">Continuar validando</button>
             </div>
             <!-- Progreso -->
             <div style="margin-bottom:16px;">
@@ -2362,17 +2619,39 @@ async function confirmarReplicar() {
     </div>
 </div>
 
-<!-- ═══ Modal preview video (ETAPA 3.1) ══════════════════════════════════════ -->
+<!-- ═══ Modal preview video (ETAPA 3.2) ══════════════════════════════════════ -->
 <div id="vval-preview-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)vvalCerrarPreview()">
     <div class="modal" style="max-width:860px;" onclick="event.stopPropagation()">
         <div class="modal-header">
             <h3 id="vval-preview-title" style="font-size:13px;font-weight:600;max-width:740px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;"></h3>
             <button class="modal-cerrar" onclick="vvalCerrarPreview()">✕</button>
         </div>
-        <div style="width:100%;aspect-ratio:16/9;background:#000;border-radius:0 0 8px 8px;overflow:hidden;">
-            <iframe id="vval-preview-iframe" src="" width="100%" height="100%"
-                style="border:0;display:block;"
-                allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
+        <div style="width:100%;aspect-ratio:16/9;background:#000;border-radius:0 0 8px 8px;overflow:hidden;position:relative;">
+            <div id="vval-preview-overlay"
+                style="position:absolute;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;z-index:2;">
+                Cargando video…
+            </div>
+            <div id="vval-preview-contenedor" style="width:100%;height:100%;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Modal bloqueo de publicación (ETAPA 3.2) ══════════════════════════════ -->
+<div id="modal-bloqueo-publicar" class="modal-overlay" style="display:none;" onclick="if(event.target===this)cerrarBloqueoPublicar()">
+    <div class="modal" style="max-width:600px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 style="color:#922b21;margin:0;">No se puede publicar</h3>
+            <button class="modal-cerrar" onclick="cerrarBloqueoPublicar()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="alerta alerta-error" style="margin-bottom:14px;font-size:13px;">
+                Las siguientes preguntas tienen errores críticos de video que impiden la publicación.
+                Corrígelas o elimínalas antes de publicar.
+            </div>
+            <div id="bloqueo-lista-errores"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secundario" onclick="cerrarBloqueoPublicar()">Cerrar</button>
         </div>
     </div>
 </div>
