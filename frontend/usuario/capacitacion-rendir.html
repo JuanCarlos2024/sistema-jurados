@@ -734,7 +734,7 @@ function _guardarRespuesta(preguntaId, alternativaId) {
         }
         return resp.json().catch(function () { return null; }).then(function (data) {
             if (resp.status === 409) {
-                if (data && data.codigo === 'TIEMPO_AGOTADO') {
+                if (data && (data.codigo === 'TIEMPO_AGOTADO' || data.codigo === 'INTENTO_FINALIZADO')) {
                     throw { status: 'tiempo_agotado', message: data.error || 'Tiempo expirado', intento_id: data.intento_id };
                 }
                 return Object.assign({ guardada: true, ya_existia: true }, data);

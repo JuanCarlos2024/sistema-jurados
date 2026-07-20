@@ -42,50 +42,28 @@ function calcularNota(porcentaje, notaMinima, notaMaxima, notaAprobacion, exigen
 // Usa .maybeSingle() en lugar de .single() para evitar dependencia del código PGRST116.
 // Las 3 consultas a la BD corren en paralelo (Promise.all) para reducir latencia.
 
-async function _consolidarIntento({ intentoId, pruebaId, pruebaConf, porTiempo }) {
-    const [
-        { count: totalPregCount },
-        { count: correctasCount },
-        { count: respondidasCount }
-    ] = await Promise.all([
-        supabase.from('capacitacion_preguntas').select('id', { count: 'exact', head: true }).eq('prueba_id', pruebaId),
-        supabase.from('capacitacion_respuestas').select('id', { count: 'exact', head: true }).eq('intento_id', intentoId).eq('es_correcta', true),
-        supabase.from('capacitacion_respuestas').select('id', { count: 'exact', head: true }).eq('intento_id', intentoId)
-    ]);
-
-    const total          = totalPregCount  || 0;
-    const correctas      = correctasCount  || 0;
-    const respondidas    = respondidasCount || 0;
-    const incorrectas    = respondidas - correctas;
-    const no_respondidas = total - respondidas;
-    const puntaje        = total > 0 ? Math.round((correctas / total) * 100 * 10) / 10 : 0;
-    const exigencia      = parseFloat(pruebaConf?.puntaje_minimo_aprobacion ?? 60);
-    const notaMinima     = parseFloat(pruebaConf?.nota_minima    ?? 1.0);
-    const notaMaxima     = parseFloat(pruebaConf?.nota_maxima    ?? 7.0);
-    const notaAprobacion = parseFloat(pruebaConf?.nota_aprobacion ?? 4.0);
-    const nota           = calcularNota(puntaje, notaMinima, notaMaxima, notaAprobacion, exigencia);
-    const aprobado       = nota != null ? nota >= notaAprobacion : puntaje >= exigencia;
-
-    const updateData = {
-        estado:           'completado',
-        finalizado_en:    new Date().toISOString(),
-        puntaje_obtenido: puntaje,
-        nota,
-        aprobado
-    };
-    if (porTiempo) updateData.finalizado_por_tiempo = true;
-
-    const { data, error } = await supabase
-        .from('capacitacion_intentos')
-        .update(updateData)
-        .eq('id', intentoId)
-        .eq('estado', 'en_curso')
-        .select()
-        .maybeSingle();
+async function _consolidarIntento({ intentoId, porTiempo }) {
+    const { data: rpc, error } = await supabase.rpc('rpc_finalizar_intento', {
+        p_intento_id: intentoId,
+        p_por_tiempo: !!porTiempo
+    });
 
     if (error) throw error;
+    if (!rpc) throw new Error('rpc_finalizar_intento devolvió resultado nulo');
+    if (rpc.codigo === 'NOT_FOUND') throw new Error('Intento ' + intentoId + ' no encontrado');
+    if (rpc.codigo === 'ESTADO_INVALIDO') return { ya_completado: true };
 
-    return { data, ya_completado: !data, correctas, incorrectas, no_respondidas, total, puntaje, nota, aprobado };
+    return {
+        data:           rpc,
+        ya_completado:  rpc.ya_completado  || false,
+        correctas:      rpc.correctas       ?? 0,
+        incorrectas:    rpc.incorrectas     ?? 0,
+        no_respondidas: rpc.no_respondidas  ?? 0,
+        total:          rpc.total_preguntas ?? 0,
+        puntaje:        rpc.puntaje_obtenido ?? 0,
+        nota:           rpc.nota,
+        aprobado:       rpc.aprobado
+    };
 }
 
 // ─── GET / — mis pruebas asignadas ────────────────────────────────────────────
@@ -295,14 +273,12 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
         if (errNew) return res.status(500).json({ error: errNew.message });
         intento = nuevo;
     } else if (enCurso.vence_en && new Date() > new Date(enCurso.vence_en)) {
-        // Tiempo agotado en un intento retomado: consolidar con función compartida
-        await _consolidarIntento({
-            intentoId:  enCurso.id,
-            pruebaId:   asig.prueba_id,
-            pruebaConf: prueba,
-            porTiempo:  true
+        // Tiempo agotado en un intento retomado: consolidar vía RPC transaccional
+        await supabase.rpc('rpc_finalizar_intento', {
+            p_intento_id: enCurso.id,
+            p_por_tiempo: true
         }).catch(function (eConsolidar) {
-            console.error('[cap/iniciar] _consolidarIntento intento=' + enCurso.id, eConsolidar?.message || eConsolidar);
+            console.error('[cap/iniciar] rpc_finalizar_intento intento=' + enCurso.id, eConsolidar?.message || eConsolidar);
         });
         return res.json({ tiempo_expirado: true, intento_id: enCurso.id });
     }
@@ -423,107 +399,74 @@ router.post('/intentos/:id/responder', async (req, res) => {
     try {
         if (!pregunta_id) return res.status(400).json({ error: 'pregunta_id es obligatorio' });
 
-        // Verificar que el intento pertenece al usuario
-        const { data: intento } = await supabase
+        // Verificar ownership del intento (autenticación JWT — el resto lo maneja el RPC)
+        const { data: asigCheck } = await supabase
             .from('capacitacion_intentos')
             .select(`
-                id, estado, asignacion_id, vence_en,
+                id,
                 asignacion:capacitacion_asignaciones!capacitacion_intentos_asignacion_id_fkey(
-                    usuario_pagado_id, prueba_id,
-                    prueba:capacitacion_pruebas!capacitacion_asignaciones_prueba_id_fkey(
-                        puntaje_minimo_aprobacion, nota_minima, nota_maxima, nota_aprobacion, fecha_fin
-                    )
+                    usuario_pagado_id
                 )
             `)
             .eq('id', intentoId)
-            .single();
+            .maybeSingle();
 
-        if (!intento || intento.asignacion?.usuario_pagado_id !== req.usuario.id) {
+        if (!asigCheck || asigCheck.asignacion?.usuario_pagado_id !== req.usuario.id) {
             _log('403-no-autorizado');
             return res.status(403).json({ error: 'No autorizado' });
         }
-        if (intento.estado !== 'en_curso') {
-            _log('400-no-en-curso');
-            return res.status(400).json({ error: 'Este intento ya no está en curso' });
-        }
 
-        // Validar tiempo global: rechazar y consolidar si el intento ya venció
-        if (intento.vence_en && new Date() > new Date(intento.vence_en)) {
-            await _consolidarIntento({
-                intentoId:  intento.id,
-                pruebaId:   intento.asignacion.prueba_id,
-                pruebaConf: intento.asignacion.prueba,
-                porTiempo:  true
-            }).catch(function (eConsolidar) {
-                console.error('[cap/responder] _consolidarIntento intento=' + intento.id, eConsolidar?.message || eConsolidar);
-            });
-            _log('409-TIEMPO_AGOTADO-vence_en');
-            return res.status(409).json({ codigo: 'TIEMPO_AGOTADO', error: 'Tiempo expirado', intento_id: intento.id });
-        }
-
-        // Validar fecha de cierre de la prueba
-        const fechaFinPrueba = intento.asignacion?.prueba?.fecha_fin;
-        if (fechaFinPrueba && new Date() > new Date(fechaFinPrueba)) {
-            _log('409-TIEMPO_AGOTADO-fecha_fin');
-            return res.status(409).json({ codigo: 'TIEMPO_AGOTADO', error: 'El plazo de la prueba ha vencido', intento_id: intento.id });
-        }
-
-        // Verificar si la alternativa es correcta y que pertenece a la pregunta
-        let es_correcta = null;
-        if (alternativa_id) {
-            const { data: alt } = await supabase
-                .from('capacitacion_alternativas')
-                .select('es_correcta, pregunta_id')
-                .eq('id', alternativa_id)
-                .maybeSingle();
-            if (!alt) {
-                _log('400-alt-no-existe');
-                return res.status(400).json({ error: 'Alternativa no encontrada' });
-            }
-            if (alt.pregunta_id !== pregunta_id) {
-                _log(`400-alt-cruzada alt_preg=${alt.pregunta_id}`);
-                return res.status(400).json({ error: 'La alternativa no corresponde a esta pregunta' });
-            }
-            es_correcta = alt.es_correcta;
-        }
-
-        // Upsert respuesta
-        const { data, error } = await supabase
-            .from('capacitacion_respuestas')
-            .upsert({
-                intento_id: intento.id,
-                pregunta_id,
-                alternativa_id: alternativa_id || null,
-                es_correcta,
-                respondida_en: new Date().toISOString()
-            }, { onConflict: 'intento_id,pregunta_id' })
-            .select()
-            .single();
-
-        if (error) {
-            if (error.code === '23505') {
-                _log('409-23505');
-                const { data: exist } = await supabase
-                    .from('capacitacion_respuestas')
-                    .select('id, intento_id, pregunta_id, alternativa_id, respondida_en')
-                    .eq('intento_id', intento.id)
-                    .eq('pregunta_id', pregunta_id)
-                    .maybeSingle();
-                return res.status(409).json({ error: 'Respuesta ya registrada', guardada: true, respuesta: exist });
-            }
-            _log(`500-db err=${error.code}`);
-            return res.status(500).json({ error: error.message });
-        }
-
-        _log(`200-ok respuesta=${data.id}`);
-        res.json({
-            id:             data.id,
-            intento_id:     data.intento_id,
-            pregunta_id:    data.pregunta_id,
-            alternativa_id: data.alternativa_id,
-            respondida_en:  data.respondida_en,
-            guardada:       true
+        // Guardar respuesta vía RPC transaccional:
+        // · Toma FOR UPDATE sobre el intento antes del upsert
+        // · Si /finalizar ganó el lock primero → devuelve INTENTO_FINALIZADO sin persistir
+        // · Verifica vence_en, fecha_fin, pregunta y alternativa en la misma transacción
+        const { data: rpc, error: rpcErr } = await supabase.rpc('rpc_guardar_respuesta', {
+            p_intento_id:     intentoId,
+            p_pregunta_id:    pregunta_id,
+            p_alternativa_id: alternativa_id || null
         });
+
+        if (rpcErr) {
+            _log(`500-rpc-error codigo=${rpcErr.code}`);
+            return res.status(500).json({ error: rpcErr.message });
+        }
+
+        const codigo = rpc?.codigo;
+
+        if (codigo === 'INTENTO_FINALIZADO') {
+            _log('409-INTENTO_FINALIZADO');
+            return res.status(409).json({ codigo: 'INTENTO_FINALIZADO', error: rpc.error, intento_id: intentoId });
+        }
+        if (codigo === 'TIEMPO_AGOTADO') {
+            // Safety net: consolidar ahora (el frontend también llamará /finalizar)
+            supabase.rpc('rpc_finalizar_intento', {
+                p_intento_id: intentoId,
+                p_por_tiempo: true
+            }).catch(function (eC) {
+                console.error('[cap/responder] rpc_finalizar_intento intento=' + intentoId, eC?.message || eC);
+            });
+            _log('409-TIEMPO_AGOTADO');
+            return res.status(409).json({ codigo: 'TIEMPO_AGOTADO', error: rpc.error || 'Tiempo expirado', intento_id: intentoId });
+        }
+        if (codigo === 'ESTADO_INVALIDO') {
+            _log('400-estado-invalido');
+            return res.status(400).json({ error: rpc.error || 'Este intento ya no está en curso' });
+        }
+        if (codigo === 'PREGUNTA_INVALIDA') {
+            _log('400-pregunta-invalida');
+            return res.status(400).json({ error: rpc.error || 'Pregunta no válida para esta prueba' });
+        }
+        if (codigo === 'ALTERNATIVA_INVALIDA') {
+            _log('400-alternativa-invalida');
+            return res.status(400).json({ error: rpc.error || 'Alternativa no válida' });
+        }
+        if (codigo === 'NOT_FOUND') {
+            _log('404-not-found');
+            return res.status(404).json({ error: rpc.error || 'Intento no encontrado' });
+        }
+
+        _log(`200-ok ya_existia=${rpc?.ya_existia}`);
+        res.json(rpc);
 
     } catch (err) {
         console.error(`[cap/responder] excepcion intento=${intentoId} dur=${Date.now() - _t0}ms`, err.message || err);
@@ -648,10 +591,8 @@ router.post('/intentos/:id/finalizar', async (req, res) => {
         _log('inicio por_tiempo=' + por_tiempo);
 
         const result = await _consolidarIntento({
-            intentoId:  intentoId,
-            pruebaId:   intento.asignacion.prueba_id,
-            pruebaConf: intento.asignacion.prueba,
-            porTiempo:  por_tiempo
+            intentoId: intentoId,
+            porTiempo: por_tiempo
         });
 
         if (result.ya_completado) {
@@ -735,10 +676,8 @@ router.post('/intentos/:id/abandonar', async (req, res) => {
         _log('inicio');
 
         const result = await _consolidarIntento({
-            intentoId:  intentoId,
-            pruebaId:   intento.asignacion.prueba_id,
-            pruebaConf: intento.asignacion.prueba,
-            porTiempo:  false
+            intentoId: intentoId,
+            porTiempo: false
         });
 
         if (result.ya_completado) {
