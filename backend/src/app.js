@@ -24,7 +24,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ─── Servir frontend estático ────────────────────────────────
 const frontendPath = path.join(__dirname, '../../frontend');
-app.use(express.static(frontendPath));
+app.use(express.static(frontendPath, {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+            // Los .html nunca deben quedar en caché (CDN de Render ni navegador)
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    }
+}));
 
 // ─── Logger de requests API (diagnóstico) ────────────────────
 app.use('/api', (req, res, next) => {
