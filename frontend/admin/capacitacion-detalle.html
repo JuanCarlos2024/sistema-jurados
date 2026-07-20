@@ -148,6 +148,38 @@
         .asig-check-tabla tr.ya-asig td { opacity:.45; }
         .asig-check-tabla tr:hover td { background:#f8f9fa; }
         .asig-check-tabla tr.ya-asig:hover td { background:none; }
+
+        /* === ETAPA 3.1: Validador de videos === */
+        .vval-overlay { position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto; }
+        .vval-modal { background:#fff;border-radius:12px;width:100%;max-width:960px;margin:auto;display:flex;flex-direction:column; }
+        .vval-header { padding:16px 20px;border-bottom:1px solid var(--gris-borde);display:flex;align-items:center;justify-content:space-between;gap:10px; }
+        .vval-body { padding:16px 20px;overflow-y:auto;max-height:calc(100vh - 220px); }
+        .vval-barra-wrap { height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;margin:6px 0; }
+        .vval-barra { height:100%;background:var(--primario);border-radius:4px;transition:width .3s; }
+        .vval-resumen { display:flex;gap:12px;flex-wrap:wrap;margin:12px 0; }
+        .vval-stat { background:#f8f9fa;border-radius:8px;padding:8px 14px;text-align:center;min-width:80px;flex:1; }
+        .vval-stat-num { font-size:20px;font-weight:700;line-height:1; }
+        .vval-stat-lbl { font-size:10px;color:var(--gris);margin-top:3px; }
+        .vval-filtros { display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px; }
+        .vval-filtro-btn { padding:4px 12px;border-radius:20px;border:1px solid var(--gris-borde);background:#fff;font-size:12px;cursor:pointer;font-weight:600; }
+        .vval-filtro-btn.activo { background:var(--primario);color:#fff;border-color:var(--primario); }
+        .vval-tabla-wrap { overflow-x:auto; }
+        .vval-tabla { width:100%;border-collapse:collapse;font-size:12px; }
+        .vval-tabla th { padding:6px 8px;text-align:left;font-size:10px;color:var(--gris);background:#f8f9fa;border-bottom:1px solid var(--gris-borde);white-space:nowrap; }
+        .vval-tabla td { padding:7px 8px;border-bottom:1px solid var(--gris-borde);vertical-align:middle; }
+        .vval-tabla tr:last-child td { border-bottom:none; }
+        .vval-badge { display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700; }
+        .vval-badge.correcto           { background:#d5f5e3;color:#1e8449; }
+        .vval-badge.pendiente          { background:#eef2ff;color:#3949ab; }
+        .vval-badge.validando          { background:#fef9e7;color:#7d6608; }
+        .vval-badge.url_invalida       { background:#fadbd8;color:#922b21; }
+        .vval-badge.video_no_disponible { background:#fadbd8;color:#922b21; }
+        .vval-badge.embedding_bloqueado { background:#fff3e0;color:#e65100; }
+        .vval-badge.error_html5        { background:#fadbd8;color:#922b21; }
+        .vval-badge.error_parametro    { background:#fadbd8;color:#922b21; }
+        .vval-badge.timeout            { background:#fff3e0;color:#e65100; }
+        .vval-badge.no_concluyente     { background:#fff3e0;color:#e65100; }
+        .vval-footer { padding:12px 20px;border-top:1px solid var(--gris-borde);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap; }
     </style>
 </head>
 <body>
@@ -270,9 +302,10 @@
                             <small style="color:var(--gris);font-size:11px;">Opcional. Hasta cuándo está disponible.</small>
                         </div>
                     </div>
-                    <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+                    <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                         <button class="btn btn-primario" onclick="guardarConfig()">Guardar cambios</button>
                         <button class="btn btn-outline btn-pequeño" onclick="validarYPublicar()" id="btn-publicar" style="display:none;">Publicar prueba</button>
+                        <button class="btn btn-outline btn-pequeño" onclick="abrirValidadorVideos()">Validar videos</button>
                     </div>
                 </div>
             </div>
@@ -638,6 +671,26 @@ async function validarYPublicar() {
     var tiempoGlobal = document.getElementById('cfg-tiempo-global').value;
     if (!tiempoPreg && !tiempoGlobal) { mostrarToast('Define al menos un temporizador antes de publicar', 'advertencia'); return; }
 
+    // ETAPA 3.1 — Verificación de videos
+    var preguntasVideo = _preguntas.filter(function(p) { return p.video_url; });
+    if (preguntasVideo.length > 0) {
+        if (_vval.items.length > 0) {
+            var criticos = _vval.items.filter(function(item) {
+                return ['url_invalida','video_no_disponible','embedding_bloqueado','error_html5','error_parametro'].indexOf(item.estado) !== -1;
+            });
+            var noConc = _vval.items.filter(function(item) {
+                return item.estado === 'timeout' || item.estado === 'no_concluyente';
+            });
+            if (criticos.length > 0) {
+                if (!confirm(criticos.length + ' video(s) con error crítico (no reproducibles). ¿Publicar de todas formas?')) return;
+            } else if (noConc.length > 0) {
+                if (!confirm(noConc.length + ' video(s) con resultado no concluyente (timeout). ¿Publicar de todas formas?')) return;
+            }
+        } else {
+            if (!confirm('Esta prueba tiene ' + preguntasVideo.length + ' pregunta(s) con video que no han sido validadas. Se recomienda usar "Validar videos" antes de publicar. ¿Publicar de todas formas?')) return;
+        }
+    }
+
     // Advertencia si no hay asignados (no bloquea)
     if (_asigAll.length === 0) {
         if (!confirm('La prueba no tiene jurados asignados aún. ¿Publicar de todas formas?')) return;
@@ -714,20 +767,34 @@ function renderPreguntas() {
 
 // ─── Helpers YouTube ──────────────────────────────────────────────────────────
 
+function youtubeExtraerId(url) {
+    if (!url || typeof url !== 'string') return null;
+    url = url.trim().split('#')[0];
+    if (!/^https?:\/\/(www\.|m\.|music\.)?youtu(be\.com|\.be)/.test(url)) return null;
+    var pats = [
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /[?&]v=([a-zA-Z0-9_-]{11})/,
+        /\/embed\/([a-zA-Z0-9_-]{11})/,
+        /\/shorts\/([a-zA-Z0-9_-]{11})/,
+        /\/live\/([a-zA-Z0-9_-]{11})/,
+        /\/v\/([a-zA-Z0-9_-]{11})/
+    ];
+    for (var i = 0; i < pats.length; i++) {
+        var m = url.match(pats[i]);
+        if (m) return m[1];
+    }
+    return null;
+}
+
 function youtubeEmbed(url) {
-    if (!url) return null;
-    url = url.trim();
-    var idMatch = url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-    if (!idMatch) return null;
-    var videoId  = idMatch[1];
+    var id = youtubeExtraerId(url);
+    if (!id) return null;
     var startSec = 0;
-    // start= (formato embed)
-    var startMatch = url.match(/[?&]start=(\d+)/);
+    var startMatch = (url || '').match(/[?&]start=(\d+)/);
     if (startMatch) {
         startSec = parseInt(startMatch[1], 10);
     } else {
-        // t= (formatos watch y youtu.be): 90, 120s, 2m30s, 1h30m20s
-        var tMatch = url.match(/[?&]t=([0-9hms]+)/);
+        var tMatch = (url || '').match(/[?&]t=([0-9hms]+)/);
         if (tMatch) {
             var parts = tMatch[1].match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
             if (parts) {
@@ -737,7 +804,7 @@ function youtubeEmbed(url) {
             }
         }
     }
-    return 'https://www.youtube-nocookie.com/embed/' + videoId
+    return 'https://www.youtube-nocookie.com/embed/' + id
          + (startSec > 0 ? '?start=' + startSec : '');
 }
 
@@ -1637,6 +1704,427 @@ function cerrarModalReplicar() {
     document.getElementById('modal-replicar').style.display = 'none';
 }
 
+// ─── ETAPA 3.1: Validador de videos ──────────────────────────────────────────
+
+var _vvalYtApiReady = !!(window.YT && window.YT.Player);
+var _vvalYtPending  = null;
+var _vvalYtPlayer   = null;
+
+window.onYouTubeIframeAPIReady = function() {
+    _vvalYtApiReady = true;
+    if (_vvalYtPending) { _vvalYtPending(); _vvalYtPending = null; }
+};
+
+(function() {
+    if (_vvalYtApiReady) return;
+    if (document.querySelector('script[src*="youtube.com/iframe_api"]')) return;
+    var s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(s);
+})();
+
+var _vvalErrMap = {
+    2:   { cls: 'error_parametro',     msg: 'Parámetro inválido — URL incorrecta' },
+    5:   { cls: 'error_html5',         msg: 'Error HTML5 — no reproducible en este navegador' },
+    100: { cls: 'video_no_disponible', msg: 'Video eliminado o privado' },
+    101: { cls: 'embedding_bloqueado', msg: 'Inserción desactivada por el propietario' },
+    150: { cls: 'embedding_bloqueado', msg: 'Inserción desactivada (HTML5)' }
+};
+
+var _vval = {
+    activa:              false,
+    parada:              false,
+    items:               [],
+    filtro:              'todos',
+    redBloqueada:        false,
+    fallosConsecutivos:  0
+};
+
+function _vvalSandbox() {
+    var sb = document.getElementById('vval-player-sandbox');
+    if (!sb) {
+        sb = document.createElement('div');
+        sb.id = 'vval-player-sandbox';
+        sb.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;';
+        document.body.appendChild(sb);
+    }
+    return sb;
+}
+
+function _vvalDestruirPlayer() {
+    if (_vvalYtPlayer) {
+        try { _vvalYtPlayer.destroy(); } catch(e) {}
+        _vvalYtPlayer = null;
+    }
+    var sb = document.getElementById('vval-player-sandbox');
+    if (sb) sb.innerHTML = '';
+}
+
+function _vvalValidarUno(idx, callback) {
+    var item = _vval.items[idx];
+    if (!item) { callback(); return; }
+    item.estado = 'validando';
+    _vvalRenderTabla();
+    _vvalActualizarProgreso();
+
+    if (!item.yt_id) {
+        item.estado  = 'url_invalida';
+        item.mensaje = 'URL no reconocida como enlace de YouTube';
+        _vvalRenderTabla();
+        callback();
+        return;
+    }
+
+    _vvalDestruirPlayer();
+    var sb    = _vvalSandbox();
+    var divId = 'vval-yt-' + Date.now();
+    var div   = document.createElement('div');
+    div.id    = divId;
+    sb.appendChild(div);
+
+    var terminado = false;
+
+    var timer = setTimeout(function() {
+        if (terminado) return;
+        terminado = true;
+        _vvalDestruirPlayer();
+        item.estado    = 'timeout';
+        item.codigo_yt = null;
+        item.mensaje   = 'No respondió en 15 segundos';
+        _vval.fallosConsecutivos++;
+        _vvalChequearRedBloqueada();
+        _vvalRenderTabla();
+        callback();
+    }, 15000);
+
+    function crearPlayer() {
+        try {
+            _vvalYtPlayer = new YT.Player(divId, {
+                width: '1', height: '1',
+                videoId: item.yt_id,
+                host: 'https://www.youtube-nocookie.com',
+                playerVars: { autoplay: 0, mute: 1, enablejsapi: 1, playsinline: 1 },
+                events: {
+                    onReady: function() {
+                        if (terminado) return;
+                        clearTimeout(timer);
+                        terminado = true;
+                        _vvalDestruirPlayer();
+                        item.estado    = 'correcto';
+                        item.codigo_yt = null;
+                        item.mensaje   = 'Reproducible';
+                        _vval.fallosConsecutivos = 0;
+                        _vvalRenderTabla();
+                        callback();
+                    },
+                    onError: function(e) {
+                        if (terminado) return;
+                        clearTimeout(timer);
+                        terminado = true;
+                        _vvalDestruirPlayer();
+                        var err        = _vvalErrMap[e.data] || { cls: 'no_concluyente', msg: 'Error desconocido (código ' + e.data + ')' };
+                        item.estado    = err.cls;
+                        item.codigo_yt = e.data;
+                        item.mensaje   = err.msg;
+                        _vval.fallosConsecutivos++;
+                        _vvalChequearRedBloqueada();
+                        _vvalRenderTabla();
+                        callback();
+                    }
+                }
+            });
+        } catch(ex) {
+            if (terminado) return;
+            clearTimeout(timer);
+            terminado = true;
+            _vvalDestruirPlayer();
+            item.estado  = 'no_concluyente';
+            item.mensaje = 'Error al crear reproductor: ' + (ex.message || String(ex));
+            _vval.fallosConsecutivos++;
+            _vvalRenderTabla();
+            callback();
+        }
+    }
+
+    if (_vvalYtApiReady) {
+        crearPlayer();
+    } else {
+        _vvalYtPending = crearPlayer;
+    }
+}
+
+function _vvalChequearRedBloqueada() {
+    if (_vval.redBloqueada) return;
+    if (_vval.fallosConsecutivos >= 3) {
+        _vval.redBloqueada = true;
+        var w = document.getElementById('vval-red-advertencia');
+        if (w) w.style.display = '';
+    }
+}
+
+function _vvalProcesarCola() {
+    if (_vval.parada) { _vvalFinalizarValidacion(); return; }
+    var siguiente = -1;
+    for (var i = 0; i < _vval.items.length; i++) {
+        if (_vval.items[i].estado === 'pendiente') { siguiente = i; break; }
+    }
+    if (siguiente === -1) { _vvalFinalizarValidacion(); return; }
+    _vvalValidarUno(siguiente, function() {
+        _vvalActualizarProgreso();
+        setTimeout(function() { _vvalProcesarCola(); }, 300);
+    });
+}
+
+function _vvalFinalizarValidacion() {
+    _vval.activa = false;
+    _vvalDestruirPlayer();
+    _vvalActualizarProgreso();
+    _vvalRenderTabla();
+    var bi = document.getElementById('vval-btn-iniciar');
+    var bp = document.getElementById('vval-btn-parar');
+    if (bi) { bi.style.display = ''; bi.disabled = false; }
+    if (bp) { bp.style.display = 'none'; bp.disabled = false; }
+    var lbl = document.getElementById('vval-progreso-label');
+    if (lbl) lbl.textContent = _vval.parada ? 'Validación interrumpida' : 'Validación completada';
+}
+
+function _vvalActualizarProgreso() {
+    var total    = _vval.items.length;
+    var pendiente = _vval.items.filter(function(i) { return i.estado === 'pendiente' || i.estado === 'validando'; }).length;
+    var completados = total - pendiente;
+    var pct      = total > 0 ? Math.round(completados / total * 100) : 0;
+
+    var barra = document.getElementById('vval-barra');
+    if (barra) barra.style.width = pct + '%';
+
+    var lbl = document.getElementById('vval-progreso-label');
+    if (lbl && _vval.activa) lbl.textContent = completados + ' / ' + total + ' (' + pct + '%)';
+
+    var correcto = _vval.items.filter(function(i) { return i.estado === 'correcto'; }).length;
+    var errores  = _vval.items.filter(function(i) {
+        return ['url_invalida','video_no_disponible','embedding_bloqueado','error_html5','error_parametro'].indexOf(i.estado) !== -1;
+    }).length;
+    var noConc   = _vval.items.filter(function(i) { return i.estado === 'timeout' || i.estado === 'no_concluyente'; }).length;
+    var pendCnt  = _vval.items.filter(function(i) { return i.estado === 'pendiente'; }).length;
+    var pctCorr  = total > 0 ? Math.round(correcto / total * 100) : 0;
+
+    var el = function(id, v) { var e = document.getElementById(id); if (e) e.textContent = v; };
+    el('vval-stat-total',  total);
+    el('vval-stat-ok',     correcto);
+    el('vval-stat-error',  errores);
+    el('vval-stat-noconc', noConc);
+    el('vval-stat-pend',   pendCnt);
+    el('vval-stat-pct',    pctCorr + '%');
+}
+
+function _vvalRenderTabla() {
+    var filtro = _vval.filtro;
+    var items  = _vval.items.filter(function(item) {
+        if (filtro === 'todos')     return true;
+        if (filtro === 'correcto')  return item.estado === 'correcto';
+        if (filtro === 'error')     return ['url_invalida','video_no_disponible','embedding_bloqueado','error_html5','error_parametro'].indexOf(item.estado) !== -1;
+        if (filtro === 'timeout')   return item.estado === 'timeout' || item.estado === 'no_concluyente';
+        if (filtro === 'bloqueado') return item.estado === 'embedding_bloqueado';
+        if (filtro === 'pendiente') return item.estado === 'pendiente' || item.estado === 'validando';
+        return true;
+    });
+    var cuerpo = document.getElementById('vval-tabla-body');
+    if (!cuerpo) return;
+    if (items.length === 0) {
+        cuerpo.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--gris);">Sin resultados para este filtro</td></tr>';
+        return;
+    }
+    cuerpo.innerHTML = items.map(function(item) {
+        var enc  = item.enunciado.length > 50 ? item.enunciado.substring(0, 50) + '…' : item.enunciado;
+        var encEsc = item.enunciado.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        var ytId = item.yt_id || '—';
+        var cod  = item.codigo_yt != null ? item.codigo_yt : '—';
+        var acciones = '';
+        if (item.yt_id) {
+            acciones += '<button class="btn btn-pequeño btn-outline" style="font-size:10px;padding:2px 7px;" onclick="vvalPreviewVideo(' + item.idx + ')">Ver</button> ';
+        }
+        if (item.estado !== 'pendiente' && item.estado !== 'validando' && item.yt_id) {
+            acciones += '<button class="btn btn-pequeño btn-outline" style="font-size:10px;padding:2px 7px;" onclick="vvalReintentarUno(' + item.idx + ')">Reintentar</button> ';
+        }
+        acciones += '<button class="btn btn-pequeño btn-outline" style="font-size:10px;padding:2px 7px;" onclick="abrirModalPregunta(\'' + item.pregunta_id + '\')">Editar</button>';
+        return '<tr>'
+            + '<td style="font-weight:700;">' + (item.orden || (item.idx + 1)) + '</td>'
+            + '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + encEsc + '">' + enc + '</td>'
+            + '<td><code style="font-size:10px;">' + ytId + '</code></td>'
+            + '<td><span class="vval-badge ' + item.estado + '">' + item.estado.replace(/_/g, ' ') + '</span></td>'
+            + '<td style="color:var(--gris);">' + cod + '</td>'
+            + '<td style="max-width:180px;font-size:11px;color:var(--gris);">' + (item.mensaje || '') + '</td>'
+            + '<td style="white-space:nowrap;">' + acciones + '</td>'
+            + '</tr>';
+    }).join('');
+}
+
+function vvalCambiarFiltro(filtro, btn) {
+    _vval.filtro = filtro;
+    document.querySelectorAll('.vval-filtro-btn').forEach(function(b) { b.classList.remove('activo'); });
+    btn.classList.add('activo');
+    _vvalRenderTabla();
+}
+
+function vvalReintentarUno(idx) {
+    var item = _vval.items[idx];
+    if (!item || item.estado === 'pendiente' || item.estado === 'validando') return;
+    item.estado    = 'pendiente';
+    item.codigo_yt = null;
+    item.mensaje   = '';
+    _vvalRenderTabla();
+    if (!_vval.activa) {
+        _vval.activa = true;
+        _vval.parada = false;
+        var bi = document.getElementById('vval-btn-iniciar');
+        var bp = document.getElementById('vval-btn-parar');
+        if (bi) bi.style.display = 'none';
+        if (bp) { bp.style.display = ''; bp.disabled = false; }
+        var lbl = document.getElementById('vval-progreso-label');
+        if (lbl) lbl.textContent = 'Validando…';
+        _vvalProcesarCola();
+    }
+}
+
+function vvalPreviewVideo(idx) {
+    var item = _vval.items[idx];
+    if (!item || !item.yt_id) return;
+    var src   = 'https://www.youtube-nocookie.com/embed/' + item.yt_id + '?autoplay=1&rel=0&playsinline=1';
+    var modal  = document.getElementById('vval-preview-modal');
+    var iframe = document.getElementById('vval-preview-iframe');
+    var title  = document.getElementById('vval-preview-title');
+    var orden  = item.orden || (item.idx + 1);
+    if (title)  title.textContent = 'Pregunta ' + orden + ': ' + item.enunciado.substring(0, 60) + (item.enunciado.length > 60 ? '…' : '');
+    if (iframe) iframe.src = src;
+    if (modal)  modal.style.display = 'flex';
+}
+
+function vvalCerrarPreview() {
+    var iframe = document.getElementById('vval-preview-iframe');
+    var modal  = document.getElementById('vval-preview-modal');
+    if (iframe) iframe.src = '';
+    if (modal)  modal.style.display = 'none';
+}
+
+function abrirValidadorVideos() {
+    var pregVideo = _preguntas.filter(function(p) { return p.video_url; });
+    if (pregVideo.length === 0) {
+        mostrarToast('Esta prueba no tiene preguntas con video', 'info');
+        return;
+    }
+
+    _vval.items = pregVideo.map(function(p, i) {
+        var ytId = youtubeExtraerId(p.video_url);
+        return {
+            idx:         i,
+            pregunta_id: p.id,
+            orden:       p.orden || (i + 1),
+            enunciado:   p.enunciado || '',
+            video_url:   p.video_url || '',
+            yt_id:       ytId,
+            estado:      ytId ? 'pendiente' : 'url_invalida',
+            codigo_yt:   null,
+            mensaje:     ytId ? '' : 'URL no es un enlace de YouTube válido'
+        };
+    });
+    _vval.activa             = false;
+    _vval.parada             = false;
+    _vval.filtro             = 'todos';
+    _vval.redBloqueada       = false;
+    _vval.fallosConsecutivos = 0;
+
+    _vvalActualizarProgreso();
+    _vvalRenderTabla();
+
+    var lbl = document.getElementById('vval-progreso-label');
+    if (lbl) lbl.textContent = 'Listo para validar (' + pregVideo.length + ' pregunta(s) con video)';
+    var barra = document.getElementById('vval-barra');
+    if (barra) barra.style.width = '0%';
+    var bi = document.getElementById('vval-btn-iniciar');
+    var bp = document.getElementById('vval-btn-parar');
+    if (bi) { bi.style.display = ''; bi.disabled = false; }
+    if (bp) { bp.style.display = 'none'; bp.disabled = false; }
+    var w = document.getElementById('vval-red-advertencia');
+    if (w) w.style.display = 'none';
+
+    document.querySelectorAll('.vval-filtro-btn').forEach(function(b, i) { b.classList.toggle('activo', i === 0); });
+
+    document.getElementById('modal-validar-videos').style.display = 'flex';
+}
+
+function cerrarValidadorVideos() {
+    if (_vval.activa) {
+        if (!confirm('La validación está en curso. ¿Cerrar de todas formas?')) return;
+        _vval.parada = true;
+        _vvalDestruirPlayer();
+        _vval.activa = false;
+    }
+    document.getElementById('modal-validar-videos').style.display = 'none';
+}
+
+function vvalIniciarValidacion() {
+    if (_vval.activa) return;
+    _vval.fallosConsecutivos = 0;
+    _vval.redBloqueada       = false;
+    var w = document.getElementById('vval-red-advertencia');
+    if (w) w.style.display = 'none';
+
+    _vval.items.forEach(function(item) {
+        if (item.estado !== 'url_invalida') {
+            item.estado    = 'pendiente';
+            item.codigo_yt = null;
+            item.mensaje   = '';
+        }
+    });
+    _vvalRenderTabla();
+    _vvalActualizarProgreso();
+
+    _vval.activa = true;
+    _vval.parada = false;
+    var bi = document.getElementById('vval-btn-iniciar');
+    var bp = document.getElementById('vval-btn-parar');
+    if (bi) bi.style.display = 'none';
+    if (bp) { bp.style.display = ''; bp.disabled = false; }
+    var lbl = document.getElementById('vval-progreso-label');
+    if (lbl) lbl.textContent = 'Validando…';
+    _vvalProcesarCola();
+}
+
+function vvalPararValidacion() {
+    _vval.parada = true;
+    _vval.activa = false;
+    var bp = document.getElementById('vval-btn-parar');
+    if (bp) bp.disabled = true;
+}
+
+function vvalExportarCSV() {
+    if (_vval.items.length === 0) { mostrarToast('No hay datos para exportar', 'info'); return; }
+    var filas = [['#','Pregunta ID','Orden','Enunciado','URL','YT ID','Estado','Codigo YT','Mensaje']];
+    _vval.items.forEach(function(item, i) {
+        filas.push([
+            i + 1,
+            item.pregunta_id,
+            item.orden,
+            '"' + (item.enunciado || '').replace(/"/g, '""') + '"',
+            '"' + (item.video_url  || '').replace(/"/g, '""') + '"',
+            item.yt_id       || '',
+            item.estado,
+            item.codigo_yt != null ? item.codigo_yt : '',
+            '"' + (item.mensaje   || '').replace(/"/g, '""') + '"'
+        ]);
+    });
+    var csv  = filas.map(function(f) { return f.join(','); }).join('\r\n');
+    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+    a.href   = url;
+    a.download = 'validacion_videos_' + (_pruebaId || 'prueba') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 async function confirmarReplicar() {
     var titulo = document.getElementById('replicar-titulo').value.trim();
     if (!titulo) { mostrarToast('El título de la nueva prueba es obligatorio', 'error'); return; }
@@ -1798,6 +2286,93 @@ async function confirmarReplicar() {
                 <button class="btn btn-secundario" onclick="cerrarModalReplicar()">Permanecer aquí</button>
                 <a id="replicar-ir-nueva" href="#" class="btn btn-primario">Ir a la nueva prueba →</a>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Modal validador de videos (ETAPA 3.1) ════════════════════════════════ -->
+<div id="modal-validar-videos" class="vval-overlay" style="display:none;" onclick="if(event.target===this)cerrarValidadorVideos()">
+    <div class="vval-modal" onclick="event.stopPropagation()">
+        <div class="vval-header">
+            <div>
+                <h3 style="margin:0;font-size:16px;">Validar videos de la prueba</h3>
+                <div style="font-size:12px;color:var(--gris);margin-top:2px;">Verifica que los videos sean reproducibles en el examen</div>
+            </div>
+            <button class="modal-cerrar" onclick="cerrarValidadorVideos()">✕</button>
+        </div>
+        <div class="vval-body">
+            <!-- Alerta red bloqueada -->
+            <div id="vval-red-advertencia" class="alerta alerta-advertencia" style="display:none;margin-bottom:12px;font-size:13px;">
+                <strong>Posible bloqueo de red:</strong> la red actual podría estar bloqueando
+                <code>youtube-nocookie.com</code>. Los timeouts pueden ser falsos negativos — prueba desde otra conexión antes de publicar.
+            </div>
+            <!-- Progreso -->
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
+                    <span style="font-size:13px;font-weight:600;" id="vval-progreso-label">Listo para validar</span>
+                    <div style="display:flex;gap:8px;">
+                        <button id="vval-btn-iniciar" class="btn btn-primario btn-pequeño" onclick="vvalIniciarValidacion()">Iniciar validación</button>
+                        <button id="vval-btn-parar"   class="btn btn-outline btn-pequeño"  onclick="vvalPararValidacion()" style="display:none;">Detener</button>
+                    </div>
+                </div>
+                <div class="vval-barra-wrap"><div class="vval-barra" id="vval-barra" style="width:0%"></div></div>
+            </div>
+            <!-- Resumen -->
+            <div class="vval-resumen">
+                <div class="vval-stat"><div class="vval-stat-num" id="vval-stat-total">0</div><div class="vval-stat-lbl">Total</div></div>
+                <div class="vval-stat"><div class="vval-stat-num" id="vval-stat-ok" style="color:#1e8449;">0</div><div class="vval-stat-lbl">Correctos</div></div>
+                <div class="vval-stat"><div class="vval-stat-num" id="vval-stat-error" style="color:#922b21;">0</div><div class="vval-stat-lbl">Errores</div></div>
+                <div class="vval-stat"><div class="vval-stat-num" id="vval-stat-noconc" style="color:#e65100;">0</div><div class="vval-stat-lbl">No concluyente</div></div>
+                <div class="vval-stat"><div class="vval-stat-num" id="vval-stat-pend" style="color:#3949ab;">0</div><div class="vval-stat-lbl">Pendiente</div></div>
+                <div class="vval-stat"><div class="vval-stat-num" id="vval-stat-pct">—</div><div class="vval-stat-lbl">% correcto</div></div>
+            </div>
+            <!-- Filtros -->
+            <div class="vval-filtros">
+                <button class="vval-filtro-btn activo" onclick="vvalCambiarFiltro('todos',this)">Todos</button>
+                <button class="vval-filtro-btn" onclick="vvalCambiarFiltro('correcto',this)">Correctos</button>
+                <button class="vval-filtro-btn" onclick="vvalCambiarFiltro('error',this)">Errores</button>
+                <button class="vval-filtro-btn" onclick="vvalCambiarFiltro('timeout',this)">No concluyentes</button>
+                <button class="vval-filtro-btn" onclick="vvalCambiarFiltro('bloqueado',this)">Bloqueados</button>
+                <button class="vval-filtro-btn" onclick="vvalCambiarFiltro('pendiente',this)">Pendientes</button>
+            </div>
+            <!-- Tabla -->
+            <div class="vval-tabla-wrap">
+                <table class="vval-tabla">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Enunciado</th>
+                            <th>YT ID</th>
+                            <th>Estado</th>
+                            <th>Cód.</th>
+                            <th>Mensaje</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vval-tabla-body">
+                        <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gris);font-size:13px;">Inicia la validación para ver resultados</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="vval-footer">
+            <button class="btn btn-outline btn-pequeño" onclick="vvalExportarCSV()">Exportar CSV</button>
+            <button class="btn btn-secundario btn-pequeño" onclick="cerrarValidadorVideos()">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Modal preview video (ETAPA 3.1) ══════════════════════════════════════ -->
+<div id="vval-preview-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)vvalCerrarPreview()">
+    <div class="modal" style="max-width:860px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="vval-preview-title" style="font-size:13px;font-weight:600;max-width:740px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;"></h3>
+            <button class="modal-cerrar" onclick="vvalCerrarPreview()">✕</button>
+        </div>
+        <div style="width:100%;aspect-ratio:16/9;background:#000;border-radius:0 0 8px 8px;overflow:hidden;">
+            <iframe id="vval-preview-iframe" src="" width="100%" height="100%"
+                style="border:0;display:block;"
+                allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
         </div>
     </div>
 </div>
