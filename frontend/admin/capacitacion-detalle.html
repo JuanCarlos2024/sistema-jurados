@@ -654,11 +654,12 @@ async function validarYPublicar() {
     var titulo = document.getElementById('cfg-titulo').value.trim();
     if (!titulo) { mostrarToast('Debes ingresar un título antes de publicar', 'error'); return; }
 
-    // Preflight: preguntas
-    if (_preguntas.length === 0) { mostrarToast('La prueba debe tener al menos una pregunta', 'error'); return; }
+    // Preflight: preguntas activas (no anuladas)
+    var preguntasValidas = _preguntas.filter(function(p) { return !p.anulada; });
+    if (preguntasValidas.length === 0) { mostrarToast('La prueba debe tener al menos una pregunta activa (no anulada)', 'error'); return; }
 
-    // Preflight: cada pregunta tiene al menos 1 alternativa correcta
-    var incompleta = _preguntas.find(function (p) {
+    // Preflight: cada pregunta válida tiene al menos 1 alternativa correcta
+    var incompleta = preguntasValidas.find(function (p) {
         var alts = p.alternativas || [];
         return alts.length < 2 || !alts.some(function (a) { return a.es_correcta; });
     });
@@ -743,7 +744,10 @@ function renderPreguntas() {
         var alts = (p.alternativas || []).map(function (a) {
             var cls    = a.es_correcta ? 'alt-correcta' : 'alt-incorrecta';
             var dotCls = a.es_correcta ? 'correcta' : 'incorrecta';
-            return '<li class="' + cls + '"><span class="alt-dot ' + dotCls + '"></span>' + sanitizar(a.texto) + '</li>';
+            var btnMarcar = (!a.es_correcta && !p.anulada)
+                ? ' <button class="btn btn-pequeño" style="font-size:10px;padding:1px 7px;margin-left:6px;background:#e8f5e9;color:#1e8449;border:none;" onclick="cambiarAlternativaCorrecta(\'' + p.id + '\',\'' + a.id + '\')">Marcar correcta</button>'
+                : '';
+            return '<li class="' + cls + '"><span class="alt-dot ' + dotCls + '"></span>' + sanitizar(a.texto) + btnMarcar + '</li>';
         }).join('');
         var star     = p.es_favorita ? '★' : '☆';
         var tipoLabel = sanitizar(TIPO_LABELS[p.tipo] || p.tipo || '');
@@ -1158,30 +1162,124 @@ async function eliminarPregunta(id) {
     }
 }
 
-async function anularPregunta(id) {
-    if (!confirm('¿Anular esta pregunta? Quedará excluida del puntaje y nota de todos los intentos, sin borrarse.')) return;
+function anularPregunta(id) {
+    abrirModalImpacto(id, 'anular', null);
+}
+
+function reactivarPregunta(id) {
+    abrirModalImpacto(id, 'reactivar', null);
+}
+
+function cambiarAlternativaCorrecta(preguntaId, altId) {
+    abrirModalImpacto(preguntaId, 'cambiar_correcta', altId);
+}
+
+// ─── Modal de impacto (ETAPA 4) ───────────────────────────────────────────────
+
+var _impactoState = null;
+
+async function abrirModalImpacto(preguntaId, tipo, altId) {
+    _impactoState = { preguntaId: preguntaId, tipo: tipo, altId: altId };
+
+    var titulos = { anular: 'Anular pregunta', reactivar: 'Reactivar pregunta', cambiar_correcta: 'Cambiar respuesta correcta' };
+    document.getElementById('impacto-titulo').textContent = titulos[tipo] || 'Confirmar cambio';
+    document.getElementById('impacto-cargando').style.display = '';
+    document.getElementById('impacto-contenido').style.display = 'none';
+    document.getElementById('impacto-resultado').style.display = 'none';
+    document.getElementById('impacto-motivo').value = '';
+    document.getElementById('impacto-btn-confirmar').disabled = true;
+    document.getElementById('impacto-btn-confirmar').textContent = 'Confirmar';
+    document.getElementById('impacto-footer').innerHTML =
+        '<button class="btn btn-outline" onclick="cerrarModalImpacto()">Cancelar</button>'
+        + '<button id="impacto-btn-confirmar" class="btn btn-primario" onclick="ejecutarCambioImpacto()" disabled>Confirmar</button>';
+    document.getElementById('modal-impacto-pregunta').style.display = 'flex';
+
     try {
-        await api.post('/admin/capacitaciones/preguntas/' + id + '/anular', {});
-        var idx = _preguntas.findIndex(function(p) { return p.id === id; });
-        if (idx !== -1) _preguntas[idx].anulada = true;
-        renderPreguntas();
-        mostrarToast('Pregunta anulada — los resultados ya no la contabilizan', 'exito');
+        var info = await api.get('/admin/capacitaciones/preguntas/' + preguntaId + '/impacto');
+        document.getElementById('impacto-cargando').style.display = 'none';
+        document.getElementById('impacto-contenido').style.display = '';
+
+        var alertaEl  = document.getElementById('impacto-alerta');
+        var resumenEl = document.getElementById('impacto-resumen');
+
+        if (info.en_curso > 0) {
+            alertaEl.innerHTML = '<div class="alerta alerta-error" style="font-size:13px;"><strong>No se puede continuar:</strong> hay '
+                + info.en_curso + ' intento(s) en curso para esta prueba. Espera a que finalicen antes de aplicar este cambio.</div>';
+            document.getElementById('impacto-btn-confirmar').disabled = true;
+        } else {
+            alertaEl.innerHTML = '';
+            document.getElementById('impacto-btn-confirmar').disabled = false;
+        }
+
+        var textoTipo = { anular: 'anulará', reactivar: 'reactivará', cambiar_correcta: 'cambiará la respuesta correcta de' };
+        var enun = info.pregunta.enunciado;
+        var enunCorto = enun.length > 60 ? enun.substring(0, 60) + '…' : enun;
+        resumenEl.innerHTML = 'Esta acción <strong>' + (textoTipo[tipo] || 'modificará') + '</strong> la pregunta <em>"' + sanitizar(enunCorto) + '"</em>.'
+            + '<br><strong>' + info.completados_afectados + '</strong> intento(s) completado(s) serán recalculados.';
     } catch (err) {
-        mostrarToast(err.message || 'Error al anular', 'error');
+        document.getElementById('impacto-cargando').style.display = 'none';
+        document.getElementById('impacto-resultado').style.display = '';
+        document.getElementById('impacto-resultado').innerHTML = '<div class="alerta alerta-error" style="font-size:13px;">' + sanitizar(err.message || 'Error al obtener impacto') + '</div>';
+        document.getElementById('impacto-footer').innerHTML = '<button class="btn btn-secundario" onclick="cerrarModalImpacto()">Cerrar</button>';
     }
 }
 
-async function reactivarPregunta(id) {
-    if (!confirm('¿Reactivar esta pregunta? Volverá a contar en el puntaje y nota de todos los intentos.')) return;
-    try {
-        await api.post('/admin/capacitaciones/preguntas/' + id + '/reactivar', {});
-        var idx = _preguntas.findIndex(function(p) { return p.id === id; });
-        if (idx !== -1) _preguntas[idx].anulada = false;
-        renderPreguntas();
-        mostrarToast('Pregunta reactivada', 'exito');
-    } catch (err) {
-        mostrarToast(err.message || 'Error al reactivar', 'error');
+async function ejecutarCambioImpacto() {
+    if (!_impactoState) return;
+    var motivo = document.getElementById('impacto-motivo').value.trim();
+    if (!motivo) {
+        mostrarToast('Debes ingresar un motivo', 'advertencia');
+        document.getElementById('impacto-motivo').focus();
+        return;
     }
+
+    var btnConfirmar = document.getElementById('impacto-btn-confirmar');
+    btnConfirmar.disabled = true;
+    btnConfirmar.textContent = 'Procesando…';
+
+    try {
+        var url, body = { motivo: motivo };
+        if (_impactoState.tipo === 'anular') {
+            url = '/admin/capacitaciones/preguntas/' + _impactoState.preguntaId + '/anular';
+        } else if (_impactoState.tipo === 'reactivar') {
+            url = '/admin/capacitaciones/preguntas/' + _impactoState.preguntaId + '/reactivar';
+        } else if (_impactoState.tipo === 'cambiar_correcta') {
+            url = '/admin/capacitaciones/preguntas/' + _impactoState.preguntaId + '/alternativas/' + _impactoState.altId + '/marcar-correcta';
+        }
+
+        var resultado = await api.post(url, body);
+
+        // Actualizar estado local para renderizado inmediato
+        var idx = _preguntas.findIndex(function(p) { return p.id === _impactoState.preguntaId; });
+        if (idx !== -1) {
+            if (_impactoState.tipo === 'anular')    _preguntas[idx].anulada = true;
+            if (_impactoState.tipo === 'reactivar') _preguntas[idx].anulada = false;
+            if (_impactoState.tipo === 'cambiar_correcta' && _impactoState.altId) {
+                var alts = _preguntas[idx].alternativas || [];
+                alts.forEach(function(a) { a.es_correcta = (a.id === _impactoState.altId); });
+            }
+        }
+        renderPreguntas();
+
+        // Mostrar resultado exitoso en modal
+        document.getElementById('impacto-contenido').style.display = 'none';
+        document.getElementById('impacto-footer').innerHTML = '<button class="btn btn-secundario" onclick="cerrarModalImpacto()">Cerrar</button>';
+        document.getElementById('impacto-resultado').style.display = '';
+        var afectados = resultado.intentos_afectados || 0;
+        document.getElementById('impacto-resultado').innerHTML =
+            '<div class="alerta alerta-exito" style="font-size:13px;"><strong>Cambio aplicado.</strong> '
+            + afectados + ' intento(s) recalculado(s) correctamente.</div>';
+
+    } catch (err) {
+        btnConfirmar.disabled = false;
+        btnConfirmar.textContent = 'Confirmar';
+        mostrarToast(err.message || 'Error al aplicar el cambio', 'error');
+    }
+}
+
+function cerrarModalImpacto() {
+    document.getElementById('modal-impacto-pregunta').style.display = 'none';
+    _impactoState = null;
 }
 
 async function toggleFavorita(id, idx) {
@@ -2683,6 +2781,34 @@ async function confirmarReplicar() {
         </div>
         <div class="modal-footer">
             <button class="btn btn-secundario" onclick="cerrarBloqueoPublicar()">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Modal impacto de pregunta (ETAPA 4) ══════════════════════════════════ -->
+<div id="modal-impacto-pregunta" class="modal-overlay" style="display:none;z-index:2500;" onclick="if(event.target===this)cerrarModalImpacto()">
+    <div class="modal" style="max-width:520px;" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <h3 id="impacto-titulo" style="margin:0;font-size:15px;">Confirmar cambio</h3>
+            <button class="modal-cerrar" onclick="cerrarModalImpacto()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="impacto-cargando" style="text-align:center;padding:24px 0;">
+                <div style="font-size:13px;color:var(--gris);">Calculando impacto…</div>
+            </div>
+            <div id="impacto-contenido" style="display:none;">
+                <div id="impacto-alerta" style="margin-bottom:12px;"></div>
+                <div id="impacto-resumen" style="font-size:13px;margin-bottom:14px;line-height:1.6;"></div>
+                <div style="margin-bottom:6px;">
+                    <label for="impacto-motivo" style="font-size:13px;font-weight:600;">Motivo <span style="color:#c0392b">*</span></label>
+                </div>
+                <textarea id="impacto-motivo" rows="3" style="width:100%;box-sizing:border-box;border:1px solid var(--gris-borde);border-radius:6px;padding:8px;font-size:13px;resize:vertical;" placeholder="Describe el motivo del cambio…"></textarea>
+            </div>
+            <div id="impacto-resultado" style="display:none;"></div>
+        </div>
+        <div class="modal-footer" id="impacto-footer">
+            <button class="btn btn-outline" onclick="cerrarModalImpacto()">Cancelar</button>
+            <button id="impacto-btn-confirmar" class="btn btn-primario" onclick="ejecutarCambioImpacto()" disabled>Confirmar</button>
         </div>
     </div>
 </div>

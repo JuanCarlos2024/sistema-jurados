@@ -602,38 +602,151 @@ router.delete('/alternativas/:id', async (req, res) => {
     res.json({ ok: true });
 });
 
+// ─── GET /preguntas/:id/impacto ───────────────────────────────────────────────
+// Preview del impacto de anular/reactivar/cambiar-correcta antes de ejecutar.
+// Devuelve: pregunta, en_curso (bloqueo), completados_afectados (a recalcular).
+
+router.get('/preguntas/:id/impacto', async (req, res) => {
+    const { data: pregunta } = await supabase
+        .from('capacitacion_preguntas')
+        .select('id, prueba_id, enunciado, anulada')
+        .eq('id', req.params.id)
+        .single();
+    if (!pregunta) return res.status(404).json({ error: 'Pregunta no encontrada' });
+
+    const { data: asigs } = await supabase
+        .from('capacitacion_asignaciones')
+        .select('id')
+        .eq('prueba_id', pregunta.prueba_id);
+    const asigIds = (asigs || []).map(a => a.id);
+
+    let enCurso = 0;
+    let completadosAfectados = 0;
+
+    if (asigIds.length > 0) {
+        const { data: intentos } = await supabase
+            .from('capacitacion_intentos')
+            .select('id, estado, orden_preguntas_json')
+            .in('asignacion_id', asigIds);
+
+        (intentos || []).forEach(i => {
+            if (i.estado === 'en_curso') {
+                enCurso++;
+            } else if (i.estado === 'completado') {
+                const snap = i.orden_preguntas_json;
+                if (!snap || (Array.isArray(snap) && snap.includes(pregunta.id))) {
+                    completadosAfectados++;
+                }
+            }
+        });
+    }
+
+    res.json({ pregunta, en_curso: enCurso, completados_afectados: completadosAfectados });
+});
+
 // ─── POST /preguntas/:id/anular ───────────────────────────────────────────────
-// Marca la pregunta como anulada: se excluye del total evaluable y del cálculo
-// de correctas/incorrectas/puntaje/nota en todos los endpoints de resultados.
-// Las respuestas históricas se conservan para trazabilidad.
+// Anula la pregunta transaccionalmente y recalcula todos los intentos afectados.
+// Requiere motivo. No puede ejecutarse si hay intentos en_curso.
 
 router.post('/preguntas/:id/anular', async (req, res) => {
-    const { data, error } = await supabase
+    const { motivo } = req.body;
+    if (!motivo || !String(motivo).trim()) {
+        return res.status(400).json({ error: 'El motivo de la anulación es obligatorio' });
+    }
+
+    const { data: pregunta } = await supabase
         .from('capacitacion_preguntas')
-        .update({ anulada: true, updated_at: new Date().toISOString() })
+        .select('id, prueba_id')
         .eq('id', req.params.id)
-        .select()
         .single();
+    if (!pregunta) return res.status(404).json({ error: 'Pregunta no encontrada' });
+
+    const { data, error } = await supabase.rpc('rpc_recalcular_intentos_capacitacion', {
+        p_prueba_id:    pregunta.prueba_id,
+        p_pregunta_id:  pregunta.id,
+        p_tipo_cambio:  'anular',
+        p_admin_id:     req.usuario.id,
+        p_motivo:       String(motivo).trim(),
+        p_nueva_alt_id: null
+    });
 
     if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: 'Pregunta no encontrada' });
-    res.json(data);
+    const resultado = typeof data === 'string' ? JSON.parse(data) : data;
+    if (resultado && resultado.error) return res.status(400).json({ error: resultado.error });
+    res.json(resultado);
 });
 
 // ─── POST /preguntas/:id/reactivar ────────────────────────────────────────────
-// Revierte la anulación: la pregunta vuelve a incluirse en todos los cálculos.
+// Reactiva la pregunta transaccionalmente y recalcula todos los intentos afectados.
+// Requiere motivo. No puede ejecutarse si hay intentos en_curso.
 
 router.post('/preguntas/:id/reactivar', async (req, res) => {
-    const { data, error } = await supabase
+    const { motivo } = req.body;
+    if (!motivo || !String(motivo).trim()) {
+        return res.status(400).json({ error: 'El motivo de la reactivación es obligatorio' });
+    }
+
+    const { data: pregunta } = await supabase
         .from('capacitacion_preguntas')
-        .update({ anulada: false, updated_at: new Date().toISOString() })
+        .select('id, prueba_id')
         .eq('id', req.params.id)
-        .select()
         .single();
+    if (!pregunta) return res.status(404).json({ error: 'Pregunta no encontrada' });
+
+    const { data, error } = await supabase.rpc('rpc_recalcular_intentos_capacitacion', {
+        p_prueba_id:    pregunta.prueba_id,
+        p_pregunta_id:  pregunta.id,
+        p_tipo_cambio:  'reactivar',
+        p_admin_id:     req.usuario.id,
+        p_motivo:       String(motivo).trim(),
+        p_nueva_alt_id: null
+    });
 
     if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: 'Pregunta no encontrada' });
-    res.json(data);
+    const resultado = typeof data === 'string' ? JSON.parse(data) : data;
+    if (resultado && resultado.error) return res.status(400).json({ error: resultado.error });
+    res.json(resultado);
+});
+
+// ─── POST /preguntas/:pregunta_id/alternativas/:alt_id/marcar-correcta ────────
+// Cambia la alternativa correcta de una pregunta y recalcula todos los intentos.
+// Requiere motivo. No puede ejecutarse si hay intentos en_curso.
+
+router.post('/preguntas/:pregunta_id/alternativas/:alt_id/marcar-correcta', async (req, res) => {
+    const { motivo } = req.body;
+    if (!motivo || !String(motivo).trim()) {
+        return res.status(400).json({ error: 'El motivo del cambio es obligatorio' });
+    }
+
+    const { data: alt } = await supabase
+        .from('capacitacion_alternativas')
+        .select('id, pregunta_id, es_correcta')
+        .eq('id', req.params.alt_id)
+        .eq('pregunta_id', req.params.pregunta_id)
+        .single();
+    if (!alt) return res.status(404).json({ error: 'Alternativa no encontrada o no pertenece a la pregunta' });
+    if (alt.es_correcta) return res.status(400).json({ error: 'Esta alternativa ya es la correcta' });
+
+    const { data: pregunta } = await supabase
+        .from('capacitacion_preguntas')
+        .select('id, prueba_id')
+        .eq('id', req.params.pregunta_id)
+        .single();
+    if (!pregunta) return res.status(404).json({ error: 'Pregunta no encontrada' });
+
+    const { data, error } = await supabase.rpc('rpc_recalcular_intentos_capacitacion', {
+        p_prueba_id:    pregunta.prueba_id,
+        p_pregunta_id:  pregunta.id,
+        p_tipo_cambio:  'cambiar_correcta',
+        p_admin_id:     req.usuario.id,
+        p_motivo:       String(motivo).trim(),
+        p_nueva_alt_id: req.params.alt_id
+    });
+
+    if (error) return res.status(500).json({ error: error.message });
+    const resultado = typeof data === 'string' ? JSON.parse(data) : data;
+    if (resultado && resultado.error) return res.status(400).json({ error: resultado.error });
+    res.json(resultado);
 });
 
 // ─── GET /pruebas/:id/asignaciones ───────────────────────────────────────────
