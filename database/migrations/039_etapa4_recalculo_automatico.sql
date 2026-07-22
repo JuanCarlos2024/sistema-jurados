@@ -513,13 +513,14 @@ BEGIN
 
     ELSIF p_tipo_cambio = 'cambiar_correcta' THEN
         -- Desmarcar TODAS las alternativas de la pregunta
+        -- (capacitacion_alternativas no tiene updated_at)
         UPDATE capacitacion_alternativas
-        SET    es_correcta = FALSE, updated_at = NOW()
+        SET    es_correcta = FALSE
         WHERE  pregunta_id = p_pregunta_id;
 
         -- Marcar la nueva alternativa correcta
         UPDATE capacitacion_alternativas
-        SET    es_correcta = TRUE, updated_at = NOW()
+        SET    es_correcta = TRUE
         WHERE  id = p_nueva_alt_id;
 
         -- Sincronizar capacitacion_respuestas.es_correcta (Estrategia A)
