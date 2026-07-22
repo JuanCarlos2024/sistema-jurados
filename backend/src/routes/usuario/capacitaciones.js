@@ -231,7 +231,7 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
     // Verificar intentos disponibles
     const { data: intentos } = await supabase
         .from('capacitacion_intentos')
-        .select('id, estado, numero_intento, orden_preguntas_json, orden_alternativas_json, vence_en')
+        .select('id, estado, numero_intento, orden_preguntas_json, orden_alternativas_json, vence_en, snapshot_contenido_json')
         .eq('asignacion_id', asig.id)
         .order('numero_intento', { ascending: false });
 
@@ -288,7 +288,9 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
         .from('capacitacion_preguntas')
         .select('id, orden, enunciado, tipo, video_url, video_sin_audio, imagen_url')
         .eq('prueba_id', asig.prueba_id)
-        .order('orden', { ascending: true });
+        .eq('anulada', false)
+        .order('orden', { ascending: true })
+        .order('id',    { ascending: true });
 
     const pregIds = (preguntas || []).map(p => p.id);
     let altsMap = {};
@@ -298,7 +300,8 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
             .from('capacitacion_alternativas')
             .select('id, pregunta_id, texto, orden')
             .in('pregunta_id', pregIds)
-            .order('orden', { ascending: true });
+            .order('orden', { ascending: true })
+            .order('id',    { ascending: true });
 
         (alts || []).forEach(a => {
             if (!altsMap[a.pregunta_id]) altsMap[a.pregunta_id] = [];
@@ -315,12 +318,20 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
     const respMap = {};
     (respYa || []).forEach(r => { respMap[r.pregunta_id] = r.alternativa_id; });
 
+    // Índices para acceso rápido por id (definidos aquí para usarse también en snapshot)
+    const pregByIdMap = {};
+    (preguntas || []).forEach(p => { pregByIdMap[p.id] = p; });
+
+    const altByIdMap = {};
+    Object.values(altsMap).forEach(lista => lista.forEach(a => { altByIdMap[a.id] = a; }));
+
     // ── Orden de preguntas y alternativas ─────────────────────────────────────
     const mezclarPreg = prueba.mezclar_preguntas !== false;
     const mezclarAlts = prueba.mezclar_alternativas !== false;
 
     let ordenPregIds;
     let ordenAltsMap;
+    let snapshotConteudo = intento.snapshot_contenido_json || null;
 
     const ordenGuardado = intento.orden_preguntas_json;
     if (ordenGuardado && Array.isArray(ordenGuardado) && ordenGuardado.length > 0) {
@@ -328,44 +339,72 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
         ordenPregIds = ordenGuardado;
         ordenAltsMap = intento.orden_alternativas_json || {};
     } else {
-        // Intento nuevo: generar orden y persistirlo
+        // Intento nuevo: generar orden, congelar snapshot de contenido y persistir
         ordenPregIds = mezclarPreg ? shuffle(pregIds.slice()) : pregIds.slice();
         ordenAltsMap = {};
         pregIds.forEach(pid => {
             const altIds = (altsMap[pid] || []).map(a => a.id);
             ordenAltsMap[pid] = mezclarAlts ? shuffle(altIds.slice()) : altIds.slice();
         });
+
+        // Snapshot inmutable: congela enunciado, imagen, video y textos al iniciar
+        const nuevoSnapshot = { preguntas: {}, alternativas: {} };
+        ordenPregIds.forEach(pid => {
+            const p = pregByIdMap[pid];
+            if (!p) return;
+            nuevoSnapshot.preguntas[pid] = {
+                enunciado:       p.enunciado,
+                tipo:            p.tipo || 'alternativa_unica',
+                imagen_url:      p.imagen_url      || null,
+                video_url:       p.video_url       || null,
+                video_sin_audio: p.video_sin_audio || false
+            };
+            (ordenAltsMap[pid] || []).forEach(aid => {
+                const a = altByIdMap[aid];
+                if (a) nuevoSnapshot.alternativas[aid] = a.texto;
+            });
+        });
+        snapshotConteudo = nuevoSnapshot;
+
         await supabase
             .from('capacitacion_intentos')
             .update({
                 orden_preguntas_json:    ordenPregIds,
-                orden_alternativas_json: ordenAltsMap
+                orden_alternativas_json: ordenAltsMap,
+                snapshot_contenido_json: nuevoSnapshot
             })
             .eq('id', intento.id);
     }
 
-    // Índices para acceso rápido por id
-    const pregByIdMap = {};
-    (preguntas || []).forEach(p => { pregByIdMap[p.id] = p; });
-
-    const altByIdMap = {};
-    Object.values(altsMap).forEach(lista => lista.forEach(a => { altByIdMap[a.id] = a; }));
+    // Índices de contenido del snapshot
+    const snapPregs = snapshotConteudo && snapshotConteudo.preguntas   ? snapshotConteudo.preguntas   : {};
+    const snapAlts  = snapshotConteudo && snapshotConteudo.alternativas ? snapshotConteudo.alternativas : {};
 
     const preguntasConAlts = ordenPregIds
         .map(pid => {
-            const p = pregByIdMap[pid];
-            if (!p) return null;
+            const pDb = pregByIdMap[pid];
+            if (!pDb) return null;   // anulada o eliminada — excluir del examen
+
+            const snap   = snapPregs[pid] || null;
             const altIds = ordenAltsMap[pid] || (altsMap[pid] || []).map(a => a.id);
-            const altsOrdenadas = altIds.map(aid => altByIdMap[aid]).filter(Boolean);
+            const altsOrdenadas = altIds
+                .map(aid => {
+                    const texto = snapAlts[aid] !== undefined
+                        ? snapAlts[aid]
+                        : (altByIdMap[aid] ? altByIdMap[aid].texto : null);
+                    return texto !== null && texto !== undefined ? { id: aid, texto } : null;
+                })
+                .filter(Boolean);
+
             return {
-                id:                 p.id,
-                enunciado:          p.enunciado,
-                tipo:               p.tipo || 'alternativa_unica',
-                video_url:          p.video_url || null,
-                video_sin_audio:    p.video_sin_audio || false,
-                imagen_url:         p.imagen_url || null,
+                id:                 pid,
+                enunciado:          snap ? snap.enunciado        : pDb.enunciado,
+                tipo:               snap ? snap.tipo             : (pDb.tipo || 'alternativa_unica'),
+                video_url:          snap ? snap.video_url        : (pDb.video_url        || null),
+                video_sin_audio:    snap ? snap.video_sin_audio  : (pDb.video_sin_audio  || false),
+                imagen_url:         snap ? snap.imagen_url       : (pDb.imagen_url       || null),
                 alternativas:       altsOrdenadas,
-                respuesta_guardada: respMap[p.id] || null
+                respuesta_guardada: respMap[pid] || null
             };
         })
         .filter(Boolean);
