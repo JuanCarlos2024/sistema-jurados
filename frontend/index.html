@@ -74,6 +74,7 @@
 </div>
 
 <script src="/js/api.js"></script>
+<script src="/js/login-ux.js"></script>
 <script>
     // Si ya está logueado, redirigir
     (function() {
@@ -98,20 +99,47 @@
         document.getElementById('tab-usuario').classList.toggle('activo', tab === 'usuario');
     }
 
-    async function loginAdmin(e) {
-        e.preventDefault();
-        const btnLogin = document.getElementById('btn-admin-login');
-        const errorDiv = document.getElementById('admin-error');
-        errorDiv.classList.add('oculto');
-        btnLogin.disabled = true;
-        btnLogin.textContent = 'Verificando...';
-
-        try {
-            const data = await api.post('/auth/admin/login', {
-                email: document.getElementById('admin-email').value.trim(),
-                password: document.getElementById('admin-password').value
+    // ── Helper: fetch con signal para los handlers de login ──────────────────
+    function makeFetchLogin(endpoint) {
+        return async function(credentials, signal) {
+            const resp = await fetch('/api' + endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(credentials),
+                signal: signal,
             });
+            const data = await resp.json().catch(function() { return null; });
+            if (!resp.ok) {
+                const err = new Error(data && data.error ? data.error : 'Error al iniciar sesión');
+                err.status = resp.status;
+                throw err;
+            }
+            return data;
+        };
+    }
 
+    // ── Helper: aplicar estado al par botón / div de error ───────────────────
+    function makeStateHandler(btnId, errId) {
+        return function(state) {
+            const btn = document.getElementById(btnId);
+            const div = document.getElementById(errId);
+            btn.disabled = state.loading;
+            btn.textContent = state.text;
+            if (state.message) {
+                div.textContent = state.message;
+                div.className = 'alerta alerta-' + (state.messageType || 'error');
+                div.classList.remove('oculto');
+            } else {
+                div.className = 'alerta alerta-error oculto';
+            }
+        };
+    }
+
+    // ── Handler: login de Administrador ──────────────────────────────────────
+    const adminLoginHandler = LoginUX.createLoginHandler({
+        apiFetch: makeFetchLogin('/auth/admin/login'),
+        onStateChange: makeStateHandler('btn-admin-login', 'admin-error'),
+        onSuccess: function(data) {
             api.guardarSesion(data.token, data.usuario);
             if (data.usuario.rol_evaluacion === 'analista' || data.usuario.rol_evaluacion === 'comision_tecnica') {
                 window.location.href = '/admin/evaluaciones.html';
@@ -120,43 +148,39 @@
             } else {
                 window.location.href = '/admin/dashboard.html';
             }
-        } catch (err) {
-            errorDiv.textContent = err.message || 'Error al iniciar sesión';
-            errorDiv.classList.remove('oculto');
-        } finally {
-            btnLogin.disabled = false;
-            btnLogin.textContent = 'Iniciar Sesión';
-        }
+        },
+    });
+
+    async function loginAdmin(e) {
+        e.preventDefault();
+        if (document.getElementById('btn-admin-login').disabled) return;
+        await adminLoginHandler.login({
+            email:    document.getElementById('admin-email').value.trim(),
+            password: document.getElementById('admin-password').value,
+        });
     }
 
-    async function loginUsuario(e) {
-        e.preventDefault();
-        const btnLogin = document.getElementById('btn-usr-login');
-        const errorDiv = document.getElementById('usr-error');
-        errorDiv.classList.add('oculto');
-        btnLogin.disabled = true;
-        btnLogin.textContent = 'Verificando...';
-
-        try {
-            const data = await api.post('/auth/usuario/login', {
-                identificador: document.getElementById('usr-identificador').value.trim(),
-                password: document.getElementById('usr-password').value
-            });
-
+    // ── Handler: login de Jurado / Delegado ───────────────────────────────────
+    const usuarioLoginHandler = LoginUX.createLoginHandler({
+        apiFetch: makeFetchLogin('/auth/usuario/login'),
+        onStateChange: makeStateHandler('btn-usr-login', 'usr-error'),
+        onSuccess: function(data) {
             api.guardarSesion(data.token, data.usuario);
-
             if (data.usuario.primer_login) {
                 window.location.href = '/usuario/perfil.html?primer_login=1';
             } else {
                 window.location.href = '/usuario/dashboard.html';
             }
-        } catch (err) {
-            errorDiv.textContent = err.message || 'Error al iniciar sesión';
-            errorDiv.classList.remove('oculto');
-        } finally {
-            btnLogin.disabled = false;
-            btnLogin.textContent = 'Iniciar Sesión';
-        }
+        },
+    });
+
+    async function loginUsuario(e) {
+        e.preventDefault();
+        if (document.getElementById('btn-usr-login').disabled) return;
+        await usuarioLoginHandler.login({
+            identificador: document.getElementById('usr-identificador').value.trim(),
+            password:      document.getElementById('usr-password').value,
+        });
     }
 </script>
 </body>
