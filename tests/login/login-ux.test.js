@@ -5,17 +5,28 @@
  *
  * Sin dependencias externas. Compatible con Node.js 16+.
  *
- * Casos cubiertos:
- *   1.  Login rapido (< 1 s)
- *   2.  Login de 6 s -> mensaje advertencia a los 5 s
- *   3.  Login de 16 s -> mensaje "Seguimos procesando" a los 15 s
- *   4.  Timeout de 35 s -> AbortError -> mensaje error, boton habilitado
- *   5.  Doble clic -> segunda solicitud cancela la primera
- *   6.  Reintento despues de timeout
- *   7.  Respuesta tardia de solicitud anterior ignorada
- *   8.  Error 401 -> mensaje especifico
- *   9.  Error 500 -> mensaje generico
- *   10. Error de red (TypeError) -> mensaje error
+ * Regla central verificada en los tests 5, 11, 12 y 16:
+ *   Un segundo submit mientras _loading=true es ignorado completamente.
+ *   El AbortController NO se usa para cancelar por doble clic.
+ *   fetch se llama exactamente UNA vez.
+ *
+ * Casos:
+ *   1.  Login rapido (< 1 s) -> exito
+ *   2.  Login de 6 s -> advertencia a los 5 s
+ *   3.  Login de 16 s -> "Seguimos procesando" a los 15 s
+ *   4.  Timeout de 35 s -> AbortError -> mensaje, boton habilitado
+ *   5.  Doble clic -> segundo ignorado, fetch una vez, sin abort
+ *   6.  Reintento despues de timeout -> segundo intento exitoso
+ *   7.  Segunda llamada durante carga activa -> ignorada completamente
+ *   8.  Error 401 -> mensaje especifico, permite reintento
+ *   9.  Error 500 -> mensaje generico, permite reintento
+ *   10. Error de red -> mensaje error, permite reintento
+ *   11. Doble clic rapido -> fetch llamado exactamente una vez
+ *   12. Enter repetido -> segunda llamada ignorada, sin segunda solicitud
+ *   13. Admin login exitoso -> onSuccess con token de admin
+ *   14. Usuario login exitoso -> onSuccess con primer_login=false
+ *   15. Redireccion unica -> onSuccess llamado exactamente una vez tras exito
+ *   16. Solicitud original NO abortada por segundo submit
  */
 
 'use strict';
@@ -49,27 +60,42 @@ function assertEqual(a, b, msg) {
 }
 
 // ── Fake AbortController ──────────────────────────────────────────────────────
-class FakeAbortController {
-    constructor() {
-        this._listeners = [];
-        this.signal = {
-            aborted: false,
-            _listeners: this._listeners,
+function makeFakeAbortController() {
+    let aborted = false;
+    let abortCalled = 0;
+    const listeners = [];
+    const ctrl = {
+        abortCalled: 0,
+        signal: {
+            get aborted() { return aborted; },
             addEventListener: function(evt, fn) {
-                if (evt === 'abort') this._listeners.push(fn);
+                if (evt === 'abort') listeners.push(fn);
             },
-        };
-        const self = this;
-        this.signal._listeners = this._listeners;
-    }
-    abort() {
-        if (this.signal.aborted) return;
-        this.signal.aborted = true;
-        this._listeners.forEach(function(fn) { fn(); });
-    }
+        },
+        abort: function() {
+            abortCalled++;
+            ctrl.abortCalled = abortCalled;
+            if (aborted) return;
+            aborted = true;
+            listeners.forEach(function(fn) { fn(); });
+        },
+    };
+    return ctrl;
 }
 
-// ── Fake timers (control manual del tiempo) ───────────────────────────────────
+function FakeAbortControllerFactory() {
+    this.instances = [];
+    const self = this;
+    this.Class = function() {
+        const ctrl = makeFakeAbortController();
+        self.instances.push(ctrl);
+        return ctrl;
+    };
+    Object.defineProperty(this, 'last',  { get: function() { return self.instances[self.instances.length - 1]; } });
+    Object.defineProperty(this, 'count', { get: function() { return self.instances.length; } });
+}
+
+// ── Fake timers ───────────────────────────────────────────────────────────────
 function makeFakeTimers() {
     const pending = new Map();
     let nextId = 1;
@@ -77,7 +103,7 @@ function makeFakeTimers() {
 
     function _setTimeout(fn, ms) {
         const id = nextId++;
-        pending.set(id, { fn, fireAt: now + ms, fired: false });
+        pending.set(id, { fn, fireAt: now + ms });
         return id;
     }
 
@@ -87,7 +113,6 @@ function makeFakeTimers() {
 
     async function advance(ms) {
         now += ms;
-        // Disparar todos los que vencieron (en orden cronologico)
         const due = Array.from(pending.entries())
             .filter(function(e) { return e[1].fireAt <= now; })
             .sort(function(a, b) { return a[1].fireAt - b[1].fireAt; });
@@ -95,7 +120,6 @@ function makeFakeTimers() {
             pending.delete(id);
             entry.fn();
         }
-        // Dejar que las promesas se resuelvan
         await new Promise(function(r) { setImmediate(r); });
         await new Promise(function(r) { setImmediate(r); });
     }
@@ -103,41 +127,44 @@ function makeFakeTimers() {
     return { _setTimeout, _clearTimeout, advance };
 }
 
-// ── Factories de fetch y handler ──────────────────────────────────────────────
-
-/** fetch que resuelve tras delayMs milisegundos reales */
-function makeFetch({ delayMs = 0, response = null, error = null } = {}) {
-    const defaultResp = { token: 'tok', usuario: { primer_login: false } };
-    return function(credentials, signal) {
-        return new Promise(function(resolve, reject) {
-            const t = setTimeout(function() {
-                if (error) reject(error); else resolve(response || defaultResp);
-            }, delayMs);
-            if (signal) {
-                signal.addEventListener('abort', function() {
-                    clearTimeout(t);
-                    const e = new Error('The user aborted a request.');
-                    e.name = 'AbortError';
-                    reject(e);
-                });
-            }
-        });
-    };
+// ── Factories ─────────────────────────────────────────────────────────────────
+function makeHandlerWithFakeTimers(apiFetch, fakeTimers, factory) {
+    const states    = [];
+    const successes = [];
+    const abortCtrl = factory || { Class: function() { return makeFakeAbortController(); } };
+    const handler   = createLoginHandler({
+        apiFetch,
+        onStateChange: function(s) { states.push(Object.assign({}, s)); },
+        onSuccess:     function(d) { successes.push(d); },
+        _setTimeout:      fakeTimers._setTimeout,
+        _clearTimeout:    fakeTimers._clearTimeout,
+        _AbortController: abortCtrl.Class,
+    });
+    return { handler, states, successes };
 }
 
-/** fetch controlado manualmente: promete hasta que llamas resolve/reject */
+function makeHandlerReal(apiFetch, factory) {
+    const states    = [];
+    const successes = [];
+    const abortCtrl = factory || { Class: function() { return makeFakeAbortController(); } };
+    const handler   = createLoginHandler({
+        apiFetch,
+        onStateChange: function(s) { states.push(Object.assign({}, s)); },
+        onSuccess:     function(d) { successes.push(d); },
+        _AbortController: abortCtrl.Class,
+    });
+    return { handler, states, successes };
+}
+
 function makeManualFetch() {
-    let _resolve, _reject, _signal;
+    let _resolve, _reject;
     const apiFetch = function(credentials, signal) {
-        _signal = signal;
         return new Promise(function(resolve, reject) {
             _resolve = resolve;
             _reject  = reject;
             if (signal) {
                 signal.addEventListener('abort', function() {
-                    const e = new Error('The user aborted a request.');
-                    e.name = 'AbortError';
-                    reject(e);
+                    const e = new Error('aborted'); e.name = 'AbortError'; reject(e);
                 });
             }
         });
@@ -146,79 +173,51 @@ function makeManualFetch() {
         apiFetch,
         resolve: function(v) { if (_resolve) _resolve(v || { token: 'tok', usuario: { primer_login: false } }); },
         reject:  function(e) { if (_reject) _reject(e); },
-        getSignal: function() { return _signal; },
     };
 }
 
-/** Crea un handler con fake timers y captura de estados */
-function makeHandlerWithFakeTimers(apiFetch, fakeTimers) {
-    const states    = [];
-    const successes = [];
-    const handler   = createLoginHandler({
-        apiFetch,
-        onStateChange: function(s) { states.push(Object.assign({}, s)); },
-        onSuccess:     function(d) { successes.push(d); },
-        _setTimeout:      fakeTimers._setTimeout,
-        _clearTimeout:    fakeTimers._clearTimeout,
-        _AbortController: FakeAbortController,
-    });
-    return { handler, states, successes };
-}
+const DEFAULT_RESP = { token: 'tok',       usuario: { tipo: 'jurado',         primer_login: false } };
+const ADMIN_RESP   = { token: 'admin-tok', usuario: { tipo: 'administrador',  rol_evaluacion: 'admin' } };
+const USUARIO_RESP = { token: 'usr-tok',   usuario: { tipo: 'jurado',         primer_login: false } };
 
-/** Crea un handler con timers reales (para casos < 100 ms) */
-function makeHandlerReal(apiFetch) {
-    const states    = [];
-    const successes = [];
-    const handler   = createLoginHandler({
-        apiFetch,
-        onStateChange: function(s) { states.push(Object.assign({}, s)); },
-        onSuccess:     function(d) { successes.push(d); },
-        _AbortController: FakeAbortController,
-    });
-    return { handler, states, successes };
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// CASOS DE PRUEBA
-// ═════════════════════════════════════════════════════════════════════════════
-
+// =============================================================================
 console.log('\n=== Tests de Login UX — Sistema Jurados ===\n');
 
 (async function run() {
 
 // ── 1. Login rapido ──────────────────────────────────────────────────────────
 await test('1. Login rapido (< 1 s) → exito, onSuccess llamado', async function() {
-    const { handler, states, successes } = makeHandlerReal(makeFetch({ delayMs: 10 }));
+    const { handler, states, successes } = makeHandlerReal(
+        function() { return Promise.resolve(DEFAULT_RESP); }
+    );
     await handler.login({ identificador: 'USR-001', password: 'pw' });
 
-    assert(successes.length === 1, 'onSuccess debe llamarse una vez');
-    assertEqual(states[0].loading,  true,         'Primer estado: loading=true');
-    assertEqual(states[0].text,     'Ingresando…', 'Primer estado: texto "Ingresando..."');
+    assert(successes.length === 1,       'onSuccess debe llamarse una vez');
+    assertEqual(states[0].loading, true,          'Primer estado: loading=true');
+    assertEqual(states[0].text,   'Ingresando…', 'Primer estado: texto Ingresando');
     const last = states[states.length - 1];
-    assertEqual(last.loading,  false, 'Ultimo estado: loading=false');
-    assert(last.message === null || last.message === undefined, 'Sin mensaje de error');
+    assertEqual(last.loading, false, 'Ultimo estado: loading=false');
+    assert(!last.message, 'Sin mensaje de error');
 });
 
 // ── 2. Login de 6 s → advertencia a los 5 s ─────────────────────────────────
 await test('2. Login 6 s → muestra advertencia a los 5 s mientras sigue pendiente', async function() {
-    const timers  = makeFakeTimers();
-    const manual  = makeManualFetch();
+    const timers = makeFakeTimers();
+    const manual = makeManualFetch();
     const { handler, states, successes } = makeHandlerWithFakeTimers(manual.apiFetch, timers);
 
-    const loginPromise = handler.login({ identificador: 'USR-001', password: 'pw' });
+    const p = handler.login({ identificador: 'USR-001', password: 'pw' });
     await new Promise(function(r) { setImmediate(r); });
 
-    // Avanzar 5 s → mensaje de advertencia
     await timers.advance(5000);
     const msg5 = states.find(function(s) { return s.message && s.message.includes('tardando'); });
-    assert(msg5, 'Debe aparecer mensaje de advertencia a los 5 s');
+    assert(msg5, 'Debe aparecer advertencia a los 5 s');
     assertEqual(msg5.messageType, 'advertencia', 'messageType=advertencia');
-    assertEqual(msg5.loading, true, 'Sigue cargando');
+    assertEqual(msg5.loading,     true,           'Sigue en loading');
 
-    // Resolver el fetch → exito
     manual.resolve();
-    await loginPromise;
-    assert(successes.length === 1, 'onSuccess despues de respuesta tardia');
+    await p;
+    assert(successes.length === 1, 'onSuccess tras resolucion');
 });
 
 // ── 3. Login de 16 s → "Seguimos procesando" a los 15 s ─────────────────────
@@ -227,205 +226,321 @@ await test('3. Login 16 s → muestra "Seguimos procesando" a los 15 s', async f
     const manual = makeManualFetch();
     const { handler, states, successes } = makeHandlerWithFakeTimers(manual.apiFetch, timers);
 
-    const loginPromise = handler.login({ identificador: 'USR-001', password: 'pw' });
+    const p = handler.login({ identificador: 'USR-001', password: 'pw' });
     await new Promise(function(r) { setImmediate(r); });
 
-    await timers.advance(5000);   // mensaje 5 s
-    await timers.advance(10000);  // ahora son 15 s
+    await timers.advance(5000);
+    await timers.advance(10000);
 
     const msg15 = states.filter(function(s) { return s.message && s.message.includes('Seguimos'); });
     assert(msg15.length > 0, 'Debe aparecer "Seguimos procesando" a los 15 s');
     assertEqual(msg15[msg15.length - 1].messageType, 'advertencia', 'messageType=advertencia');
 
     manual.resolve();
-    await loginPromise;
-    assert(successes.length === 1, 'onSuccess tras resolucion tardia');
+    await p;
+    assert(successes.length === 1, 'onSuccess tras resolucion');
 });
 
 // ── 4. Timeout de 35 s → AbortError → boton habilitado ──────────────────────
-await test('4. Timeout 35 s → mensaje de timeout, loading=false, texto restaurado', async function() {
-    const timers = makeFakeTimers();
-    const manual = makeManualFetch();
-    const { handler, states } = makeHandlerWithFakeTimers(manual.apiFetch, timers);
+await test('4. Timeout 35 s → mensaje timeout, loading=false, texto restaurado', async function() {
+    const timers  = makeFakeTimers();
+    const factory = new FakeAbortControllerFactory();
+    const manual  = makeManualFetch();
+    const { handler, states } = makeHandlerWithFakeTimers(manual.apiFetch, timers, factory);
 
-    const loginPromise = handler.login({ identificador: 'USR-001', password: 'pw' });
+    const p = handler.login({ identificador: 'USR-001', password: 'pw' });
     await new Promise(function(r) { setImmediate(r); });
 
-    // Avanzar 35 s → AbortController.abort() → catch AbortError
     await timers.advance(35000);
-    await loginPromise;
+    await p;
 
     const last = states[states.length - 1];
-    assertEqual(last.loading, false, 'loading=false tras timeout');
-    assertEqual(last.text, 'Iniciar Sesión', 'Texto restaurado a "Iniciar Sesion"');
+    assertEqual(last.loading, false,           'loading=false tras timeout');
+    assertEqual(last.text,    'Iniciar Sesión', 'Texto restaurado');
     assert(last.message && last.message.includes('35 segundos'), 'Mensaje menciona 35 segundos');
     assertEqual(last.messageType, 'error', 'messageType=error');
+    assertEqual(factory.last.abortCalled, 1, 'AbortController.abort() llamado una vez (por timeout)');
 });
 
-// ── 5. Doble clic → segunda solicitud cancela la primera ─────────────────────
-await test('5. Doble clic → primera solicitud cancelada, solo un onSuccess', async function() {
-    let callCount   = 0;
-    let firstAborted = false;
+// ── 5. Doble clic → segundo ignorado, sin abort ──────────────────────────────
+await test('5. Doble clic → segunda llamada ignorada, sin abort de la primera solicitud', async function() {
+    let fetchCalls = 0;
+    const factory  = new FakeAbortControllerFactory();
+    const manual   = makeManualFetch();
 
-    const apiFetch = function(credentials, signal) {
-        const mine = ++callCount;
-        return new Promise(function(resolve, reject) {
-            if (signal) {
-                signal.addEventListener('abort', function() {
-                    if (mine === 1) firstAborted = true;
-                    const e = new Error('abort'); e.name = 'AbortError'; reject(e);
-                });
-            }
-            // Primera tarda 200 ms; segunda es inmediata
-            setTimeout(function() {
-                resolve({ token: 'tok' + mine, usuario: { primer_login: false } });
-            }, mine === 1 ? 200 : 5);
-        });
-    };
+    const { handler, successes } = makeHandlerReal(function(credentials, signal) {
+        fetchCalls++;
+        return manual.apiFetch(credentials, signal);
+    }, factory);
 
-    const { handler, successes } = makeHandlerReal(apiFetch);
-
-    // Dos llamadas casi simultaneas
     const p1 = handler.login({ identificador: 'USR-001', password: 'pw' });
-    const p2 = handler.login({ identificador: 'USR-001', password: 'pw' });
+    await new Promise(function(r) { setImmediate(r); });
 
-    await Promise.allSettled([p1, p2]);
+    // Segundo clic mientras loading=true
+    handler.login({ identificador: 'USR-001', password: 'pw' });
+    await new Promise(function(r) { setImmediate(r); });
 
-    assert(firstAborted, 'Primera solicitud debe ser abortada');
-    assertEqual(successes.length, 1, 'Un solo onSuccess (de la segunda solicitud)');
+    manual.resolve();
+    await p1;
+
+    assertEqual(fetchCalls,              1, 'fetch llamado exactamente una vez');
+    assertEqual(factory.count,           1, 'Solo un AbortController creado');
+    assertEqual(factory.last.abortCalled, 0, 'AbortController NO fue abortado');
+    assertEqual(successes.length,        1, 'onSuccess llamado una vez');
 });
 
 // ── 6. Reintento despues de timeout ──────────────────────────────────────────
 await test('6. Reintento despues de timeout → segundo intento exitoso', async function() {
-    const timers = makeFakeTimers();
-    let callCount = 0;
-    let firstReject;
+    let callCount  = 0;
+    const timers1  = makeFakeTimers();
+    const manual1  = makeManualFetch();
+    const states   = [];
+    const successes = [];
 
-    const apiFetch = function(credentials, signal) {
-        callCount++;
-        if (callCount === 1) {
-            return new Promise(function(resolve, reject) {
-                firstReject = reject;
-                if (signal) {
-                    signal.addEventListener('abort', function() {
-                        const e = new Error('abort'); e.name = 'AbortError'; reject(e);
-                    });
-                }
-            });
-        }
-        // Segunda llamada → exito inmediato
-        return Promise.resolve({ token: 'tok2', usuario: { primer_login: false } });
-    };
+    const h1 = createLoginHandler({
+        apiFetch: function(creds, signal) {
+            callCount++;
+            return manual1.apiFetch(creds, signal);
+        },
+        onStateChange: function(s) { states.push(Object.assign({}, s)); },
+        onSuccess:     function(d) { successes.push(d); },
+        _setTimeout:      timers1._setTimeout,
+        _clearTimeout:    timers1._clearTimeout,
+        _AbortController: function() { return makeFakeAbortController(); },
+    });
 
-    const { handler, states, successes } = makeHandlerWithFakeTimers(apiFetch, timers);
-
-    // Primer intento → timeout
-    const p1 = handler.login({ identificador: 'USR-001', password: 'pw' });
+    const p1 = h1.login({ identificador: 'USR-001', password: 'pw' });
     await new Promise(function(r) { setImmediate(r); });
-    await timers.advance(35000);
+    await timers1.advance(35000);
     await p1;
 
-    const afterTimeout = states[states.length - 1];
-    assertEqual(afterTimeout.loading, false, 'loading=false tras timeout');
+    assertEqual(states[states.length - 1].loading, false, 'loading=false tras timeout');
 
-    // Segundo intento con el mismo handler
+    // Nuevo handler fresco para el reintento
     const timers2 = makeFakeTimers();
     const h2 = createLoginHandler({
-        apiFetch:         apiFetch,
-        onStateChange:    function(s) { states.push(Object.assign({}, s)); },
-        onSuccess:        function(d) { successes.push(d); },
+        apiFetch: function() {
+            callCount++;
+            return Promise.resolve(DEFAULT_RESP);
+        },
+        onStateChange: function(s) { states.push(Object.assign({}, s)); },
+        onSuccess:     function(d) { successes.push(d); },
         _setTimeout:      timers2._setTimeout,
         _clearTimeout:    timers2._clearTimeout,
-        _AbortController: FakeAbortController,
+        _AbortController: function() { return makeFakeAbortController(); },
     });
 
     await h2.login({ identificador: 'USR-001', password: 'pw' });
     assertEqual(successes.length, 1, 'Segundo intento tiene exito');
-    assertEqual(callCount, 2, '2 llamadas totales');
+    assertEqual(callCount,        2, '2 llamadas fetch totales');
 });
 
-// ── 7. Respuesta tardia de solicitud anterior ignorada ───────────────────────
-await test('7. Respuesta tardia de solicitud anterior → ignorada, no llama onSuccess extra', async function() {
-    let firstResolve;
-    let callCount = 0;
+// ── 7. Segunda llamada durante carga activa → ignorada ───────────────────────
+await test('7. Segunda llamada login() durante carga activa → ignorada completamente', async function() {
+    let fetchCalls = 0;
+    const manual   = makeManualFetch();
 
-    const apiFetch = function(credentials, signal) {
-        callCount++;
-        if (callCount === 1) {
-            // Primera: tarda — controlada manualmente
-            return new Promise(function(resolve, reject) {
-                firstResolve = resolve;
-                if (signal) {
-                    signal.addEventListener('abort', function() {
-                        const e = new Error('abort'); e.name = 'AbortError'; reject(e);
-                    });
-                }
-            });
-        }
-        // Segunda: exito inmediato
-        return Promise.resolve({ token: 'tok2', usuario: { primer_login: false } });
-    };
+    const { handler, states, successes } = makeHandlerReal(function(creds, signal) {
+        fetchCalls++;
+        return manual.apiFetch(creds, signal);
+    });
 
-    const { handler, successes } = makeHandlerReal(apiFetch);
-
-    // Primera solicitud (lenta)
     const p1 = handler.login({ identificador: 'USR-001', password: 'pw' });
     await new Promise(function(r) { setImmediate(r); });
 
-    // Segunda solicitud cancela la primera y triunfa
+    // Tres llamadas adicionales mientras loading=true
     await handler.login({ identificador: 'USR-001', password: 'pw' });
-    await new Promise(function(r) { setImmediate(r); });
+    await handler.login({ identificador: 'USR-001', password: 'pw' });
+    await handler.login({ identificador: 'USR-001', password: 'pw' });
 
-    const successesBefore = successes.length;
-    assertEqual(successesBefore, 1, 'Un solo onSuccess hasta ahora');
+    assertEqual(fetchCalls, 1, 'fetch llamado solo una vez');
 
-    // Ahora resolver la primera (cuya promesa fue abortada por la FakeAbortController)
-    // Como ya fue cancelada, no deberia afectar el estado
-    firstResolve && firstResolve({ token: 'tok1-late', usuario: { primer_login: false } });
-    await Promise.allSettled([p1]);
-    await new Promise(function(r) { setImmediate(r); });
+    manual.resolve();
+    await p1;
 
-    assertEqual(successes.length, successesBefore, 'Respuesta tardia no llama onSuccess de nuevo');
+    assertEqual(successes.length, 1,    'onSuccess llamado una vez');
+    assertEqual(fetchCalls,       1,    'fetch sigue siendo 1 despues de resolver');
 });
 
-// ── 8. Error 401 → mensaje especifico ────────────────────────────────────────
-await test('8. Error 401 → mensaje de credenciales incorrectas, loading=false', async function() {
-    const err401 = new Error('Código o contraseña incorrectos.');
+// ── 8. Error 401 → mensaje especifico, permite reintento ─────────────────────
+await test('8. Error 401 → mensaje de credenciales, loading=false, permite reintento', async function() {
+    const err401  = new Error('Código o contraseña incorrectos.');
     err401.status = 401;
+    let callCount = 0;
 
-    const { handler, states } = makeHandlerReal(function() { return Promise.reject(err401); });
+    const { handler, states, successes } = makeHandlerReal(function() {
+        callCount++;
+        if (callCount === 1) return Promise.reject(err401);
+        return Promise.resolve(DEFAULT_RESP);
+    });
+
     await handler.login({ identificador: 'USR-001', password: 'wrong' });
 
     const last = states[states.length - 1];
-    assertEqual(last.loading, false, 'loading=false tras 401');
-    assert(last.message && last.message.length > 0, 'Hay mensaje de error');
+    assertEqual(last.loading,     false,   'loading=false tras 401');
     assertEqual(last.messageType, 'error', 'messageType=error');
+    assert(last.message && last.message.length > 0, 'Hay mensaje');
+
+    // Reintento debe funcionar
+    await handler.login({ identificador: 'USR-001', password: 'correct' });
+    assertEqual(successes.length, 1, 'Reintento exitoso tras 401');
 });
 
 // ── 9. Error 500 → mensaje generico ──────────────────────────────────────────
-await test('9. Error 500 → mensaje de error generico, loading=false', async function() {
-    const err500 = new Error('Error interno del servidor');
+await test('9. Error 500 → mensaje generico, loading=false', async function() {
+    const err500  = new Error('Error interno del servidor');
     err500.status = 500;
 
     const { handler, states } = makeHandlerReal(function() { return Promise.reject(err500); });
     await handler.login({ identificador: 'USR-001', password: 'pw' });
 
     const last = states[states.length - 1];
-    assertEqual(last.loading, false, 'loading=false tras 500');
-    assert(last.message && last.message.length > 0, 'Hay mensaje de error');
+    assertEqual(last.loading,     false,   'loading=false tras 500');
     assertEqual(last.messageType, 'error', 'messageType=error');
+    assert(last.message && last.message.length > 0, 'Hay mensaje');
 });
 
 // ── 10. Error de red ─────────────────────────────────────────────────────────
-await test('10. Error de red (TypeError: Failed to fetch) → mensaje error, loading=false', async function() {
-    const netErr = new TypeError('Failed to fetch');
-
-    const { handler, states } = makeHandlerReal(function() { return Promise.reject(netErr); });
+await test('10. Error de red (TypeError) → mensaje error, loading=false', async function() {
+    const { handler, states } = makeHandlerReal(function() {
+        return Promise.reject(new TypeError('Failed to fetch'));
+    });
     await handler.login({ identificador: 'USR-001', password: 'pw' });
 
     const last = states[states.length - 1];
-    assertEqual(last.loading, false, 'loading=false tras error de red');
+    assertEqual(last.loading,     false,   'loading=false tras error de red');
     assertEqual(last.messageType, 'error', 'messageType=error');
+});
+
+// ── 11. Doble clic rapido → fetch exactamente una vez ────────────────────────
+await test('11. Doble clic rapido → fetch llamado exactamente una vez', async function() {
+    let fetchCalls = 0;
+    const manual   = makeManualFetch();
+
+    const { handler, successes } = makeHandlerReal(function(creds, signal) {
+        fetchCalls++;
+        return manual.apiFetch(creds, signal);
+    });
+
+    // Tres clics rapidos sin await
+    handler.login({ identificador: 'USR-001', password: 'pw' });
+    handler.login({ identificador: 'USR-001', password: 'pw' });
+    handler.login({ identificador: 'USR-001', password: 'pw' });
+
+    await new Promise(function(r) { setImmediate(r); });
+    manual.resolve();
+    await new Promise(function(r) { setTimeout(r, 20); });
+
+    assertEqual(fetchCalls,       1, 'fetch llamado una vez aunque se cliqueó 3 veces');
+    assertEqual(successes.length, 1, 'onSuccess una sola vez');
+});
+
+// ── 12. Enter repetido → segunda llamada ignorada ────────────────────────────
+await test('12. Enter repetido mientras login pendiente → sin segunda solicitud', async function() {
+    let fetchCalls = 0;
+    const manual   = makeManualFetch();
+
+    const { handler, successes } = makeHandlerReal(function(creds, signal) {
+        fetchCalls++;
+        return manual.apiFetch(creds, signal);
+    });
+
+    // 4 submit via Enter rapidos
+    const promises = [
+        handler.login({ identificador: 'USR-001', password: 'pw' }),
+        handler.login({ identificador: 'USR-001', password: 'pw' }),
+        handler.login({ identificador: 'USR-001', password: 'pw' }),
+        handler.login({ identificador: 'USR-001', password: 'pw' }),
+    ];
+
+    await new Promise(function(r) { setImmediate(r); });
+    manual.resolve();
+    await Promise.all(promises);
+
+    assertEqual(fetchCalls,       1, 'fetch una sola vez aunque Enter se presiono 4 veces');
+    assertEqual(successes.length, 1, 'onSuccess una vez');
+});
+
+// ── 13. Admin login exitoso ───────────────────────────────────────────────────
+await test('13. Admin login exitoso → onSuccess recibe token y datos de admin', async function() {
+    const { handler, successes } = makeHandlerReal(function(creds) {
+        assert(creds.email    === 'admin@rodeo.cl', 'email correcto');
+        assert(creds.password === 'Admin2024!',     'password correcto');
+        return Promise.resolve(ADMIN_RESP);
+    });
+
+    await handler.login({ email: 'admin@rodeo.cl', password: 'Admin2024!' });
+
+    assertEqual(successes.length,         1,              'onSuccess llamado');
+    assertEqual(successes[0].token,       'admin-tok',    'Token de admin');
+    assertEqual(successes[0].usuario.tipo, 'administrador', 'tipo=administrador');
+});
+
+// ── 14. Usuario login exitoso ─────────────────────────────────────────────────
+await test('14. Usuario login exitoso → onSuccess con primer_login=false', async function() {
+    const { handler, successes } = makeHandlerReal(function(creds) {
+        assert(creds.identificador === 'USR-0001', 'identificador correcto');
+        return Promise.resolve(USUARIO_RESP);
+    });
+
+    await handler.login({ identificador: 'USR-0001', password: 'jurados' });
+
+    assertEqual(successes.length,              1,         'onSuccess llamado');
+    assertEqual(successes[0].token,           'usr-tok',  'Token de usuario');
+    assertEqual(successes[0].usuario.primer_login, false, 'primer_login=false');
+});
+
+// ── 15. Redireccion unica → onSuccess exactamente una vez ────────────────────
+await test('15. Redireccion unica → onSuccess exactamente una vez, llama posteriores ignoradas', async function() {
+    let onSuccessCalls = 0;
+    const states  = [];
+
+    const handler = createLoginHandler({
+        apiFetch:      function() { return Promise.resolve(DEFAULT_RESP); },
+        onStateChange: function(s) { states.push(s); },
+        onSuccess:     function() { onSuccessCalls++; },
+        _AbortController: function() { return makeFakeAbortController(); },
+    });
+
+    // Primera llamada: login exitoso (_done=true)
+    await handler.login({ identificador: 'USR-001', password: 'pw' });
+    // Llamadas posteriores: deben ser ignoradas porque _done=true
+    await handler.login({ identificador: 'USR-001', password: 'pw' });
+    await handler.login({ identificador: 'USR-001', password: 'pw' });
+
+    assertEqual(onSuccessCalls, 1, 'onSuccess llamado exactamente una vez');
+});
+
+// ── 16. Solicitud original NO abortada por segundo submit ────────────────────
+await test('16. Solicitud original NO abortada por segundo submit', async function() {
+    const factory  = new FakeAbortControllerFactory();
+    const manual   = makeManualFetch();
+    let fetchCalls = 0;
+
+    const { handler, successes } = makeHandlerReal(function(creds, signal) {
+        fetchCalls++;
+        return manual.apiFetch(creds, signal);
+    }, factory);
+
+    // Primer submit
+    const p1 = handler.login({ identificador: 'USR-001', password: 'pw' });
+    await new Promise(function(r) { setImmediate(r); });
+
+    // Segundo submit: ignorado — NO debe abortar el AbortController activo
+    handler.login({ identificador: 'USR-001', password: 'pw' });
+    handler.login({ identificador: 'USR-001', password: 'pw' });
+    await new Promise(function(r) { setImmediate(r); });
+
+    assertEqual(factory.count,            1, 'Solo un AbortController fue creado');
+    assertEqual(factory.last.abortCalled, 0, 'AbortController NO abortado por segundo submit');
+    assertEqual(fetchCalls,               1, 'fetch llamado una sola vez');
+
+    // Resolver normalmente
+    manual.resolve();
+    await p1;
+
+    assertEqual(successes.length,         1, 'onSuccess llamado una vez');
+    assertEqual(factory.last.abortCalled, 0, 'AbortController sigue intacto (sin timeout)');
 });
 
 // ── Reporte ───────────────────────────────────────────────────────────────────

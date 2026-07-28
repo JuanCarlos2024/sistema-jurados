@@ -1,17 +1,20 @@
 /**
- * login-ux.js — UX de login con AbortController, mensajes progresivos
- * y proteccion ante race conditions.
+ * login-ux.js — UX de login con AbortController (solo timeout 35 s),
+ * mensajes progresivos y proteccion ante doble submit.
  *
  * Compatible con browser (script tag) y Node.js (require para tests).
  *
- * Comportamiento:
- *   - Deshabilita el boton y muestra "Ingresando..." inmediatamente.
- *   - A los 5 s muestra advertencia de demora.
- *   - A los 15 s muestra mensaje de espera prolongada.
- *   - A los 35 s aborta via AbortController y habilita el reintento.
- *   - Si llega una respuesta de una solicitud anterior (cancelada), la ignora.
- *   - Exito: cancela timers, redirige una sola vez.
- *   - Error: cancela timers, muestra mensaje, habilita reintento.
+ * Reglas de estado:
+ *   _loading = true  → solicitud en vuelo; cualquier submit adicional es ignorado.
+ *   _done    = true  → login exitoso; no se permite ningun intento posterior.
+ *   AbortController  → se usa exclusivamente para el timeout de 35 s.
+ *                      Un segundo submit NO aborta la solicitud activa.
+ *
+ * Ciclo:
+ *   Idle → login() → _loading=true → {exito|error|timeout}
+ *     exito:   _loading=false, _done=true  → onSuccess(), sin mas intentos.
+ *     error:   _loading=false, _done=false → onStateChange(error), permite reintento.
+ *     timeout: _loading=false, _done=false → onStateChange(error), permite reintento.
  */
 
 (function (root, factory) {
@@ -39,7 +42,8 @@
         var _clearTimeout    = opts._clearTimeout    || clearTimeout;
         var _AbortController = opts._AbortController || AbortController;
 
-        var _requestId  = 0;
+        var _loading    = false; // solicitud en vuelo
+        var _done       = false; // exito ya obtenido
         var _controller = null;
         var _timers     = [];
 
@@ -49,12 +53,10 @@
         }
 
         async function login(credentials) {
-            // Cancelar solicitud anterior (proteccion doble clic / doble Enter)
-            if (_controller) {
-                _controller.abort();
-            }
+            // Ignorar si ya hay una solicitud activa o si el login ya fue exitoso
+            if (_loading || _done) return;
 
-            var requestId = ++_requestId;
+            _loading    = true;
             _controller = new _AbortController();
             _clear();
 
@@ -62,7 +64,7 @@
 
             // 5 s: advertencia de demora
             _timers.push(_setTimeout(function () {
-                if (_requestId !== requestId) return;
+                if (!_loading) return;
                 onStateChange({
                     loading:     true,
                     text:        'Ingresando…',
@@ -73,7 +75,7 @@
 
             // 15 s: mensaje de espera prolongada
             _timers.push(_setTimeout(function () {
-                if (_requestId !== requestId) return;
+                if (!_loading) return;
                 onStateChange({
                     loading:     true,
                     text:        'Ingresando…',
@@ -82,28 +84,31 @@
                 });
             }, 15000));
 
-            // 35 s: abortar via AbortController
+            // 35 s: abortar — unico uso del AbortController
             _timers.push(_setTimeout(function () {
-                if (_requestId !== requestId) return;
+                if (!_loading) return;
                 _controller.abort();
-                // El catch recibe AbortError y muestra el mensaje
             }, 35000));
 
             try {
                 var data = await apiFetch(credentials, _controller.signal);
-
-                if (_requestId !== requestId) return; // respuesta de solicitud anterior — ignorar
-
                 _clear();
+                _loading = false;
+                _done    = true; // impedir cualquier intento posterior
                 onStateChange({ loading: false, text: 'Iniciar Sesión', message: null });
                 onSuccess(data);
-
             } catch (err) {
-                if (_requestId !== requestId) return; // respuesta abortada de solicitud anterior
-
                 _clear();
+                _loading = false;
+                // _done permanece false → el usuario puede reintentar
 
                 if (err.name === 'AbortError') {
+                    /*
+                     * JWT es stateless: el servidor valida credenciales y genera
+                     * el token en memoria durante la solicitud. Si el navegador
+                     * aborto a los 35 s, no existe sesion persistente en el servidor.
+                     * El usuario simplemente no recibio el token y puede reintentar.
+                     */
                     onStateChange({
                         loading:     false,
                         text:        'Iniciar Sesión',
