@@ -209,3 +209,67 @@ _Prueba ejecutada con `tests/load/scenarios_70.py` · Sistema Jurados · Ferochi
 ---
 
 _Generado por `tests/load/scenarios_100.py` · Sistema Jurados · Ferochi 2026_
+
+---
+
+## Cierre del ciclo de validación — 2026-07-28
+
+> Commit productivo: `fb29985` · Rama: `main` · Deploy: Render Pro Live
+
+### Resumen ejecutivo
+
+| Ítem | Resultado |
+|------|-----------|
+| Test realista 100 usuarios | **APROBADO** |
+| 6.000/6.000 respuestas almacenadas | ✓ |
+| Una instancia Render Pro suficiente para 70 participantes | ✓ |
+| No se requiere Render Pro Plus | ✓ |
+| Autoscaling puede permanecer desactivado | ✓ |
+| Backend /responder soportó todos los picos | ✓ |
+| Login simultáneo masivo: único componente degradado (escenario artificial) | ✓ |
+| Login UX corregido y desplegado | ✓ |
+| Segundo submit ignorado (_loading/_done) | ✓ |
+| Timeout informativo 35 s (AbortController) | ✓ |
+| Mensajes progresivos a los 5 s y 15 s | ✓ |
+| Videos de YouTube no atraviesan Render | ✓ |
+| Datos sintéticos completamente eliminados | ✓ |
+
+### Estado de la base de datos post-cierre
+
+- 0 usuarios LOADTEST_ en `usuarios_pagados`
+- 0 asignaciones LOADTEST_
+- 0 intentos LOADTEST_
+- 0 respuestas LOADTEST_
+- `TEST_EXAM_ID` fecha_fin restaurada: `2026-07-08T13:23:00+00:00`
+- `REAL_EXAM_ID` sin modificar: fecha_fin `2026-07-09T00:30:00+00:00`
+
+### Estado de infraestructura verificado
+
+- Render Pro · 2 CPU · 4 GB · 1 instancia · Autoscaling OFF
+- Supabase Pro · max_rows=1000 (paginación activa en scripts)
+- bcrypt cost sin modificar
+- Backend de autenticación sin modificar
+- JWT stateless (sin sesiones persistentes en servidor)
+
+### Prueba de humo post-despliegue
+
+| Verificación | Resultado |
+|--------------|-----------|
+| GET /js/login-ux.js → HTTP 200, Content-Type: application/javascript | ✓ |
+| login-ux.js contiene createLoginHandler, _loading, _done, AbortController | ✓ |
+| index.html carga login-ux.js antes de los handlers (línea 77) | ✓ |
+| POST /api/auth/admin/login → HTTP 200, token recibido | ✓ |
+| POST /api/auth/usuario/login → HTTP 200, token recibido | ✓ |
+| Login con credenciales incorrectas → HTTP 401, mensaje "Credenciales inválidas" | ✓ |
+| Reintento tras 401 → HTTP 200 | ✓ |
+| Contenido login-ux.js en producción = commit fb29985 (SHA256 verificado) | ✓ |
+
+### Tests unitarios
+
+- 16/16 APROBADOS · 0 fallidos
+- Cobertura: login rápido, 5 s, 15 s, timeout 35 s, doble clic, Enter repetido,
+  respuesta tardía, 401, 500, error de red, redirect único, solicitud no abortada
+
+---
+
+_Ciclo completado: `tests/load/scenarios_70.py` → `tests/load/scenarios_100.py` → `fix/login-ux-timeout` → `main` · Sistema Jurados · Ferochi 2026_
