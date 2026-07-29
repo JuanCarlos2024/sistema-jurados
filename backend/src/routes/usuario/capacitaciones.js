@@ -93,7 +93,7 @@ router.get('/', async (req, res) => {
     if (asigIds.length > 0) {
         const { data: intentos } = await supabase
             .from('capacitacion_intentos')
-            .select('id, asignacion_id, estado, numero_intento, puntaje_obtenido, nota, aprobado, iniciado_en, finalizado_en')
+            .select('id, asignacion_id, estado, numero_intento, puntaje_obtenido, nota, aprobado, iniciado_en, finalizado_en, nota_manual, nota_manual_activa')
             .in('asignacion_id', asigIds)
             .order('numero_intento', { ascending: false });
 
@@ -106,10 +106,10 @@ router.get('/', async (req, res) => {
     const result = (asigs || [])
         .filter(a => a.prueba && a.prueba.estado === 'publicada')
         .map(a => {
-            const intentos   = intentosMap[a.id] || [];
-            const ultimo     = intentos[0] || null;
-            const completado = intentos.find(i => i.estado === 'completado');
-            const validos    = intentos.filter(i => i.estado !== 'abandonado');
+            const intentos    = intentosMap[a.id] || [];
+            const completados = intentos.filter(i => i.estado === 'completado');
+            const validos     = intentos.filter(i => i.estado !== 'abandonado');
+            const enCurso     = validos.find(i => i.estado === 'en_curso') || null;
 
             // Disponibilidad por fecha (no oculta — siempre se muestra al jurado)
             let disponibilidad = 'disponible';
@@ -119,25 +119,32 @@ router.get('/', async (req, res) => {
                 disponibilidad = 'vencida';
             }
 
+            // Mejor intento: el de nota efectiva más alta (nota_manual si está activa, nota calculada si no)
+            const notaEfectiva = c => c.nota_manual_activa ? (c.nota_manual ?? c.nota) : c.nota;
+            const mejor = completados.reduce((best, c) =>
+                !best || (parseFloat(notaEfectiva(c)) || 0) > (parseFloat(notaEfectiva(best)) || 0) ? c : best
+            , null);
+
             let estado_jurado = 'pendiente';
-            if (completado)                                  estado_jurado = completado.aprobado ? 'aprobado' : 'reprobado';
-            else if (ultimo && ultimo.estado === 'en_curso') estado_jurado = 'en_curso';
+            if (mejor)        estado_jurado = mejor.aprobado ? 'aprobado' : 'reprobado';
+            else if (enCurso) estado_jurado = 'en_curso';
 
             const puede_rendir = disponibilidad === 'disponible'
-                && !completado
+                && !enCurso
                 && (!a.prueba.intentos_maximos || validos.length < a.prueba.intentos_maximos);
 
             return {
-                asignacion_id:    a.id,
-                prueba:           a.prueba,
-                fecha_limite:     a.fecha_limite,
-                asignado_en:      a.asignado_en,
+                asignacion_id:        a.id,
+                prueba:               a.prueba,
+                fecha_limite:         a.fecha_limite,
+                asignado_en:          a.asignado_en,
                 estado_jurado,
                 disponibilidad,
                 puede_rendir,
-                intento_en_curso: (ultimo && ultimo.estado === 'en_curso') ? ultimo : null,
-                ultimo_completado: completado || null,
-                total_intentos:   validos.length
+                intento_en_curso:     enCurso,
+                ultimo_completado:    mejor || null,
+                intentos_completados: completados,
+                total_intentos:       validos.length
             };
         });
 
@@ -235,11 +242,8 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
         .eq('asignacion_id', asig.id)
         .order('numero_intento', { ascending: false });
 
-    const validos    = (intentos || []).filter(i => i.estado !== 'abandonado');
-    const enCurso    = validos.find(i => i.estado === 'en_curso');
-    const completado = validos.find(i => i.estado === 'completado');
-
-    if (completado) return res.status(403).json({ error: 'Ya completaste esta prueba' });
+    const validos = (intentos || []).filter(i => i.estado !== 'abandonado');
+    const enCurso = validos.find(i => i.estado === 'en_curso');
 
     const maxIntentos = prueba.intentos_maximos;
     if (maxIntentos && validos.length >= maxIntentos && !enCurso) {

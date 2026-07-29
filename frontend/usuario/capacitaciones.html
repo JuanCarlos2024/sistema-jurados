@@ -109,6 +109,18 @@
     </div>
 </div>
 
+<!-- ─── Modal historial de intentos ──────────────────────────────────────────── -->
+<div id="hist-overlay" class="mc-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="hist-titulo" onclick="cerrarHistorial()">
+    <div id="hist-dialog" onclick="event.stopPropagation()"
+         style="background:#fff;border-radius:12px;max-width:640px;width:100%;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--gris-borde);flex-shrink:0;">
+            <div id="hist-titulo" style="font-weight:700;font-size:15px;"></div>
+            <button onclick="cerrarHistorial()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:4px 8px;margin-left:10px;line-height:1;" aria-label="Cerrar">✕</button>
+        </div>
+        <div id="hist-body" style="flex:1;overflow:auto;"></div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
@@ -132,8 +144,10 @@ async function cargar() {
 
 cargar();
 
-var _matCargado  = {}; // asignacionId → boolean
-var _matDatos    = {}; // materialId → { id, titulo, descripcion, tipo }
+var _matCargado    = {}; // asignacionId → boolean
+var _matDatos      = {}; // materialId → { id, titulo, descripcion, tipo }
+var _historialDatos = {}; // asignacionId → { titulo, intentos }
+var _enviandoNuevoIntento = false;
 
 function render(lista) {
     var div = document.getElementById('contenido');
@@ -142,12 +156,18 @@ function render(lista) {
         return;
     }
 
+    _historialDatos = {};
+
     div.innerHTML = lista.map(function (item) {
-        var p    = item.prueba;
-        var disp = item.disponibilidad || 'disponible';
-        var estado = item.estado_jurado;
-        var badgeCls = 'estado-' + estado;
-        var badgeTxt = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
+        var p           = item.prueba;
+        var disp        = item.disponibilidad || 'disponible';
+        var estado      = item.estado_jurado;
+        var badgeCls    = 'estado-' + estado;
+        var badgeTxt    = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
+        var completados = item.intentos_completados || [];
+
+        // Guardar datos para modal de historial
+        _historialDatos[item.asignacion_id] = { titulo: p.titulo, intentos: completados };
 
         var dispBadge = '';
         if (disp === 'vencida' && !item.ultimo_completado) {
@@ -164,8 +184,12 @@ function render(lista) {
         metaItems.push('🔄 Intentos: ' + item.total_intentos + ' / ' + (p.intentos_maximos || '∞'));
         if (p.fecha_inicio) metaItems.push('📅 Desde: ' + fmtFechaChile(p.fecha_inicio));
         if (p.fecha_fin)    metaItems.push('📅 Hasta: ' + fmtFechaChile(p.fecha_fin));
-        if (item.ultimo_completado && item.ultimo_completado.nota != null)
-            metaItems.push('🏅 Nota: ' + parseFloat(item.ultimo_completado.nota).toFixed(1));
+        if (item.ultimo_completado) {
+            // Nota efectiva: nota_manual si activa, nota calculada si no
+            var uc = item.ultimo_completado;
+            var notaEf = uc.nota_manual_activa ? (uc.nota_manual ?? uc.nota) : uc.nota;
+            if (notaEf != null) metaItems.push('🏅 Nota: ' + parseFloat(notaEf).toFixed(1));
+        }
 
         var acciones = '';
         if (disp === 'vencida' && !item.ultimo_completado) {
@@ -177,10 +201,15 @@ function render(lista) {
         } else if (item.intento_en_curso) {
             acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Continuar prueba</a>';
         } else if (item.puede_rendir) {
-            acciones = '<a href="/usuario/capacitacion-rendir.html?id=' + item.asignacion_id + '" class="btn btn-primario btn-pequeño">Iniciar prueba</a>';
+            var btnLabel = completados.length > 0 ? 'Realizar otro intento' : 'Iniciar prueba';
+            acciones = '<button class="btn btn-primario btn-pequeño" onclick="iniciarIntento(\'' + item.asignacion_id + '\')">' + btnLabel + '</button>';
         }
         if (item.ultimo_completado) {
+            // Ver resultado siempre apunta al mejor intento (ultimo_completado = mejor por nota)
             acciones += ' <a href="/usuario/capacitacion-resultado.html?id=' + item.ultimo_completado.id + '" class="btn btn-outline btn-pequeño">Ver resultado</a>';
+        }
+        if (completados.length > 1) {
+            acciones += ' <button class="btn btn-outline btn-pequeño" onclick="abrirHistorial(\'' + item.asignacion_id + '\')">Historial de intentos</button>';
         }
         if (!acciones) {
             acciones = '<span style="font-size:13px;color:var(--gris);">Sin intentos disponibles.</span>';
@@ -210,6 +239,78 @@ function render(lista) {
             + '</div>'
             + '</div>';
     }).join('');
+}
+
+// ─── Iniciar / realizar otro intento ─────────────────────────────────────────
+
+function iniciarIntento(asignacionId) {
+    if (_enviandoNuevoIntento) return;
+    _enviandoNuevoIntento = true;
+    window.location.href = '/usuario/capacitacion-rendir.html?id=' + asignacionId;
+}
+
+// ─── Historial de intentos ────────────────────────────────────────────────────
+
+function abrirHistorial(asignacionId) {
+    var datos = _historialDatos[asignacionId];
+    if (!datos || !datos.intentos || datos.intentos.length === 0) return;
+
+    document.getElementById('hist-titulo').textContent = sanitizar(datos.titulo) + ' — Historial de intentos';
+
+    // Ordenar cronológicamente (numero_intento ASC)
+    var intentos = datos.intentos.slice().sort(function (a, b) { return a.numero_intento - b.numero_intento; });
+
+    // Identificar la nota efectiva más alta para marcarla
+    var mejorNota = -Infinity;
+    intentos.forEach(function (i) {
+        var n = parseFloat(i.nota_manual_activa ? (i.nota_manual ?? i.nota) : i.nota) || 0;
+        if (n > mejorNota) mejorNota = n;
+    });
+
+    var filas = intentos.map(function (i, idx) {
+        var notaEf  = i.nota_manual_activa ? (i.nota_manual ?? i.nota) : i.nota;
+        var notaStr = notaEf != null ? parseFloat(notaEf).toFixed(1) : '—';
+        var puntaje = i.puntaje_obtenido != null ? parseFloat(i.puntaje_obtenido).toFixed(1) + '%' : '—';
+        var fecha   = i.finalizado_en ? fmtFechaChile(i.finalizado_en) : '—';
+        var esMejor = (parseFloat(notaEf) || 0) === mejorNota && mejorNota > -Infinity;
+        var estadoHtml = i.aprobado
+            ? '<span style="color:#1e8449;font-weight:600;">Aprobado</span>'
+            : '<span style="color:#922b21;font-weight:600;">Reprobado</span>';
+        var bg = idx % 2 === 0 ? '' : 'background:#f9f9f9;';
+        return '<tr style="' + bg + '">'
+            + '<td style="padding:9px 14px;">'
+            + 'N.° ' + i.numero_intento
+            + (esMejor ? ' <span style="color:#e67e22;font-size:11px;font-weight:600;">★ Mejor</span>' : '')
+            + '</td>'
+            + '<td style="padding:9px 14px;">' + sanitizar(fecha) + '</td>'
+            + '<td style="padding:9px 14px;text-align:right;">' + sanitizar(puntaje) + '</td>'
+            + '<td style="padding:9px 14px;text-align:right;font-weight:' + (esMejor ? '700' : '400') + ';">' + sanitizar(notaStr) + '</td>'
+            + '<td style="padding:9px 14px;text-align:center;">' + estadoHtml + '</td>'
+            + '<td style="padding:9px 14px;text-align:center;">'
+            + '<a href="/usuario/capacitacion-resultado.html?id=' + i.id + '" class="btn btn-outline btn-pequeño" style="font-size:11px;white-space:nowrap;">Ver resultado</a>'
+            + '</td>'
+            + '</tr>';
+    }).join('');
+
+    document.getElementById('hist-body').innerHTML =
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+        + '<thead><tr style="background:#f7f7f7;">'
+        + '<th style="text-align:left;padding:9px 14px;border-bottom:2px solid var(--gris-borde);font-weight:600;white-space:nowrap;">Intento</th>'
+        + '<th style="text-align:left;padding:9px 14px;border-bottom:2px solid var(--gris-borde);font-weight:600;white-space:nowrap;">Fecha</th>'
+        + '<th style="text-align:right;padding:9px 14px;border-bottom:2px solid var(--gris-borde);font-weight:600;white-space:nowrap;">Puntaje</th>'
+        + '<th style="text-align:right;padding:9px 14px;border-bottom:2px solid var(--gris-borde);font-weight:600;white-space:nowrap;">Nota</th>'
+        + '<th style="text-align:center;padding:9px 14px;border-bottom:2px solid var(--gris-borde);font-weight:600;white-space:nowrap;">Estado</th>'
+        + '<th style="padding:9px 14px;border-bottom:2px solid var(--gris-borde);"></th>'
+        + '</tr></thead>'
+        + '<tbody>' + filas + '</tbody>'
+        + '</table>';
+
+    document.getElementById('hist-overlay').style.display = 'flex';
+}
+
+function cerrarHistorial() {
+    document.getElementById('hist-overlay').style.display = 'none';
+    document.getElementById('hist-body').innerHTML = '';
 }
 
 // ─── Material de estudio por prueba ──────────────────────────────────────────
@@ -457,8 +558,9 @@ function mcYoutubeEmbed(url) {
 }
 
 document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && document.getElementById('mc-overlay').style.display !== 'none') {
-        cerrarMcModal();
+    if (e.key === 'Escape') {
+        if (document.getElementById('mc-overlay').style.display   !== 'none') cerrarMcModal();
+        if (document.getElementById('hist-overlay').style.display !== 'none') cerrarHistorial();
     }
 });
 </script>
