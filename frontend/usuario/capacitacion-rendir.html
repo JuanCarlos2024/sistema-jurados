@@ -305,6 +305,24 @@
     </div>
 </div>
 
+<!-- ═══ Modal de confirmación de omisión (pregunta sin responder) ════════════ -->
+<div id="modal-omision" class="modal-salida-overlay" style="display:none;"
+     role="dialog" aria-modal="true" aria-labelledby="modal-omision-titulo">
+    <div class="modal-salida">
+        <div class="modal-salida-icono">⚠️</div>
+        <h3 id="modal-omision-titulo">Pregunta sin responder</h3>
+        <p id="modal-omision-msg"></p>
+        <div class="modal-salida-acciones">
+            <button class="btn btn-primario" id="btn-omision-volver" onclick="cerrarModalOmision()">
+                Volver y responder
+            </button>
+            <button class="btn-salir-confirmar" id="btn-omision-confirmar" onclick="confirmarOmision()">
+                Omitir y continuar
+            </button>
+        </div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -340,6 +358,10 @@ var _aviso1min           = false;
 var _pruebaActiva       = false; // true solo mientras el jurado está respondiendo preguntas
 var _enviandoAbandono   = false; // guard contra doble acción en modal de salida
 var _modalSalidaVisible = false;
+
+// Modal de omisión de pregunta sin responder
+var _modalOmisionVisible = false;
+var _omisionEsUltima     = false; // true cuando se omite la última pregunta (→ finalizar)
 
 // Sincronización de reloj con el servidor
 var _desfaseServidor  = 0;    // ms: corrección entre reloj local y servidor (Date.now() + _desfaseServidor ≈ hora servidor)
@@ -551,6 +573,8 @@ async function tiempoAgotado() {
     if (_enviando || _preguntaBloqueada) return;
     _preguntaBloqueada = true;
 
+    if (_modalOmisionVisible) cerrarModalOmision();
+
     var p = _preguntas[_actual];
 
     // Si hay guardado pendiente con alternativa seleccionada, esperar su resolución
@@ -613,6 +637,7 @@ function actualizarDisplayTimerGlobal() {
 async function tiempoGlobalAgotado() {
     if (_enviando) return;
     detenerTimer();
+    if (_modalOmisionVisible) cerrarModalOmision();
     mostrarToast('Tiempo agotado. Finalizando prueba…', 'error');
     await finalizarPrueba(true);
 }
@@ -888,9 +913,9 @@ function mostrarPregunta(idx) {
     // Botón de avance — nunca hay botón "Anterior"
     var btnAvance = '';
     if (!esUltima) {
-        btnAvance = '<button class="btn btn-primario" id="btn-siguiente-actual" onclick="avanzarSiguiente()">Siguiente →</button>';
+        btnAvance = '<button class="btn btn-primario" id="btn-siguiente-actual" onclick="intentarAvanzarSiguiente()">Siguiente →</button>';
     } else {
-        btnAvance = '<button class="btn btn-primario" onclick="finalizarPrueba(false)" id="btn-finalizar">'
+        btnAvance = '<button class="btn btn-primario" onclick="intentarFinalizarPrueba()" id="btn-finalizar">'
             + (todasRespondidas ? 'Finalizar y enviar' : 'Omitir restantes y finalizar')
             + '</button>';
     }
@@ -1241,21 +1266,13 @@ async function finalizarPrueba(porTiempo) {
     detenerTimer();
     detenerTimerGlobal();
 
-    // Confirmar si hay preguntas sin responder (solo en finalización manual)
-    var sinResponder = _preguntas.length - respondidas();
-    if (!porTiempo && sinResponder > 0) {
-        var ok = confirm('Tienes ' + sinResponder + ' pregunta(s) sin responder. ¿Finalizar de todas formas?');
-        if (!ok) {
-            iniciarTimerPregunta();
-            if (_venceEnMs) iniciarTimerGlobal();
-            return;
-        }
-    }
-
     _enviando     = true;
     _pruebaActiva = false;
     var btn = document.getElementById('btn-finalizar');
     if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+
+    // Cerrar el modal de omisión si quedara abierto (e.g. timeout global muy rápido)
+    if (_modalOmisionVisible) cerrarModalOmision();
 
     var redirigido = false;
 
@@ -1341,6 +1358,69 @@ async function finalizarPrueba(porTiempo) {
         }
     }
 }
+// ─── Modal de omisión (pregunta sin responder) ────────────────────────────────
+
+function intentarAvanzarSiguiente() {
+    if (_avanceEnCurso || _preguntaBloqueada) return;
+    var p = _preguntas[_actual];
+    if (p && _respuestas[p.id] == null) {
+        mostrarModalOmision(false);
+    } else {
+        avanzarSiguiente();
+    }
+}
+
+function intentarFinalizarPrueba() {
+    if (_enviando) return;
+    var p = _preguntas[_actual];
+    if (p && _respuestas[p.id] == null) {
+        mostrarModalOmision(true);
+    } else {
+        finalizarPrueba(false);
+    }
+}
+
+function mostrarModalOmision(esUltima) {
+    if (_modalOmisionVisible) return;
+    _modalOmisionVisible = true;
+    _omisionEsUltima = !!esUltima;
+
+    var msgEl = document.getElementById('modal-omision-msg');
+    var btnEl = document.getElementById('btn-omision-confirmar');
+
+    if (esUltima) {
+        msgEl.textContent = 'No has seleccionado ninguna alternativa. Si continúas, esta pregunta quedará registrada como omitida y la prueba finalizará sin posibilidad de volver a responderla. ¿Estás seguro de que deseas continuar?';
+        btnEl.textContent = 'Omitir y finalizar prueba';
+    } else {
+        msgEl.textContent = 'No has seleccionado ninguna alternativa. Si continúas, esta pregunta quedará registrada como omitida y no podrás volver a responderla. ¿Estás seguro de que deseas continuar?';
+        btnEl.textContent = 'Omitir y continuar';
+    }
+
+    document.getElementById('modal-omision').style.display = 'flex';
+    setTimeout(function () {
+        var btn = document.getElementById('btn-omision-volver');
+        if (btn) btn.focus();
+    }, 0);
+}
+
+function cerrarModalOmision() {
+    _modalOmisionVisible = false;
+    document.getElementById('modal-omision').style.display = 'none';
+    // Devolver foco al botón de avance activo
+    var btnSig = document.getElementById('btn-siguiente-actual') || document.getElementById('btn-finalizar');
+    if (btnSig) btnSig.focus();
+}
+
+function confirmarOmision() {
+    if (!_modalOmisionVisible) return; // protección ante doble-click
+    cerrarModalOmision();
+    if (_omisionEsUltima) {
+        finalizarPrueba(false);
+    } else {
+        avanzarSiguiente();
+    }
+}
+
 // ─── Protección de salida ─────────────────────────────────────────────────────
 
 // Interceptar botón "Atrás" del navegador
