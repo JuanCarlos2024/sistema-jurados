@@ -119,11 +119,22 @@ router.get('/', async (req, res) => {
                 disponibilidad = 'vencida';
             }
 
-            // Mejor intento: el de nota efectiva más alta (nota_manual si está activa, nota calculada si no)
+            // Mejor intento: mayor nota efectiva; empate → más reciente (finalizado_en); empate → mayor id
             const notaEfectiva = c => c.nota_manual_activa ? (c.nota_manual ?? c.nota) : c.nota;
-            const mejor = completados.reduce((best, c) =>
-                !best || (parseFloat(notaEfectiva(c)) || 0) > (parseFloat(notaEfectiva(best)) || 0) ? c : best
-            , null);
+            const mejor = completados.reduce((best, c) => {
+                if (!best) return c;
+                const nb = parseFloat(notaEfectiva(best)) || 0;
+                const nc = parseFloat(notaEfectiva(c))    || 0;
+                if (nc > nb) return c;
+                if (nc < nb) return best;
+                // Empate de nota: más reciente
+                const fb = best.finalizado_en || '';
+                const fc = c.finalizado_en    || '';
+                if (fc > fb) return c;
+                if (fc < fb) return best;
+                // Empate adicional: mayor id (determinista)
+                return c.id > best.id ? c : best;
+            }, null);
 
             let estado_jurado = 'pendiente';
             if (mejor)        estado_jurado = mejor.aprobado ? 'aprobado' : 'reprobado';
@@ -235,56 +246,62 @@ router.get('/:asignacion_id/iniciar', async (req, res) => {
         return res.status(403).json({ error: 'El plazo de esta prueba ha vencido' });
     }
 
-    // Verificar intentos disponibles
-    const { data: intentos } = await supabase
-        .from('capacitacion_intentos')
-        .select('id, estado, numero_intento, orden_preguntas_json, orden_alternativas_json, vence_en, snapshot_contenido_json')
-        .eq('asignacion_id', asig.id)
-        .order('numero_intento', { ascending: false });
+    // ── Creación atómica de intento (concurrencia protegida vía RPC) ──────────────
+    // rpc_iniciar_intento usa SELECT FOR UPDATE sobre capacitacion_asignaciones para
+    // serializar solicitudes concurrentes: la segunda encontrará el EN_CURSO de la primera.
+    // Dos capas: (1) lock de fila en el RPC, (2) índice único parcial en la BD.
+    const venceEn = prueba.tiempo_limite_minutos
+        ? new Date(Date.now() + prueba.tiempo_limite_minutos * 60000).toISOString()
+        : null;
 
-    const validos = (intentos || []).filter(i => i.estado !== 'abandonado');
-    const enCurso = validos.find(i => i.estado === 'en_curso');
+    const { data: rpcInicio, error: rpcInicioErr } = await supabase.rpc('rpc_iniciar_intento', {
+        p_asignacion_id:          asig.id,
+        p_vence_en:               venceEn,
+        p_tiempo_limite_aplicado: prueba.tiempo_limite_minutos || null
+    });
 
-    const maxIntentos = prueba.intentos_maximos;
-    if (maxIntentos && validos.length >= maxIntentos && !enCurso) {
-        return res.status(403).json({ error: 'Has alcanzado el máximo de intentos permitidos' });
+    if (rpcInicioErr) {
+        console.error('[cap/iniciar] rpc_iniciar_intento asig=' + asig.id, rpcInicioErr.message);
+        return res.status(500).json({ error: rpcInicioErr.message });
     }
 
-    // Usar intento en curso o crear uno nuevo
-    let intento = enCurso;
-    if (!intento) {
-        // Calcular vence_en si la prueba tiene tiempo límite
-        const venceEn = prueba.tiempo_limite_minutos
-            ? new Date(Date.now() + prueba.tiempo_limite_minutos * 60000).toISOString()
-            : null;
+    const codigoInicio = rpcInicio?.codigo;
+    if (codigoInicio === 'NOT_FOUND')     return res.status(404).json({ error: 'Asignación no encontrada' });
+    if (codigoInicio === 'MAX_ALCANZADO') return res.status(403).json({ error: 'Has alcanzado el máximo de intentos permitidos' });
 
-        const insertData = {
-            asignacion_id:  asig.id,
-            numero_intento: (intentos || []).length + 1,
-            estado:         'en_curso'
-        };
-        if (venceEn) {
-            insertData.vence_en               = venceEn;
-            insertData.tiempo_limite_aplicado = prueba.tiempo_limite_minutos;
+    let intento;
+    if (codigoInicio === 'EN_CURSO') {
+        // Intento activo ya existía — verificar si expiró
+        if (rpcInicio.vence_en && new Date() > new Date(rpcInicio.vence_en)) {
+            await supabase.rpc('rpc_finalizar_intento', {
+                p_intento_id: rpcInicio.intento_id,
+                p_por_tiempo: true
+            }).catch(function (e) {
+                console.error('[cap/iniciar] rpc_finalizar_intento intento=' + rpcInicio.intento_id, e?.message || e);
+            });
+            return res.json({ tiempo_expirado: true, intento_id: rpcInicio.intento_id });
         }
-
-        const { data: nuevo, error: errNew } = await supabase
+        // Cargar datos completos (orden, snapshot) para continuar el intento
+        const { data: intentoFull } = await supabase
             .from('capacitacion_intentos')
-            .insert(insertData)
-            .select()
+            .select('id, vence_en, orden_preguntas_json, orden_alternativas_json, snapshot_contenido_json, iniciado_en')
+            .eq('id', rpcInicio.intento_id)
             .single();
-
-        if (errNew) return res.status(500).json({ error: errNew.message });
-        intento = nuevo;
-    } else if (enCurso.vence_en && new Date() > new Date(enCurso.vence_en)) {
-        // Tiempo agotado en un intento retomado: consolidar vía RPC transaccional
-        await supabase.rpc('rpc_finalizar_intento', {
-            p_intento_id: enCurso.id,
-            p_por_tiempo: true
-        }).catch(function (eConsolidar) {
-            console.error('[cap/iniciar] rpc_finalizar_intento intento=' + enCurso.id, eConsolidar?.message || eConsolidar);
-        });
-        return res.json({ tiempo_expirado: true, intento_id: enCurso.id });
+        intento = intentoFull || {
+            id: rpcInicio.intento_id, vence_en: rpcInicio.vence_en,
+            orden_preguntas_json: null, orden_alternativas_json: null,
+            snapshot_contenido_json: null, iniciado_en: null
+        };
+    } else {
+        // CREADO: nuevo intento vacío; orden y snapshot se generan a continuación
+        intento = {
+            id:                      rpcInicio.intento_id,
+            vence_en:                rpcInicio.vence_en,
+            orden_preguntas_json:    null,
+            orden_alternativas_json: null,
+            snapshot_contenido_json: null,
+            iniciado_en:             new Date().toISOString()
+        };
     }
 
     // Preguntas con tipo y video_url — nunca se expone es_correcta

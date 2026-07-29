@@ -166,8 +166,12 @@ function render(lista) {
         var badgeTxt    = { pendiente:'Pendiente', en_curso:'En curso', aprobado:'Aprobado', reprobado:'Reprobado' }[estado] || estado;
         var completados = item.intentos_completados || [];
 
-        // Guardar datos para modal de historial
-        _historialDatos[item.asignacion_id] = { titulo: p.titulo, intentos: completados };
+        // Guardar datos para modal de historial (mejor_id viene del backend — mismo criterio que la tarjeta)
+        _historialDatos[item.asignacion_id] = {
+            titulo:   p.titulo,
+            intentos: completados,
+            mejor_id: item.ultimo_completado ? item.ultimo_completado.id : null
+        };
 
         var dispBadge = '';
         if (disp === 'vencida' && !item.ultimo_completado) {
@@ -208,7 +212,7 @@ function render(lista) {
             // Ver resultado siempre apunta al mejor intento (ultimo_completado = mejor por nota)
             acciones += ' <a href="/usuario/capacitacion-resultado.html?id=' + item.ultimo_completado.id + '" class="btn btn-outline btn-pequeño">Ver resultado</a>';
         }
-        if (completados.length > 1) {
+        if (completados.length >= 1) {
             acciones += ' <button class="btn btn-outline btn-pequeño" onclick="abrirHistorial(\'' + item.asignacion_id + '\')">Historial de intentos</button>';
         }
         if (!acciones) {
@@ -255,24 +259,21 @@ function abrirHistorial(asignacionId) {
     var datos = _historialDatos[asignacionId];
     if (!datos || !datos.intentos || datos.intentos.length === 0) return;
 
-    document.getElementById('hist-titulo').textContent = sanitizar(datos.titulo) + ' — Historial de intentos';
+    document.getElementById('hist-titulo').textContent = datos.titulo + ' — Historial de intentos';
 
     // Ordenar cronológicamente (numero_intento ASC)
     var intentos = datos.intentos.slice().sort(function (a, b) { return a.numero_intento - b.numero_intento; });
 
-    // Identificar la nota efectiva más alta para marcarla
-    var mejorNota = -Infinity;
-    intentos.forEach(function (i) {
-        var n = parseFloat(i.nota_manual_activa ? (i.nota_manual ?? i.nota) : i.nota) || 0;
-        if (n > mejorNota) mejorNota = n;
-    });
+    // mejor_id viene del backend (mismo criterio que la tarjeta: mayor nota efectiva,
+    // empate → más reciente, empate → mayor id). Garantía de consistencia entre tarjeta e historial.
+    var mejorId = datos.mejor_id || null;
 
     var filas = intentos.map(function (i, idx) {
-        var notaEf  = i.nota_manual_activa ? (i.nota_manual ?? i.nota) : i.nota;
-        var notaStr = notaEf != null ? parseFloat(notaEf).toFixed(1) : '—';
-        var puntaje = i.puntaje_obtenido != null ? parseFloat(i.puntaje_obtenido).toFixed(1) + '%' : '—';
-        var fecha   = i.finalizado_en ? fmtFechaChile(i.finalizado_en) : '—';
-        var esMejor = (parseFloat(notaEf) || 0) === mejorNota && mejorNota > -Infinity;
+        var notaEf     = i.nota_manual_activa ? (i.nota_manual ?? i.nota) : i.nota;
+        var notaStr    = notaEf != null ? parseFloat(notaEf).toFixed(1) : '—';
+        var puntaje    = i.puntaje_obtenido != null ? parseFloat(i.puntaje_obtenido).toFixed(1) + '%' : '—';
+        var fecha      = i.finalizado_en ? fmtFechaChile(i.finalizado_en) : '—';
+        var esMejor    = mejorId !== null && i.id === mejorId;
         var estadoHtml = i.aprobado
             ? '<span style="color:#1e8449;font-weight:600;">Aprobado</span>'
             : '<span style="color:#922b21;font-weight:600;">Reprobado</span>';
