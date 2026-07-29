@@ -312,8 +312,8 @@ Las correcciones adicionales (tie-breaking determinístico, umbral de historial,
 sincronización `mejor_id`) eliminan inconsistencias de presentación que podían
 confundir al usuario con diferentes "mejores notas" en el mismo intento.
 
-Todos los intentos de prueba han sido eliminados. La base de datos de producción
-no fue afectada en ningún momento.
+Todos los intentos de prueba han sido eliminados. Datos reales de producción sin
+modificar; esquema actualizado (rpc_iniciar_intento + índice único parcial).
 
 ---
 
