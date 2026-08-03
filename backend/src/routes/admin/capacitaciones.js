@@ -64,6 +64,34 @@ const calcularNota = (pct, nMin, nMax, nAprob, exig) => {
     return Math.round(nota * 10) / 10;
 };
 
+// Pagina capacitacion_respuestas por lotes de 900 para eludir el límite
+// server-side max_rows=1000 de Supabase, que silencia .limit(10000).
+// Lanza error en cualquier fallo de página — nunca devuelve datos parciales.
+async function obtenerRespuestasPorIntentosPaginadas(intentoIds) {
+    if (!Array.isArray(intentoIds) || intentoIds.length === 0) return [];
+    const TAMANO_PAGINA = 900;
+    const todasRespuestas = [];
+    let desde = 0;
+    while (true) {
+        const hasta = desde + TAMANO_PAGINA - 1;
+        const { data: pagina, error } = await supabase
+            .from('capacitacion_respuestas')
+            .select('intento_id, pregunta_id, es_correcta')
+            .in('intento_id', intentoIds)
+            .order('id', { ascending: true })
+            .range(desde, hasta);
+        if (error) {
+            console.error('[respuestas/paginar] error en offset=' + desde, error.message);
+            throw error;
+        }
+        const filas = pagina || [];
+        todasRespuestas.push(...filas);
+        if (filas.length < TAMANO_PAGINA) break;
+        desde += TAMANO_PAGINA;
+    }
+    return todasRespuestas;
+}
+
 // ─── GET /pruebas ─────────────────────────────────────────────────────────────
 
 router.get('/pruebas', async (req, res) => {
@@ -890,16 +918,14 @@ router.get('/pruebas/:id/resultados', async (req, res) => {
             .map(i => i.id);
 
         if (completadoIds.length > 0) {
-            // pregunta_id es necesario para excluir respuestas de preguntas anuladas.
-            // .limit(10000) evita la truncación del límite por defecto de Supabase (1000 filas).
-            const { data: respuestas } = await supabase
-                .from('capacitacion_respuestas')
-                .select('intento_id, pregunta_id, es_correcta')
-                .in('intento_id', completadoIds)
-                .limit(10000);
-
-            (respuestas || []).forEach(r => {
-                if (anuladasSet.has(r.pregunta_id)) return; // excluir preguntas anuladas
+            let respuestas;
+            try {
+                respuestas = await obtenerRespuestasPorIntentosPaginadas(completadoIds);
+            } catch (err) {
+                return res.status(500).json({ error: 'Error al cargar respuestas: ' + err.message });
+            }
+            respuestas.forEach(r => {
+                if (anuladasSet.has(r.pregunta_id)) return;
                 if (!respuestasMap[r.intento_id]) respuestasMap[r.intento_id] = { correctas: 0, incorrectas: 0 };
                 if (r.es_correcta === true)        respuestasMap[r.intento_id].correctas++;
                 else if (r.es_correcta === false)  respuestasMap[r.intento_id].incorrectas++;
@@ -1367,14 +1393,13 @@ router.get('/pruebas/:id/exportar', async (req, res) => {
     const completadoIds = (intentos || []).filter(i => i.estado === 'completado').map(i => i.id);
     let respuestasMap = {};
     if (completadoIds.length > 0) {
-        // pregunta_id necesario para excluir anuladas; .limit(10000) evita truncación por defecto.
-        const { data: respuestas } = await supabase
-            .from('capacitacion_respuestas')
-            .select('intento_id, pregunta_id, es_correcta')
-            .in('intento_id', completadoIds)
-            .limit(10000);
-
-        (respuestas || []).forEach(r => {
+        let respuestas;
+        try {
+            respuestas = await obtenerRespuestasPorIntentosPaginadas(completadoIds);
+        } catch (err) {
+            return res.status(500).json({ error: 'Error al cargar respuestas: ' + err.message });
+        }
+        respuestas.forEach(r => {
             if (anuladasSet.has(r.pregunta_id)) return;
             if (!respuestasMap[r.intento_id]) respuestasMap[r.intento_id] = { correctas: 0, incorrectas: 0 };
             if (r.es_correcta) respuestasMap[r.intento_id].correctas++;
