@@ -64,30 +64,59 @@ const calcularNota = (pct, nMin, nMax, nAprob, exig) => {
     return Math.round(nota * 10) / 10;
 };
 
-// Pagina capacitacion_respuestas por lotes de 900 para eludir el límite
-// server-side max_rows=1000 de Supabase, que silencia .limit(10000).
+// Carga capacitacion_respuestas con paginación keyset (cursor) sobre la PK id.
+// Esto evita el límite server-side max_rows=1000 de Supabase y es inmune a
+// inserciones concurrentes que desplazarían un OFFSET a mitad de la carga.
 // Lanza error en cualquier fallo de página — nunca devuelve datos parciales.
 async function obtenerRespuestasPorIntentosPaginadas(intentoIds) {
     if (!Array.isArray(intentoIds) || intentoIds.length === 0) return [];
     const TAMANO_PAGINA = 900;
     const todasRespuestas = [];
-    let desde = 0;
+    let ultimoId = null;
     while (true) {
-        const hasta = desde + TAMANO_PAGINA - 1;
-        const { data: pagina, error } = await supabase
+        let consulta = supabase
             .from('capacitacion_respuestas')
-            .select('intento_id, pregunta_id, es_correcta')
+            .select('id, intento_id, pregunta_id, es_correcta')
             .in('intento_id', intentoIds)
             .order('id', { ascending: true })
-            .range(desde, hasta);
+            .limit(TAMANO_PAGINA);
+        if (ultimoId) consulta = consulta.gt('id', ultimoId);
+        const { data, error } = await consulta;
         if (error) {
-            console.error('[respuestas/paginar] error en offset=' + desde, error.message);
+            console.error('[respuestas/cursor] error tras id=' + ultimoId, error.message);
             throw error;
         }
-        const filas = pagina || [];
+        const filas = data || [];
         todasRespuestas.push(...filas);
         if (filas.length < TAMANO_PAGINA) break;
-        desde += TAMANO_PAGINA;
+        ultimoId = filas[filas.length - 1].id;
+    }
+    return todasRespuestas;
+}
+
+// Igual que la anterior pero filtra por pregunta_id (endpoint /estadisticas).
+async function obtenerRespuestasPorPreguntasPaginadas(preguntaIds) {
+    if (!Array.isArray(preguntaIds) || preguntaIds.length === 0) return [];
+    const TAMANO_PAGINA = 900;
+    const todasRespuestas = [];
+    let ultimoId = null;
+    while (true) {
+        let consulta = supabase
+            .from('capacitacion_respuestas')
+            .select('id, pregunta_id, es_correcta')
+            .in('pregunta_id', preguntaIds)
+            .order('id', { ascending: true })
+            .limit(TAMANO_PAGINA);
+        if (ultimoId) consulta = consulta.gt('id', ultimoId);
+        const { data, error } = await consulta;
+        if (error) {
+            console.error('[respuestas/cursor] error tras id=' + ultimoId, error.message);
+            throw error;
+        }
+        const filas = data || [];
+        todasRespuestas.push(...filas);
+        if (filas.length < TAMANO_PAGINA) break;
+        ultimoId = filas[filas.length - 1].id;
     }
     return todasRespuestas;
 }
@@ -1000,10 +1029,12 @@ router.get('/pruebas/:id/estadisticas', async (req, res) => {
 
     const preguntaIds = preguntas.map(p => p.id);
 
-    const { data: respuestas } = await supabase
-        .from('capacitacion_respuestas')
-        .select('pregunta_id, es_correcta')
-        .in('pregunta_id', preguntaIds);
+    let respuestas;
+    try {
+        respuestas = await obtenerRespuestasPorPreguntasPaginadas(preguntaIds);
+    } catch (err) {
+        return res.status(500).json({ error: 'Error al cargar estadísticas: ' + err.message });
+    }
 
     const statsMap = {};
     preguntaIds.forEach(id => { statsMap[id] = { total: 0, correctas: 0 }; });
