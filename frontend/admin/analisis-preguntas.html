@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análisis de Preguntas</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ── Aviso es_correcta ── */
+        .aviso-historico {
+            background: #fef9e7;
+            border-left: 4px solid #d4ac0d;
+            padding: 10px 14px;
+            font-size: 12px;
+            color: #6e2f00;
+            margin-bottom: 12px;
+        }
+        @media (prefers-color-scheme: dark) {
+            .aviso-historico { background: #2d2200; color: #f0c040; border-color: #d4ac0d; }
+        }
+
+        /* ── Selector de pruebas ── */
+        .prueba-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-color, #e0e0e0);
+        }
+        .prueba-row:last-child { border-bottom: none; }
+        .prueba-row input[type=checkbox] { margin-top: 3px; flex-shrink: 0; }
+        .prueba-info { flex: 1; }
+        .prueba-titulo { font-weight: 600; font-size: 14px; }
+        .prueba-meta   { font-size: 12px; color: #777; margin-top: 2px; }
+        .badge-lab {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 9px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-pub   { background: #d5f5e3; color: #1e8449; }
+        .badge-bor   { background: #fef9e7; color: #7d6608; }
+        .badge-cer   { background: #eee;    color: #666; }
+
+        /* ── Sugerencia de réplica ── */
+        .sugerencia-replica {
+            background: #eaf4fd;
+            border: 1px solid #aed6f1;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        @media (prefers-color-scheme: dark) {
+            .sugerencia-replica { background: #152535; border-color: #1f618d; color: #aed6f1; }
+        }
+
+        /* ── Tabla de resultados ── */
+        .tabla-analisis { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .tabla-analisis th, .tabla-analisis td {
+            padding: 7px 10px;
+            border-bottom: 1px solid #dfe5eb;
+            vertical-align: middle;
+        }
+        /* Cabecera: azul oscuro del panel admin, texto blanco — alto contraste */
+        .tabla-analisis thead tr { background: #23456b; }
+        .tabla-analisis th {
+            background: #23456b;
+            color: #ffffff;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            border-bottom: 2px solid #183754;
+        }
+        .tabla-analisis th:hover { background: #2d567f; color: #ffffff; }
+        /* Filas del cuerpo */
+        .tabla-analisis tbody td { color: #17324d; }
+        .tabla-analisis tr:hover td { background: #eef4f8; }
+        /* Flecha de ordenamiento — visible sobre fondo azul */
+        .sort-indicator { font-size: 10px; margin-left: 3px; color: #dbe7f3; }
+        @media (prefers-color-scheme: dark) {
+            .tabla-analisis thead tr,
+            .tabla-analisis th     { background: #1a2e45; color: #e8f0f8; border-bottom-color: #0f1f30; }
+            .tabla-analisis th:hover { background: #243d55; color: #ffffff; }
+            .tabla-analisis tbody td { color: #c9d8e8; }
+            .tabla-analisis tr:hover td { background: rgba(255,255,255,.05); }
+        }
+
+        /* ── Barras de progreso ── */
+        .barra-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 120px;
+        }
+        .barra-fondo {
+            flex: 1;
+            height: 8px;
+            background: #e8e8e8;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .barra-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width .2s;
+        }
+        .barra-verde  { background: #27ae60; }
+        .barra-roja   { background: #e74c3c; }
+        .barra-gris   { background: #95a5a6; }
+        .barra-val    { font-size: 12px; width: 42px; text-align: right; color: #2e4a63; }
+
+        /* ── Tarjetas de resumen ── */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .kpi-card {
+            border: 1px solid var(--border-color, #e0e0e0);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .kpi-valor { font-size: 24px; font-weight: 700; color: #2c3e50; }
+        .kpi-label { font-size: 11px; color: #777; margin-top: 2px; }
+        @media (prefers-color-scheme: dark) {
+            .kpi-valor { color: #ecf0f1; }
+        }
+
+        /* ── Badge de agrupación ── */
+        .badge-banco    { background: #d6eaf8; color: #1a5276; }
+        .badge-bancod   { background: #fef9e7; color: #7d6608; }
+        .badge-contenido{ background: #eafaf1; color: #1e8449; }
+        .badge-muestra  { background: #fde8d8; color: #922b21; }
+
+        /* ── Modal de detalle ── */
+        .modal-lab-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.45);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 9999;
+        }
+        .modal-lab {
+            background: var(--bg, #fff);
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,.25);
+            max-width: 720px;
+            width: 95%;
+            max-height: 88vh;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .modal-lab h3 { margin: 0 0 12px; font-size: 16px; }
+        .modal-lab h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 700; color: #555; }
+        .tabla-dist { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+        .tabla-dist td, .tabla-dist th {
+            padding: 5px 8px;
+            border: 1px solid #dfe5eb;
+        }
+        /* Mismo azul oscuro que la tabla principal — resuelve herencia color:#fff de style.css */
+        .tabla-dist th {
+            background: #23456b;
+            color: #ffffff;
+            font-weight: 600;
+            border-bottom: 2px solid #183754;
+        }
+        .tabla-dist td { color: #17324d; }
+        .tabla-dist tbody tr:nth-child(even) td { background: #f8fafc; }
+        @media (prefers-color-scheme: dark) {
+            .modal-lab { background: #1a1a1a; }
+            .tabla-dist th { background: #1a2e45; color: #e8f0f8; border-bottom-color: #0f1f30; }
+            .tabla-dist td { color: #c9d8e8; }
+            .tabla-dist tbody tr:nth-child(even) td { background: rgba(255,255,255,.04); }
+        }
+        .alt-correcta td { color: #1a7a40; font-weight: 600; }
+
+        /* ── Secciones colapsables ── */
+        .seccion-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 8px 0;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .seccion-toggle { font-size: 12px; color: #888; }
+
+        /* ── Controles ── */
+        .control-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: flex-end;
+            margin-bottom: 12px;
+        }
+        .control-row label { font-size: 12px; font-weight: 600; display: block; margin-bottom: 3px; }
+        .control-row select, .control-row input { font-size: 13px; padding: 5px 8px; border-radius: 5px; border: 1px solid #ccc; }
+
+        /* ── Misc ── */
+        /* #6b7280 cumple WCAG AA sobre fondo blanco (ratio ≈ 4.6:1) */
+        .txt-muted { color: #6b7280; font-size: 11px; }
+        .txt-warn  { color: #c05a00; font-size: 12px; }
+        .enunciado-corto {
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: block;
+        }
+        .overflow-x { overflow-x: auto; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Análisis Estadístico de Preguntas</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- Estado: módulo deshabilitado -->
+            <div id="estado-deshabilitado" class="card" style="display:none;">
+                <div style="padding:24px;text-align:center;">
+                    <p>El módulo de análisis de preguntas no está habilitado en este entorno.</p>
+                    <p class="txt-muted">Para activarlo, defina <code>ENABLE_ANALISIS_PREGUNTAS=true</code> en las variables de entorno del servidor.</p>
+                </div>
+            </div>
+
+            <!-- Estado: cargando lista de pruebas -->
+            <div id="estado-carga" class="card">
+                <div class="alerta alerta-info" style="font-size:13px;">Cargando pruebas disponibles…</div>
+            </div>
+
+            <!-- Selector de pruebas -->
+            <div id="panel-selector" class="card" style="display:none;">
+                <h3 style="margin-bottom:10px;">Seleccionar pruebas a analizar</h3>
+
+                <div class="aviso-historico">
+                    <strong>Aviso sobre datos históricos:</strong>
+                    Contenido reconstruido desde el intento histórico.
+                    La clasificación correcta/incorrecta corresponde a la corrección vigente
+                    en el sistema, no necesariamente a la del momento en que se rindió la prueba.
+                </div>
+
+                <div id="sugerencias-replica"></div>
+
+                <div id="lista-pruebas" style="max-height:400px;overflow-y:auto;"></div>
+
+                <div class="control-row" style="margin-top:14px;">
+                    <div>
+                        <label for="sel-politica">Política de intentos múltiples</label>
+                        <select id="sel-politica">
+                            <option value="primero" selected>Primer intento completado por participante (recomendado)</option>
+                            <option value="ultimo">Último intento completado por participante</option>
+                            <option value="todos">Todos los intentos completados (un participante puede aportar N filas)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="sel-min-muestra">Mínimo de respuestas para ranking</label>
+                        <input type="number" id="sel-min-muestra" value="5" min="1" max="999" style="width:70px;">
+                    </div>
+                </div>
+
+                <div style="margin-top:10px;">
+                    <button class="btn btn-primario" id="btn-analizar" onclick="iniciarAnalisis()">Analizar pruebas seleccionadas</button>
+                    <span id="sel-count" class="txt-muted" style="margin-left:10px;">0 seleccionadas</span>
+                </div>
+            </div>
+
+            <!-- Resultados -->
+            <div id="panel-resultados" style="display:none;">
+                <!-- Encabezado de contexto -->
+                <div class="card" id="ctx-analisis" style="font-size:12px;padding:12px 16px;margin-bottom:0;border-radius:8px 8px 0 0;border-bottom:none;background:#f9f9f9;"></div>
+
+                <!-- Aviso es_correcta permanente -->
+                <div class="aviso-historico" id="aviso-historico-res" style="border-radius:0;margin:0;"></div>
+
+                <!-- KPIs -->
+                <div class="card" style="border-radius:0;border-top:none;border-bottom:none;">
+                    <div class="kpi-grid" id="kpi-grid"></div>
+                </div>
+
+                <!-- Advertencia intentos indeterminables -->
+                <div id="aviso-indet" class="card" style="display:none;border-radius:0;border-top:none;border-bottom:none;">
+                    <div class="alerta alerta-advertencia" style="font-size:12px;"></div>
+                </div>
+
+                <!-- Advertencia grupos divergentes -->
+                <div id="aviso-divergente" class="card" style="display:none;">
+                    <div class="alerta alerta-advertencia" style="font-size:12px;"></div>
+                </div>
+
+                <!-- Controles de tabla -->
+                <div class="card" style="border-radius:0;border-top:none;border-bottom:none;padding:10px 16px;">
+                    <div class="control-row" style="margin:0;">
+                        <div>
+                            <label for="filtro-enunciado">Buscar en enunciado</label>
+                            <input type="text" id="filtro-enunciado" placeholder="filtrar…" oninput="renderTabla()" style="width:220px;">
+                        </div>
+                        <div>
+                            <label for="filtro-agrupacion">Agrupación</label>
+                            <select id="filtro-agrupacion" onchange="renderTabla()">
+                                <option value="">Todas</option>
+                                <option value="banco_exacto">Banco exacto</option>
+                                <option value="contenido">Por contenido</option>
+                                <option value="banco_divergente">Banco divergente</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="filtro-prueba">Prueba</label>
+                            <select id="filtro-prueba" onchange="renderTabla()">
+                                <option value="">Todas</option>
+                            </select>
+                        </div>
+                        <div style="margin-left:auto;align-self:flex-end;">
+                            <button class="btn btn-secundario btn-sm" onclick="exportarCSV()">Exportar resumen CSV</button>
+                            <button class="btn btn-secundario btn-sm" style="margin-left:6px;" onclick="volverSelector()">← Cambiar selección</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabla principal -->
+                <div class="card" style="border-radius:0 0 8px 8px;border-top:none;">
+                    <div class="overflow-x">
+                        <table class="tabla-analisis" id="tabla-principal">
+                            <thead>
+                                <tr>
+                                    <th data-col="orden" onclick="ordenar('orden')">#<span class="sort-indicator" id="si-orden"></span></th>
+                                    <th>Pregunta</th>
+                                    <th>Tipo</th>
+                                    <th>Agrupación</th>
+                                    <th>Pruebas</th>
+                                    <th data-col="participantes" onclick="ordenar('participantes')">Partic.<span class="sort-indicator" id="si-participantes"></span></th>
+                                    <th data-col="pct_acierto" onclick="ordenar('pct_acierto')">% Acierto<span class="sort-indicator" id="si-pct_acierto"></span></th>
+                                    <th data-col="pct_error" onclick="ordenar('pct_error')">% Error<span class="sort-indicator" id="si-pct_error"></span></th>
+                                    <th data-col="pct_omision" onclick="ordenar('pct_omision')">% Omis.<span class="sort-indicator" id="si-pct_omision"></span></th>
+                                    <th data-col="incorrectas" onclick="ordenar('incorrectas')">Errores abs.<span class="sort-indicator" id="si-incorrectas"></span></th>
+                                    <th>Alt. incorrecta más elegida</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-principal"></tbody>
+                        </table>
+                    </div>
+                    <p id="sin-resultados" style="display:none;text-align:center;color:#888;padding:20px;">
+                        No hay preguntas que coincidan con los filtros.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de detalle de pregunta -->
+<div id="modal-detalle" class="modal-lab-overlay" style="display:none;" onclick="cerrarModal(event)">
+    <div class="modal-lab" onclick="event.stopPropagation()">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+            <h3 id="modal-titulo">Detalle de pregunta</h3>
+            <button class="btn btn-secundario btn-sm" onclick="document.getElementById('modal-detalle').style.display='none'">✕ Cerrar</button>
+        </div>
+        <div id="modal-cuerpo"></div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+// ── Estado global ────────────────────────────────────────────────────────────
+
+let pruebas      = [];    // lista completa del servidor
+let datosAnalisis = null; // { resumen, tabla }
+let colOrden     = 'pct_error'; // columna activa de ordenamiento
+let dirOrden     = 'desc';      // asc | desc
+
+// ── Inicialización ────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', function () {
+    protegerRuta('administrador');
+    const u = api.getUsuario();
+    if (!u) return api.cerrarSesion();
+    const elNombre = document.getElementById('nombre-admin');
+    if (elNombre) elNombre.textContent = u.nombre_completo || u.email || '';
+    cargarPruebas();
+});
+
+async function cargarPruebas() {
+    try {
+        // api.get() usa apiFetch: agrega Authorization automáticamente y
+        // maneja 401 llamando cerrarSesion() + redirect al login.
+        const data = await api.get('/admin/analisis-preguntas/pruebas');
+        if (data === undefined) return; // 401 → apiFetch ya redirigió al login
+
+        pruebas = data;
+        document.getElementById('estado-carga').style.display = 'none';
+        renderSelector();
+        document.getElementById('panel-selector').style.display = '';
+
+    } catch (err) {
+        if (err.status === 404) {
+            document.getElementById('estado-carga').style.display = 'none';
+            document.getElementById('estado-deshabilitado').style.display = '';
+        } else if (err.status === 403) {
+            document.getElementById('estado-carga').innerHTML =
+                '<div class="alerta alerta-error">No tienes permisos de administrador para este módulo.</div>';
+        } else {
+            document.getElementById('estado-carga').innerHTML =
+                '<div class="alerta alerta-error">Error al cargar pruebas: ' + (err.message || 'Error desconocido') + '</div>';
+        }
+    }
+}
+
+// ── Renderizar selector ───────────────────────────────────────────────────────
+
+function renderSelector() {
+    // Sugerencias de posibles réplicas (mismo título inicial)
+    const grupos = {};
+    pruebas.forEach(p => {
+        const base = p.titulo.trim().toLowerCase().slice(0, 30);
+        if (!grupos[base]) grupos[base] = [];
+        grupos[base].push(p);
+    });
+    const posibles = Object.values(grupos).filter(g => g.length > 1);
+
+    const divSug = document.getElementById('sugerencias-replica');
+    if (posibles.length > 0) {
+        divSug.innerHTML = posibles.map(g =>
+            '<div class="sugerencia-replica">' +
+            '<strong>Posibles réplicas detectadas</strong> (títulos similares — confirme manualmente antes de seleccionar):<br>' +
+            g.map(p => '• ' + p.titulo).join('<br>') +
+            '</div>'
+        ).join('');
+    }
+
+    // Lista de pruebas
+    const lista = document.getElementById('lista-pruebas');
+    lista.innerHTML = pruebas.map(p => {
+        const badgeClass = p.estado === 'publicada' ? 'badge-pub'
+                         : p.estado === 'cerrada'   ? 'badge-cer' : 'badge-bor';
+        const fechas = [
+            p.fecha_inicio ? 'Desde ' + p.fecha_inicio.slice(0,10) : '',
+            p.fecha_fin    ? 'Hasta '  + p.fecha_fin.slice(0,10)   : ''
+        ].filter(Boolean).join(' · ');
+        return `
+        <div class="prueba-row">
+            <input type="checkbox" class="chk-prueba" value="${p.id}" onchange="actualizarContador()">
+            <div class="prueba-info">
+                <div class="prueba-titulo">${esc(p.titulo)}</div>
+                <div class="prueba-meta">
+                    <span class="badge-lab ${badgeClass}">${p.estado}</span>
+                    &nbsp;${p.total_preguntas} preguntas · ${p.intentos_completados} completados
+                    ${fechas ? ' · ' + fechas : ''}
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Inicializar estado del botón (0 seleccionadas → deshabilitado)
+    actualizarContador();
+}
+
+function actualizarContador() {
+    const n = document.querySelectorAll('.chk-prueba:checked').length;
+    document.getElementById('sel-count').textContent = n + ' seleccionada' + (n !== 1 ? 's' : '');
+    document.getElementById('btn-analizar').disabled = n === 0;
+}
+
+// ── Iniciar análisis ──────────────────────────────────────────────────────────
+
+async function iniciarAnalisis() {
+    const ids = [...document.querySelectorAll('.chk-prueba:checked')].map(c => c.value);
+    if (ids.length === 0) return;
+
+    const politica   = document.getElementById('sel-politica').value;
+    const minMuestra = parseInt(document.getElementById('sel-min-muestra').value) || 5;
+
+    document.getElementById('btn-analizar').textContent = 'Analizando…';
+    document.getElementById('btn-analizar').disabled = true;
+
+    try {
+        const params = new URLSearchParams({
+            pruebas:    ids.join(','),
+            politica,
+            min_muestra: minMuestra
+        });
+
+        // api.get() usa apiFetch: Authorization automático, 401 → cerrarSesion + redirect.
+        const data = await api.get('/admin/analisis-preguntas/analizar?' + params);
+        if (data === undefined) return; // 401 → apiFetch ya redirigió al login
+
+        datosAnalisis = data;
+        renderResultados();
+
+    } catch (err) {
+        if (err.status === 404) {
+            document.getElementById('panel-selector').style.display = 'none';
+            document.getElementById('estado-deshabilitado').style.display = '';
+        } else {
+            alert('Error al analizar: ' + (err.message || 'Error desconocido'));
+        }
+    } finally {
+        document.getElementById('btn-analizar').textContent = 'Analizar pruebas seleccionadas';
+        document.getElementById('btn-analizar').disabled = false;
+    }
+}
+
+function volverSelector() {
+    document.getElementById('panel-resultados').style.display = 'none';
+    document.getElementById('panel-selector').style.display   = '';
+    datosAnalisis = null;
+}
+
+// ── Renderizar resultados ─────────────────────────────────────────────────────
+
+function renderResultados() {
+    const { resumen, tabla } = datosAnalisis;
+
+    document.getElementById('panel-selector').style.display   = 'none';
+    document.getElementById('panel-resultados').style.display = '';
+
+    // Contexto
+    const politicaLabel = resumen.politica_intentos === 'primero' ? 'Primer intento por participante'
+                        : resumen.politica_intentos === 'ultimo'  ? 'Último intento por participante'
+                        : 'Todos los intentos completados';
+    document.getElementById('ctx-analisis').innerHTML =
+        '<strong>Pruebas:</strong> ' + resumen.pruebas.map(p => esc(p.titulo)).join(' · ') +
+        ' &nbsp;|&nbsp; <strong>Política:</strong> ' + politicaLabel +
+        ' &nbsp;|&nbsp; <strong>Mínimo de muestra:</strong> ' + resumen.min_muestra +
+        ' &nbsp;|&nbsp; <strong>Generado:</strong> ' + new Date(resumen.generado_en).toLocaleString('es-CL');
+
+    // Aviso es_correcta
+    document.getElementById('aviso-historico-res').innerHTML =
+        '<strong>Aviso:</strong> ' + esc(resumen.aviso_es_correcta);
+
+    // KPIs
+    const kpis = [
+        { v: resumen.pruebas_seleccionadas,          l: 'Pruebas' },
+        { v: resumen.participantes_unicos,            l: 'Participantes únicos' },
+        { v: resumen.intentos_considerados,           l: 'Intentos analizados' },
+        { v: resumen.grupos_preguntas,                l: 'Grupos de preguntas' },
+        { v: resumen.respuestas_registradas,          l: 'Respuestas registradas (filas DB)' },
+        { v: resumen.items_considerados_total,        l: 'Ítems considerados (c+i+o)' },
+        { v: resumen.omisiones_implicitas_total,      l: 'Omisiones implícitas' },
+        { v: resumen.correctas_total,                 l: 'Correctas totales' },
+        { v: resumen.incorrectas_total,               l: 'Incorrectas totales' },
+        { v: resumen.omitidas_total,                  l: 'Omitidas totales' },
+        { v: resumen.preguntas_anuladas_excluidas,    l: 'Preguntas anuladas (excluidas)' },
+        { v: resumen.grupos_banco_divergente,         l: 'Grupos banco divergente' }
+    ];
+    document.getElementById('kpi-grid').innerHTML = kpis.map(k =>
+        `<div class="kpi-card"><div class="kpi-valor">${k.v ?? '—'}</div><div class="kpi-label">${k.l}</div></div>`
+    ).join('');
+
+    // Aviso intentos sin orden determinable
+    const avIndet = document.getElementById('aviso-indet');
+    if (resumen.intentos_sin_orden_determinable > 0) {
+        avIndet.style.display = '';
+        avIndet.querySelector('.alerta').textContent =
+            'Advertencia: ' + resumen.intentos_sin_orden_determinable +
+            ' intento(s) no tienen orden_preguntas_json ni snapshot de preguntas. ' +
+            'Para esos intentos solo se contaron omisiones explícitas; ' +
+            'las omisiones implícitas no son determinables.';
+    } else {
+        avIndet.style.display = 'none';
+    }
+
+    // Aviso grupos divergentes
+    const avDiv = document.getElementById('aviso-divergente');
+    if (resumen.grupos_banco_divergente > 0) {
+        avDiv.style.display = '';
+        avDiv.querySelector('.alerta').textContent =
+            resumen.grupos_banco_divergente + ' grupo(s) con mismo banco_pregunta_id ' +
+            'pero contenido diferente (versiones distintas). Se tratan de forma independiente.';
+    } else {
+        avDiv.style.display = 'none';
+    }
+
+    // Filtro por prueba
+    const filtroPrueba = document.getElementById('filtro-prueba');
+    filtroPrueba.innerHTML = '<option value="">Todas</option>' +
+        resumen.pruebas.map(p => `<option value="${p.id}">${esc(p.titulo)}</option>`).join('');
+
+    renderTabla();
+}
+
+// ── Renderizar tabla con filtros y ordenamiento ───────────────────────────────
+
+function renderTabla() {
+    if (!datosAnalisis) return;
+    const { tabla } = datosAnalisis;
+
+    const textoBusq = (document.getElementById('filtro-enunciado').value || '').toLowerCase();
+    const agrupFiltro = document.getElementById('filtro-agrupacion').value;
+    const pruebaFiltro = document.getElementById('filtro-prueba').value;
+
+    let filas = tabla.filter(r => {
+        if (textoBusq && !r.enunciado.toLowerCase().includes(textoBusq)) return false;
+        if (agrupFiltro && r.tipo_agrupacion !== agrupFiltro) return false;
+        if (pruebaFiltro && !r.pruebas_ids.includes(pruebaFiltro)) return false;
+        return true;
+    });
+
+    // Ordenar
+    filas.sort((a, b) => {
+        const va = a[colOrden] ?? (dirOrden === 'asc' ? Infinity : -Infinity);
+        const vb = b[colOrden] ?? (dirOrden === 'asc' ? Infinity : -Infinity);
+        return dirOrden === 'asc' ? (va < vb ? -1 : va > vb ? 1 : 0)
+                                  : (vb < va ? -1 : vb > va ? 1 : 0);
+    });
+
+    // Actualizar indicadores de sort
+    ['orden','participantes','pct_acierto','pct_error','pct_omision','incorrectas'].forEach(c => {
+        const el = document.getElementById('si-' + c);
+        if (el) el.textContent = c === colOrden ? (dirOrden === 'asc' ? '▲' : '▼') : '';
+    });
+
+    const tbody = document.getElementById('tbody-principal');
+    const sin   = document.getElementById('sin-resultados');
+
+    if (filas.length === 0) {
+        tbody.innerHTML = '';
+        sin.style.display = '';
+        return;
+    }
+    sin.style.display = 'none';
+
+    tbody.innerHTML = filas.map((r, idx) => {
+        const badgeAgrup = r.tipo_agrupacion === 'banco_exacto'     ? '<span class="badge-lab badge-banco">banco ✓</span>'
+                         : r.tipo_agrupacion === 'banco_divergente' ? '<span class="badge-lab badge-bancod">banco ≠</span>'
+                         : '<span class="badge-lab badge-contenido">contenido</span>';
+        const badgeMuestra = r.muestra_baja ? ' <span class="badge-lab badge-muestra">muestra baja</span>' : '';
+
+        const pctA = r.pct_acierto  ?? 0;
+        const pctE = r.pct_error    ?? 0;
+        const pctO = r.pct_omision  ?? 0;
+
+        const altTop = r.alt_incorrecta_top
+            ? esc(r.alt_incorrecta_top.slice(0, 40)) + (r.alt_incorrecta_top.length > 40 ? '…' : '') +
+              ' <span class="txt-muted">(' + r.alt_incorrecta_top_n + ')</span>'
+            : '<span class="txt-muted">—</span>';
+
+        return `
+        <tr>
+            <td class="txt-muted">${idx + 1}</td>
+            <td>
+                <span class="enunciado-corto" title="${esc(r.enunciado)}">${esc(r.enunciado)}</span>
+                ${badgeMuestra}
+            </td>
+            <td class="txt-muted" style="white-space:nowrap;">${esc(r.tipo || '—')}</td>
+            <td>${badgeAgrup}</td>
+            <td class="txt-muted" style="font-size:11px;">${r.pruebas_titulos.map(t => esc(t.slice(0,25))).join('<br>')}</td>
+            <td style="text-align:right;">${r.participantes}</td>
+            <td>${barra(pctA, 'verde', r.pct_acierto)}</td>
+            <td>${barra(pctE, 'roja',  r.pct_error)}</td>
+            <td>${barra(pctO, 'gris',  r.pct_omision)}</td>
+            <td style="text-align:right;">${r.incorrectas}</td>
+            <td style="font-size:12px;">${altTop}</td>
+            <td>
+                <button class="btn btn-secundario btn-sm"
+                    onclick="abrirDetalle(${idx_en_tabla(r)})">
+                    Ver detalle
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+
+    // Guardamos referencia a las filas filtradas para el botón "Ver detalle"
+    window._filasActuales = filas;
+}
+
+function idx_en_tabla(r) {
+    return "'" + r.grupo_clave.replace(/'/g, "\\'") + "'";
+}
+
+function barra(pct, color, valor) {
+    const v = Math.max(0, Math.min(100, pct || 0));
+    const txt = valor != null ? valor.toFixed(1) + '%' : '—';
+    return `<div class="barra-wrap">
+        <div class="barra-fondo"><div class="barra-fill barra-${color}" style="width:${v}%"></div></div>
+        <span class="barra-val">${txt}</span>
+    </div>`;
+}
+
+function ordenar(col) {
+    if (colOrden === col) {
+        dirOrden = dirOrden === 'asc' ? 'desc' : 'asc';
+    } else {
+        colOrden = col;
+        dirOrden = col === 'pct_acierto' ? 'desc' : 'desc';
+    }
+    renderTabla();
+}
+
+// ── Modal de detalle ──────────────────────────────────────────────────────────
+
+function abrirDetalle(claveGrupo) {
+    const r = (window._filasActuales || datosAnalisis.tabla).find(f => f.grupo_clave === claveGrupo);
+    if (!r) return;
+
+    document.getElementById('modal-titulo').textContent = 'Detalle: ' + r.enunciado.slice(0, 60) + (r.enunciado.length > 60 ? '…' : '');
+
+    const contenido = [];
+
+    // Tipo y agrupación
+    contenido.push(`<p class="txt-muted" style="margin:0 0 10px;">
+        Tipo: <strong>${esc(r.tipo)}</strong> &nbsp;·&nbsp;
+        Agrupación: <strong>${esc(r.tipo_agrupacion)}</strong>
+        ${r.banco_pregunta_id ? '&nbsp;·&nbsp; Banco: <code>' + r.banco_pregunta_id.slice(0,8) + '…</code>' : ''}
+    </p>`);
+
+    // Aviso es_correcta
+    contenido.push(`<div class="aviso-historico">
+        <strong>Aviso:</strong> ${esc(datosAnalisis.resumen.aviso_es_correcta)}
+    </div>`);
+
+    // Enunciado completo
+    contenido.push('<h4>Enunciado (contenido actual)</h4>');
+    contenido.push('<p>' + esc(r.enunciado) + '</p>');
+
+    // Imagen o video
+    if (r.imagen_url) {
+        contenido.push('<h4>Imagen asociada</h4><p class="txt-muted">' + esc(r.imagen_url) + '</p>');
+    }
+    if (r.video_url) {
+        contenido.push('<h4>Video asociado</h4><p class="txt-muted">' + esc(r.video_url) + '</p>');
+    }
+
+    // Alternativas con distribución
+    const totalResp = r.correctas + r.incorrectas + r.omitidas;
+    contenido.push('<h4>Alternativas y distribución de respuestas incorrectas</h4>');
+
+    const distMap = {};
+    (r.distribucion_incorrectas || []).forEach(d => { distMap[norm(d.texto)] = d.count; });
+
+    const tablaAlts = ['<table class="tabla-dist"><thead><tr><th>Alternativa</th><th>Correcta</th><th>Elegida incorrectamente (aprox.)</th></tr></thead><tbody>'];
+    (r.alternativas || []).forEach(a => {
+        const textoNorm = norm(a.texto);
+        const selInc    = distMap[textoNorm] || 0;
+        const pctInc    = totalResp > 0 ? (selInc / totalResp * 100).toFixed(1) + '%' : '—';
+        const trClass   = a.es_correcta ? 'alt-correcta' : '';
+        tablaAlts.push(`<tr class="${trClass}">
+            <td>${esc(a.texto)}</td>
+            <td style="text-align:center;">${a.es_correcta ? '✓' : ''}</td>
+            <td style="text-align:right;">${selInc > 0 ? selInc + ' (' + pctInc + ')' : '—'}</td>
+        </tr>`);
+    });
+    tablaAlts.push('</tbody></table>');
+    contenido.push(tablaAlts.join(''));
+
+    contenido.push('<p class="txt-muted" style="margin-top:6px;">Nota: "elegida incorrectamente" refleja la corrección vigente en el sistema.</p>');
+
+    // Estadísticas globales
+    contenido.push('<h4>Estadísticas globales</h4>');
+    contenido.push(`<table class="tabla-dist"><thead><tr>
+        <th>Participantes</th><th>Correctas</th><th>Incorrectas</th><th>Omitidas</th>
+        <th>% Acierto</th><th>% Error</th><th>% Omisión</th>
+    </tr></thead><tbody><tr>
+        <td>${r.participantes}</td>
+        <td>${r.correctas}</td>
+        <td>${r.incorrectas}</td>
+        <td>${r.omitidas}</td>
+        <td>${r.pct_acierto != null ? r.pct_acierto + '%' : '—'}</td>
+        <td>${r.pct_error   != null ? r.pct_error   + '%' : '—'}</td>
+        <td>${r.pct_omision != null ? r.pct_omision + '%' : '—'}</td>
+    </tr></tbody></table>`);
+
+    if (r.muestra_baja) {
+        contenido.push('<p class="txt-warn">⚠ Muestra baja — los porcentajes pueden no ser representativos.</p>');
+    }
+
+    // Detalle por prueba
+    if ((r.detalle_por_prueba || []).length > 1) {
+        contenido.push('<h4>Detalle por prueba</h4>');
+        contenido.push('<table class="tabla-dist"><thead><tr><th>Prueba</th><th>Partic.</th><th>Correctas</th><th>Incorrectas</th><th>Omitidas</th><th>% Acierto</th><th>% Error</th></tr></thead><tbody>');
+        (r.detalle_por_prueba || []).forEach(d => {
+            contenido.push(`<tr>
+                <td>${esc(d.titulo)}</td>
+                <td>${d.participantes}</td>
+                <td>${d.correctas}</td>
+                <td>${d.incorrectas}</td>
+                <td>${d.omitidas}</td>
+                <td>${d.pct_acierto != null ? d.pct_acierto + '%' : '—'}</td>
+                <td>${d.pct_error   != null ? d.pct_error   + '%' : '—'}</td>
+            </tr>`);
+        });
+        contenido.push('</tbody></table>');
+
+        // Diferencia porcentual entre pruebas (si hay exactamente 2)
+        if (r.detalle_por_prueba.length === 2) {
+            const [d1, d2] = r.detalle_por_prueba;
+            if (d1.pct_acierto != null && d2.pct_acierto != null) {
+                const diffNum = d1.pct_acierto - d2.pct_acierto;
+                const diff = diffNum.toFixed(1);
+                contenido.push(`<p class="txt-muted">Diferencia de acierto entre pruebas: ${diffNum > 0 ? '+' : ''}${diff}%</p>`);
+            }
+        }
+    }
+
+    document.getElementById('modal-cuerpo').innerHTML = contenido.join('');
+    document.getElementById('modal-detalle').style.display = 'flex';
+}
+
+function cerrarModal(e) {
+    if (e.target === document.getElementById('modal-detalle'))
+        document.getElementById('modal-detalle').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape')
+        document.getElementById('modal-detalle').style.display = 'none';
+});
+
+// ── Exportar CSV — generado en frontend desde datos ya cargados ───────────────
+
+function exportarCSV() {
+    if (!datosAnalisis) return;
+    const { resumen, tabla } = datosAnalisis;
+
+    const encab = ['pregunta','tipo','pruebas','participantes',
+                   'respuestas_registradas','items_considerados','omisiones_implicitas',
+                   'correctas','incorrectas','omitidas',
+                   'pct_acierto','pct_error','pct_omision',
+                   'alt_incorrecta_mas_elegida','origen_agrupacion','fuente_contenido'];
+
+    function cc(v) {
+        const s = String(v ?? '');
+        const safe = /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+        return '"' + safe.replace(/"/g, '""') + '"';
+    }
+
+    const filas = tabla.map(r => [
+        cc(r.enunciado),
+        cc(r.tipo),
+        cc(r.pruebas_titulos.join(' | ')),
+        cc(r.participantes),
+        cc(r.respuestas_registradas ?? ''),
+        cc(r.items_considerados ?? ''),
+        cc(r.omisiones_implicitas ?? 0),
+        cc(r.correctas),
+        cc(r.incorrectas),
+        cc(r.omitidas),
+        cc(r.pct_acierto != null ? r.pct_acierto + '%' : ''),
+        cc(r.pct_error   != null ? r.pct_error   + '%' : ''),
+        cc(r.pct_omision != null ? r.pct_omision + '%' : ''),
+        cc(r.alt_incorrecta_top || ''),
+        cc(r.tipo_agrupacion),
+        cc('contenido_actual')
+    ].join(';'));
+
+    const ts  = new Date().toISOString().slice(0,10);
+    const bom = '﻿';
+    const csv = bom + [encab.map(cc).join(';'), ...filas].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'analisis-preguntas_' + ts + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ── Utilidades ────────────────────────────────────────────────────────────────
+
+function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function norm(s) {
+    return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+</script>
+</body>
+</html>
