@@ -888,6 +888,10 @@ function renderJuradosDesignacion() {
         const yaHtml = j.ya_asignado
             ? `<span style="color:var(--gris); font-size:11px; margin-left:6px;">ya asignado</span>`
             : '';
+        const designacionesHtml = `<div style="margin-top:4px;"><span class="badge badge-jurado">${j.designaciones ?? 0} designaciones</span></div>`;
+        const asociacionTxt = j.asociacion ? sanitizar(j.asociacion) : 'Sin información';
+        const comunaTxt = j.comuna ? sanitizar(j.comuna) : 'Sin información';
+        const infoJuradoHtml = `<div style="font-size:12px; color:var(--gris); margin-top:3px;">Asociación: ${asociacionTxt} · Comuna: ${comunaTxt}</div>`;
         const histHtml = j.historial.length > 0
             ? `<div style="font-size:11px; color:var(--gris); margin-top:4px; line-height:1.6;">
                 <span style="font-weight:600;">Últimos:</span>
@@ -909,6 +913,8 @@ function renderJuradosDesignacion() {
                 <div style="font-weight:600; font-size:14px;">
                     ${sanitizar(j.nombre_completo)}${badgeCat}${repiteHtml}${yaHtml}
                 </div>
+                ${designacionesHtml}
+                ${infoJuradoHtml}
                 ${histHtml}
             </div>
             <button ${btnStyle}>${j.ya_asignado ? 'Asignado' : 'Designar'}</button>

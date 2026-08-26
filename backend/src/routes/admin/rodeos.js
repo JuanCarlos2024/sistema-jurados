@@ -715,7 +715,7 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     // Cargar todos los jurados activos (con filtros de búsqueda)
     let query = supabase
         .from('usuarios_pagados')
-        .select('id, nombre_completo, categoria, codigo_interno')
+        .select('id, nombre_completo, categoria, codigo_interno, asociacion, comuna')
         .eq('activo', true)
         .eq('tipo_persona', 'jurado')
         .order('nombre_completo');
@@ -802,18 +802,42 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     }
     const repiteAsocSet = new Set(asigAsociacion.map(a => a.usuario_pagado_id));
 
-    // Últimos rodeos de cada jurado (sin join de notas para evitar problemas con FK UNIQUE)
-    const { data: ultRodeos } = await supabase
-        .from('asignaciones')
-        .select('id, usuario_pagado_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
-        .in('usuario_pagado_id', idsDisp)
-        .neq('estado', 'anulado')
-        .order('created_at', { ascending: false });
+    // Historial completo de asignaciones no anuladas de cada jurado (paginado para
+    // no depender del tope implícito de filas de PostgREST/Supabase — mismo patrón
+    // de paginación usado en analisis-preguntas.js). Sirve tanto para "Últimos"
+    // como para el contador histórico de designaciones (rodeos distintos).
+    const PAGINA_HIST = 900;
+    let ultRodeos = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error: errHist } = await supabase
+                .from('asignaciones')
+                .select('id, usuario_pagado_id, rodeo_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
+                .in('usuario_pagado_id', idsDisp)
+                .neq('estado', 'anulado')
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA_HIST - 1);
+            if (errHist) break;
+            const filas = pagina || [];
+            ultRodeos = ultRodeos.concat(filas);
+            if (filas.length < PAGINA_HIST) break;
+            offset += PAGINA_HIST;
+        }
+    }
+
+    // Contador histórico de designaciones: rodeos distintos por jurado (evita que
+    // filas duplicadas para el mismo rodeo inflen el total).
+    const designacionesMap = {};
+    for (const a of ultRodeos) {
+        if (!designacionesMap[a.usuario_pagado_id]) designacionesMap[a.usuario_pagado_id] = new Set();
+        designacionesMap[a.usuario_pagado_id].add(a.rodeo_id);
+    }
 
     // Construir historial (máx 3 por jurado) y recolectar los asignacion_ids usados
     const historialMap = {};
     const asigIdsHistorial = [];
-    for (const a of (ultRodeos || [])) {
+    for (const a of ultRodeos) {
         if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
         if (historialMap[a.usuario_pagado_id].length < 3) {
             historialMap[a.usuario_pagado_id].push({
@@ -859,6 +883,9 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
         nombre_completo:   j.nombre_completo,
         categoria:         j.categoria,
         codigo_interno:    j.codigo_interno,
+        asociacion:        j.asociacion || null,
+        comuna:            j.comuna || null,
+        designaciones:     designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
         ya_asignado:       yaAsignadosSet.has(j.id),
         repite_asociacion: repiteAsocSet.has(j.id),
         historial:         historialMap[j.id] || []
