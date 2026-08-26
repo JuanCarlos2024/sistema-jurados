@@ -891,6 +891,13 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
         historial:         historialMap[j.id] || []
     }));
 
+    // Orden de presentación (no altera quiénes califican, solo el orden ya calculado
+    // arriba): más designaciones primero; empate, alfabético por nombre.
+    resultado.sort((a, b) => {
+        if (b.designaciones !== a.designaciones) return b.designaciones - a.designaciones;
+        return a.nombre_completo.localeCompare(b.nombre_completo, 'es');
+    });
+
     res.json({ jurados: resultado, asociacion_rodeo: rodeo.asociacion });
 });
 
