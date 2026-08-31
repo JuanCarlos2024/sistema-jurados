@@ -892,9 +892,9 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     }));
 
     // Orden de presentación (no altera quiénes califican, solo el orden ya calculado
-    // arriba): más designaciones primero; empate, alfabético por nombre.
+    // arriba): menos designaciones primero; empate, alfabético por nombre.
     resultado.sort((a, b) => {
-        if (b.designaciones !== a.designaciones) return b.designaciones - a.designaciones;
+        if (a.designaciones !== b.designaciones) return a.designaciones - b.designaciones;
         return a.nombre_completo.localeCompare(b.nombre_completo, 'es');
     });
 
