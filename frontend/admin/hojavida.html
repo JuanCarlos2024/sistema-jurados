@@ -210,6 +210,8 @@ function renderTodo(d) {
 
     ${renderHistorialAdmin(hadm)}
 
+    ${renderResumenSituaciones(resumen_situaciones)}
+
     ${renderIndicadores(indicadores)}
 
     ${comparacion ? renderComparacion(comparacion, perfil, indicadores) : ''}
@@ -230,8 +232,6 @@ function renderTodo(d) {
         <div class="seccion-titulo">Posición en la categoría${perfil.categoria ? ' ' + perfil.categoria : ''} — total rodeos histórico</div>
         <div id="chart-pares-wrap"><canvas id="chart-pares"></canvas></div>
     </div>
-
-    ${renderResumenSituaciones(resumen_situaciones)}
 
     ${renderHistorial(historial)}
 
@@ -304,21 +304,19 @@ function renderResumenSituaciones(resumen) {
     const total   = resumen?.total ?? 0;
     const tipos   = Object.entries(porTipo);
 
-    const tarjetas = tipos.length
-        ? tipos.map(([tipo, cant]) => `
+    const tarjetasTipo = tipos.map(([tipo, cant]) => `
             <div class="stat-card">
                 <div class="val">${cant}</div>
                 <div class="lbl">${sanitizar(TIPO_SITUACION_LABEL[tipo] || tipo)}</div>
-            </div>`).join('')
-        : `<p style="color:var(--gris); font-size:13px;">Sin situaciones registradas.</p>`;
+            </div>`).join('');
 
     return `<div class="seccion-bloque">
         <div class="seccion-titulo">Resumen de situaciones</div>
         <div class="stat-grid">
-            ${tarjetas}
+            ${tarjetasTipo}
             <div class="stat-card" style="border-left:3px solid var(--primario);">
                 <div class="val" style="font-weight:700;">${total}</div>
-                <div class="lbl">Total</div>
+                <div class="lbl">Total situaciones</div>
             </div>
         </div>
     </div>`;
