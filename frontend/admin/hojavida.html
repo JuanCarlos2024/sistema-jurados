@@ -298,6 +298,24 @@ function renderComparacion(comp, perfil, ind) {
 // Mismo mapeo de tipo_caso → etiqueta usado en el resto del sistema
 // (frontend/js/utils.js, reporte-deportivo.js) — no se inventa nomenclatura nueva.
 const TIPO_SITUACION_LABEL = { interpretativa: 'Apreciación', reglamentaria: 'Reglamentaria', informativo: 'Conceptual/Informativo' };
+// Iniciales para la celda compacta de la tabla (R=Reglamentaria, A=Apreciación, C=Conceptual)
+const TIPO_SITUACION_SIGLA = { reglamentaria: 'R', interpretativa: 'A', informativo: 'C' };
+const ORDEN_TIPOS_SITUACION = ['reglamentaria', 'interpretativa', 'informativo'];
+
+// Celda compacta "Situaciones" de la tabla de historial: desglose R/A/C + Total.
+function renderSituacionesCelda(porTipo, total) {
+    if (!total) return '<span style="text-align:center; display:block;">0</span>';
+    const tipos = ORDEN_TIPOS_SITUACION.filter(t => porTipo?.[t]);
+    const columnas = [...tipos.map(t => ({ sigla: TIPO_SITUACION_SIGLA[t], label: TIPO_SITUACION_LABEL[t], val: porTipo[t] })),
+                      { sigla: 'T', label: 'Total situaciones', val: total }];
+    return `<div style="display:flex; gap:6px; justify-content:center;">
+        ${columnas.map(c => `
+            <div style="text-align:center;" title="${sanitizar(c.label)}">
+                <div style="font-size:10px; font-weight:700; color:var(--gris);">${c.sigla}</div>
+                <div style="font-size:12px; font-weight:${c.sigla === 'T' ? '700' : '600'};">${c.val}</div>
+            </div>`).join('')}
+    </div>`;
+}
 
 function renderResumenSituaciones(resumen) {
     const porTipo = resumen?.porTipo || {};
@@ -360,7 +378,7 @@ function renderHistorial(historial) {
             <td>${a.categoria_aplicada || '—'}</td>
             <td class="monto-positivo">${rechazado ? '<span class="texto-gris">—</span>' : formatCLP(a.pago_base_calculado)}</td>
             <td>${estadoBadge}</td>
-            <td style="text-align:center;">${a.situaciones ?? 0}</td>
+            <td>${renderSituacionesCelda(a.situaciones_por_tipo, a.situaciones ?? 0)}</td>
             <td>${notaChip(nr?.nota)}</td>
             <td style="max-width:220px; font-size:12px; color:${comentarioAdmin ? 'var(--oscuro)' : 'var(--gris)'};">${comentarioAdmin ? sanitizar(comentarioAdmin) : '—'}</td>
             <td>

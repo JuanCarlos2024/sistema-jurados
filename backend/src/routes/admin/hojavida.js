@@ -159,7 +159,8 @@ router.get('/:id', async (req, res) => {
             notas_rodeo: notasMap[a.id] || null,
             eval_id:     evalMap[a.rodeos?.id]?.id     || null,
             eval_estado: evalMap[a.rodeos?.id]?.estado || null,
-            situaciones: situaciones.porRodeo[a.rodeos?.id] || 0
+            situaciones: situaciones.porRodeo[a.rodeos?.id] || 0,
+            situaciones_por_tipo: situaciones.porTipoPorRodeo[a.rodeos?.id] || {}
         }));
 
     // Resumen acumulado de situaciones por tipo, sobre las mismas filas del historial
