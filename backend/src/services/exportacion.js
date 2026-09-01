@@ -505,7 +505,73 @@ async function exportarAgregado(tipo, datos, formato, res) {
     await wb.xlsx.write(res);
 }
 
+function formatFechaDDMMYYYY(iso) {
+    if (!iso) return '—';
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function sanitizarNombreArchivo(nombre) {
+    return (nombre || 'jurado')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '') // quitar tildes
+        .replace(/[^a-zA-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .toUpperCase();
+}
+
+/**
+ * Exporta a Excel el historial completo de rodeos de un jurado (Hoja de Vida).
+ * `filas`: [{ fecha, asociacion, club, tipo_rodeo, situaciones, nota }] — ya
+ * debe venir con el historial COMPLETO (no solo lo paginado/visible en pantalla).
+ */
+async function exportarHistorialHojaVida(perfil, filas, res) {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Historial de Rodeos');
+
+    ws.addRow(['HOJA DE VIDA — HISTORIAL DE RODEOS']).font = { bold: true, size: 13 };
+    ws.addRow([`Nombre: ${perfil?.nombre_completo || '—'}`]);
+    ws.addRow([`Asociación: ${perfil?.asociacion || 'Sin información'}`]);
+    ws.addRow([`Categoría: ${perfil?.categoria || 'Sin información'}`]);
+    ws.addRow([`Comuna: ${perfil?.comuna || 'Sin información'}`]);
+    ws.addRow([]);
+
+    ws.columns = [
+        { header: 'Fecha', key: 'f', width: 14 },
+        { header: 'Asociación', key: 'a', width: 22 },
+        { header: 'Club', key: 'c', width: 26 },
+        { header: 'Tipo de Rodeo', key: 't', width: 28 },
+        { header: 'Cantidad de Situaciones', key: 's', width: 20 },
+        { header: 'Nota', key: 'n', width: 12 },
+    ];
+    const headerRow = ws.getRow(7);
+    headerRow.values = ['Fecha', 'Asociación', 'Club', 'Tipo de Rodeo', 'Cantidad de Situaciones', 'Nota'];
+    headerRow.eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
+
+    if (!filas || filas.length === 0) {
+        ws.addRow(['No existen rodeos registrados para este jurado.']);
+    } else {
+        filas.forEach((f, i) => {
+            const row = ws.addRow([
+                formatFechaDDMMYYYY(f.fecha),
+                f.asociacion || '—',
+                f.club || '—',
+                f.tipo_rodeo || '—',
+                f.situaciones ?? 0,
+                f.nota != null ? Number(f.nota) : 'Sin nota'
+            ]);
+            if (i % 2 === 0) row.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F4F8' } }; });
+        });
+    }
+
+    autoWidth(ws);
+    const filename = `Hoja_Vida_${sanitizarNombreArchivo(perfil?.nombre_completo)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    await wb.xlsx.write(res);
+}
+
 module.exports = {
     exportarResumenMensual, exportarBonos, exportarPendientes,
-    exportarRodeos, exportarResumenJurados, exportarDetalleJurado, exportarAgregado
+    exportarRodeos, exportarResumenJurados, exportarDetalleJurado, exportarAgregado,
+    exportarHistorialHojaVida
 };

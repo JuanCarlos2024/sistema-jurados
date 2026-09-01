@@ -2,6 +2,68 @@ const express   = require('express');
 const router    = express.Router();
 const supabase  = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
+const { exportarHistorialHojaVida } = require('../../services/exportacion');
+
+const PAGINA_HV = 900; // paginación defensiva para no depender del tope implícito de Supabase/PostgREST
+
+// Cantidad de "situaciones" (casos de evaluación técnica) respondidas por el jurado
+// en cada asignación: solo casos no anulados, de evaluaciones ya publicadas/cerradas.
+// Devuelve { [asignacion_id]: cantidad }. Sin N+1: consultas batch por lote de rodeos/casos.
+async function calcularSituacionesPorAsignacion(asignacionIds, rodeoIds) {
+    const mapa = {};
+    if (!asignacionIds.length || !rodeoIds.length) return mapa;
+
+    const { data: evals } = await supabase
+        .from('evaluaciones')
+        .select('id, rodeo_id')
+        .in('rodeo_id', rodeoIds)
+        .in('estado', ['publicado', 'cerrado']);
+    const evaluacionIds = [...new Set((evals || []).map(e => e.id))];
+    if (evaluacionIds.length === 0) return mapa;
+
+    let casos = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error } = await supabase
+                .from('evaluacion_casos')
+                .select('id')
+                .in('evaluacion_id', evaluacionIds)
+                .eq('anulado', false)
+                .range(offset, offset + PAGINA_HV - 1);
+            if (error) break;
+            const filas = pagina || [];
+            casos = casos.concat(filas);
+            if (filas.length < PAGINA_HV) break;
+            offset += PAGINA_HV;
+        }
+    }
+    const casoIds = casos.map(c => c.id);
+    if (casoIds.length === 0) return mapa;
+
+    let respuestas = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error } = await supabase
+                .from('evaluacion_respuestas_jurado')
+                .select('asignacion_id, caso_id')
+                .in('asignacion_id', asignacionIds)
+                .in('caso_id', casoIds)
+                .range(offset, offset + PAGINA_HV - 1);
+            if (error) break;
+            const filas = pagina || [];
+            respuestas = respuestas.concat(filas);
+            if (filas.length < PAGINA_HV) break;
+            offset += PAGINA_HV;
+        }
+    }
+
+    for (const r of respuestas) {
+        mapa[r.asignacion_id] = (mapa[r.asignacion_id] || 0) + 1;
+    }
+    return mapa;
+}
 
 // ─── GET /api/admin/hojavida/:id ────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
@@ -10,30 +72,40 @@ router.get('/:id', async (req, res) => {
     // 1. Perfil
     const { data: perfil, error: errPerfil } = await supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, asociacion, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, created_at')
+        .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, comuna, asociacion, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, created_at')
         .eq('id', uid)
         .single();
 
     if (errPerfil || !perfil) return res.status(404).json({ error: 'Usuario no encontrado' });
 
-    // 2. Asignaciones — sin inline join a notas_rodeo para evitar fallo por cache de schema
-    const { data: asigs, error: errAsigs } = await supabase
-        .from('asignaciones')
-        .select(`
-            id, estado, estado_designacion, categoria_aplicada,
-            valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
-            comentario_admin,
-            rodeos(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)
-        `)
-        .eq('usuario_pagado_id', uid)
-        .order('created_at', { ascending: false });
+    // 2. Asignaciones — sin inline join a notas_rodeo para evitar fallo por cache de schema.
+    // Paginada con .range() para no depender del tope implícito de filas de Supabase/PostgREST.
+    let todasAsigs = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error: errAsigs } = await supabase
+                .from('asignaciones')
+                .select(`
+                    id, estado, estado_designacion, categoria_aplicada,
+                    valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
+                    comentario_admin,
+                    rodeos(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)
+                `)
+                .eq('usuario_pagado_id', uid)
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA_HV - 1);
 
-    if (errAsigs) {
-        console.error('[hojavida] error asignaciones:', errAsigs.message);
-        return res.status(500).json({ error: 'Error al obtener historial: ' + errAsigs.message });
+            if (errAsigs) {
+                console.error('[hojavida] error asignaciones:', errAsigs.message);
+                return res.status(500).json({ error: 'Error al obtener historial: ' + errAsigs.message });
+            }
+            const filas = pagina || [];
+            todasAsigs = todasAsigs.concat(filas);
+            if (filas.length < PAGINA_HV) break;
+            offset += PAGINA_HV;
+        }
     }
-
-    const todasAsigs = asigs || [];
 
     // 3. Notas — query separada para no romper la carga si la tabla es nueva o el cache no refrescó
     let notasMap = {};
@@ -60,14 +132,23 @@ router.get('/:id', async (req, res) => {
         }
     }
 
-    // Merge notas y evaluaciones en historial
+    // 3.6 Cantidad de situaciones (casos de evaluación técnica respondidos por este jurado)
+    let situacionesMap = {};
+    if (todasAsigs.length > 0) {
+        const asigIds  = todasAsigs.map(a => a.id);
+        const rodeoIds = [...new Set(todasAsigs.map(a => a.rodeos?.id).filter(Boolean))];
+        situacionesMap = await calcularSituacionesPorAsignacion(asigIds, rodeoIds);
+    }
+
+    // Merge notas, evaluaciones y situaciones en historial
     const historial = todasAsigs
         .filter(a => a.estado === 'activo')
         .map(a => ({
             ...a,
             notas_rodeo: notasMap[a.id] || null,
             eval_id:     evalMap[a.rodeos?.id]?.id     || null,
-            eval_estado: evalMap[a.rodeos?.id]?.estado || null
+            eval_estado: evalMap[a.rodeos?.id]?.estado || null,
+            situaciones: situacionesMap[a.id] || 0
         }));
 
     // 4. Ficha interna
@@ -429,6 +510,73 @@ router.post('/nota/:asignacion_id', async (req, res) => {
     });
 
     res.json({ mensaje: 'Nota guardada', nota: result.data });
+});
+
+// ─── GET /api/admin/hojavida/:id/exportar ───────────────────────────────────
+// Exporta a Excel el historial COMPLETO de rodeos del jurado (independiente de
+// lo que esté visible en pantalla). Handler autocontenido: re-consulta los
+// mismos datos que GET /:id para no modificar ese endpoint ya en uso.
+router.get('/:id/exportar', async (req, res) => {
+    const uid = req.params.id;
+
+    const { data: perfil, error: errPerfil } = await supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, categoria, asociacion, comuna')
+        .eq('id', uid)
+        .single();
+
+    if (errPerfil || !perfil) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    let todasAsigs = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error: errAsigs } = await supabase
+                .from('asignaciones')
+                .select(`
+                    id, estado, rodeo_id,
+                    rodeos(club, asociacion, fecha, tipo_rodeo_nombre)
+                `)
+                .eq('usuario_pagado_id', uid)
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA_HV - 1);
+
+            if (errAsigs) return res.status(500).json({ error: 'Error al obtener historial: ' + errAsigs.message });
+            const filas = pagina || [];
+            todasAsigs = todasAsigs.concat(filas);
+            if (filas.length < PAGINA_HV) break;
+            offset += PAGINA_HV;
+        }
+    }
+
+    const historial = todasAsigs.filter(a => a.estado === 'activo');
+
+    let notasMap = {};
+    if (historial.length > 0) {
+        const ids = historial.map(a => a.id);
+        const { data: notas } = await supabase
+            .from('notas_rodeo')
+            .select('asignacion_id, nota')
+            .in('asignacion_id', ids);
+        (notas || []).forEach(n => { notasMap[n.asignacion_id] = n.nota; });
+    }
+
+    const asigIds  = historial.map(a => a.id);
+    const rodeoIds = [...new Set(historial.map(a => a.rodeo_id).filter(Boolean))];
+    const situacionesMap = await calcularSituacionesPorAsignacion(asigIds, rodeoIds);
+
+    const filas = historial
+        .map(a => ({
+            fecha:       a.rodeos?.fecha || null,
+            asociacion:  a.rodeos?.asociacion || null,
+            club:        a.rodeos?.club || null,
+            tipo_rodeo:  a.rodeos?.tipo_rodeo_nombre || null,
+            situaciones: situacionesMap[a.id] || 0,
+            nota:        notasMap[a.id] ?? null
+        }))
+        .sort((x, y) => (y.fecha || '').localeCompare(x.fecha || ''));
+
+    await exportarHistorialHojaVida(perfil, filas, res);
 });
 
 module.exports = router;

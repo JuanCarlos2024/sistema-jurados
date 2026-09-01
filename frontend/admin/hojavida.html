@@ -295,7 +295,13 @@ function renderComparacion(comp, perfil, ind) {
 
 function renderHistorial(historial) {
     if (!historial || historial.length === 0) {
-        return `<div class="seccion-bloque"><div class="seccion-titulo">Historial de rodeos</div><p style="color:var(--gris); font-size:13px;">Sin asignaciones registradas.</p></div>`;
+        return `<div class="seccion-bloque">
+            <div class="seccion-titulo" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                <span>Historial de rodeos</span>
+                <button class="btn btn-outline btn-pequeño" onclick="exportarHistorialRodeos()">⬇ Exportar Excel</button>
+            </div>
+            <p style="color:var(--gris); font-size:13px;">Sin asignaciones registradas.</p>
+        </div>`;
     }
 
     // Ordenar por fecha del rodeo descendente
@@ -325,6 +331,7 @@ function renderHistorial(historial) {
             <td>${a.categoria_aplicada || '—'}</td>
             <td class="monto-positivo">${rechazado ? '<span class="texto-gris">—</span>' : formatCLP(a.pago_base_calculado)}</td>
             <td>${estadoBadge}</td>
+            <td style="text-align:center;">${a.situaciones ?? 0}</td>
             <td>${notaChip(nr?.nota)}</td>
             <td style="max-width:220px; font-size:12px; color:${comentarioAdmin ? 'var(--oscuro)' : 'var(--gris)'};">${comentarioAdmin ? sanitizar(comentarioAdmin) : '—'}</td>
             <td>
@@ -339,17 +346,31 @@ function renderHistorial(historial) {
     }).join('');
 
     return `<div class="seccion-bloque">
-        <div class="seccion-titulo">Historial de rodeos (${historial.length})</div>
+        <div class="seccion-titulo" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <span>Historial de rodeos (${historial.length})</span>
+            <button class="btn btn-outline btn-pequeño" onclick="exportarHistorialRodeos()">⬇ Exportar Excel</button>
+        </div>
         <div style="overflow-x:auto;">
         <table class="tabla">
             <thead><tr>
                 <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Cat.</th>
-                <th>Pago base</th><th>Estado</th><th>Nota</th><th>Coment. Jefe Deportivo</th><th></th>
+                <th>Pago base</th><th>Estado</th><th>Situaciones</th><th>Nota</th><th>Coment. Jefe Deportivo</th><th></th>
             </tr></thead>
             <tbody>${filas}</tbody>
         </table>
         </div>
     </div>`;
+}
+
+async function exportarHistorialRodeos() {
+    try {
+        const nombre = (_datos?.perfil?.nombre_completo || 'jurado')
+            .normalize('NFD').replace(/[̀-ͯ]/g, '')
+            .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
+        await api.descargar(`/admin/hojavida/${userId}/exportar`, `Hoja_Vida_${nombre}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    }
 }
 
 function _fmtFecha(iso) {
