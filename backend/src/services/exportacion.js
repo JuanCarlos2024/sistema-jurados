@@ -519,12 +519,26 @@ function sanitizarNombreArchivo(nombre) {
         .toUpperCase();
 }
 
+// Mismo mapeo de tipo_caso → etiqueta ya usado en reporte-deportivo.js (export-detalle)
+// y en frontend/js/utils.js — no se inventa, se reutiliza la nomenclatura real del sistema.
+const TIPO_CASO_LABEL = {
+    interpretativa: 'Apreciación',
+    reglamentaria:  'Reglamentaria',
+    informativo:    'Conceptual/Informativo'
+};
+
+function formatNotaComa(n) {
+    if (n == null) return 'Sin nota';
+    return Number(n).toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 /**
  * Exporta a Excel el historial completo de rodeos de un jurado (Hoja de Vida).
- * `filas`: [{ fecha, asociacion, club, tipo_rodeo, situaciones, nota }] — ya
- * debe venir con el historial COMPLETO (no solo lo paginado/visible en pantalla).
+ * `filas`: [{ fecha, asociacion, club, tipo_rodeo, situaciones, nota }] — ya debe
+ * venir con el historial COMPLETO (no solo lo paginado/visible en pantalla).
+ * `resumen`: { totalSituaciones, porTipo: {tipo_caso: cantidad}, promedioNota }.
  */
-async function exportarHistorialHojaVida(perfil, filas, res) {
+async function exportarHistorialHojaVida(perfil, filas, resumen, res) {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Historial de Rodeos');
 
@@ -535,16 +549,29 @@ async function exportarHistorialHojaVida(perfil, filas, res) {
     ws.addRow([`Comuna: ${perfil?.comuna || 'Sin información'}`]);
     ws.addRow([]);
 
-    ws.columns = [
-        { header: 'Fecha', key: 'f', width: 14 },
-        { header: 'Asociación', key: 'a', width: 22 },
-        { header: 'Club', key: 'c', width: 26 },
-        { header: 'Tipo de Rodeo', key: 't', width: 28 },
-        { header: 'Cantidad de Situaciones', key: 's', width: 20 },
-        { header: 'Nota', key: 'n', width: 12 },
-    ];
-    const headerRow = ws.getRow(7);
-    headerRow.values = ['Fecha', 'Asociación', 'Club', 'Tipo de Rodeo', 'Cantidad de Situaciones', 'Nota'];
+    // Resumen general acumulado (no incluye Club ni Tipo de Rodeo — eso queda solo
+    // en la tabla detallada de más abajo).
+    ws.addRow([`Total de Situaciones: ${resumen?.totalSituaciones ?? 0}`]);
+    ws.addRow([`Nota Promedio: ${formatNotaComa(resumen?.promedioNota)}`]);
+    ws.addRow([]);
+
+    // Resumen de situaciones por tipo (tipos dinámicos según lo que exista realmente)
+    ws.addRow(['Resumen de situaciones']).font = { bold: true, size: 12 };
+    const tipoHeaderRow = ws.addRow(['Tipo', 'Cantidad']);
+    tipoHeaderRow.eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
+    const tiposEncontrados = Object.entries(resumen?.porTipo || {});
+    if (tiposEncontrados.length === 0) {
+        ws.addRow(['Sin situaciones registradas', 0]);
+    } else {
+        tiposEncontrados.forEach(([tipo, cantidad]) => {
+            ws.addRow([TIPO_CASO_LABEL[tipo] || tipo, cantidad]);
+        });
+    }
+    ws.addRow(['TOTAL', resumen?.totalSituaciones ?? 0]).font = { bold: true };
+    ws.addRow([]);
+
+    // Tabla detallada de rodeos (conserva Club y Tipo de Rodeo)
+    const headerRow = ws.addRow(['Fecha', 'Asociación', 'Club', 'Tipo de Rodeo', 'Cantidad de Situaciones', 'Nota']);
     headerRow.eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
 
     if (!filas || filas.length === 0) {
@@ -563,7 +590,14 @@ async function exportarHistorialHojaVida(perfil, filas, res) {
         });
     }
 
+    ws.getColumn(1).width = 26;
+    ws.getColumn(2).width = 22;
+    ws.getColumn(3).width = 26;
+    ws.getColumn(4).width = 28;
+    ws.getColumn(5).width = 20;
+    ws.getColumn(6).width = 14;
     autoWidth(ws);
+
     const filename = `Hoja_Vida_${sanitizarNombreArchivo(perfil?.nombre_completo)}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);

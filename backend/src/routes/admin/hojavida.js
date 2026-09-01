@@ -6,20 +6,29 @@ const { exportarHistorialHojaVida } = require('../../services/exportacion');
 
 const PAGINA_HV = 900; // paginación defensiva para no depender del tope implícito de Supabase/PostgREST
 
-// Cantidad de "situaciones" (casos de evaluación técnica) respondidas por el jurado
-// en cada asignación: solo casos no anulados, de evaluaciones ya publicadas/cerradas.
-// Devuelve { [asignacion_id]: cantidad }. Sin N+1: consultas batch por lote de rodeos/casos.
-async function calcularSituacionesPorAsignacion(asignacionIds, rodeoIds) {
-    const mapa = {};
-    if (!asignacionIds.length || !rodeoIds.length) return mapa;
+// Cantidad de "situaciones" = casos reales (evaluacion_casos) de la evaluación técnica
+// de cada rodeo — no depende de si el jurado respondió ni del estado de la evaluación.
+// Mismo criterio ya usado en reporte-deportivo.js (export-detalle) y en el listado de
+// evaluaciones (evaluaciones.js): evaluacion_casos filtrado por anulado=false, agrupado
+// por evaluacion_id → rodeo_id. 1 caso = 1 situación (sin pasar por evaluacion_respuestas_jurado,
+// que evitaba duplicar por múltiples respuestas pero también causaba falsos "0").
+// Devuelve { porRodeo: {rodeo_id: cantidad}, porTipoPorRodeo: {rodeo_id: {tipo_caso: cantidad}} }.
+// El resumen acumulado (total y por tipo) se arma en el handler sumando sobre las
+// filas de `historial` realmente mostradas, para que coincida matemáticamente con
+// la columna "Situaciones" visible aunque exista más de una asignación al mismo rodeo.
+async function calcularSituacionesPorRodeo(rodeoIds) {
+    const resultado = { porRodeo: {}, porTipoPorRodeo: {} };
+    if (!rodeoIds.length) return resultado;
 
     const { data: evals } = await supabase
         .from('evaluaciones')
         .select('id, rodeo_id')
-        .in('rodeo_id', rodeoIds)
-        .in('estado', ['publicado', 'cerrado']);
-    const evaluacionIds = [...new Set((evals || []).map(e => e.id))];
-    if (evaluacionIds.length === 0) return mapa;
+        .in('rodeo_id', rodeoIds);
+    if (!evals || evals.length === 0) return resultado;
+
+    const evalToRodeo = {};
+    evals.forEach(e => { evalToRodeo[e.id] = e.rodeo_id; });
+    const evaluacionIds = evals.map(e => e.id);
 
     let casos = [];
     {
@@ -27,7 +36,7 @@ async function calcularSituacionesPorAsignacion(asignacionIds, rodeoIds) {
         while (true) {
             const { data: pagina, error } = await supabase
                 .from('evaluacion_casos')
-                .select('id')
+                .select('evaluacion_id, tipo_caso')
                 .in('evaluacion_id', evaluacionIds)
                 .eq('anulado', false)
                 .range(offset, offset + PAGINA_HV - 1);
@@ -38,31 +47,33 @@ async function calcularSituacionesPorAsignacion(asignacionIds, rodeoIds) {
             offset += PAGINA_HV;
         }
     }
-    const casoIds = casos.map(c => c.id);
-    if (casoIds.length === 0) return mapa;
 
-    let respuestas = [];
-    {
-        let offset = 0;
-        while (true) {
-            const { data: pagina, error } = await supabase
-                .from('evaluacion_respuestas_jurado')
-                .select('asignacion_id, caso_id')
-                .in('asignacion_id', asignacionIds)
-                .in('caso_id', casoIds)
-                .range(offset, offset + PAGINA_HV - 1);
-            if (error) break;
-            const filas = pagina || [];
-            respuestas = respuestas.concat(filas);
-            if (filas.length < PAGINA_HV) break;
-            offset += PAGINA_HV;
+    for (const c of casos) {
+        const rodeoId = evalToRodeo[c.evaluacion_id];
+        if (!rodeoId) continue;
+        resultado.porRodeo[rodeoId] = (resultado.porRodeo[rodeoId] || 0) + 1;
+        if (!resultado.porTipoPorRodeo[rodeoId]) resultado.porTipoPorRodeo[rodeoId] = {};
+        resultado.porTipoPorRodeo[rodeoId][c.tipo_caso] = (resultado.porTipoPorRodeo[rodeoId][c.tipo_caso] || 0) + 1;
+    }
+    return resultado;
+}
+
+// Suma el desglose por tipo y el total sobre un conjunto de filas de historial
+// (una por asignación), a partir de porTipoPorRodeo — así el total siempre coincide
+// con la suma de la columna "Situaciones" realmente mostrada en pantalla/Excel.
+function acumularResumenSituaciones(filasHistorial, porTipoPorRodeo, obtenerRodeoId) {
+    const porTipo = {};
+    let total = 0;
+    for (const fila of filasHistorial) {
+        const rodeoId = obtenerRodeoId(fila);
+        const tipos = porTipoPorRodeo[rodeoId];
+        if (!tipos) continue;
+        for (const [tipo, cant] of Object.entries(tipos)) {
+            porTipo[tipo] = (porTipo[tipo] || 0) + cant;
+            total += cant;
         }
     }
-
-    for (const r of respuestas) {
-        mapa[r.asignacion_id] = (mapa[r.asignacion_id] || 0) + 1;
-    }
-    return mapa;
+    return { porTipo, total };
 }
 
 // ─── GET /api/admin/hojavida/:id ────────────────────────────────────────────
@@ -132,12 +143,12 @@ router.get('/:id', async (req, res) => {
         }
     }
 
-    // 3.6 Cantidad de situaciones (casos de evaluación técnica respondidos por este jurado)
-    let situacionesMap = {};
+    // 3.6 Cantidad de situaciones: casos reales (evaluacion_casos) de la evaluación
+    // técnica de cada rodeo del historial de este jurado.
+    let situaciones = { porRodeo: {}, porTipoPorRodeo: {} };
     if (todasAsigs.length > 0) {
-        const asigIds  = todasAsigs.map(a => a.id);
         const rodeoIds = [...new Set(todasAsigs.map(a => a.rodeos?.id).filter(Boolean))];
-        situacionesMap = await calcularSituacionesPorAsignacion(asigIds, rodeoIds);
+        situaciones = await calcularSituacionesPorRodeo(rodeoIds);
     }
 
     // Merge notas, evaluaciones y situaciones en historial
@@ -148,8 +159,14 @@ router.get('/:id', async (req, res) => {
             notas_rodeo: notasMap[a.id] || null,
             eval_id:     evalMap[a.rodeos?.id]?.id     || null,
             eval_estado: evalMap[a.rodeos?.id]?.estado || null,
-            situaciones: situacionesMap[a.id] || 0
+            situaciones: situaciones.porRodeo[a.rodeos?.id] || 0
         }));
+
+    // Resumen acumulado de situaciones por tipo, sobre las mismas filas del historial
+    // (para que "Total" coincida exactamente con la suma de la columna visible).
+    const resumen_situaciones = acumularResumenSituaciones(
+        historial, situaciones.porTipoPorRodeo, a => a.rodeos?.id
+    );
 
     // 4. Ficha interna
     const { data: ficha } = await supabase
@@ -380,7 +397,8 @@ router.get('/:id', async (req, res) => {
         frecuencia_propia,
         comparacion,
         pares_categoria,
-        comparacion_frecuencia
+        comparacion_frecuencia,
+        resumen_situaciones
     });
 });
 
@@ -534,7 +552,7 @@ router.get('/:id/exportar', async (req, res) => {
             const { data: pagina, error: errAsigs } = await supabase
                 .from('asignaciones')
                 .select(`
-                    id, estado, rodeo_id,
+                    id, estado, estado_designacion, rodeo_id,
                     rodeos(club, asociacion, fecha, tipo_rodeo_nombre)
                 `)
                 .eq('usuario_pagado_id', uid)
@@ -561,9 +579,22 @@ router.get('/:id/exportar', async (req, res) => {
         (notas || []).forEach(n => { notasMap[n.asignacion_id] = n.nota; });
     }
 
-    const asigIds  = historial.map(a => a.id);
     const rodeoIds = [...new Set(historial.map(a => a.rodeo_id).filter(Boolean))];
-    const situacionesMap = await calcularSituacionesPorAsignacion(asigIds, rodeoIds);
+    const situaciones = await calcularSituacionesPorRodeo(rodeoIds);
+    const resumen_situaciones = acumularResumenSituaciones(
+        historial, situaciones.porTipoPorRodeo, a => a.rodeo_id
+    );
+
+    // Promedio de nota: MISMA definición que el indicador "Promedio" de Hoja de Vida
+    // (GET /:id) — excluye asignaciones rechazadas, promedia solo las que tienen nota.
+    const noEjecutadas = historial.filter(a => a.estado_designacion !== 'rechazado');
+    const notasValidas = noEjecutadas
+        .map(a => notasMap[a.id])
+        .filter(n => n != null)
+        .map(n => parseFloat(n));
+    const promedioNota = notasValidas.length
+        ? Math.round((notasValidas.reduce((s, n) => s + n, 0) / notasValidas.length) * 100) / 100
+        : null;
 
     const filas = historial
         .map(a => ({
@@ -571,12 +602,18 @@ router.get('/:id/exportar', async (req, res) => {
             asociacion:  a.rodeos?.asociacion || null,
             club:        a.rodeos?.club || null,
             tipo_rodeo:  a.rodeos?.tipo_rodeo_nombre || null,
-            situaciones: situacionesMap[a.id] || 0,
+            situaciones: situaciones.porRodeo[a.rodeo_id] || 0,
             nota:        notasMap[a.id] ?? null
         }))
         .sort((x, y) => (y.fecha || '').localeCompare(x.fecha || ''));
 
-    await exportarHistorialHojaVida(perfil, filas, res);
+    const resumen = {
+        totalSituaciones: resumen_situaciones.total,
+        porTipo:          resumen_situaciones.porTipo,
+        promedioNota
+    };
+
+    await exportarHistorialHojaVida(perfil, filas, resumen, res);
 });
 
 module.exports = router;

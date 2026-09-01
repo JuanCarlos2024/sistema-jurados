@@ -173,7 +173,7 @@ async function cargar() {
 function renderTodo(d) {
     const { perfil, historial, historial_cambios, historial_administrativo, ficha, indicadores,
             evolucion_notas, frecuencia_propia,
-            comparacion, pares_categoria, comparacion_frecuencia } = d;
+            comparacion, pares_categoria, comparacion_frecuencia, resumen_situaciones } = d;
     const hadm = historial_administrativo || historial_cambios || [];
 
     const iniciales = (perfil.nombre_completo || '?').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
@@ -230,6 +230,8 @@ function renderTodo(d) {
         <div class="seccion-titulo">Posición en la categoría${perfil.categoria ? ' ' + perfil.categoria : ''} — total rodeos histórico</div>
         <div id="chart-pares-wrap"><canvas id="chart-pares"></canvas></div>
     </div>
+
+    ${renderResumenSituaciones(resumen_situaciones)}
 
     ${renderHistorial(historial)}
 
@@ -289,6 +291,35 @@ function renderComparacion(comp, perfil, ind) {
                 <div class="clbl">Percentil</div>
                 <div class="percentil-bar"><div class="percentil-fill" style="width:${pct}%"></div></div>
             </div>` : ''}
+        </div>
+    </div>`;
+}
+
+// Mismo mapeo de tipo_caso → etiqueta usado en el resto del sistema
+// (frontend/js/utils.js, reporte-deportivo.js) — no se inventa nomenclatura nueva.
+const TIPO_SITUACION_LABEL = { interpretativa: 'Apreciación', reglamentaria: 'Reglamentaria', informativo: 'Conceptual/Informativo' };
+
+function renderResumenSituaciones(resumen) {
+    const porTipo = resumen?.porTipo || {};
+    const total   = resumen?.total ?? 0;
+    const tipos   = Object.entries(porTipo);
+
+    const tarjetas = tipos.length
+        ? tipos.map(([tipo, cant]) => `
+            <div class="stat-card">
+                <div class="val">${cant}</div>
+                <div class="lbl">${sanitizar(TIPO_SITUACION_LABEL[tipo] || tipo)}</div>
+            </div>`).join('')
+        : `<p style="color:var(--gris); font-size:13px;">Sin situaciones registradas.</p>`;
+
+    return `<div class="seccion-bloque">
+        <div class="seccion-titulo">Resumen de situaciones</div>
+        <div class="stat-grid">
+            ${tarjetas}
+            <div class="stat-card" style="border-left:3px solid var(--primario);">
+                <div class="val" style="font-weight:700;">${total}</div>
+                <div class="lbl">Total</div>
+            </div>
         </div>
     </div>`;
 }
