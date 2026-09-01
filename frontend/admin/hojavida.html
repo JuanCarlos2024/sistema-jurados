@@ -208,9 +208,11 @@ function renderTodo(d) {
         </div>
     </div>
 
-    ${renderResumenSituaciones(resumen_situaciones)}
-
     ${renderHistorialAdmin(hadm)}
+
+    ${renderHistorial(historial)}
+
+    ${renderResumenSituaciones(resumen_situaciones)}
 
     ${renderIndicadores(indicadores)}
 
@@ -232,8 +234,6 @@ function renderTodo(d) {
         <div class="seccion-titulo">Posición en la categoría${perfil.categoria ? ' ' + perfil.categoria : ''} — total rodeos histórico</div>
         <div id="chart-pares-wrap"><canvas id="chart-pares"></canvas></div>
     </div>
-
-    ${renderHistorial(historial)}
 
     ${renderFicha(ficha)}
     `;
