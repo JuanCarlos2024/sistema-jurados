@@ -209,7 +209,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
         const ids = rodeos.map(r => r.id);
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('rodeo_id, tipo_persona, pago_base_calculado, estado_designacion, nombre_importado, usuarios_pagados(nombre_completo)')
+            .select('rodeo_id, usuario_pagado_id, tipo_persona, pago_base_calculado, estado_designacion, nombre_importado, usuarios_pagados(nombre_completo)')
             .in('rodeo_id', ids).eq('estado', 'activo');
 
         const emptyStats = () => ({
@@ -217,6 +217,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             j_acept: 0, j_rech: 0, j_pend: 0,
             d_acept: 0, d_rech: 0, d_pend: 0,
             jurados_nombres: [],
+            jurados_lista: [], // [{id, nombre}] — id solo si está vinculado a usuarios_pagados (no en pendientes importados)
             delegado_nombre: null
         });
         const sp = {};
@@ -232,7 +233,10 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             if (a.tipo_persona === 'jurado') {
                 s.jurados++;
                 if (rech) s.j_rech++; else if (acept) s.j_acept++; else s.j_pend++;
-                if (nombre) s.jurados_nombres.push(nombre);
+                if (nombre) {
+                    s.jurados_nombres.push(nombre);
+                    s.jurados_lista.push({ id: a.usuario_pagado_id || null, nombre });
+                }
             } else {
                 s.delegados++;
                 if (rech) s.d_rech++; else if (acept) s.d_acept++; else s.d_pend++;

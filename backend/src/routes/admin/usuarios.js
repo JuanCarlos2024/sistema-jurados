@@ -504,19 +504,82 @@ router.delete('/:id', async (req, res) => {
 });
 
 // GET /api/admin/usuarios/:id/historial
+// Resumen + historial completo de designaciones válidas de un jurado/delegado.
+// No tenía consumidores en el frontend (verificado en todo el repo) — se extiende
+// aquí en vez de crear un endpoint paralelo. Usado por el popover de la columna
+// "Jurados" en Rodeos, cargado bajo demanda al primer hover.
 router.get('/:id/historial', async (req, res) => {
-    const { data, error } = await supabase
-        .from('asignaciones')
-        .select(`
-            id, tipo_persona, categoria_aplicada, valor_diario_aplicado,
-            duracion_dias_aplicada, pago_base_calculado, estado, created_at,
-            rodeos(club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)
-        `)
-        .eq('usuario_pagado_id', req.params.id)
-        .order('created_at', { ascending: false });
+    const uid = req.params.id;
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    const { data: perfil, error: errPerfil } = await supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, categoria, asociacion, comuna')
+        .eq('id', uid)
+        .single();
+
+    if (errPerfil || !perfil) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    // Historial completo (paginado con .range() para no depender del tope implícito
+    // de filas de Supabase/PostgREST — mismo patrón usado en hojavida.js/rodeos.js).
+    const PAGINA = 900;
+    let todasAsigs = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error } = await supabase
+                .from('asignaciones')
+                .select(`
+                    id, rodeo_id, tipo_persona, categoria_aplicada, valor_diario_aplicado,
+                    duracion_dias_aplicada, pago_base_calculado, estado, estado_designacion, created_at,
+                    rodeos(club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)
+                `)
+                .eq('usuario_pagado_id', uid)
+                .neq('estado', 'anulado')
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA - 1);
+
+            if (error) return res.status(500).json({ error: error.message });
+            const filas = pagina || [];
+            todasAsigs = todasAsigs.concat(filas);
+            if (filas.length < PAGINA) break;
+            offset += PAGINA;
+        }
+    }
+
+    // Notas de esas asignaciones (batch, sin N+1)
+    let notasMap = {};
+    if (todasAsigs.length > 0) {
+        const idsAsig = todasAsigs.map(a => a.id);
+        const { data: notas } = await supabase
+            .from('notas_rodeo')
+            .select('asignacion_id, nota')
+            .in('asignacion_id', idsAsig);
+        (notas || []).forEach(n => { notasMap[n.asignacion_id] = n.nota; });
+    }
+
+    // Designaciones = rodeos DISTINTOS (evita inflar por filas duplicadas), mismo
+    // criterio ya usado en el modal "Designar jurado" (rodeos.js).
+    const rodeosDistintos = new Set(todasAsigs.map(a => a.rodeo_id).filter(Boolean));
+
+    res.json({
+        perfil: {
+            id:               perfil.id,
+            nombre_completo:  perfil.nombre_completo,
+            categoria:        perfil.categoria || null,
+            asociacion:       perfil.asociacion || null,
+            comuna:           perfil.comuna || null
+        },
+        designaciones: rodeosDistintos.size,
+        historial: todasAsigs.map(a => ({
+            id:         a.id,
+            rodeo_id:   a.rodeo_id,
+            club:       a.rodeos?.club || null,
+            asociacion: a.rodeos?.asociacion || null,
+            fecha:      a.rodeos?.fecha || null,
+            tipo_rodeo: a.rodeos?.tipo_rodeo_nombre || null,
+            nota:       notasMap[a.id] ?? null
+        }))
+    });
 });
 
 module.exports = router;

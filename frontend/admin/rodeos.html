@@ -6,6 +6,31 @@
     <title>Rodeos — Administrador</title>
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .jurado-nombre-hover {
+            cursor: help;
+            border-bottom: 1px dotted var(--gris);
+        }
+        .jurado-popover {
+            position: fixed;
+            z-index: 5000;
+            width: 280px;
+            background: white;
+            border: 1px solid var(--gris-borde);
+            border-radius: var(--radio);
+            box-shadow: var(--sombra), 0 8px 24px rgba(0,0,0,0.15);
+            padding: 12px 14px;
+            font-size: 12px;
+            line-height: 1.5;
+            color: var(--texto);
+        }
+        .jurado-popover .jp-nombre { font-weight: 700; font-size: 13px; color: var(--azul); display:flex; align-items:center; gap:6px; }
+        .jurado-popover .jp-designaciones { font-weight: 700; color: var(--azul); margin: 4px 0; }
+        .jurado-popover .jp-dato { color: var(--gris); }
+        .jurado-popover .jp-ultimos-titulo { font-weight: 600; margin-top: 8px; }
+        .jurado-popover .jp-fila { padding: 2px 0; }
+        .jurado-popover .jp-fila.jp-repite { color: var(--rojo); font-weight: 600; }
+    </style>
 </head>
 <body>
 <div class="layout">
@@ -350,6 +375,7 @@ async function cargar(pagina = 1) {
 
 function renderTabla(rodeos, total, indicadores = {}) {
     const wrap = document.getElementById('tabla-wrap');
+    if (_juradoPopoverEl) _juradoPopoverEl.classList.add('oculto'); // evita tarjeta "fantasma" al recargar la tabla
     if (!rodeos || rodeos.length === 0) {
         wrap.innerHTML = '<p class="tabla-vacia">Sin rodeos para los filtros seleccionados</p>';
         return;
@@ -390,10 +416,10 @@ function renderTabla(rodeos, total, indicadores = {}) {
             <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
             <td style="font-size:13px;">${r.delegado_nombre ? sanitizar(r.delegado_nombre) : '<span style="color:#aaa;">—</span>'}</td>
             <td style="font-size:13px;">${(() => {
-                const nombres = r.jurados_nombres || [];
-                if (nombres.length === 0) return '<span style="color:#aaa;">—</span>';
-                const visibles = nombres.slice(0, 2).map(n => `<strong>${sanitizar(n)}</strong>`).join('<br>');
-                const resto = nombres.length > 2 ? `<br><span style="color:#888; font-size:11px;">+${nombres.length - 2} más</span>` : '';
+                const lista = r.jurados_lista || [];
+                if (lista.length === 0) return '<span style="color:#aaa;">—</span>';
+                const visibles = lista.slice(0, 2).map(j => juradoNombreHoverHtml(j, r)).join('<br>');
+                const resto = lista.length > 2 ? `<br><span style="color:#888; font-size:11px;">+${lista.length - 2} más</span>` : '';
                 return visibles + resto;
             })()}</td>
             <td style="text-align:center;">${r.duracion_dias}</td>
@@ -412,6 +438,156 @@ function renderTabla(rodeos, total, indicadores = {}) {
         </tr>`;}).join('')}
         </tbody>
     </table><div style="padding:10px 14px; font-size:12px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; <span style="color:#27ae60;">●</span>=Aceptado <span style="color:#f39c12;">●</span>=Pendiente <span style="color:#e74c3c;">●</span>=Rechazado &nbsp;·&nbsp; J=Jurado D=Delegado &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube</div>`;
+
+    // Los data-* quedan en atributos HTML (sanitizados) para que el hover los lea
+    // desde el DOM, evitando incrustar texto libre (nombres con comillas/tildes)
+    // dentro de un string JS embebido en el atributo onmouseenter.
+    wrap.querySelectorAll('.jurado-nombre-hover').forEach(el => {
+        el.addEventListener('mouseenter', onEntrarJuradoHover);
+        el.addEventListener('mouseleave', ocultarPopoverJuradoConDelay);
+        el.addEventListener('focus', onEntrarJuradoHover);
+        el.addEventListener('blur', ocultarPopoverJuradoConDelay);
+        el.addEventListener('click', onEntrarJuradoHover); // soporte táctil / click
+    });
+}
+
+// ── Previsualización de historial de jurado (hover en columna "Jurados") ─────
+// Carga bajo demanda: 1 consulta por jurado distinto, cacheada en memoria durante
+// la sesión de la página (no se repite mientras no se recargue la tabla).
+const _juradoHistCache = {};
+let _juradoPopoverEl = null;
+let _juradoCierreTimer = null;
+
+function juradoNombreHoverHtml(j, rodeo) {
+    if (!j.id) return `<strong>${sanitizar(j.nombre)}</strong>`; // sin id vinculado (importado pendiente): sin previsualización
+    return `<strong class="jurado-nombre-hover" tabindex="0"
+                data-jurado-id="${sanitizar(j.id)}"
+                data-jurado-nombre="${sanitizar(j.nombre)}"
+                data-rodeo-club="${sanitizar(rodeo.club || '')}"
+                data-rodeo-asociacion="${sanitizar(rodeo.asociacion || '')}"
+            >${sanitizar(j.nombre)}</strong>`;
+}
+
+function normalizarTextoJurado(str) {
+    // Mismo algoritmo que backend/src/services/importacion.js normalizar():
+    // trim, minúsculas, sin tildes/diacríticos, guiones→espacio, espacios colapsados.
+    if (!str) return '';
+    return str.toString().trim().toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[\-–—]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function crearPopoverJuradoEl() {
+    if (_juradoPopoverEl) return _juradoPopoverEl;
+    const el = document.createElement('div');
+    el.className = 'jurado-popover oculto';
+    el.addEventListener('mouseenter', cancelarCierrePopoverJurado);
+    el.addEventListener('mouseleave', ocultarPopoverJuradoConDelay);
+    document.body.appendChild(el);
+    _juradoPopoverEl = el;
+    return el;
+}
+
+function cancelarCierrePopoverJurado() {
+    if (_juradoCierreTimer) { clearTimeout(_juradoCierreTimer); _juradoCierreTimer = null; }
+}
+
+function ocultarPopoverJuradoConDelay() {
+    cancelarCierrePopoverJurado();
+    _juradoCierreTimer = setTimeout(() => {
+        if (_juradoPopoverEl) _juradoPopoverEl.classList.add('oculto');
+    }, 200);
+}
+
+function posicionarPopoverJurado(el, trigger) {
+    const rect = trigger.getBoundingClientRect();
+    const margen = 8;
+    // Medir tamaño real (visible pero fuera de vista) antes de posicionar
+    el.style.visibility = 'hidden';
+    el.classList.remove('oculto');
+    const alto = el.offsetHeight;
+    const ancho = el.offsetWidth;
+
+    let top = rect.bottom + margen;
+    if (top + alto > window.innerHeight) { // sin espacio abajo -> abrir hacia arriba
+        top = rect.top - alto - margen;
+        if (top < margen) top = margen; // último recurso: pegado arriba
+    }
+    let left = rect.left;
+    if (left + ancho > window.innerWidth - margen) left = window.innerWidth - ancho - margen;
+    if (left < margen) left = margen;
+
+    el.style.top  = top + 'px';
+    el.style.left = left + 'px';
+    el.style.visibility = 'visible';
+}
+
+function renderContenidoPopoverJurado(data, rodeoClub, rodeoAsociacion) {
+    const p = data.perfil || {};
+    const catBadge = p.categoria ? `<span class="badge badge-${p.categoria.toLowerCase()}">${sanitizar(p.categoria)}</span>` : '';
+    const desig = data.designaciones ?? 0;
+
+    const clubActualN = normalizarTextoJurado(rodeoClub);
+    const asocActualN = normalizarTextoJurado(rodeoAsociacion);
+
+    const ultimos = (data.historial || []).slice(0, 3);
+    let yaMarcoRepite = false; // solo la coincidencia más reciente se destaca
+    const filasHtml = ultimos.length === 0
+        ? `<div class="jp-fila" style="color:var(--gris);">Sin designaciones anteriores.</div>`
+        : ultimos.map(h => {
+            const esRepite = !yaMarcoRepite
+                && clubActualN && asocActualN
+                && normalizarTextoJurado(h.club) === clubActualN
+                && normalizarTextoJurado(h.asociacion) === asocActualN;
+            if (esRepite) yaMarcoRepite = true;
+            const nota = (h.nota !== null && h.nota !== undefined) ? `Nota: ${h.nota}` : 'Sin nota';
+            return `<div class="jp-fila ${esRepite ? 'jp-repite' : ''}">${sanitizar(h.club || '—')} | ${sanitizar(h.asociacion || '—')} | ${formatFecha(h.fecha)} | ${nota}</div>`;
+        }).join('');
+
+    return `
+        <div class="jp-nombre">${sanitizar(p.nombre_completo || '')} ${catBadge}</div>
+        <div class="jp-designaciones">${desig} designacion${desig === 1 ? '' : 'es'}</div>
+        <div class="jp-dato">Asociación: ${sanitizar(p.asociacion || 'Sin información')}</div>
+        <div class="jp-dato">Comuna: ${sanitizar(p.comuna || 'Sin información')}</div>
+        <div class="jp-ultimos-titulo">Últimos:</div>
+        ${filasHtml}
+    `;
+}
+
+async function onEntrarJuradoHover(ev) {
+    cancelarCierrePopoverJurado();
+    const trigger  = ev.currentTarget;
+    const juradoId = trigger.dataset.juradoId;
+    const club     = trigger.dataset.rodeoClub;
+    const asoc     = trigger.dataset.rodeoAsociacion;
+    if (!juradoId) return;
+
+    const el = crearPopoverJuradoEl();
+    el.dataset.juradoActual = juradoId;
+
+    if (_juradoHistCache[juradoId]) {
+        el.innerHTML = renderContenidoPopoverJurado(_juradoHistCache[juradoId], club, asoc);
+        posicionarPopoverJurado(el, trigger);
+        return;
+    }
+
+    el.innerHTML = '<div style="color:var(--gris);">Cargando historial...</div>';
+    posicionarPopoverJurado(el, trigger);
+
+    try {
+        const data = await api.get(`/admin/usuarios/${juradoId}/historial`);
+        _juradoHistCache[juradoId] = data;
+        // Si el usuario ya movió el mouse a otro jurado mientras cargaba, no pisar su contenido
+        if (el.dataset.juradoActual !== juradoId) return;
+        el.innerHTML = renderContenidoPopoverJurado(data, club, asoc);
+        posicionarPopoverJurado(el, trigger);
+    } catch (e) {
+        if (el.dataset.juradoActual !== juradoId) return;
+        el.innerHTML = '<div style="color:var(--rojo);">No fue posible cargar el historial</div>';
+        posicionarPopoverJurado(el, trigger);
+    }
 }
 
 function renderPag(total) {
