@@ -463,8 +463,9 @@ function juradoNombreHoverHtml(j, rodeo) {
     return `<strong class="jurado-nombre-hover" tabindex="0"
                 data-jurado-id="${sanitizar(j.id)}"
                 data-jurado-nombre="${sanitizar(j.nombre)}"
-                data-rodeo-club="${sanitizar(rodeo.club || '')}"
+                data-rodeo-id="${sanitizar(rodeo.id || '')}"
                 data-rodeo-asociacion="${sanitizar(rodeo.asociacion || '')}"
+                data-rodeo-fecha="${sanitizar(rodeo.fecha || '')}"
             >${sanitizar(j.nombre)}</strong>`;
 }
 
@@ -524,23 +525,29 @@ function posicionarPopoverJurado(el, trigger) {
     el.style.visibility = 'visible';
 }
 
-function renderContenidoPopoverJurado(data, rodeoClub, rodeoAsociacion) {
+function renderContenidoPopoverJurado(data, rodeoAsociacion, rodeoIdActual, rodeoFechaActual) {
     const p = data.perfil || {};
     const catBadge = p.categoria ? `<span class="badge badge-${p.categoria.toLowerCase()}">${sanitizar(p.categoria)}</span>` : '';
     const desig = data.designaciones ?? 0;
 
-    const clubActualN = normalizarTextoJurado(rodeoClub);
     const asocActualN = normalizarTextoJurado(rodeoAsociacion);
 
-    const ultimos = (data.historial || []).slice(0, 3);
-    let yaMarcoRepite = false; // solo la coincidencia más reciente se destaca
+    // "Últimos" = designaciones ANTERIORES del jurado — excluye explícitamente el
+    // propio rodeo de la fila actual (por rodeo_id, no por fecha: pueden existir
+    // varios rodeos el mismo día).
+    const anteriores = (data.historial || []).filter(h => h.rodeo_id !== rodeoIdActual);
+    const ultimos = anteriores.slice(0, 3);
+
+    let yaMarcoRepite = false; // solo la coincidencia histórica más reciente se destaca
     const filasHtml = ultimos.length === 0
         ? `<div class="jp-fila" style="color:var(--gris);">Sin designaciones anteriores.</div>`
         : ultimos.map(h => {
+            // Repetición = misma asociación (no club) Y estrictamente anterior a la
+            // fecha del rodeo actual — "ya estuvo antes", no "también aparece aquí".
             const esRepite = !yaMarcoRepite
-                && clubActualN && asocActualN
-                && normalizarTextoJurado(h.club) === clubActualN
-                && normalizarTextoJurado(h.asociacion) === asocActualN;
+                && asocActualN
+                && normalizarTextoJurado(h.asociacion) === asocActualN
+                && h.fecha && rodeoFechaActual && h.fecha < rodeoFechaActual;
             if (esRepite) yaMarcoRepite = true;
             const nota = (h.nota !== null && h.nota !== undefined) ? `Nota: ${h.nota}` : 'Sin nota';
             return `<div class="jp-fila ${esRepite ? 'jp-repite' : ''}">${sanitizar(h.club || '—')} | ${sanitizar(h.asociacion || '—')} | ${formatFecha(h.fecha)} | ${nota}</div>`;
@@ -558,17 +565,18 @@ function renderContenidoPopoverJurado(data, rodeoClub, rodeoAsociacion) {
 
 async function onEntrarJuradoHover(ev) {
     cancelarCierrePopoverJurado();
-    const trigger  = ev.currentTarget;
-    const juradoId = trigger.dataset.juradoId;
-    const club     = trigger.dataset.rodeoClub;
-    const asoc     = trigger.dataset.rodeoAsociacion;
+    const trigger     = ev.currentTarget;
+    const juradoId    = trigger.dataset.juradoId;
+    const rodeoId     = trigger.dataset.rodeoId;
+    const asoc        = trigger.dataset.rodeoAsociacion;
+    const rodeoFecha  = trigger.dataset.rodeoFecha;
     if (!juradoId) return;
 
     const el = crearPopoverJuradoEl();
     el.dataset.juradoActual = juradoId;
 
     if (_juradoHistCache[juradoId]) {
-        el.innerHTML = renderContenidoPopoverJurado(_juradoHistCache[juradoId], club, asoc);
+        el.innerHTML = renderContenidoPopoverJurado(_juradoHistCache[juradoId], asoc, rodeoId, rodeoFecha);
         posicionarPopoverJurado(el, trigger);
         return;
     }
@@ -581,7 +589,7 @@ async function onEntrarJuradoHover(ev) {
         _juradoHistCache[juradoId] = data;
         // Si el usuario ya movió el mouse a otro jurado mientras cargaba, no pisar su contenido
         if (el.dataset.juradoActual !== juradoId) return;
-        el.innerHTML = renderContenidoPopoverJurado(data, club, asoc);
+        el.innerHTML = renderContenidoPopoverJurado(data, asoc, rodeoId, rodeoFecha);
         posicionarPopoverJurado(el, trigger);
     } catch (e) {
         if (el.dataset.juradoActual !== juradoId) return;
