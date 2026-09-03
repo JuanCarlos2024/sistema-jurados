@@ -4,6 +4,83 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase, obtenerBonoParaDistancia } = require('../../services/calculo');
 const { soloNoMonitor } = require('../../middleware/auth');
+const { normalizar } = require('../../services/importacion');
+
+// ─── Helpers: feriados de Chile y "bloque de fin de semana de rodeo" ───────────
+// Mismo algoritmo (feriados fijos + Semana Santa vía Meeus/Jones/Butcher) que ya
+// existe en frontend/usuario/dashboard.html (calcularFeriadosChile) — se porta
+// aquí tal cual, sin inventar una fuente nueva ni depender de servicios externos.
+function calcularFeriadosChile(anio) {
+    const f = new Set();
+    const pad = n => String(n).padStart(2, '0');
+    const add = (m, d) => f.add(`${anio}-${pad(m)}-${pad(d)}`);
+
+    add(1,1);  add(5,1);  add(5,21); add(6,29); add(7,16);
+    add(8,15); add(9,18); add(9,19); add(10,12); add(10,31);
+    add(11,1); add(12,8); add(12,25);
+    add(6,21); // Día Nacional de los Pueblos Indígenas (solsticio de invierno)
+
+    // Semana Santa — algoritmo Meeus/Jones/Butcher para el Domingo de Pascua
+    const a = anio % 19;
+    const b = Math.floor(anio / 100), c = anio % 100;
+    const d2 = Math.floor(b / 4), e = b % 4;
+    const ff = Math.floor((b + 8) / 25);
+    const g  = Math.floor((b - ff + 1) / 3);
+    const h  = (19 * a + b - d2 - g + 15) % 30;
+    const i  = Math.floor(c / 4), k = c % 4;
+    const l  = (32 + 2 * e + 2 * i - h - k) % 7;
+    const mm = Math.floor((a + 11 * h + 22 * l) / 451);
+    const mesPascua = Math.floor((h + l - 7 * mm + 114) / 31);
+    const diaPascua = ((h + l - 7 * mm + 114) % 31) + 1;
+    const pascuaMs = Date.UTC(anio, mesPascua - 1, diaPascua);
+    const toStr = ms => {
+        const dt = new Date(ms);
+        return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+    };
+    f.add(toStr(pascuaMs - 2 * 86400000)); // Viernes Santo
+    f.add(toStr(pascuaMs - 1 * 86400000)); // Sábado Santo
+
+    return f;
+}
+
+const _feriadosCache = {};
+function esDiaRodeo(fechaStr) {
+    const d = new Date(fechaStr + 'T00:00:00Z');
+    const dow = d.getUTCDay(); // 0=domingo, 6=sábado
+    if (dow === 0 || dow === 6) return true;
+    const anio = d.getUTCFullYear();
+    if (!_feriadosCache[anio]) _feriadosCache[anio] = calcularFeriadosChile(anio);
+    return _feriadosCache[anio].has(fechaStr);
+}
+
+function sumarDiasFecha(fechaStr, n) {
+    const d = new Date(fechaStr + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+}
+
+// Expande una fecha de rodeo (inicio + duración) hacia atrás/adelante mientras
+// los días adyacentes sean sábado/domingo/feriado, formando el "bloque" completo
+// de la jornada de rodeo (fin de semana, o fin de semana extendido por feriado).
+function calcularBloqueRodeo(fechaInicio, duracionDias) {
+    let inicio = fechaInicio;
+    let fin    = sumarDiasFecha(fechaInicio, (duracionDias || 1) - 1);
+    while (esDiaRodeo(sumarDiasFecha(inicio, -1))) inicio = sumarDiasFecha(inicio, -1);
+    while (esDiaRodeo(sumarDiasFecha(fin, 1)))      fin    = sumarDiasFecha(fin, 1);
+    return { inicio, fin };
+}
+
+// Cuenta los sábados estrictamente entre dos fechas (no inclusive). Si es 0,
+// no hay ningún fin de semana "libre" saltado entre ambos bloques de rodeo.
+function contarSabadosEntre(fechaDesdeExclusiva, fechaHastaExclusiva) {
+    let count = 0;
+    let cursor = sumarDiasFecha(fechaDesdeExclusiva, 1);
+    while (cursor < fechaHastaExclusiva) {
+        if (new Date(cursor + 'T00:00:00Z').getUTCDay() === 6) count++;
+        cursor = sumarDiasFecha(cursor, 1);
+    }
+    return count;
+}
 
 // ─── Helper: crea o actualiza bono de distancia (flujo admin) ──────────────────
 // Lógica idéntica al flujo usuario:
@@ -625,8 +702,16 @@ router.delete('/:id', async (req, res) => {
 });
 
 // POST /api/admin/asignaciones/validar-historial
-// Verifica si un jurado ya fue asignado en la misma asociación del rodeo.
+// Verifica si un jurado ya fue asignado ANTERIORMENTE en la misma asociación del
+// rodeo, y si tiene una designación en la fecha de rodeo inmediatamente anterior
+// (mismo fin de semana/feriado consecutivo). Excluye siempre el propio rodeo_id
+// actual (relevante al reasignar sobre un rodeo ya editado).
 // body: { usuario_pagado_id, rodeo_id }
+//
+// Respuesta: se mantienen tiene_historial/asociacion/historial (consumidos hoy
+// por guardarAsignacion() en rodeos.html — flujo de asignación manual genérica)
+// y se agregan repite_asociacion / fecha_consecutiva (usados por el modal
+// "Designar jurado").
 router.post('/validar-historial', async (req, res) => {
     const { usuario_pagado_id, rodeo_id } = req.body;
     if (!usuario_pagado_id || !rodeo_id) {
@@ -635,31 +720,82 @@ router.post('/validar-historial', async (req, res) => {
 
     const { data: rodeo } = await supabase
         .from('rodeos')
-        .select('id, asociacion')
+        .select('id, asociacion, fecha, duracion_dias')
         .eq('id', rodeo_id)
         .single();
 
     if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
-    if (!rodeo.asociacion) return res.json({ tiene_historial: false, historial: [] });
+    if (!rodeo.asociacion) {
+        return res.json({ tiene_historial: false, historial: [], repite_asociacion: null, fecha_consecutiva: null });
+    }
 
-    const { data: historial } = await supabase
-        .from('asignaciones')
-        .select('id, rodeos!inner(id, club, asociacion, fecha, tipo_rodeo_nombre)')
-        .eq('usuario_pagado_id', usuario_pagado_id)
-        .eq('rodeos.asociacion', rodeo.asociacion)
-        .neq('estado', 'anulado')
-        .order('created_at', { ascending: false })
-        .limit(5);
+    // Historial completo del jurado (paginado, sin depender del tope implícito de
+    // filas de Supabase/PostgREST), excluyendo siempre el propio rodeo actual.
+    const PAGINA = 900;
+    let todasAsigs = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error } = await supabase
+                .from('asignaciones')
+                .select('id, rodeos!inner(id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias)')
+                .eq('usuario_pagado_id', usuario_pagado_id)
+                .neq('estado', 'anulado')
+                .neq('rodeo_id', rodeo_id)
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA - 1);
+            if (error) return res.status(500).json({ error: error.message });
+            const filas = pagina || [];
+            todasAsigs = todasAsigs.concat(filas);
+            if (filas.length < PAGINA) break;
+            offset += PAGINA;
+        }
+    }
+
+    // ── Regla A: misma asociación (comparación normalizada, no texto crudo) ──
+    const asocActualN = normalizar(rodeo.asociacion);
+    const enAsociacion = todasAsigs.filter(a => normalizar(a.rodeos?.asociacion) === asocActualN);
+    const historialCompat = enAsociacion.slice(0, 5).map(a => ({
+        id:         a.id,
+        club:       a.rodeos?.club,
+        fecha:      a.rodeos?.fecha,
+        tipo_rodeo: a.rodeos?.tipo_rodeo_nombre
+    }));
+    const masReciente = enAsociacion[0]; // ya viene ordenado desc por created_at
+    const repite_asociacion = masReciente ? {
+        club:           masReciente.rodeos?.club || null,
+        asociacion:     masReciente.rodeos?.asociacion || null,
+        fecha:          masReciente.rodeos?.fecha || null,
+        tipo_rodeo:     masReciente.rodeos?.tipo_rodeo_nombre || null,
+        duracion_dias:  masReciente.rodeos?.duracion_dias || null
+    } : null;
+
+    // ── Regla B: fecha de rodeo inmediatamente anterior (fin de semana / ─────
+    //    feriado consecutivo, según calcularBloqueRodeo + contarSabadosEntre) ──
+    const bloqueActual = calcularBloqueRodeo(rodeo.fecha, rodeo.duracion_dias || 1);
+    let candidataConsecutiva = null;
+    for (const a of todasAsigs) {
+        const r = a.rodeos;
+        if (!r?.fecha) continue;
+        const bloqueH = calcularBloqueRodeo(r.fecha, r.duracion_dias || 1);
+        if (bloqueH.fin >= bloqueActual.inicio) continue; // no es anterior al bloque actual
+        if (contarSabadosEntre(bloqueH.fin, bloqueActual.inicio) !== 0) continue; // hubo un fin de semana libre entre medio
+        if (!candidataConsecutiva || r.fecha > candidataConsecutiva.rodeos.fecha) candidataConsecutiva = a;
+    }
+    const fecha_consecutiva = candidataConsecutiva ? {
+        club:          candidataConsecutiva.rodeos?.club || null,
+        asociacion:    candidataConsecutiva.rodeos?.asociacion || null,
+        fecha:         candidataConsecutiva.rodeos?.fecha || null,
+        tipo_rodeo:    candidataConsecutiva.rodeos?.tipo_rodeo_nombre || null,
+        duracion_dias: candidataConsecutiva.rodeos?.duracion_dias || null
+    } : null;
 
     return res.json({
-        tiene_historial: (historial || []).length > 0,
+        tiene_historial: enAsociacion.length > 0,
         asociacion: rodeo.asociacion,
-        historial: (historial || []).map(a => ({
-            id: a.id,
-            club:        a.rodeos?.club,
-            fecha:       a.rodeos?.fecha,
-            tipo_rodeo:  a.rodeos?.tipo_rodeo_nombre
-        }))
+        historial: historialCompat,
+        repite_asociacion,
+        fecha_consecutiva
     });
 });
 
