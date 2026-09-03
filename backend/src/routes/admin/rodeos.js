@@ -209,7 +209,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
         const ids = rodeos.map(r => r.id);
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('rodeo_id, usuario_pagado_id, tipo_persona, pago_base_calculado, estado_designacion, nombre_importado, usuarios_pagados(nombre_completo)')
+            .select('rodeo_id, usuario_pagado_id, tipo_persona, pago_base_calculado, estado_designacion, nombre_importado, publicado, usuarios_pagados(nombre_completo)')
             .in('rodeo_id', ids).eq('estado', 'activo');
 
         const emptyStats = () => ({
@@ -218,7 +218,8 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             d_acept: 0, d_rech: 0, d_pend: 0,
             jurados_nombres: [],
             jurados_lista: [], // [{id, nombre}] — id solo si está vinculado a usuarios_pagados (no en pendientes importados)
-            delegado_nombre: null
+            delegado_nombre: null,
+            pendientes_publicacion: 0 // designaciones activas con publicado=false
         });
         const sp = {};
         (asigs || []).forEach(a => {
@@ -226,6 +227,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             const s = sp[a.rodeo_id];
             s.total_asignaciones++;
             s.total_pago_base += (a.pago_base_calculado || 0);
+            if (!a.publicado) s.pendientes_publicacion++;
             const ed = a.estado_designacion;
             const acept = ed === 'aceptado' || ed === null; // null = legacy = aceptado
             const rech  = ed === 'rechazado';
@@ -275,6 +277,7 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
                 id, tipo_persona, nombre_importado, categoria_aplicada,
                 valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado,
                 estado, estado_designacion, distancia_km, aceptado_en, observacion, comentario_admin, created_at,
+                publicado, publicado_en,
                 usuarios_pagados(id, codigo_interno, nombre_completo, tipo_persona, categoria)
             `)
             .eq('rodeo_id', req.params.id)
@@ -606,6 +609,55 @@ router.delete('/:id', soloNoMonitor, soloNoAnalista, soloNoComisionTecnica, asyn
     });
 
     res.json({ mensaje: 'Rodeo eliminado correctamente junto con sus asignaciones y bonos pendientes' });
+});
+
+// POST /api/admin/rodeos/:id/publicar-designaciones
+// Publica (hace visibles al jurado/delegado) todas las designaciones activas
+// y aún no publicadas de este rodeo. NO crea ni duplica asignaciones, NO
+// recalcula pagos, NO toca ninguna otra validación existente — solamente
+// cambia publicado: false → true. Es un único UPDATE (atómico por definición
+// en Postgres: o se aplica a todas las filas que matchean, o a ninguna).
+router.post('/:id/publicar-designaciones', soloNoMonitor, soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
+    const { data: rodeo } = await supabase
+        .from('rodeos')
+        .select('id, club, asociacion, fecha')
+        .eq('id', req.params.id)
+        .single();
+
+    if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
+
+    const ahora = new Date().toISOString();
+
+    const { data: publicadas, error } = await supabase
+        .from('asignaciones')
+        .update({ publicado: true, publicado_en: ahora, publicado_por: req.usuario.id })
+        .eq('rodeo_id', req.params.id)
+        .eq('estado', 'activo')
+        .eq('publicado', false)
+        .select('id, tipo_persona, nombre_importado, usuarios_pagados(nombre_completo)');
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    if (!publicadas || publicadas.length === 0) {
+        return res.json({ mensaje: 'No había designaciones pendientes de publicación en este rodeo.', publicadas: [] });
+    }
+
+    const nombres = publicadas.map(a => a.usuarios_pagados?.nombre_completo || a.nombre_importado || 'Sin nombre');
+
+    await auditoria.registrar({
+        tabla: 'asignaciones',
+        registro_id: req.params.id,
+        accion: 'publicar_designaciones',
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Designaciones publicadas para ${rodeo.club} - ${rodeo.fecha} (${publicadas.length}): ${nombres.join(', ')}`,
+        ip_address: req.ip
+    });
+
+    res.json({
+        mensaje: `${publicadas.length} designación(es) publicada(s) correctamente.`,
+        publicadas: publicadas.map(a => ({ id: a.id, nombre: a.usuarios_pagados?.nombre_completo || a.nombre_importado || null, tipo_persona: a.tipo_persona }))
+    });
 });
 
 // ─────────────────────────────────────────────

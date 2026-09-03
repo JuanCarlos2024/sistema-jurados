@@ -64,7 +64,7 @@ function calcularPagoBase(tipo_persona, categoria, duracion_dias, tarifas) {
  * @param {string} mes - 'MM'
  * @returns {{ bruto, retencion, liquido, asignaciones, bonos }}
  */
-async function calcularResumenMensual(usuario_pagado_id, año, mes) {
+async function calcularResumenMensual(usuario_pagado_id, año, mes, { soloPublicadas = false } = {}) {
     // Construir rango de fechas del mes
     const fechaInicio = `${año}-${mes.padStart(2, '0')}-01`;
     const fechaFin = new Date(parseInt(año), parseInt(mes), 0).toISOString().split('T')[0];
@@ -72,7 +72,9 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
     // Obtener asignaciones activas del usuario en el período
     // Filtramos por fecha del rodeo usando inner join
     // Incluye rechazadas (estado_designacion='rechazado') para historial, pero se excluyen de los totales
-    const { data: asignaciones, error: errA } = await supabase
+    // soloPublicadas=true: uso exclusivo del portal del jurado (no aplica a
+    // exportacion.js, que sigue viendo borrador+publicado para el admin).
+    let query = supabase
         .from('asignaciones')
         .select(`
             *,
@@ -81,7 +83,10 @@ async function calcularResumenMensual(usuario_pagado_id, año, mes) {
         .eq('usuario_pagado_id', usuario_pagado_id)
         .eq('estado', 'activo')
         .gte('rodeos.fecha', fechaInicio)
-        .lte('rodeos.fecha', fechaFin)
+        .lte('rodeos.fecha', fechaFin);
+    if (soloPublicadas) query = query.eq('publicado', true);
+
+    const { data: asignaciones, error: errA } = await query
         .order('created_at', { ascending: true });
 
     if (errA) throw new Error('Error al obtener asignaciones: ' + errA.message);

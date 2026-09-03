@@ -399,12 +399,16 @@ function renderTabla(rodeos, total, indicadores = {}) {
             const dStr = (dot(r.d_acept,'#27ae60','Delegado(s) aceptó asistir') +
                           dot(r.d_pend, '#f39c12','Delegado(s) sin respuesta') +
                           dot(r.d_rech, '#e74c3c','Delegado(s) rechazó asistir')).trim();
+            const badgePublicacion = (r.total_asignaciones || 0) === 0 ? '' :
+                r.pendientes_publicacion > 0
+                    ? `<div style="margin-top:3px;"><span class="badge" style="background:#fff8e1; color:#a04000; font-size:10px;" title="${r.pendientes_publicacion} designación(es) sin publicar — el jurado/delegado aún no las ve">🟡 Pendiente</span></div>`
+                    : `<div style="margin-top:3px;"><span class="badge" style="background:#eafaf1; color:#1e8449; font-size:10px;">🟢 Publicado</span></div>`;
             const estadoHtml = (!r.jurados && !r.delegados)
                 ? '<span style="color:#aaa;">—</span>'
                 : `<div style="font-size:12px; line-height:1.8;">` +
                   (r.jurados   ? `<span style="color:#888; font-size:11px;">J:</span> ${jStr  || '<span style="color:#aaa; font-size:11px;">—</span>'} ` : '') +
                   (r.delegados ? `<span style="color:#888; font-size:11px;">D:</span> ${dStr  || '<span style="color:#aaa; font-size:11px;">—</span>'}` : '') +
-                  `</div>`;
+                  `</div>` + badgePublicacion;
             const ind = indicadores[r.id] || { cj: false, cd: false, vy: false };
             const si = '<span style="color:#27ae60; font-weight:700;">✔</span>';
             const no = '<span style="color:#ccc;">✖</span>';
@@ -430,6 +434,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
             <td>
                 <div class="flex gap-8">
                     ${esComisionRodeos ? '' : `<button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver</button>`}
+                    ${(!esMonitor && !esAnalistaRodeos && !esComisionRodeos && r.pendientes_publicacion > 0) ? `<button class="btn btn-pequeño" style="background:#a04000;color:white;" onclick="abrirPublicarDesignaciones('${r.id}')">Publicar designaciones</button>` : ''}
                     ${(esMonitor || esAnalistaRodeos || esComisionRodeos) ? '' : `<button class="btn btn-pequeño btn-secundario" onclick="abrirEditar('${r.id}')">Editar</button>`}
                     ${(esAnalistaRodeos || esComisionRodeos) ? '' : `<button class="btn btn-pequeño btn-outline" onclick="abrirAdjuntosAdmin('${r.id}', '${sanitizar(r.club)}')">📎</button>`}
                     ${(esMonitor || esAnalistaRodeos || esComisionRodeos) ? '' : `<button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminar('${r.id}', '${sanitizar(r.club)}', '${formatFecha(r.fecha)}', ${r.total_asignaciones || 0})">Eliminar</button>`}
@@ -686,7 +691,7 @@ function htmlDetalle(r) {
             <td>${a.categoria_aplicada || '—'}</td>
             <td>${formatCLP(a.valor_diario_aplicado)}</td>
             <td class="monto-positivo">${formatCLP(a.pago_base_calculado)}</td>
-            <td>${designBadge}</td>
+            <td>${designBadge}${a.publicado ? '' : '<br><span style="font-size:11px; color:#a04000;" title="Aún no visible para esta persona">🟡 Pendiente de publicación</span>'}</td>
             <td>
                 ${!esMonitor && !esComisionRodeos && a.estado === 'activo' ? `<div class="flex gap-8" style="flex-wrap:wrap;">
                     <button class="btn btn-pequeño btn-outline" onclick="abrirEditarAsignacion('${a.id}', '${r.id}')">Editar</button>
@@ -1201,6 +1206,50 @@ async function designarJurado(usuarioId, nombre, repiteAsociacion) {
         cerrarModal();
         verDetalle(_designarRodeoId);
     } catch(err) { mostrarError(err); }
+}
+
+// ── Publicar designaciones del rodeo (hace visibles al jurado/delegado las ──
+// designaciones que estaban en borrador). Reutiliza el modal confirmar()
+// existente con contenido enriquecido, sin crear infraestructura nueva.
+async function abrirPublicarDesignaciones(rodeoId) {
+    let detalle;
+    try {
+        detalle = await api.get('/admin/rodeos/' + rodeoId);
+    } catch (e) { mostrarError(e); return; }
+
+    // Revalidar con datos frescos (no confiar únicamente en el contador ya
+    // mostrado en la fila de la tabla, que pudo haber cambiado).
+    const pendientes = (detalle.asignaciones || []).filter(a => a.estado !== 'anulado' && !a.publicado);
+    if (pendientes.length === 0) {
+        mostrarToast('No hay designaciones pendientes de publicación en este rodeo.', 'info');
+        return;
+    }
+
+    const nombres = pendientes.map(a => sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || 'Sin nombre'));
+
+    const contenido = `
+        <div style="text-align:left;">
+            <div style="font-weight:700; font-size:15px; margin-bottom:8px; color:var(--azul);">Publicar designaciones</div>
+            <p style="font-size:13px; margin-bottom:10px;">Está a punto de publicar las designaciones del siguiente rodeo:</p>
+            <div style="font-size:13px; margin-bottom:10px; line-height:1.6;">
+                <strong>Fecha:</strong> ${formatFecha(detalle.fecha)}<br>
+                <strong>Club:</strong> ${sanitizar(detalle.club)}<br>
+                <strong>Asociación:</strong> ${sanitizar(detalle.asociacion)}
+            </div>
+            <div style="font-size:13px; margin-bottom:4px;"><strong>${nombres.length > 1 ? 'Personas' : 'Persona'}:</strong></div>
+            <ul style="font-size:13px; margin:0 0 10px 20px; padding:0;">${nombres.map(n => `<li>${n}</li>`).join('')}</ul>
+            <p style="font-size:12px; color:var(--gris); margin-bottom:0;">Una vez publicadas, estas personas podrán ver el rodeo en su portal. ¿Desea continuar?</p>
+        </div>`;
+
+    const ok = await confirmar(contenido);
+    if (!ok) return;
+
+    try {
+        const resp = await api.post(`/admin/rodeos/${rodeoId}/publicar-designaciones`, {});
+        mostrarToast(resp.mensaje || 'Designaciones publicadas correctamente', 'success');
+        cargar(paginaActual);
+        if (rodeoActual && rodeoActual.id === rodeoId) verDetalle(rodeoId);
+    } catch (e) { mostrarError(e); }
 }
 
 async function mostrarTipos() {

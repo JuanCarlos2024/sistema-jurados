@@ -24,6 +24,7 @@ router.get('/:asignacion_id', async (req, res) => {
         .eq('id', asigId)
         .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .single();
 
     if (asigErr || !asig) return res.status(404).json({ error: 'Asignación no encontrada' });
@@ -97,6 +98,7 @@ router.patch('/:asignacion_id', async (req, res) => {
         .eq('id', asigId)
         .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
@@ -162,6 +164,7 @@ router.post('/:asignacion_id/enviar', async (req, res) => {
         .eq('id', asigId)
         .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });

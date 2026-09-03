@@ -19,6 +19,7 @@ router.post('/:id/responder', async (req, res) => {
         .select('id, rodeo_id, usuario_pagado_id, estado, estado_designacion, rodeos(club, asociacion, fecha)')
         .eq('id', req.params.id)
         .eq('usuario_pagado_id', req.usuario.id)
+        .eq('publicado', true)
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
@@ -166,6 +167,7 @@ router.patch('/:id/km', async (req, res) => {
         .select('id, rodeo_id, usuario_pagado_id, estado, estado_designacion, distancia_km, rodeos(club, fecha)')
         .eq('id', req.params.id)
         .eq('usuario_pagado_id', req.usuario.id)
+        .eq('publicado', true)
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });

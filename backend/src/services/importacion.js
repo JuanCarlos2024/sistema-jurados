@@ -512,6 +512,7 @@ async function procesarImportacion(buffer, nombreArchivo, adminId, adminIp) {
                     pago_base_calculado:    calculo.pago_base_calculado,
                     estado:                 'activo',
                     estado_designacion:     'pendiente',
+                    publicado:              false, // borrador: requiere "Publicar designaciones" del rodeo
                     created_by:             adminId
                 });
 

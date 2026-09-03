@@ -297,6 +297,7 @@ router.post('/', async (req, res) => {
                     pago_base_calculado: calculo.pago_base_calculado,
                     estado: 'activo',
                     estado_designacion: 'pendiente',
+                    publicado: false, // borrador: no visible para el jurado hasta "Publicar designaciones"
                     created_by: req.usuario.id
                 })
                 .select()
@@ -937,6 +938,7 @@ router.post('/pendientes/:id/resolver', async (req, res) => {
                 pago_base_calculado: calculo.pago_base_calculado,
                 estado: 'activo',
                 estado_designacion: 'pendiente',
+                publicado: false, // borrador: no visible para el jurado hasta "Publicar designaciones"
                 created_by: req.usuario.id
             })
             .select()

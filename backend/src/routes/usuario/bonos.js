@@ -40,6 +40,7 @@ router.post('/', async (req, res) => {
         .select('id, rodeo_id, estado')
         .eq('id', asignacion_id)
         .eq('usuario_pagado_id', req.usuario.id)
+        .eq('publicado', true)
         .single();
 
     if (!asig) {

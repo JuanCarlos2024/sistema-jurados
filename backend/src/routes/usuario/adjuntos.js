@@ -30,6 +30,7 @@ router.get('/', async (req, res) => {
         .eq('rodeo_id', rodeo_id)
         .eq('usuario_pagado_id', req.usuario.id)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .limit(1);
 
     if (!asig || asig.length === 0) {
@@ -81,6 +82,7 @@ router.post('/', upload.single('archivo'), async (req, res) => {
         .eq('rodeo_id', rodeo_id)
         .eq('usuario_pagado_id', req.usuario.id)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .limit(1);
 
     if (!asig || asig.length === 0) {

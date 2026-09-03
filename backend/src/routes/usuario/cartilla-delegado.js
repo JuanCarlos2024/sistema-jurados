@@ -39,6 +39,7 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
         .eq('rodeo_id', rodeoId)
         .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .neq('estado_designacion', 'rechazado')
         .maybeSingle();
 
@@ -76,6 +77,7 @@ router.post('/rodeo/:rodeo_id', async (req, res) => {
         .eq('rodeo_id', rodeoId)
         .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .neq('estado_designacion', 'rechazado')
         .maybeSingle();
 

@@ -24,6 +24,7 @@ router.get('/', async (req, res) => {
         .select('id, rodeo_id')
         .eq('usuario_pagado_id', uid)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .neq('estado_designacion', 'rechazado');
 
     if (!asignaciones?.length) {
@@ -174,6 +175,7 @@ router.get('/:id/casos', async (req, res) => {
         .eq('usuario_pagado_id', req.usuario.id)
         .eq('rodeo_id', ev.rodeo_id)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .neq('estado_designacion', 'rechazado')
         .limit(1)
         .single();
@@ -285,6 +287,7 @@ router.get('/:id/resultado', async (req, res) => {
         .eq('usuario_pagado_id', req.usuario.id)
         .eq('rodeo_id', ev.rodeo.id)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .limit(1)
         .single();
 
@@ -403,6 +406,7 @@ router.post('/:id/comentario-final', async (req, res) => {
         .eq('usuario_pagado_id', req.usuario.id)
         .eq('rodeo_id', ev.rodeo_id)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .limit(1)
         .single();
 
@@ -454,6 +458,7 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
             .eq('usuario_pagado_id', req.usuario.id)
             .eq('rodeo_id', ev.rodeo_id)
             .eq('estado', 'activo')
+            .eq('publicado', true)
             .neq('estado_designacion', 'rechazado')
             .limit(1)
             .single();
@@ -588,6 +593,7 @@ router.post('/:id/ciclos/:cicloId/comentario', async (req, res) => {
         .eq('usuario_pagado_id', req.usuario.id)
         .eq('rodeo_id', ev.rodeo_id)
         .eq('estado', 'activo')
+        .eq('publicado', true)
         .neq('estado_designacion', 'rechazado')
         .limit(1)
         .single();

@@ -14,7 +14,8 @@ router.get('/historial', async (req, res) => {
             bonos_solicitados(estado, monto_aprobado, monto_solicitado)
         `)
         .eq('usuario_pagado_id', req.usuario.id)
-        .eq('estado', 'activo');
+        .eq('estado', 'activo')
+        .eq('publicado', true);
 
     if (error) return res.status(500).json({ error: error.message });
 
@@ -62,7 +63,8 @@ router.get('/desempeno', async (req, res) => {
             .from('asignaciones')
             .select('id, estado_designacion')
             .eq('usuario_pagado_id', uid)
-            .eq('estado', 'activo');
+            .eq('estado', 'activo')
+            .eq('publicado', true);
 
         const propias = (asigs || []).filter(a => a.estado_designacion !== 'rechazado');
         const total_rodeos = propias.length;
@@ -97,6 +99,7 @@ router.get('/desempeno', async (req, res) => {
                     .from('asignaciones')
                     .select('id, estado_designacion')
                     .eq('estado', 'activo')
+                    .eq('publicado', true)
                     .in('usuario_pagado_id', pareIds);
 
                 const asigIdsPares = (asigsPares || [])
@@ -129,7 +132,7 @@ router.get('/', async (req, res) => {
     const mes = req.query.mes || String(ahora.getMonth() + 1).padStart(2, '0');
 
     try {
-        const resumen = await calcularResumenMensual(req.usuario.id, año, mes);
+        const resumen = await calcularResumenMensual(req.usuario.id, año, mes, { soloPublicadas: true });
 
         // Adjuntar notas y estado de cartilla por asignación
         const esDelegado = req.usuario.tipo_persona === 'delegado_rentado';
@@ -190,7 +193,8 @@ router.get('/meses-disponibles', async (req, res) => {
         .from('asignaciones')
         .select('rodeos!inner(fecha)')
         .eq('usuario_pagado_id', req.usuario.id)
-        .eq('estado', 'activo');
+        .eq('estado', 'activo')
+        .eq('publicado', true);
 
     if (error) return res.status(500).json({ error: error.message });
 
