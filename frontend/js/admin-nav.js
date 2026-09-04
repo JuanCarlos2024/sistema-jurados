@@ -13,6 +13,7 @@
         { s: 'Rodeos' },
         { href: '/admin/rodeos.html',              icon: '🏆', label: 'Rodeos' },
         { href: '/admin/importacion.html',         icon: '📥', label: 'Importar Excel' },
+        { href: '/admin/propuesta-designacion.html', icon: '🧭', label: 'Propuesta de Designación' },
         { s: 'Pagos' },
         { href: '/admin/bonos.html',               icon: '💰', label: 'Bonos' },
         { s: 'Reportes' },

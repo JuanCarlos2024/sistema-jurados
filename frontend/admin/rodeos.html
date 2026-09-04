@@ -248,6 +248,8 @@ let paginaActual = 1;
 const POR_PAGINA = 25;
 let tiposRodeo = [];
 let categoriasRodeo = [];
+let comunasChile = [];
+let clasificacionesDesignacion = [];
 let rodeoActual = null;
 
 let debounceTimer;
@@ -273,20 +275,25 @@ let todosDelegados = [];
 async function init() {
     poblarAnios();
     try {
-        const [tipos, cats, jurados, delegados] = await Promise.all([
+        const [tipos, cats, jurados, delegados, comunas, clasificaciones] = await Promise.all([
             api.get('/admin/rodeos/tipos/lista?activo=true'),
             api.get('/admin/reportes/categorias-rodeo/lista?activo=true'),
             api.get('/admin/usuarios?tipo=jurado&activo=true&limit=500'),
-            api.get('/admin/usuarios?tipo=delegado_rentado&activo=true&limit=500')
+            api.get('/admin/usuarios?tipo=delegado_rentado&activo=true&limit=500'),
+            api.get('/admin/propuesta-designacion/comunas').catch(() => []),
+            api.get('/admin/propuesta-designacion/clasificaciones').catch(() => [])
         ]);
         tiposRodeo      = tipos  || [];
         categoriasRodeo = cats   || [];
         todosJurados    = jurados?.data  || [];
         todosDelegados  = delegados?.data || [];
+        comunasChile    = comunas || [];
+        clasificacionesDesignacion = clasificaciones || [];
     } catch(err) {
         console.warn('[Rodeos] No se pudieron cargar datos iniciales:', err.message);
         tiposRodeo = []; categoriasRodeo = [];
         todosJurados = []; todosDelegados = [];
+        comunasChile = []; clasificacionesDesignacion = [];
     }
     poblarFiltrosAvanzados();
     cargar();
@@ -799,6 +806,20 @@ function formRodeo(r) {
                 <div class="form-hint" id="hint-cat"></div>
             </div>
             <div class="form-grupo">
+                <label class="form-label">Comuna</label>
+                <input type="text" id="in-comuna" class="form-control" list="dl-comunas"
+                       placeholder="Buscar comuna..." autocomplete="off"
+                       value="${sanitizar(r?.comuna_nombre||'')}"
+                       oninput="sincronizarComunaId(this)">
+                <datalist id="dl-comunas">
+                    ${comunasChile.map(c => `<option value="${sanitizar(c.nombre)}">`).join('')}
+                </datalist>
+                <input type="hidden" name="comuna_id" id="in-comuna-id" value="${r?.comuna_id||''}">
+                <div class="form-hint">Opcional. Solo se guarda si el nombre coincide exactamente con una comuna del listado.</div>
+            </div>
+        </div>
+        <div class="form-fila">
+            <div class="form-grupo" style="flex:1 1 100%;">
                 <label class="form-label">Observación</label>
                 <textarea name="observacion" class="form-control" rows="2">${sanitizar(r?.observacion||'')}</textarea>
             </div>
@@ -808,6 +829,16 @@ function formRodeo(r) {
             <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
         </div>
     </form>`;
+}
+
+// Resuelve el texto escrito en el buscador de comuna contra el catálogo cargado
+// (comparación exacta por nombre, no inventa coincidencias parciales) y guarda
+// el id resuelto en el campo oculto. Si no coincide con ninguna comuna, deja
+// el campo oculto vacío (se guarda como comuna_id = null).
+function sincronizarComunaId(inputEl) {
+    const texto = inputEl.value.trim();
+    const match = comunasChile.find(c => c.nombre.toLowerCase() === texto.toLowerCase());
+    document.getElementById('in-comuna-id').value = match ? match.id : '';
 }
 
 async function guardarRodeo(e) {
@@ -1253,23 +1284,30 @@ async function abrirPublicarDesignaciones(rodeoId) {
 }
 
 async function mostrarTipos() {
-    const data = await api.get('/admin/rodeos/tipos/lista');
+    const [data, clasif] = await Promise.all([
+        api.get('/admin/rodeos/tipos/lista'),
+        api.get('/admin/propuesta-designacion/tipos-rodeo-clasificacion').catch(() => [])
+    ]);
+    const clasifPorId = {};
+    (clasif||[]).forEach(c => { clasifPorId[c.id] = c.clasificacion_nombre; });
     document.getElementById('modal-titulo').textContent = 'Tipos de Rodeo';
     document.getElementById('modal-body').innerHTML = `
         <div class="form-acciones" style="margin-bottom:16px;">
             <button class="btn btn-primario btn-pequeño" onclick="formularioTipo(null)">+ Nuevo tipo</button>
         </div>
         <table>
-            <thead><tr><th>Nombre</th><th>Días</th><th>Categoría asociada</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Días</th><th>Categoría asociada</th><th>Clasificación designación</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
             ${(data||[]).map(t => {
                 const catNombre = t.categoria_rodeo_id
                     ? (categoriasRodeo.find(c => c.id === t.categoria_rodeo_id)?.nombre || '—')
                     : '<span style="color:#aaa;">Sin categoría</span>';
+                const clasifNombre = clasifPorId[t.id] || '<span style="color:#aaa;">Sin clasificar</span>';
                 return `<tr>
                 <td>${sanitizar(t.nombre)}</td>
                 <td style="text-align:center;">${t.duracion_dias}</td>
                 <td>${catNombre}</td>
+                <td>${clasifNombre}</td>
                 <td>${t.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Inactivo</span>'}</td>
                 <td>
                     <button class="btn btn-pequeño btn-outline" onclick="formularioTipo(${JSON.stringify(t).replace(/"/g,'&quot;')})">Editar</button>
@@ -1283,6 +1321,9 @@ async function mostrarTipos() {
 function formularioTipo(t) {
     const catsOpts = categoriasRodeo.map(c =>
         `<option value="${c.id}" ${t?.categoria_rodeo_id===c.id?'selected':''}>${sanitizar(c.nombre)}</option>`
+    ).join('');
+    const clasifOpts = clasificacionesDesignacion.map(c =>
+        `<option value="${c.codigo}" ${t?.clasificacion_designacion_id===c.id?'selected':''}>${sanitizar(c.nombre)}</option>`
     ).join('');
     document.getElementById('modal-body').innerHTML = `
         <form onsubmit="guardarTipo(event, '${t?.id||''}')">
@@ -1307,6 +1348,14 @@ function formularioTipo(t) {
                 </div>
             </div>
             <div class="form-grupo">
+                <label class="form-label">Clasificación para designación</label>
+                <select name="clasificacion_codigo" class="form-control">
+                    <option value="">Sin clasificar</option>
+                    ${clasifOpts}
+                </select>
+                <div class="form-hint">Usada por el módulo de Propuesta de Designación (Interclubes, Provincial, etc.). No afecta la categoría de rodeo de arriba.</div>
+            </div>
+            <div class="form-grupo">
                 <label class="form-label">Observación</label>
                 <input type="text" name="observacion" class="form-control" value="${sanitizar(t?.observacion||'')}">
             </div>
@@ -1329,11 +1378,20 @@ async function guardarTipo(e, id) {
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
     const datos = Object.fromEntries(new FormData(e.target));
+    const clasificacion_codigo = datos.clasificacion_codigo || null;
+    delete datos.clasificacion_codigo;
     if (datos.activo) datos.activo = datos.activo === 'true';
     if (!datos.categoria_rodeo_id) datos.categoria_rodeo_id = null;
     try {
+        let tipoId = id;
         if (id) await api.patch('/admin/rodeos/tipos/' + id, datos);
-        else await api.post('/admin/rodeos/tipos', datos);
+        else {
+            const creado = await api.post('/admin/rodeos/tipos', datos);
+            tipoId = creado?.id;
+        }
+        // La clasificación de designación se guarda por endpoint separado
+        // (recurso distinto: no altera nombre/duración/categoría del tipo).
+        if (tipoId) await api.patch(`/admin/propuesta-designacion/tipos-rodeo/${tipoId}/clasificacion`, { clasificacion_codigo });
         mostrarToast('Tipo de rodeo guardado', 'success');
         tiposRodeo = await api.get('/admin/rodeos/tipos/lista?activo=true');
         mostrarTipos();

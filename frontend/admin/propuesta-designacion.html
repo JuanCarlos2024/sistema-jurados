@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Propuesta de Designación — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .dash-seccion { margin-bottom: 24px; }
+        .dash-seccion-titulo {
+            font-size: 11px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: .7px; color: var(--gris); margin-bottom: 10px;
+            border-bottom: 1px solid var(--gris-borde); padding-bottom: 6px;
+        }
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+        .kpi-card {
+            background: white; border: 1px solid var(--gris-borde); border-radius: 10px;
+            padding: 14px 16px; text-align: center;
+        }
+        .kpi-card .val { font-size: 22px; font-weight: 700; color: var(--primario); line-height: 1.2; }
+        .kpi-card .val.verde  { color: #27ae60; }
+        .kpi-card .val.naranja { color: #e67e22; }
+        .kpi-card .val.rojo   { color: #c0392b; }
+        .kpi-card .lbl { font-size: 12px; color: var(--gris); margin-top: 4px; line-height: 1.3; }
+        .aviso-etapa {
+            background: #eef5ff; border: 1px solid #cfe2ff; border-radius: 10px;
+            padding: 12px 16px; font-size: 13px; color: #1b4f8c; margin-bottom: 20px; line-height: 1.5;
+        }
+        .aviso-simulacion {
+            background: #fff3cd; border: 1px solid #ffe08a; border-radius: 10px;
+            padding: 12px 16px; font-size: 13px; color: #7a5200; margin-bottom: 16px; line-height: 1.5; font-weight: 600;
+        }
+        .rodeo-buscador { position: relative; }
+        .rodeo-sugerencias {
+            position: absolute; z-index: 20; top: 100%; left: 0; right: 0;
+            background: white; border: 1px solid var(--gris-borde); border-radius: 8px;
+            box-shadow: 0 6px 16px rgba(0,0,0,.1); max-height: 260px; overflow-y: auto; margin-top: 4px;
+        }
+        .rodeo-sugerencia-item { padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--gris-claro); }
+        .rodeo-sugerencia-item:hover { background: #f4f6f9; }
+        .chip-rodeo {
+            display: inline-flex; align-items: center; gap: 6px; background: #eef5ff; border: 1px solid #cfe2ff;
+            border-radius: 14px; padding: 4px 10px; font-size: 12px; margin: 3px 4px 3px 0;
+        }
+        .chip-rodeo button { border: none; background: none; cursor: pointer; color: #1b4f8c; font-weight: 700; padding: 0; }
+        .resultado-rodeo-card {
+            background: white; border: 1px solid var(--gris-borde); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+        }
+        .badge-estado { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; text-transform: uppercase; letter-spacing: .3px; }
+        .badge-estado.PROPUESTO { background: #e6f7ec; color: #1e8449; }
+        .badge-estado.SIN_PROPUESTA { background: #fdeee0; color: #b9560a; }
+        .badge-estado.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
+        .check-linea { font-size: 12px; margin: 2px 0; }
+        .check-linea.ok { color: #1e8449; }
+        .check-linea.no { color: #b9560a; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Propuesta de Designación de Jurados <span style="font-size:12px; font-weight:700; color:#8a5a00; background:#fff3cd; border:1px solid #ffe08a; border-radius:12px; padding:2px 10px; vertical-align:middle;">🧪 Incluye simulación — no crea designaciones reales</span></h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="aviso-etapa">
+                <strong>Esta pantalla NO crea designaciones reales.</strong> Es una herramienta administrativa de
+                preparación, diagnóstico y <strong>simulación (dry-run)</strong> del motor de propuesta automática.
+                El motor analiza rodeos y jurados reales y devuelve un resultado hipotético — no guarda nada en la
+                base de datos, no publica nada, no queda visible para ningún jurado.
+                <br><br>
+                Para editar la comuna de un rodeo, use el formulario de edición en
+                <a href="/admin/rodeos.html">Rodeos</a>. Para editar la clasificación de un tipo de rodeo, use
+                <a href="/admin/rodeos.html">Rodeos → Tipos de Rodeo</a>.
+            </div>
+
+            <div id="contenido">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+
+            <div class="dash-seccion" style="margin-top:28px;">
+                <div class="dash-seccion-titulo">🧪 Laboratorio de simulación (DRY-RUN)</div>
+                <div class="aviso-simulacion">
+                    ⚠️ SIMULACIÓN — Este resultado es hipotético. No crea, guarda ni publica ninguna designación.
+                    Nadie puede ver este resultado excepto usted, en esta pantalla, ahora mismo.
+                </div>
+
+                <div class="card" style="padding:16px;">
+                    <div class="form-grupo rodeo-buscador">
+                        <label class="form-label">Buscar rodeo (club o asociación)</label>
+                        <input type="text" id="in-buscar-rodeo" class="form-control" placeholder="Ej: Melipilla, Colchagua..." oninput="debounceBuscarRodeo()" autocomplete="off">
+                        <div id="sugerencias-rodeo" class="rodeo-sugerencias" hidden></div>
+                    </div>
+                    <div id="chips-rodeos-seleccionados" style="margin:8px 0;"></div>
+                    <div class="form-acciones">
+                        <button class="btn btn-primario" id="btn-ejecutar-dryrun" onclick="ejecutarDryRun()" disabled>🧪 Ejecutar simulación (DRY-RUN)</button>
+                        <button class="btn btn-secundario" onclick="limpiarSeleccionRodeos()">Limpiar selección</button>
+                    </div>
+                </div>
+
+                <div id="resultado-dryrun" style="margin-top:16px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+function kpi(valor, etiqueta, clase) {
+    return `<div class="kpi-card"><div class="val ${clase||''}">${valor}</div><div class="lbl">${etiqueta}</div></div>`;
+}
+
+async function cargar() {
+    const cont = document.getElementById('contenido');
+    try {
+        const d = await api.get('/admin/propuesta-designacion/diagnostico');
+        cont.innerHTML = `
+            <div class="dash-seccion">
+                <div class="dash-seccion-titulo">Rodeos activos (${d.rodeos.total})</div>
+                <div class="kpi-grid">
+                    ${kpi(d.rodeos.con_comuna, 'Con comuna', 'verde')}
+                    ${kpi(d.rodeos.sin_comuna, 'Sin comuna', 'naranja')}
+                    ${kpi(d.rodeos.con_clasificacion, 'Con clasificación (vía tipo)', 'verde')}
+                    ${kpi(d.rodeos.sin_clasificacion, 'Sin clasificación (vía tipo)', 'naranja')}
+                </div>
+            </div>
+
+            <div class="dash-seccion">
+                <div class="dash-seccion-titulo">Tipos de rodeo activos (${d.tipos_rodeo.total})</div>
+                <div class="kpi-grid">
+                    ${kpi(d.tipos_rodeo.clasificados, 'Clasificados', 'verde')}
+                    ${kpi(d.tipos_rodeo.sin_clasificar, 'Sin clasificar', 'naranja')}
+                </div>
+            </div>
+
+            <div class="dash-seccion">
+                <div class="dash-seccion-titulo">Jurados activos (${d.jurados.total})</div>
+                <div class="kpi-grid">
+                    ${kpi(d.jurados.con_categoria, 'Con categoría A/B/C', 'verde')}
+                    ${kpi(d.jurados.sin_categoria, 'Sin categoría', 'rojo')}
+                    ${kpi(d.jurados.con_comuna_texto, 'Con comuna (texto)', 'verde')}
+                    ${kpi(d.jurados.sin_comuna_texto, 'Sin comuna', 'naranja')}
+                    ${kpi(d.jurados.comuna_resuelta_contra_catalogo, 'Comuna reconocida en catálogo', 'verde')}
+                    ${kpi(d.jurados.comuna_no_reconocida_contra_catalogo, 'Comuna NO reconocida en catálogo', 'rojo')}
+                    ${kpi(d.jurados.asociacion_vacia_o_nula, 'Asociación vacía o nula', 'naranja')}
+                </div>
+            </div>
+
+            <div style="font-size:12px; color:var(--gris); margin-top:8px;">
+                Generado: ${new Date(d.generado_en).toLocaleString('es-CL')}
+            </div>`;
+    } catch (err) {
+        cont.innerHTML = '';
+        mostrarError(err);
+    }
+}
+
+cargar();
+
+// ─────────────────────────────────────────────────────────────────────────
+// Laboratorio de simulación (DRY-RUN) — llama al motor en modo simulación.
+// NO crea, guarda ni publica ninguna designación. Solo lectura.
+// ─────────────────────────────────────────────────────────────────────────
+let rodeosSeleccionados = []; // [{id, club, asociacion, fecha}]
+let debounceBuscarRodeoTimer;
+
+function debounceBuscarRodeo() {
+    clearTimeout(debounceBuscarRodeoTimer);
+    debounceBuscarRodeoTimer = setTimeout(buscarRodeoParaSimulacion, 300);
+}
+
+async function buscarRodeoParaSimulacion() {
+    const q = document.getElementById('in-buscar-rodeo').value.trim();
+    const cont = document.getElementById('sugerencias-rodeo');
+    if (q.length < 2) { cont.hidden = true; cont.innerHTML = ''; return; }
+    try {
+        const resp = await api.get('/admin/rodeos?buscar=' + encodeURIComponent(q) + '&limit=15');
+        const rodeos = (resp.data || []).filter(r => !rodeosSeleccionados.some(s => s.id === r.id));
+        if (rodeos.length === 0) {
+            cont.innerHTML = '<div class="rodeo-sugerencia-item" style="color:#aaa;">Sin resultados</div>';
+            cont.hidden = false;
+            return;
+        }
+        cont.innerHTML = rodeos.map(r => `
+            <div class="rodeo-sugerencia-item" onclick='agregarRodeoSeleccionado(${JSON.stringify({id:r.id, club:r.club, asociacion:r.asociacion, fecha:r.fecha}).replace(/'/g,"&#39;")})'>
+                <strong>${sanitizar(r.club)}</strong> — ${sanitizar(r.asociacion)} — ${formatFecha ? formatFecha(r.fecha) : r.fecha}
+            </div>`).join('');
+        cont.hidden = false;
+    } catch (err) { console.warn('[DryRun] búsqueda de rodeos falló:', err.message); }
+}
+
+function agregarRodeoSeleccionado(r) {
+    if (rodeosSeleccionados.some(s => s.id === r.id)) return;
+    rodeosSeleccionados.push(r);
+    document.getElementById('sugerencias-rodeo').hidden = true;
+    document.getElementById('in-buscar-rodeo').value = '';
+    renderChipsRodeos();
+}
+
+function quitarRodeoSeleccionado(id) {
+    rodeosSeleccionados = rodeosSeleccionados.filter(r => r.id !== id);
+    renderChipsRodeos();
+}
+
+function limpiarSeleccionRodeos() {
+    rodeosSeleccionados = [];
+    renderChipsRodeos();
+    document.getElementById('resultado-dryrun').innerHTML = '';
+}
+
+function renderChipsRodeos() {
+    const cont = document.getElementById('chips-rodeos-seleccionados');
+    cont.innerHTML = rodeosSeleccionados.map(r =>
+        `<span class="chip-rodeo">${sanitizar(r.club)} (${r.fecha})<button onclick="quitarRodeoSeleccionado('${r.id}')" title="Quitar">×</button></span>`
+    ).join('');
+    document.getElementById('btn-ejecutar-dryrun').disabled = rodeosSeleccionados.length === 0;
+}
+
+const ETIQUETAS_CAUSA = {
+    RODEO_NO_ENCONTRADO: 'Rodeo no encontrado', RODEO_INACTIVO: 'Rodeo inactivo/anulado',
+    TEMPORADA_NO_RESUELTA: 'No hay temporada activa configurada', RODEO_FUERA_DE_TEMPORADA: 'Fecha del rodeo fuera de la temporada activa',
+    RODEO_SIN_COMUNA: 'El rodeo no tiene comuna cargada', TIPO_SIN_CLASIFICACION: 'El tipo de rodeo no tiene clasificación asignada',
+    DISPONIBILIDAD: 'Sin disponibilidad declarada', MISMA_ASOCIACION: 'Es de la misma asociación del rodeo',
+    ASOCIACION_REPETIDA_TEMPORADA: 'Ya fue designado en esa asociación esta temporada', MISMO_FINDE: 'Ya tiene otro rodeo ese mismo fin de semana',
+    FINDE_CONSECUTIVO: 'Trabajó el fin de semana inmediatamente anterior', CATEGORIA_INCOMPATIBLE: 'Categoría no compatible con la clasificación del rodeo',
+    JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia mayor a 600 km'
+};
+
+async function ejecutarDryRun() {
+    const btn = document.getElementById('btn-ejecutar-dryrun');
+    const cont = document.getElementById('resultado-dryrun');
+    btn.disabled = true;
+    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const resp = await api.post('/admin/propuesta-designacion/dry-run', { rodeo_ids: rodeosSeleccionados.map(r => r.id) });
+        renderResultadoDryRun(resp);
+    } catch (err) {
+        cont.innerHTML = '';
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderResultadoDryRun(resp) {
+    const cont = document.getElementById('resultado-dryrun');
+    const r = resp.resumen;
+    let html = `
+        <div class="aviso-simulacion">
+            🧪 MODO: ${resp.modo} — Temporada: ${sanitizar(resp.temporada || '—')} — Nada de esto fue guardado.
+        </div>
+        <div class="kpi-grid" style="margin-bottom:16px;">
+            ${kpi(r.rodeos_solicitados, 'Rodeos solicitados')}
+            ${kpi(r.propuestos, 'Propuestos', 'verde')}
+            ${kpi(r.sin_propuesta, 'Sin propuesta', 'naranja')}
+            ${kpi(r.no_evaluables, 'No evaluables')}
+            ${kpi(r.candidatos_analizados, 'Candidatos analizados')}
+        </div>
+        <div style="font-size:11px; color:var(--gris); margin-bottom:16px;">
+            ${resp.metricas.tiempo_ejecucion_ms} ms total (carga BD: ${resp.metricas.tiempo_carga_bd_ms} ms · motor en memoria: ${resp.metricas.tiempo_motor_memoria_ms} ms)
+            · ~${resp.metricas.queries_aproximadas} consultas · ${resp.metricas.jurados_activos_considerados} jurados activos considerados
+        </div>`;
+
+    html += resp.resultados.map(res => {
+        const cabecera = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <div><strong>${sanitizar(res.rodeo?.club || '')}</strong> ${res.rodeo?.fecha ? '— ' + res.rodeo.fecha : ''} ${res.rodeo?.asociacion ? '— ' + sanitizar(res.rodeo.asociacion) : ''}</div>
+                <span class="badge-estado ${res.estado}">${res.estado.replace('_',' ')}</span>
+            </div>`;
+
+        if (res.estado === 'NO_EVALUABLE') {
+            return `<div class="resultado-rodeo-card">${cabecera}
+                <div style="font-size:13px; color:#6b7280;">Causa: ${ETIQUETAS_CAUSA[res.causa] || res.causa}</div>
+            </div>`;
+        }
+
+        if (res.estado === 'SIN_PROPUESTA') {
+            return `<div class="resultado-rodeo-card">${cabecera}
+                <div style="font-size:13px; color:#b9560a; margin-bottom:6px;">Ningún jurado cumple todas las reglas (${res.candidatos_evaluados} candidatos evaluados, ${res.candidatos_potenciales_bd ?? '—'} potenciales según BD).</div>
+                ${renderDescartes(res.descartes)}
+            </div>`;
+        }
+
+        // PROPUESTO
+        const jp = res.jurado_propuesto;
+        const checks = jp.checks;
+        const lineaCheck = (ok, label) => `<div class="check-linea ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${label}</div>`;
+        return `<div class="resultado-rodeo-card">${cabecera}
+            <div style="font-size:11px; color:var(--gris); margin-bottom:6px;">Candidatos potenciales (según BD, antes de esta corrida): <strong>${res.candidatos_potenciales_bd ?? '—'}</strong></div>
+            <div style="font-size:14px; font-weight:700;">${sanitizar(jp.nombre)}</div>
+            <div style="font-size:12px; color:var(--gris); margin-bottom:6px;">
+                Categoría ${sanitizar(jp.categoria || '—')}${jp.categoria_preferente ? ' (preferente)' : ''} ·
+                Distancia: ${jp.distancia_km !== null ? jp.distancia_km + ' km' : '—'} ·
+                Comuna: ${sanitizar(jp.comuna_canonica || '—')}${jp.origen_comuna ? ' (' + jp.origen_comuna + ')' : ''} ·
+                Designaciones temporada antes: ${jp.designaciones_temporada_antes}
+            </div>
+            ${lineaCheck(checks.disponible, 'Disponible')}
+            ${lineaCheck(checks.asociacion_diferente, 'Asociación diferente')}
+            ${lineaCheck(checks.no_repite_asociacion, 'No repite asociación en la temporada')}
+            ${lineaCheck(checks.sin_rodeo_mismo_finde, 'Sin otro rodeo ese fin de semana')}
+            ${lineaCheck(checks.sin_finde_consecutivo, 'No salió el fin de semana anterior')}
+            ${lineaCheck(checks.dentro_600km, 'Dentro de 600 km')}
+            ${lineaCheck(checks.categoria_compatible, 'Categoría compatible')}
+            <details style="margin-top:8px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">¿Por qué ganó? — Top ${res.top_candidatos?.length || 0} candidatos finales</summary>${renderTopCandidatos(res.top_candidatos)}</details>
+            <details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">Ver descartes (${res.candidatos_evaluados} candidatos evaluados)</summary>${renderDescartes(res.descartes)}</details>
+        </div>`;
+    }).join('');
+
+    if (resp.jurados_utilizados && resp.jurados_utilizados.length > 0) {
+        html += `
+        <div class="dash-seccion-titulo" style="margin-top:20px;">Jurados utilizados en esta simulación</div>
+        <div class="card" style="padding:0; overflow-x:auto;">
+            <table>
+                <thead><tr><th>Nombre</th><th>Designaciones antes</th><th>Propuestas nuevas</th><th>Total temporal</th></tr></thead>
+                <tbody>
+                ${resp.jurados_utilizados.map(j => `<tr>
+                    <td>${sanitizar(j.nombre || j.jurado_id)}</td>
+                    <td style="text-align:center;">${j.designaciones_antes}</td>
+                    <td style="text-align:center;">${j.propuestas_nuevas}</td>
+                    <td style="text-align:center; font-weight:700;">${j.total_temporal}</td>
+                </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    cont.innerHTML = html;
+}
+
+function renderTopCandidatos(top) {
+    if (!top || top.length === 0) return '<div style="font-size:12px; color:#aaa;">Sin candidatos.</div>';
+    return `<ol style="font-size:12px; margin:4px 0 0 18px; padding:0;">${top.map(c =>
+        `<li>${sanitizar(c.nombre)} — categoría ${sanitizar(c.categoria || '—')} — ${c.designaciones_antes} designaciones — ${c.distancia_km !== null ? c.distancia_km + ' km' : '—'}</li>`
+    ).join('')}</ol>`;
+}
+
+function renderDescartes(descartes) {
+    const entradas = Object.entries(descartes || {}).filter(([, n]) => n > 0);
+    if (entradas.length === 0) return '<div style="font-size:12px; color:#aaa;">Sin descartes registrados.</div>';
+    return `<div style="font-size:12px; margin-top:4px;">${entradas.map(([causa, n]) =>
+        `<div>${ETIQUETAS_CAUSA[causa] || causa}: <strong>${n}</strong></div>`
+    ).join('')}</div>`;
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.rodeo-buscador')) {
+        const s = document.getElementById('sugerencias-rodeo');
+        if (s) s.hidden = true;
+    }
+});
+</script>
+</body>
+</html>

@@ -133,6 +133,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
         .select(`
             id, club, asociacion, fecha, tipo_rodeo_nombre, tipo_rodeo_id,
             categoria_rodeo_id, categoria_rodeo_nombre, duracion_dias, origen, estado, created_at,
+            comuna_id, comunas_chile(nombre),
             tipos_rodeo(categoria_rodeo_id, categorias_rodeo(nombre))
         `, { count: 'exact' })
         .order('fecha', { ascending: false })
@@ -199,8 +200,10 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
                     r.categoria_heredada = true; // flag para el frontend si se necesita
                 }
             }
-            // Limpiar el join auxiliar de la respuesta
+            r.comuna_nombre = r.comunas_chile?.nombre || null;
+            // Limpiar los joins auxiliares de la respuesta
             delete r.tipos_rodeo;
+            delete r.comunas_chile;
         });
     }
 
@@ -255,7 +258,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
 router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     const { data: rodeo, error } = await supabase
         .from('rodeos')
-        .select('*, tipos_rodeo(nombre, duracion_dias, categoria_rodeo_id, categorias_rodeo(nombre))')
+        .select('*, tipos_rodeo(nombre, duracion_dias, categoria_rodeo_id, categorias_rodeo(nombre)), comunas_chile(nombre)')
         .eq('id', req.params.id)
         .single();
 
@@ -268,6 +271,10 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             rodeo.categoria_rodeo_nombre = catNombre;
             rodeo.categoria_heredada = true;
         }
+    }
+    if (rodeo) {
+        rodeo.comuna_nombre = rodeo.comunas_chile?.nombre || null;
+        delete rodeo.comunas_chile;
     }
 
     const [{ data: asignaciones }, { data: evaluacion }, { data: datosMonitor }, { data: notasSecundarias }] = await Promise.all([
@@ -435,7 +442,7 @@ router.put('/:id/notas-secundarias', async (req, res) => {
 
 // POST /api/admin/rodeos
 router.post('/', soloNoMonitor, async (req, res) => {
-    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion } = req.body;
+    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, comuna_id } = req.body;
 
     if (!club || !asociacion || !fecha || !tipo_rodeo_id) {
         return res.status(400).json({ error: 'club, asociacion, fecha y tipo_rodeo_id son requeridos' });
@@ -468,6 +475,7 @@ router.post('/', soloNoMonitor, async (req, res) => {
             duracion_dias: tipo.duracion_dias,
             categoria_rodeo_id: categoria_rodeo_id || null,
             categoria_rodeo_nombre,
+            comuna_id: comuna_id || null,
             observacion,
             origen: 'manual',
             created_by: req.usuario.id
@@ -493,7 +501,7 @@ router.post('/', soloNoMonitor, async (req, res) => {
 
 // PATCH /api/admin/rodeos/:id
 router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
-    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, estado } = req.body;
+    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, estado, comuna_id } = req.body;
 
     const { data: anterior } = await supabase
         .from('rodeos')
@@ -509,6 +517,7 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
     if (fecha) cambios.fecha = fecha;
     if (observacion !== undefined) cambios.observacion = observacion;
     if (estado) cambios.estado = estado;
+    if (comuna_id !== undefined) cambios.comuna_id = comuna_id || null;
 
     if (tipo_rodeo_id && tipo_rodeo_id !== anterior.tipo_rodeo_id) {
         const { data: tipo } = await supabase
