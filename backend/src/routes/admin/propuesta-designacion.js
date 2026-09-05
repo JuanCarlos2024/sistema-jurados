@@ -26,9 +26,13 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { resolverComuna, cargarCatalogoResolucionComunas } = require('../../services/geografia');
 const { soloRolEvaluacion } = require('../../middleware/auth');
-const { generarSimulacion, filtrarRodeosSinJuradoEfectivo } = require('../../services/motorPropuestaDesignacion');
+const { generarSimulacion, cargarDatosMotor, ejecutarSimulacion, filtrarRodeosSinJuradoEfectivo } = require('../../services/motorPropuestaDesignacion');
 const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
 const { clasificarJurado } = require('../../services/diagnosticoJurados');
+const { calcularBloqueRodeo } = require('../../services/feriados');
+const {
+    construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta
+} = require('../../services/propuestaDesignacion');
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
 router.use(soloRolEvaluacion());
@@ -620,6 +624,391 @@ router.post('/dry-run', async (req, res) => {
         console.error('[DRY-RUN] Error generando simulación:', err.message);
         res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
     }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Etapa 4 — PROPUESTA BORRADOR persistente. NO crea asignaciones reales, NO
+// publica, NO es visible para ningún jurado. Reutiliza generarSimulacion()/
+// ejecutarSimulacion() para todo lo que es "reglas del motor" — este bloque
+// solo agrega la capa de persistencia + selección/aceptación administrativa.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── POST /propuestas — genera y guarda una propuesta BORRADOR ────────────
+// Body: { rodeo_ids: [...] }. Reutiliza EXACTAMENTE generarSimulacion() (el
+// mismo motor del dry-run) y persiste su resultado. No crea nada en
+// `asignaciones`. Advierte (sin bloquear) si algún rodeo ya está en otra
+// propuesta BORRADOR — ver sección 14 del pedido.
+router.post('/propuestas', async (req, res) => {
+    const { rodeo_ids } = req.body;
+    if (!Array.isArray(rodeo_ids) || rodeo_ids.length === 0) {
+        return res.status(400).json({ error: 'rodeo_ids debe ser un array con al menos un id' });
+    }
+    if (rodeo_ids.length > 200) {
+        return res.status(400).json({ error: 'Máximo 200 rodeos por propuesta' });
+    }
+    const idsUnicos = [...new Set(rodeo_ids)];
+
+    // Advertencia (no bloqueante) de rodeos ya presentes en otra propuesta BORRADOR
+    let rodeosYaEnOtraPropuesta = [];
+    {
+        const { data: yaEnOtra, error: errYa } = await supabase
+            .from('propuestas_designacion_detalle')
+            .select('rodeo_id, propuestas_designacion!inner(estado)')
+            .in('rodeo_id', idsUnicos)
+            .eq('propuestas_designacion.estado', 'BORRADOR');
+        if (errYa) return res.status(500).json({ error: errYa.message });
+        rodeosYaEnOtraPropuesta = [...new Set((yaEnOtra || []).map(r => r.rodeo_id))];
+    }
+
+    let resultadoSimulacion;
+    try {
+        resultadoSimulacion = await generarSimulacion(idsUnicos); // mismo motor exacto del dry-run
+    } catch (err) {
+        return res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
+    }
+
+    const { data: temporadaActiva } = await supabase.from('temporadas').select('id').eq('activa', true).maybeSingle();
+
+    const { data: propuesta, error: errProp } = await supabase
+        .from('propuestas_designacion')
+        .insert({ temporada_id: temporadaActiva?.id || null, estado: 'BORRADOR', creado_por: req.usuario.id })
+        .select()
+        .single();
+    if (errProp) return res.status(500).json({ error: errProp.message });
+
+    const filas = resultadoSimulacion.resultados.map(r => ({
+        propuesta_id: propuesta.id,
+        ...construirDetalleDesdeResultado(r)
+    }));
+
+    const { data: detalles, error: errDet } = await supabase
+        .from('propuestas_designacion_detalle')
+        .insert(filas)
+        .select();
+    if (errDet) return res.status(500).json({ error: errDet.message });
+
+    await auditoria.registrar({
+        tabla: 'propuestas_designacion',
+        registro_id: propuesta.id,
+        accion: 'crear',
+        datos_nuevos: { rodeos: idsUnicos.length, resumen: resumenPropuesta(detalles) },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Propuesta borrador creada con ${idsUnicos.length} rodeo(s)`,
+        ip_address: req.ip
+    });
+
+    res.status(201).json({
+        propuesta: { id: propuesta.id, estado: propuesta.estado, created_at: propuesta.created_at, resumen: resumenPropuesta(detalles) },
+        rodeos_ya_en_otra_propuesta: rodeosYaEnOtraPropuesta
+    });
+});
+
+// ─── GET /propuestas — listado de propuestas guardadas ────────────────────
+router.get('/propuestas', async (req, res) => {
+    const { data: propuestas, error } = await supabase
+        .from('propuestas_designacion')
+        .select('id, temporada_id, estado, creado_por, created_at, updated_at, temporadas(nombre)')
+        .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    if (!propuestas || propuestas.length === 0) return res.json({ propuestas: [] });
+
+    const ids = propuestas.map(p => p.id);
+    const { data: detalles, error: errD } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('propuesta_id, estado_revision')
+        .in('propuesta_id', ids);
+    if (errD) return res.status(500).json({ error: errD.message });
+
+    const porPropuesta = {};
+    for (const d of (detalles || [])) {
+        if (!porPropuesta[d.propuesta_id]) porPropuesta[d.propuesta_id] = [];
+        porPropuesta[d.propuesta_id].push(d);
+    }
+
+    res.json({
+        propuestas: propuestas.map(p => ({
+            id: p.id,
+            temporada: p.temporadas?.nombre || null,
+            estado: p.estado,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+            resumen: resumenPropuesta(porPropuesta[p.id] || [])
+        }))
+    });
+});
+
+// ─── GET /propuestas/:id — detalle completo de una propuesta ──────────────
+router.get('/propuestas/:id', async (req, res) => {
+    const { data: propuesta, error } = await supabase
+        .from('propuestas_designacion')
+        .select('id, temporada_id, estado, creado_por, created_at, updated_at, confirmado_en, temporadas(nombre)')
+        .eq('id', req.params.id)
+        .single();
+    if (error || !propuesta) return res.status(404).json({ error: 'Propuesta no encontrada' });
+
+    const { data: detalles, error: errD } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select(`
+            id, rodeo_id, jurado_id_propuesto, jurado_id_seleccionado, estado_revision, origen_seleccion,
+            explicacion_json, metricas_json, created_at, updated_at,
+            rodeos(club, fecha, asociacion, tipo_rodeo_nombre)
+        `)
+        .eq('propuesta_id', req.params.id)
+        .order('created_at');
+    if (errD) return res.status(500).json({ error: errD.message });
+
+    // Nombres de jurados en una sola consulta adicional (evita el problema de
+    // relaciones ambiguas de PostgREST al tener dos FKs distintas hacia la
+    // misma tabla usuarios_pagados desde la misma fila).
+    const juradoIds = [...new Set((detalles || []).flatMap(d => [d.jurado_id_propuesto, d.jurado_id_seleccionado]).filter(Boolean))];
+    const nombresPorId = {};
+    if (juradoIds.length > 0) {
+        const { data: jurados } = await supabase.from('usuarios_pagados').select('id, nombre_completo').in('id', juradoIds);
+        (jurados || []).forEach(j => { nombresPorId[j.id] = j.nombre_completo; });
+    }
+
+    const detalleFinal = (detalles || []).map(d => ({
+        id: d.id, rodeo_id: d.rodeo_id,
+        rodeo: d.rodeos || null,
+        jurado_id_propuesto: d.jurado_id_propuesto,
+        nombre_propuesto: d.jurado_id_propuesto ? (nombresPorId[d.jurado_id_propuesto] || null) : null,
+        jurado_id_seleccionado: d.jurado_id_seleccionado,
+        nombre_seleccionado: d.jurado_id_seleccionado ? (nombresPorId[d.jurado_id_seleccionado] || null) : null,
+        estado_revision: d.estado_revision,
+        origen_seleccion: d.origen_seleccion,
+        explicacion_json: d.explicacion_json,
+        metricas_json: d.metricas_json,
+        created_at: d.created_at, updated_at: d.updated_at
+    }));
+
+    res.json({
+        propuesta: {
+            id: propuesta.id, temporada: propuesta.temporadas?.nombre || null, estado: propuesta.estado,
+            created_at: propuesta.created_at, updated_at: propuesta.updated_at, confirmado_en: propuesta.confirmado_en
+        },
+        resumen: resumenPropuesta(detalles || []),
+        detalle: detalleFinal
+    });
+});
+
+// ─── GET /propuestas/:propuestaId/detalle/:detalleId/candidatos ───────────
+// Candidatos para la pantalla "Modificar" — reutiliza cargarDatosMotor() +
+// ejecutarSimulacion() (con topN alto para no limitarse a 5) sobre EL MISMO
+// rodeo. NO reimplementa ninguna regla. candidatos_validos = cumplen todas
+// las reglas del motor (ordenados igual que el dry-run); descartados =
+// todos los demás jurados evaluados, con sus causas — para la excepción
+// manual (sección 8) sin necesitar una lista aparte de "los 61".
+router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req, res) => {
+    const { data: detalle, error } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('id, rodeo_id, estado_revision')
+        .eq('id', req.params.detalleId)
+        .eq('propuesta_id', req.params.propuestaId)
+        .single();
+    if (error || !detalle) return res.status(404).json({ error: 'Detalle no encontrado' });
+    if (detalle.estado_revision === 'NO_EVALUABLE') {
+        return res.status(400).json({ error: 'Este rodeo no es evaluable (faltan datos estructurales de comuna/clasificación)' });
+    }
+
+    let resultado;
+    try {
+        const contexto = await cargarDatosMotor([detalle.rodeo_id]);
+        const simulacion = ejecutarSimulacion(contexto, 999);
+        resultado = simulacion.resultados[0];
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+    if (!resultado) return res.status(404).json({ error: 'No se pudo evaluar el rodeo' });
+
+    res.json({
+        estado: resultado.estado,
+        candidatos_validos: resultado.top_candidatos || [],
+        descartados: resultado.descartados || [],
+        candidatos_evaluados: resultado.candidatos_evaluados || 0
+    });
+});
+
+// ─── Lógica compartida por ACEPTAR y SELECCIONAR (MODIFICAR) ──────────────
+// Reevalúa al candidato con datos EN VIVO (no el snapshot original — los
+// datos pueden haber cambiado desde que se generó la propuesta, ver sección
+// 15) y detecta conflictos con otras filas ya aceptadas/modificadas de la
+// MISMA propuesta. Si hay advertencias y no vienen confirmadas, no guarda
+// nada y responde 409 con el detalle para que el frontend pida confirmación
+// explícita — nunca se aplica una excepción en silencio.
+async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
+    const { propuestaId, detalleId } = req.params;
+
+    const { data: propuesta } = await supabase.from('propuestas_designacion').select('id, estado').eq('id', propuestaId).single();
+    if (!propuesta) return res.status(404).json({ error: 'Propuesta no encontrada' });
+    if (propuesta.estado !== 'BORRADOR') return res.status(400).json({ error: 'Solo se puede modificar una propuesta en estado BORRADOR' });
+
+    const { data: detalle } = await supabase.from('propuestas_designacion_detalle').select('*').eq('id', detalleId).eq('propuesta_id', propuestaId).single();
+    if (!detalle) return res.status(404).json({ error: 'Detalle no encontrado' });
+    if (detalle.estado_revision === 'NO_EVALUABLE') {
+        return res.status(400).json({ error: 'Este rodeo no es evaluable — no se puede seleccionar un jurado' });
+    }
+    if (!juradoId) return res.status(400).json({ error: 'jurado_id requerido' });
+
+    const { data: jurado } = await supabase.from('usuarios_pagados').select('id, nombre_completo, activo, tipo_persona').eq('id', juradoId).single();
+    if (!jurado || !jurado.activo || jurado.tipo_persona !== 'jurado') return res.status(400).json({ error: 'Jurado inválido o inactivo' });
+
+    // Reevaluación EN VIVO contra las reglas del motor (sin reimplementarlas)
+    let causas = [];
+    let rodeoEnriquecido = null;
+    try {
+        const contexto = await cargarDatosMotor([detalle.rodeo_id]);
+        const simulacion = ejecutarSimulacion(contexto, 999);
+        const resultadoSimulacion = simulacion.resultados[0];
+        rodeoEnriquecido = contexto.rodeosPorId.get(detalle.rodeo_id) || null;
+        if (resultadoSimulacion) {
+            const descartado = (resultadoSimulacion.descartados || []).find(d => d.jurado_id === juradoId);
+            if (descartado) causas = descartado.causas;
+        }
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+
+    // Conflicto con OTRAS filas ya aceptadas/modificadas de esta misma propuesta
+    let conflictos = [];
+    if (rodeoEnriquecido) {
+        const { data: otrasFilas } = await supabase
+            .from('propuestas_designacion_detalle')
+            .select('jurado_id_seleccionado, rodeo_id, rodeos(id, club, fecha, asociacion, duracion_dias)')
+            .eq('propuesta_id', propuestaId)
+            .in('estado_revision', ['ACEPTADO', 'MODIFICADO'])
+            .neq('id', detalleId);
+
+        const otrasFilasEnriquecidas = (otrasFilas || [])
+            .filter(f => f.rodeos?.fecha)
+            .map(f => ({
+                jurado_id_seleccionado: f.jurado_id_seleccionado,
+                rodeo: {
+                    id: f.rodeo_id, club: f.rodeos.club, fecha: f.rodeos.fecha, asociacion: f.rodeos.asociacion,
+                    bloque: calcularBloqueRodeo(f.rodeos.fecha, f.rodeos.duracion_dias || 1)
+                }
+            }));
+
+        conflictos = detectarConflictoInterno(
+            { id: detalle.rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque },
+            juradoId,
+            otrasFilasEnriquecidas
+        );
+    }
+
+    const advertencias = [
+        ...causas.map(c => ({ tipo: c, origen: 'REGLA_MOTOR' })),
+        ...conflictos.map(c => ({ ...c, origen: 'CONFLICTO_INTERNO_PROPUESTA' }))
+    ];
+
+    if (advertencias.length > 0 && !confirmarAdvertencias) {
+        return res.status(409).json({
+            requiereConfirmacion: true,
+            advertencias,
+            jurado: { id: jurado.id, nombre: jurado.nombre_completo }
+        });
+    }
+
+    const { estado_revision, origen_seleccion } = decidirEstadoSeleccion(juradoId, detalle.jurado_id_propuesto, advertencias);
+
+    const metricas_json = { ...(detalle.metricas_json || {}) };
+    if (advertencias.length > 0) metricas_json.advertencias_aceptadas = advertencias;
+    else delete metricas_json.advertencias_aceptadas;
+
+    const { data: actualizado, error: errUpd } = await supabase
+        .from('propuestas_designacion_detalle')
+        .update({ jurado_id_seleccionado: juradoId, estado_revision, origen_seleccion, metricas_json, updated_at: new Date().toISOString() })
+        .eq('id', detalleId)
+        .select()
+        .single();
+    if (errUpd) return res.status(500).json({ error: errUpd.message });
+
+    await auditoria.registrar({
+        tabla: 'propuestas_designacion_detalle',
+        registro_id: detalleId,
+        accion: 'editar',
+        datos_anteriores: { jurado_id_seleccionado: detalle.jurado_id_seleccionado, estado_revision: detalle.estado_revision },
+        datos_nuevos: { jurado_id_seleccionado: juradoId, estado_revision, origen_seleccion },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Selección en propuesta: ${jurado.nombre_completo} → ${estado_revision}${advertencias.length ? ' (con advertencias confirmadas)' : ''}`,
+        ip_address: req.ip
+    });
+
+    res.json({ detalle: actualizado, advertencias });
+}
+
+// ─── POST /propuestas/:propuestaId/detalle/:detalleId/aceptar ─────────────
+// "El Administrador está conforme con la sugerencia del motor." NO crea
+// asignación — solo copia jurado_id_propuesto → jurado_id_seleccionado.
+router.post('/propuestas/:propuestaId/detalle/:detalleId/aceptar', async (req, res) => {
+    const { data: detalle } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('jurado_id_propuesto')
+        .eq('id', req.params.detalleId)
+        .eq('propuesta_id', req.params.propuestaId)
+        .single();
+    if (!detalle) return res.status(404).json({ error: 'Detalle no encontrado' });
+    if (!detalle.jurado_id_propuesto) {
+        return res.status(400).json({ error: 'Este rodeo no tiene un jurado propuesto por el motor para aceptar. Use "Modificar" para seleccionar uno manualmente.' });
+    }
+    await procesarSeleccion(req, res, detalle.jurado_id_propuesto, req.body?.confirmar_advertencias === true);
+});
+
+// ─── POST /propuestas/:propuestaId/detalle/:detalleId/seleccionar ─────────
+// "Modificar": el administrador elige un candidato (válido o, con doble
+// confirmación explícita, con advertencias). Body: { jurado_id,
+// confirmar_advertencias }.
+router.post('/propuestas/:propuestaId/detalle/:detalleId/seleccionar', async (req, res) => {
+    const { jurado_id, confirmar_advertencias } = req.body;
+    await procesarSeleccion(req, res, jurado_id, confirmar_advertencias === true);
+});
+
+// ─── POST /propuestas/:propuestaId/detalle/:detalleId/revertir ────────────
+// Deshace una aceptación o modificación mientras la propuesta siga BORRADOR
+// — vuelve a PENDIENTE (si el motor había propuesto a alguien) o a
+// SIN_PROPUESTA (si la fila nunca tuvo propuesta del motor).
+router.post('/propuestas/:propuestaId/detalle/:detalleId/revertir', async (req, res) => {
+    const { data: propuesta } = await supabase.from('propuestas_designacion').select('estado').eq('id', req.params.propuestaId).single();
+    if (!propuesta) return res.status(404).json({ error: 'Propuesta no encontrada' });
+    if (propuesta.estado !== 'BORRADOR') return res.status(400).json({ error: 'Solo se puede modificar una propuesta en estado BORRADOR' });
+
+    const { data: detalle } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('*')
+        .eq('id', req.params.detalleId)
+        .eq('propuesta_id', req.params.propuestaId)
+        .single();
+    if (!detalle) return res.status(404).json({ error: 'Detalle no encontrado' });
+    if (!['ACEPTADO', 'MODIFICADO'].includes(detalle.estado_revision)) {
+        return res.status(400).json({ error: 'Solo se puede revertir una fila ACEPTADA o MODIFICADA' });
+    }
+
+    const nuevoEstado = detalle.jurado_id_propuesto ? 'PENDIENTE' : 'SIN_PROPUESTA';
+    const metricas_json = { ...(detalle.metricas_json || {}) };
+    delete metricas_json.advertencias_aceptadas;
+
+    const { data: actualizado, error } = await supabase
+        .from('propuestas_designacion_detalle')
+        .update({ jurado_id_seleccionado: null, estado_revision: nuevoEstado, origen_seleccion: null, metricas_json, updated_at: new Date().toISOString() })
+        .eq('id', req.params.detalleId)
+        .select()
+        .single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'propuestas_designacion_detalle',
+        registro_id: req.params.detalleId,
+        accion: 'editar',
+        datos_anteriores: { jurado_id_seleccionado: detalle.jurado_id_seleccionado, estado_revision: detalle.estado_revision },
+        datos_nuevos: { jurado_id_seleccionado: null, estado_revision: nuevoEstado },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Selección revertida en propuesta (vuelve a ${nuevoEstado})`,
+        ip_address: req.ip
+    });
+
+    res.json({ detalle: actualizado });
 });
 
 module.exports = router;

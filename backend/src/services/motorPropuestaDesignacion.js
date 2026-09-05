@@ -310,7 +310,7 @@ async function cargarDatosMotor(rodeoIdsInput) {
 // ─────────────────────────────────────────────────────────────────────────
 // CAPA 2 — Simulación (función pura: no toca la BD, testeable con fixtures)
 // ─────────────────────────────────────────────────────────────────────────
-function ejecutarSimulacion(contexto) {
+function ejecutarSimulacion(contexto, topN = 5) {
     const { idsSolicitados, temporada, rodeosPorId, matrizPorCodigo, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
 
     // ── Estado temporal de la corrida (BD + asignaciones temporales unificadas) ──
@@ -467,9 +467,12 @@ function ejecutarSimulacion(contexto) {
             return a.jurado.id < b.jurado.id ? -1 : (a.jurado.id > b.jurado.id ? 1 : 0);
         });
 
-        // Top 5 candidatos finales del grupo usado (preferente u otro elegible),
-        // ya en el orden de desempate — solo para auditoría del dry-run.
-        const topCandidatos = grupo.slice(0, 5).map(e => ({
+        // Top N candidatos finales del grupo usado (preferente u otro elegible),
+        // ya en el orden de desempate — para auditoría del dry-run (N=5 por
+        // defecto) y, con un N mayor, para la pantalla "Modificar" de una
+        // propuesta guardada (Etapa 4), que necesita ver más candidatos sin
+        // reimplementar el ranking.
+        const topCandidatos = grupo.slice(0, topN).map(e => ({
             jurado_id: e.jurado.id, nombre: e.jurado.nombre_completo, categoria: e.jurado.categoria,
             designaciones_antes: e.designacionesAntes,
             distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null
@@ -544,11 +547,11 @@ function ejecutarSimulacion(contexto) {
     };
 }
 
-async function generarSimulacion(rodeoIdsInput) {
+async function generarSimulacion(rodeoIdsInput, topN = 5) {
     const inicioMs = Date.now();
     const contexto = await cargarDatosMotor(rodeoIdsInput);
     const finCargaMs = Date.now();
-    const resultado = ejecutarSimulacion(contexto);
+    const resultado = ejecutarSimulacion(contexto, topN);
     const finMotorMs = Date.now();
     resultado.temporada = contexto.temporada ? contexto.temporada.nombre : null;
     resultado.modo = 'DRY_RUN';
@@ -565,5 +568,6 @@ async function generarSimulacion(rodeoIdsInput) {
 module.exports = {
     generarSimulacion, cargarDatosMotor, ejecutarSimulacion, evaluarCandidato,
     esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo,
+    bloquesSeSuperponen, bloquesSonConsecutivos,
     DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL
 };

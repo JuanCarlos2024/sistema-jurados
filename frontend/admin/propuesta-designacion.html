@@ -55,6 +55,16 @@
         .check-linea { font-size: 12px; margin: 2px 0; }
         .check-linea.ok { color: #1e8449; }
         .check-linea.no { color: #b9560a; }
+        .badge-revision { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; text-transform: uppercase; letter-spacing: .3px; }
+        .badge-revision.PENDIENTE { background: #f0f1f2; color: #6b7280; }
+        .badge-revision.ACEPTADO { background: #e6f7ec; color: #1e8449; }
+        .badge-revision.MODIFICADO { background: #eaf4fb; color: #1a5276; }
+        .badge-revision.SIN_PROPUESTA { background: #fdeee0; color: #b9560a; }
+        .badge-revision.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
+        .candidato-fila {
+            display: flex; justify-content: space-between; align-items: center; gap: 10px;
+            padding: 8px 10px; border: 1px solid var(--gris-borde); border-radius: 8px; margin-bottom: 6px; background: white;
+        }
     </style>
 </head>
 <body>
@@ -159,6 +169,19 @@
 
                 <div id="resultado-dryrun" style="margin-top:16px;"></div>
             </div>
+
+            <div class="dash-seccion" style="margin-top:28px;">
+                <div class="dash-seccion-titulo">📋 Propuestas guardadas</div>
+                <div class="aviso-etapa" style="margin-bottom:14px;">
+                    Una propuesta guardada es un <strong>borrador administrativo</strong>. No crea ni modifica
+                    ninguna asignación real, no publica nada y ningún jurado puede verla.
+                </div>
+                <div id="lista-propuestas" class="card" style="padding:0; overflow-x:auto;">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+
+                <div id="vista-propuesta" style="margin-top:16px;"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -235,6 +258,7 @@ async function cargar() {
 }
 
 cargar();
+cargarListaPropuestas();
 
 // ─────────────────────────────────────────────────────────────────────────
 // Datos pendientes — hace accionables los indicadores de datos incompletos:
@@ -746,6 +770,9 @@ function renderResultadoDryRun(resp) {
             ${kpi(r.no_evaluables, 'No evaluables')}
             ${kpi(r.candidatos_analizados, 'Candidatos analizados')}
         </div>
+        <div class="form-acciones" style="margin-bottom:16px;">
+            <button class="btn btn-primario" id="btn-guardar-propuesta" onclick="guardarComoPropuesta()">💾 Guardar como propuesta (borrador)</button>
+        </div>
         <div style="font-size:11px; color:var(--gris); margin-bottom:16px;">
             ${resp.metricas.tiempo_ejecucion_ms} ms total (carga BD: ${resp.metricas.tiempo_carga_bd_ms} ms · motor en memoria: ${resp.metricas.tiempo_motor_memoria_ms} ms)
             · ~${resp.metricas.queries_aproximadas} consultas · ${resp.metricas.jurados_activos_considerados} jurados activos considerados
@@ -830,6 +857,286 @@ function renderDescartes(descartes) {
     return `<div style="font-size:12px; margin-top:4px;">${entradas.map(([causa, n]) =>
         `<div>${ETIQUETAS_CAUSA[causa] || causa}: <strong>${n}</strong></div>`
     ).join('')}</div>`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Etapa 4 — PROPUESTA BORRADOR persistente (Aceptar / Modificar).
+// Nada de esta sección crea, edita ni publica una designación real: solo
+// guarda/edita filas de propuestas_designacion_detalle. El botón "Confirmar
+// propuesta" queda deliberadamente deshabilitado (Etapa 5).
+// ═════════════════════════════════════════════════════════════════════════
+const ETIQUETAS_REVISION = {
+    PENDIENTE: '⏳ Pendiente', ACEPTADO: '✓ Aceptado', MODIFICADO: '✏ Modificado',
+    SIN_PROPUESTA: '⚠ Sin propuesta', NO_EVALUABLE: '⚠ No evaluable'
+};
+const ETIQUETAS_CONFLICTO_INTERNO = {
+    MISMO_FINDE: 'Ya está seleccionado en otro rodeo de esta misma propuesta ese mismo fin de semana',
+    FINDE_CONSECUTIVO: 'Ya está seleccionado en otro rodeo de esta misma propuesta el fin de semana consecutivo',
+    ASOCIACION_REPETIDA_EN_PROPUESTA: 'Ya está seleccionado en otro rodeo de esta misma propuesta de la misma asociación'
+};
+
+let propuestaAbierta = null; // { propuesta, resumen, detalle } de la propuesta actualmente abierta en pantalla
+
+async function guardarComoPropuesta() {
+    if (seleccionMapa.size === 0) return;
+    const btn = document.getElementById('btn-guardar-propuesta');
+    btn.disabled = true;
+    try {
+        const resp = await api.post('/admin/propuesta-designacion/propuestas', { rodeo_ids: [...seleccionMapa.keys()] });
+        let msg = `Propuesta guardada como borrador (${resp.propuesta.resumen.total_rodeos} rodeo(s)).`;
+        if (resp.rodeos_ya_en_otra_propuesta?.length > 0) {
+            msg += ` ⚠ ${resp.rodeos_ya_en_otra_propuesta.length} de estos rodeos ya estaban en otra propuesta borrador — no se bloqueó, revíselo antes de confirmar.`;
+        }
+        mostrarToast(msg, 'success');
+        await cargarListaPropuestas();
+        await abrirPropuesta(resp.propuesta.id);
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function cargarListaPropuestas() {
+    const cont = document.getElementById('lista-propuestas');
+    try {
+        const resp = await api.get('/admin/propuesta-designacion/propuestas');
+        renderListaPropuestas(resp.propuestas || []);
+    } catch (err) {
+        cont.innerHTML = `<div class="alerta alerta-error" style="margin:14px;">${sanitizar(err.message)}</div>`;
+    }
+}
+
+function renderListaPropuestas(propuestas) {
+    const cont = document.getElementById('lista-propuestas');
+    if (propuestas.length === 0) {
+        cont.innerHTML = '<p style="font-size:13px; color:var(--gris); padding:14px;">Todavía no hay propuestas guardadas. Ejecute una simulación arriba y use "Guardar como propuesta".</p>';
+        return;
+    }
+    cont.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th><th>Temporada</th><th>Rodeos</th><th>✓ Aceptados</th><th>✏ Modificados</th>
+            <th>⏳ Pendientes</th><th>⚠ Sin propuesta</th><th>⚠ No evaluables</th><th>Estado</th><th></th>
+        </tr></thead>
+        <tbody>${propuestas.map(p => `<tr>
+            <td style="font-size:12px;">${new Date(p.created_at).toLocaleString('es-CL')}</td>
+            <td style="font-size:12px;">${sanitizar(p.temporada || '—')}</td>
+            <td style="text-align:center;">${p.resumen.total_rodeos}</td>
+            <td style="text-align:center;">${p.resumen.aceptados}</td>
+            <td style="text-align:center;">${p.resumen.modificados}</td>
+            <td style="text-align:center;">${p.resumen.pendientes}</td>
+            <td style="text-align:center;">${p.resumen.sin_propuesta}</td>
+            <td style="text-align:center;">${p.resumen.no_evaluables}</td>
+            <td><span class="badge-revision ${p.estado === 'BORRADOR' ? 'PENDIENTE' : 'ACEPTADO'}">${sanitizar(p.estado)}</span></td>
+            <td><button class="btn btn-pequeño btn-secundario" onclick="abrirPropuesta('${p.id}')">Abrir</button></td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+async function abrirPropuesta(id) {
+    const cont = document.getElementById('vista-propuesta');
+    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    cont.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    try {
+        propuestaAbierta = await api.get('/admin/propuesta-designacion/propuestas/' + id);
+        renderVistaPropuesta();
+    } catch (err) {
+        cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
+}
+
+function cerrarVistaPropuesta() {
+    propuestaAbierta = null;
+    document.getElementById('vista-propuesta').innerHTML = '';
+}
+
+function renderVistaPropuesta() {
+    const cont = document.getElementById('vista-propuesta');
+    if (!propuestaAbierta) { cont.innerHTML = ''; return; }
+    const { propuesta, resumen, detalle } = propuestaAbierta;
+
+    cont.innerHTML = `<div class="card" style="padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+            <div>
+                <div style="font-weight:700; font-size:15px;">Propuesta del ${new Date(propuesta.created_at).toLocaleString('es-CL')}</div>
+                <div style="font-size:12px; color:var(--gris);">Temporada: ${sanitizar(propuesta.temporada || '—')} · Estado: ${sanitizar(propuesta.estado)}</div>
+            </div>
+            <button class="btn btn-secundario btn-pequeño" onclick="cerrarVistaPropuesta()">Cerrar</button>
+        </div>
+        <div class="kpi-grid" style="margin-bottom:16px;">
+            ${kpi(resumen.total_rodeos, 'Rodeos')}
+            ${kpi(resumen.aceptados, 'Aceptados', 'verde')}
+            ${kpi(resumen.modificados, 'Modificados')}
+            ${kpi(resumen.pendientes, 'Pendientes', 'naranja')}
+            ${kpi(resumen.sin_propuesta, 'Sin propuesta', 'naranja')}
+            ${kpi(resumen.no_evaluables, 'No evaluables')}
+        </div>
+        <div>${detalle.map(renderFilaDetallePropuesta).join('')}</div>
+        <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
+            <button class="btn btn-primario" disabled title="Disponible en la siguiente etapa">Confirmar propuesta — Disponible en siguiente etapa</button>
+        </div>
+    </div>`;
+}
+
+function renderFilaDetallePropuesta(d) {
+    const cabecera = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
+            <div><strong>${sanitizar(d.rodeo?.club || '—')}</strong> ${d.rodeo?.fecha ? '— ' + formatFecha(d.rodeo.fecha) : ''} ${d.rodeo?.asociacion ? '— ' + sanitizar(d.rodeo.asociacion) : ''}</div>
+            <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
+        </div>`;
+
+    if (d.estado_revision === 'NO_EVALUABLE') {
+        return `<div class="resultado-rodeo-card">${cabecera}
+            <div style="font-size:13px; color:#6b7280;">Causa: ${ETIQUETAS_CAUSA[d.explicacion_json?.causa] || d.explicacion_json?.causa || '—'}</div>
+        </div>`;
+    }
+
+    const nombreMostrado = d.jurado_id_seleccionado ? d.nombre_seleccionado : d.nombre_propuesto;
+    const infoOrigen = (d.jurado_id_seleccionado && d.jurado_id_propuesto && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
+        ? `<div style="font-size:11px; color:var(--gris); margin-top:2px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
+        : '';
+    const advertenciasGuardadas = d.metricas_json?.advertencias_aceptadas;
+    const avisoAdvertencia = (advertenciasGuardadas && advertenciasGuardadas.length > 0)
+        ? `<div style="font-size:11px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
+        : '';
+
+    let acciones = '';
+    if (d.estado_revision === 'PENDIENTE') {
+        acciones = `<button class="btn btn-pequeño btn-primario" onclick="aceptarDetalle('${d.id}')">Aceptar</button>
+                    <button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">Modificar</button>`;
+    } else if (d.estado_revision === 'ACEPTADO' || d.estado_revision === 'MODIFICADO') {
+        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">Modificar</button>
+                    <button class="btn btn-pequeño btn-secundario" onclick="revertirDetalle('${d.id}')">Revertir</button>`;
+    } else if (d.estado_revision === 'SIN_PROPUESTA') {
+        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">Seleccionar manualmente</button>`;
+    }
+
+    return `<div class="resultado-rodeo-card" id="fila-detalle-${d.id}">${cabecera}
+        <div style="font-size:14px; font-weight:700;">${nombreMostrado ? sanitizar(nombreMostrado) : '<span style="color:#aaa; font-weight:400;">Sin jurado seleccionado</span>'}</div>
+        ${infoOrigen}
+        ${avisoAdvertencia}
+        <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">${acciones}</div>
+        <div id="modificar-${d.id}"></div>
+    </div>`;
+}
+
+async function recargarPropuestaAbierta() {
+    if (!propuestaAbierta) return;
+    const id = propuestaAbierta.propuesta.id;
+    propuestaAbierta = await api.get('/admin/propuesta-designacion/propuestas/' + id);
+    renderVistaPropuesta();
+    cargarListaPropuestas(); // refresca contadores del listado general
+}
+
+async function aceptarDetalle(detalleId) {
+    try {
+        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/aceptar`, {});
+        mostrarToast('Jurado propuesto aceptado.', 'success');
+        await recargarPropuestaAbierta();
+    } catch (err) {
+        await manejarRespuestaSeleccion(err, detalleId, null);
+    }
+}
+
+function toggleModificar(detalleId) {
+    const cont = document.getElementById('modificar-' + detalleId);
+    if (!cont) return;
+    if (cont.innerHTML.trim() !== '') { cont.innerHTML = ''; return; }
+    cargarCandidatos(detalleId);
+}
+
+async function cargarCandidatos(detalleId) {
+    const cont = document.getElementById('modificar-' + detalleId);
+    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const resp = await api.get(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/candidatos`);
+        renderCandidatosModificar(detalleId, resp);
+    } catch (err) {
+        cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
+}
+
+function renderCandidatosModificar(detalleId, resp) {
+    const cont = document.getElementById('modificar-' + detalleId);
+    const validos = resp.candidatos_validos || [];
+    const descartados = resp.descartados || [];
+
+    const filaValido = (c) => `<div class="candidato-fila">
+        <div style="font-size:12px;">
+            <strong>${sanitizar(c.nombre)}</strong> — Categoría ${sanitizar(c.categoria || '—')} —
+            ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} — ${c.designaciones_antes} designación(es) esta temporada
+            <span style="color:#1e8449;"> · ✓ cumple todas las reglas</span>
+        </div>
+        <button class="btn btn-pequeño btn-primario" onclick="seleccionarCandidato('${detalleId}', '${c.jurado_id}', false)">Seleccionar</button>
+    </div>`;
+
+    const filaDescartado = (d) => `<div class="candidato-fila" style="border-color:#ffe08a;">
+        <div style="font-size:12px;">
+            <strong>${sanitizar(d.nombre)}</strong>
+            <span style="color:#b9560a;"> · ⚠ ${d.causas.map(c => ETIQUETAS_CAUSA[c] || c).join(', ')}</span>
+        </div>
+        <button class="btn btn-pequeño btn-outline" onclick="seleccionarCandidato('${detalleId}', '${d.jurado_id}', false)">Seleccionar igualmente (excepción)</button>
+    </div>`;
+
+    cont.innerHTML = `<div style="background:#f8f9fa; border-radius:8px; padding:12px; margin-top:8px;">
+        <div style="font-size:12px; font-weight:700; margin-bottom:6px;">Candidatos válidos (${validos.length})</div>
+        ${validos.length > 0 ? validos.map(filaValido).join('') : '<div style="font-size:12px; color:#aaa; margin-bottom:6px;">Ningún jurado cumple todas las reglas para este rodeo.</div>'}
+        ${descartados.length > 0 ? `<details style="margin-top:8px;">
+            <summary style="cursor:pointer; font-size:12px; color:var(--gris);">Otros jurados, con advertencias (${descartados.length}) — requiere confirmar excepción</summary>
+            <div style="margin-top:6px;">${descartados.map(filaDescartado).join('')}</div>
+        </details>` : ''}
+    </div>`;
+}
+
+async function seleccionarCandidato(detalleId, juradoId, confirmarAdvertencias) {
+    try {
+        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/seleccionar`,
+            { jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias });
+        mostrarToast('Selección guardada.', 'success');
+        await recargarPropuestaAbierta();
+    } catch (err) {
+        await manejarRespuestaSeleccion(err, detalleId, juradoId);
+    }
+}
+
+// El backend responde 409 { requiereConfirmacion, advertencias, jurado } cuando
+// la selección incumple una regla del motor o genera un conflicto interno con
+// otra fila ya aceptada/modificada de la MISMA propuesta. Nunca se guarda nada
+// en ese caso hasta que el administrador confirme explícitamente la excepción.
+async function manejarRespuestaSeleccion(err, detalleId, juradoId) {
+    if (err.status === 409 && err.data?.requiereConfirmacion) {
+        await mostrarConfirmacionAdvertencias(detalleId, juradoId || err.data.jurado?.id, err.data);
+        return;
+    }
+    mostrarError(err);
+}
+
+function etiquetaAdvertencia(a) {
+    if (ETIQUETAS_CONFLICTO_INTERNO[a.tipo] && a.origen === 'CONFLICTO_INTERNO_PROPUESTA') {
+        return `${ETIQUETAS_CONFLICTO_INTERNO[a.tipo]}${a.club ? ' — ' + sanitizar(a.club) + (a.fecha ? ' (' + formatFecha(a.fecha) + ')' : '') : ''}`;
+    }
+    return ETIQUETAS_CAUSA[a.tipo] || a.tipo;
+}
+
+async function mostrarConfirmacionAdvertencias(detalleId, juradoId, info) {
+    const lista = (info.advertencias || []).map(a => `<li>${etiquetaAdvertencia(a)}</li>`).join('');
+    const mensaje = `⚠ <strong>Advertencias para ${sanitizar(info.jurado?.nombre || '')}:</strong>
+        <ul style="text-align:left; margin:10px 0; padding-left:20px; font-size:13px;">${lista}</ul>
+        Esto se registrará como una excepción manual con advertencias. ¿Desea utilizarlo igualmente?`;
+    const ok = await confirmar(mensaje);
+    if (ok) await seleccionarCandidato(detalleId, juradoId, true);
+}
+
+async function revertirDetalle(detalleId) {
+    const ok = await confirmar('¿Revertir esta selección? El rodeo volverá a quedar pendiente de revisión, sin jurado seleccionado.');
+    if (!ok) return;
+    try {
+        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/revertir`, {});
+        mostrarToast('Selección revertida.', 'success');
+        await recargarPropuestaAbierta();
+    } catch (err) {
+        mostrarError(err);
+    }
 }
 
 </script>

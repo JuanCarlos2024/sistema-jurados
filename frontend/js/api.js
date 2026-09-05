@@ -54,7 +54,10 @@ async function apiFetch(endpoint, options = {}) {
         const data = await response.json().catch(() => null);
 
         if (!response.ok) {
-            throw { status: response.status, message: data?.error || 'Error en la solicitud' };
+            // `data` completo se incluye además de `message` para que endpoints que
+            // devuelven info estructurada en el error (p.ej. 409 con advertencias
+            // a confirmar) puedan leerla sin romper a quienes solo usan err.message.
+            throw { status: response.status, message: data?.error || 'Error en la solicitud', data };
         }
 
         return data;
