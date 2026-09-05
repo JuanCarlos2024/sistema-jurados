@@ -9,12 +9,56 @@
 //
 // Todas las funciones son puras (no tocan la base de datos) — el router es
 // quien las usa junto con las consultas reales.
+//
+// ─── HISTÓRICO vs EFECTIVO (corrección post-revisión) ──────────────────────
+// jurado_id_propuesto es un registro HISTÓRICO: lo que el motor sugirió al
+// generar la propuesta. NUNCA se modifica ni se borra, pase lo que pase
+// después (secciones 2/7/15 del pedido).
+//
+// Pero una fila puede llegar a un punto donde ese jurado histórico YA NO está
+// vigente en ella (porque el administrador lo movió a otro rodeo de la misma
+// propuesta) — en ese caso la fila necesita un estado que lo diga
+// explícitamente: SIN_JURADO_ACTUAL. Sin este estado, "jurado_id_propuesto
+// no nulo + jurado_id_seleccionado nulo" sería ambiguo entre "el motor lo
+// propuso y sigue siendo la sugerencia vigente" (PENDIENTE) y "el motor lo
+// propuso pero ya se movió a otra fila" — dos situaciones que deben tratarse
+// distinto en TODAS partes (indicadores, conflictos, resumen). Por eso existe
+// el estado SIN_JURADO_ACTUAL (ver migración 048, preparada, no aplicada).
+//
+// obtenerJuradoEfectivo() es la ÚNICA función que decide "quién está
+// actualmente en uso en esta fila" — todo el resto del módulo (indicador
+// "propuesto en otro rodeo", detección de conflictos, mover jurado, resumen)
+// pasa por ella. Nunca se reimplementa ese fallback en otro lado.
 // ═════════════════════════════════════════════════════════════════════════
 const { bloquesSeSuperponen, bloquesSonConsecutivos } = require('./motorPropuestaDesignacion');
 const { mismaAsociacion } = require('./asociaciones');
 
-const ESTADOS_REVISION = ['PENDIENTE', 'ACEPTADO', 'MODIFICADO', 'SIN_PROPUESTA', 'NO_EVALUABLE'];
+const ESTADOS_REVISION = ['PENDIENTE', 'ACEPTADO', 'MODIFICADO', 'SIN_PROPUESTA', 'NO_EVALUABLE', 'SIN_JURADO_ACTUAL'];
 const ORIGENES_SELECCION = ['MOTOR', 'MANUAL', 'MANUAL_CON_ADVERTENCIA'];
+
+// ─── Jurado EFECTIVO de una fila — fuente única de verdad ─────────────────
+// ACEPTADO/MODIFICADO       → jurado_id_seleccionado (el administrador actuó)
+// PENDIENTE                 → jurado_id_propuesto (sugerencia del motor, vigente)
+// SIN_JURADO_ACTUAL         → null (el jurado histórico fue movido a otra fila)
+// SIN_PROPUESTA/NO_EVALUABLE → null (nunca hubo/no se puede evaluar)
+//
+// @param detalle { estado_revision, jurado_id_seleccionado, jurado_id_propuesto }
+// @returns jurado_id efectivo, o null
+function obtenerJuradoEfectivo(detalle) {
+    if (!detalle) return null;
+    switch (detalle.estado_revision) {
+        case 'ACEPTADO':
+        case 'MODIFICADO':
+            return detalle.jurado_id_seleccionado || null;
+        case 'PENDIENTE':
+            return detalle.jurado_id_propuesto || null;
+        case 'SIN_JURADO_ACTUAL':
+        case 'SIN_PROPUESTA':
+        case 'NO_EVALUABLE':
+        default:
+            return null;
+    }
+}
 
 // ─── Construye la fila de detalle a partir de UN resultado de ────────────
 // ejecutarSimulacion() (el mismo objeto que ya devuelve el dry-run, sin
@@ -71,28 +115,50 @@ function construirDetalleDesdeResultado(resultado) {
 
 // ─── Conflicto interno de la propuesta ────────────────────────────────────
 // Compara el candidato que se está por seleccionar en `rodeoActual` contra
-// las DEMÁS filas ya aceptadas/modificadas de la MISMA propuesta (no contra
-// la base de datos general — eso ya lo hace el motor). Reutiliza los mismos
-// helpers de bloque/asociación que usa el motor, sin reimplementarlos.
+// las DEMÁS filas de la MISMA propuesta (no contra la base de datos general
+// — eso ya lo hace el motor). Reutiliza los mismos helpers de bloque/
+// asociación que usa el motor, sin reimplementarlos.
+//
+// El jurado de cada otra fila que cuenta para este chequeo es su jurado
+// EFECTIVO (obtenerJuradoEfectivo) — nunca jurado_id_propuesto en bruto, para
+// que una fila SIN_JURADO_ACTUAL (jurado movido a otra parte) deje de
+// disparar el indicador aunque su campo histórico siga apuntando al mismo
+// jurado.
+//
+// Si el jurado coincide en otra fila pero ninguna regla específica aplica
+// (fechas lejanas, asociación distinta), igual se reporta como
+// YA_USADO_EN_PROPUESTA — es informativo, no bloqueante: permite que el
+// administrador mueva conscientemente a un jurado de un rodeo a otro dentro
+// del mismo borrador en vez de duplicarlo silenciosamente.
 //
 // @param rodeoActual {id, club, fecha, asociacion, bloque:{inicio,fin}}
 // @param juradoId - candidato que se evalúa para rodeoActual
-// @param otrasFilas [{ jurado_id_seleccionado, rodeo:{id,club,fecha,asociacion,bloque} }]
-// @returns [{ tipo:'MISMO_FINDE'|'FINDE_CONSECUTIVO'|'ASOCIACION_REPETIDA_EN_PROPUESTA', rodeo_id, club, fecha }]
+// @param otrasFilas [{ detalle_id, estado_revision, jurado_id_seleccionado, jurado_id_propuesto, rodeo:{id,club,fecha,asociacion,tipo_rodeo_nombre,bloque} }]
+// @returns [{ tipo:'MISMO_FINDE'|'FINDE_CONSECUTIVO'|'ASOCIACION_REPETIDA_EN_PROPUESTA'|'YA_USADO_EN_PROPUESTA', rodeo_id, club, fecha, asociacion, tipo_rodeo_nombre }]
 function detectarConflictoInterno(rodeoActual, juradoId, otrasFilas) {
     const conflictos = [];
     for (const fila of (otrasFilas || [])) {
-        if (!fila.jurado_id_seleccionado || fila.jurado_id_seleccionado !== juradoId) continue;
+        const juradoEfectivoFila = obtenerJuradoEfectivo(fila);
+        if (!juradoEfectivoFila || juradoEfectivoFila !== juradoId) continue;
         if (fila.rodeo.id === rodeoActual.id) continue; // no compararse consigo misma
 
+        const base = { rodeo_id: fila.rodeo.id, club: fila.rodeo.club, fecha: fila.rodeo.fecha, asociacion: fila.rodeo.asociacion, tipo_rodeo_nombre: fila.rodeo.tipo_rodeo_nombre || null };
+        let tipoPorFecha = null;
         if (bloquesSeSuperponen(fila.rodeo.bloque, rodeoActual.bloque)) {
-            conflictos.push({ tipo: 'MISMO_FINDE', rodeo_id: fila.rodeo.id, club: fila.rodeo.club, fecha: fila.rodeo.fecha });
+            tipoPorFecha = 'MISMO_FINDE';
         } else if (bloquesSonConsecutivos(fila.rodeo.bloque, rodeoActual.bloque)) {
-            conflictos.push({ tipo: 'FINDE_CONSECUTIVO', rodeo_id: fila.rodeo.id, club: fila.rodeo.club, fecha: fila.rodeo.fecha });
+            tipoPorFecha = 'FINDE_CONSECUTIVO';
+        }
+        if (tipoPorFecha) conflictos.push({ tipo: tipoPorFecha, ...base });
+
+        const mismaAsoc = mismaAsociacion(fila.rodeo.asociacion, rodeoActual.asociacion);
+        if (mismaAsoc) {
+            conflictos.push({ tipo: 'ASOCIACION_REPETIDA_EN_PROPUESTA', ...base });
         }
 
-        if (mismaAsociacion(fila.rodeo.asociacion, rodeoActual.asociacion)) {
-            conflictos.push({ tipo: 'ASOCIACION_REPETIDA_EN_PROPUESTA', rodeo_id: fila.rodeo.id, club: fila.rodeo.club, fecha: fila.rodeo.fecha });
+        // Reutilización sin conflicto de regla — informativo, para "mover jurado"
+        if (!tipoPorFecha && !mismaAsoc) {
+            conflictos.push({ tipo: 'YA_USADO_EN_PROPUESTA', ...base });
         }
     }
     return conflictos;
@@ -117,6 +183,50 @@ function decidirEstadoSeleccion(juradoId, juradoIdPropuesto, advertencias) {
     return { estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL' };
 }
 
+// ─── Resolver qué fila anterior liberar al "mover" un jurado ─────────────
+// Si el jurado que se está por seleccionar en una fila nueva ya es el jurado
+// EFECTIVO (obtenerJuradoEfectivo) de OTRA fila de la MISMA propuesta —ya sea
+// porque estaba ACEPTADO/MODIFICADO o porque estaba PENDIENTE con esa
+// propuesta del motor vigente— esa fila anterior debe liberarse para que el
+// jurado nunca quede vigente simultáneamente en dos rodeos.
+//
+// CORRECCIÓN: el nuevo_estado NO depende de qué estado_revision tenía la fila
+// (ACEPTADO/MODIFICADO/PENDIENTE) — depende de si jurado_id_propuesto (el
+// histórico, que NUNCA se toca) es o no el MISMO jurado que se está moviendo:
+//
+//   - jurado_id_propuesto === juradoQueSeMueve → el motor había propuesto
+//     justo al que se está yendo; no hay a quién "volver" → SIN_JURADO_ACTUAL.
+//     (Este es el caso que antes se resolvía mal: una fila ACEPTADA donde
+//     jurado_id_propuesto == jurado_id_seleccionado == el que se mueve
+//     volvía a PENDIENTE, y como PENDIENTE usa jurado_id_propuesto como
+//     efectivo, el mismo jurado quedaba "vigente" en el origen Y en el
+//     destino a la vez.)
+//   - jurado_id_propuesto existe y es OTRO jurado distinto → esa propuesta
+//     original del motor (para otra persona) vuelve a quedar vigente → PENDIENTE.
+//   - no hay jurado_id_propuesto (selección 100% manual, sin sugerencia del
+//     motor) → SIN_PROPUESTA, igual que /revertir.
+//
+// jurado_id_propuesto de la fila liberada NUNCA se toca en ningún caso.
+// NO se autoasigna ningún reemplazo — queda pendiente de decisión administrativa.
+//
+// @param otrasFilas [{ detalle_id, estado_revision, jurado_id_seleccionado, jurado_id_propuesto }]
+// @param juradoId - jurado que se está moviendo/seleccionando en la fila nueva
+// @returns { detalle_id, nuevo_estado: 'PENDIENTE'|'SIN_PROPUESTA'|'SIN_JURADO_ACTUAL' } | null
+function resolverFilaALiberar(otrasFilas, juradoId) {
+    const fila = (otrasFilas || []).find(f => obtenerJuradoEfectivo(f) === juradoId);
+    if (!fila) return null;
+
+    let nuevoEstado;
+    if (fila.jurado_id_propuesto === juradoId) {
+        nuevoEstado = 'SIN_JURADO_ACTUAL';
+    } else if (fila.jurado_id_propuesto) {
+        nuevoEstado = 'PENDIENTE';
+    } else {
+        nuevoEstado = 'SIN_PROPUESTA';
+    }
+    return { detalle_id: fila.detalle_id, nuevo_estado: nuevoEstado };
+}
+
 // ─── Resumen de una propuesta a partir de sus filas de detalle ───────────
 function resumenPropuesta(filasDetalle) {
     const contar = (estado) => (filasDetalle || []).filter(f => f.estado_revision === estado).length;
@@ -126,11 +236,14 @@ function resumenPropuesta(filasDetalle) {
         modificados: contar('MODIFICADO'),
         pendientes: contar('PENDIENTE'),
         sin_propuesta: contar('SIN_PROPUESTA'),
-        no_evaluables: contar('NO_EVALUABLE')
+        no_evaluables: contar('NO_EVALUABLE'),
+        sin_jurado_actual: contar('SIN_JURADO_ACTUAL')
     };
 }
 
 module.exports = {
     ESTADOS_REVISION, ORIGENES_SELECCION,
-    construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta
+    obtenerJuradoEfectivo,
+    construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
+    resolverFilaALiberar
 };

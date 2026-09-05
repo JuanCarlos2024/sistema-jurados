@@ -61,6 +61,7 @@
         .badge-revision.MODIFICADO { background: #eaf4fb; color: #1a5276; }
         .badge-revision.SIN_PROPUESTA { background: #fdeee0; color: #b9560a; }
         .badge-revision.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
+        .badge-revision.SIN_JURADO_ACTUAL { background: #fdeee0; color: #b9560a; }
         .candidato-fila {
             display: flex; justify-content: space-between; align-items: center; gap: 10px;
             padding: 8px 10px; border: 1px solid var(--gris-borde); border-radius: 8px; margin-bottom: 6px; background: white;
@@ -867,12 +868,23 @@ function renderDescartes(descartes) {
 // ═════════════════════════════════════════════════════════════════════════
 const ETIQUETAS_REVISION = {
     PENDIENTE: '⏳ Pendiente', ACEPTADO: '✓ Aceptado', MODIFICADO: '✏ Modificado',
-    SIN_PROPUESTA: '⚠ Sin propuesta', NO_EVALUABLE: '⚠ No evaluable'
+    SIN_PROPUESTA: '⚠ Sin propuesta', NO_EVALUABLE: '⚠ No evaluable',
+    SIN_JURADO_ACTUAL: '⚠ Sin jurado — requiere revisión'
 };
 const ETIQUETAS_CONFLICTO_INTERNO = {
     MISMO_FINDE: 'Ya está seleccionado en otro rodeo de esta misma propuesta ese mismo fin de semana',
     FINDE_CONSECUTIVO: 'Ya está seleccionado en otro rodeo de esta misma propuesta el fin de semana consecutivo',
-    ASOCIACION_REPETIDA_EN_PROPUESTA: 'Ya está seleccionado en otro rodeo de esta misma propuesta de la misma asociación'
+    ASOCIACION_REPETIDA_EN_PROPUESTA: 'Ya está seleccionado en otro rodeo de esta misma propuesta de la misma asociación',
+    YA_USADO_EN_PROPUESTA: 'Ya está propuesto/seleccionado en otro rodeo de esta misma propuesta'
+};
+// Etiquetas cortas para la lista de candidatos y el diálogo de "mover jurado"
+// — mismos 4 tipos que devuelve detectarConflictoInterno(), sin reimplementar
+// ninguna regla de fecha/asociación en el frontend.
+const ETIQUETAS_USO_CORTO = {
+    MISMO_FINDE: '🔴 Mismo fin de semana',
+    FINDE_CONSECUTIVO: '🟠 Fin de semana consecutivo',
+    ASOCIACION_REPETIDA_EN_PROPUESTA: '🟠 Misma asociación',
+    YA_USADO_EN_PROPUESTA: 'ℹ️ Otra fecha, sin conflicto de reglas'
 };
 
 let propuestaAbierta = null; // { propuesta, resumen, detalle } de la propuesta actualmente abierta en pantalla
@@ -969,6 +981,7 @@ function renderVistaPropuesta() {
             ${kpi(resumen.modificados, 'Modificados')}
             ${kpi(resumen.pendientes, 'Pendientes', 'naranja')}
             ${kpi(resumen.sin_propuesta, 'Sin propuesta', 'naranja')}
+            ${kpi(resumen.sin_jurado_actual, 'Sin jurado (movido)', 'naranja')}
             ${kpi(resumen.no_evaluables, 'No evaluables')}
         </div>
         <div>${detalle.map(renderFilaDetallePropuesta).join('')}</div>
@@ -978,44 +991,80 @@ function renderVistaPropuesta() {
     </div>`;
 }
 
+// Tarjeta de una fila de la propuesta — sección 1/2/16 de la mejora: el tipo
+// de rodeo y la clasificación quedan SIEMPRE visibles (nunca dentro de un
+// "ver detalles"), junto con los datos del jurado propuesto/seleccionado.
 function renderFilaDetallePropuesta(d) {
-    const cabecera = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
-            <div><strong>${sanitizar(d.rodeo?.club || '—')}</strong> ${d.rodeo?.fecha ? '— ' + formatFecha(d.rodeo.fecha) : ''} ${d.rodeo?.asociacion ? '— ' + sanitizar(d.rodeo.asociacion) : ''}</div>
-            <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
-        </div>`;
-
     if (d.estado_revision === 'NO_EVALUABLE') {
-        return `<div class="resultado-rodeo-card">${cabecera}
+        return `<div class="resultado-rodeo-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
+                <div><strong>${sanitizar(d.rodeo?.club || '—')}</strong> ${d.rodeo?.fecha ? '— ' + formatFecha(d.rodeo.fecha) : ''}</div>
+                <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
+            </div>
             <div style="font-size:13px; color:#6b7280;">Causa: ${ETIQUETAS_CAUSA[d.explicacion_json?.causa] || d.explicacion_json?.causa || '—'}</div>
         </div>`;
     }
 
-    const nombreMostrado = d.jurado_id_seleccionado ? d.nombre_seleccionado : d.nombre_propuesto;
+    const r = d.rodeo || {};
+    const j = d.jurado_efectivo;
     const infoOrigen = (d.jurado_id_seleccionado && d.jurado_id_propuesto && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
-        ? `<div style="font-size:11px; color:var(--gris); margin-top:2px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
+        ? `<div style="font-size:11px; color:var(--gris); margin-top:6px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
         : '';
     const advertenciasGuardadas = d.metricas_json?.advertencias_aceptadas;
     const avisoAdvertencia = (advertenciasGuardadas && advertenciasGuardadas.length > 0)
         ? `<div style="font-size:11px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
         : '';
 
+    // "Designar jurado" y "Modificar" son el MISMO botón/mecanismo (sección
+    // 13) — solo cambia la etiqueta según si la fila ya tiene jurado en uso.
+    const etiquetaBoton = j ? 'Modificar' : 'Designar jurado';
     let acciones = '';
     if (d.estado_revision === 'PENDIENTE') {
         acciones = `<button class="btn btn-pequeño btn-primario" onclick="aceptarDetalle('${d.id}')">Aceptar</button>
-                    <button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">Modificar</button>`;
+                    <button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">${etiquetaBoton}</button>`;
     } else if (d.estado_revision === 'ACEPTADO' || d.estado_revision === 'MODIFICADO') {
-        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">Modificar</button>
+        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">${etiquetaBoton}</button>
                     <button class="btn btn-pequeño btn-secundario" onclick="revertirDetalle('${d.id}')">Revertir</button>`;
-    } else if (d.estado_revision === 'SIN_PROPUESTA') {
-        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">Seleccionar manualmente</button>`;
+    } else if (d.estado_revision === 'SIN_PROPUESTA' || d.estado_revision === 'SIN_JURADO_ACTUAL') {
+        // SIN_JURADO_ACTUAL: no se ofrece "Aceptar" — el jurado que el motor
+        // propuso originalmente ya fue movido a otro rodeo de esta propuesta;
+        // requiere una decisión administrativa nueva, no una simple confirmación.
+        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">${etiquetaBoton}</button>`;
     }
 
-    return `<div class="resultado-rodeo-card" id="fila-detalle-${d.id}">${cabecera}
-        <div style="font-size:14px; font-weight:700;">${nombreMostrado ? sanitizar(nombreMostrado) : '<span style="color:#aaa; font-weight:400;">Sin jurado seleccionado</span>'}</div>
+    return `<div class="resultado-rodeo-card" id="fila-detalle-${d.id}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
+            <div style="flex:1 1 260px;">
+                <div style="font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:3px;">Rodeo</div>
+                <div style="font-weight:700; font-size:14px;">${sanitizar(r.club || '—')}</div>
+                <div style="font-size:12px; color:var(--gris); line-height:1.7;">
+                    ${sanitizar(r.asociacion || '—')} · ${r.fecha ? formatFecha(r.fecha) : '—'}<br>
+                    <strong>Tipo:</strong> ${sanitizar(r.tipo_rodeo_nombre || '—')}<br>
+                    <strong>Clasificación:</strong> ${sanitizar(r.clasificacion_nombre || '—')}
+                    ${r.comuna_nombre ? '<br><strong>Comuna:</strong> ' + sanitizar(r.comuna_nombre) : ''}
+                </div>
+            </div>
+            <div style="flex:1 1 220px;">
+                <div style="font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:3px;">Propuesta</div>
+                ${j ? `
+                    <div style="font-weight:700; font-size:14px;">${sanitizar(j.nombre || '—')}</div>
+                    <div style="font-size:12px; color:var(--gris); line-height:1.7;">
+                        Categoría ${sanitizar(j.categoria || '—')}${j.categoria_preferente ? ' (preferente)' : ''}<br>
+                        ${j.comuna ? 'Comuna: ' + sanitizar(j.comuna) + '<br>' : ''}
+                        ${j.distancia_km !== null ? 'Distancia: ' + j.distancia_km + ' km<br>' : ''}
+                        ${j.designaciones_temporada_antes !== null ? 'Designaciones temporada: ' + j.designaciones_temporada_antes : ''}
+                    </div>` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
+                        ? `<div style="font-size:12px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong><br>
+                           <span style="color:#b9560a;">Ese jurado fue movido a otro rodeo de esta propuesta — requiere una nueva decisión.</span></div>`
+                        : '<span style="color:#aaa; font-size:13px;">Sin jurado designado</span>')}
+            </div>
+            <div>
+                <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
+            </div>
+        </div>
         ${infoOrigen}
         ${avisoAdvertencia}
-        <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">${acciones}</div>
+        <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">${acciones}</div>
         <div id="modificar-${d.id}"></div>
     </div>`;
 }
@@ -1056,33 +1105,62 @@ async function cargarCandidatos(detalleId) {
     }
 }
 
+// Etiqueta corta "ya usado en otro rodeo de esta propuesta" para un
+// candidato de la lista (sección 6) — reutiliza los mismos 4 tipos que
+// devuelve detectarConflictoInterno(), sin reimplementar ninguna regla.
+function renderUsoEnOtraFila(usos) {
+    if (!usos || usos.length === 0) return '';
+    return `<div style="margin-top:4px;">${usos.map(u => `
+        <div style="font-size:11px; color:#8a5a00;">
+            ⚠ PROPUESTO EN OTRO RODEO — ${ETIQUETAS_USO_CORTO[u.tipo] || u.tipo}<br>
+            &nbsp;&nbsp;Rodeo: ${sanitizar(u.tipo_rodeo_nombre || '—')} · Club: ${sanitizar(u.club)} · Fecha: ${formatFecha(u.fecha)}${u.asociacion ? ' · Asociación: ' + sanitizar(u.asociacion) : ''}
+        </div>`).join('')}</div>`;
+}
+
 function renderCandidatosModificar(detalleId, resp) {
     const cont = document.getElementById('modificar-' + detalleId);
     const validos = resp.candidatos_validos || [];
     const descartados = resp.descartados || [];
+    const fila = propuestaAbierta?.detalle?.find(f => f.id === detalleId);
 
-    const filaValido = (c) => `<div class="candidato-fila">
+    // Sección 14 — "Jurado actual de la propuesta": qué propuso el motor vs
+    // qué eligió el administrador, para que quede claro qué se está cambiando.
+    const cabeceraActual = fila ? `<div style="font-size:12px; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--gris-borde);">
+        <div style="font-weight:700; margin-bottom:2px;">Jurado actual de la propuesta</div>
+        Motor propuso: <strong>${fila.nombre_propuesto ? sanitizar(fila.nombre_propuesto) : '—'}</strong><br>
+        Administrador seleccionó: <strong>${fila.nombre_seleccionado ? sanitizar(fila.nombre_seleccionado) : '—'}</strong>
+    </div>` : '';
+
+    const detallesCandidato = (c) => `Categoría ${sanitizar(c.categoria || '—')}${c.categoria_preferente ? ' (preferente)' : ''} —
+        ${sanitizar(c.asociacion || '—')} — ${c.comuna_nombre ? sanitizar(c.comuna_nombre) : '—'} —
+        ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} — ${c.designaciones_antes} designación(es) esta temporada`;
+
+    const filaValido = (c) => `<div class="candidato-fila" style="align-items:flex-start;">
         <div style="font-size:12px;">
-            <strong>${sanitizar(c.nombre)}</strong> — Categoría ${sanitizar(c.categoria || '—')} —
-            ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} — ${c.designaciones_antes} designación(es) esta temporada
+            <strong>${sanitizar(c.nombre)}</strong><br>
+            ${detallesCandidato(c)}
             <span style="color:#1e8449;"> · ✓ cumple todas las reglas</span>
+            ${renderUsoEnOtraFila(c.uso_en_otra_fila)}
         </div>
         <button class="btn btn-pequeño btn-primario" onclick="seleccionarCandidato('${detalleId}', '${c.jurado_id}', false)">Seleccionar</button>
     </div>`;
 
-    const filaDescartado = (d) => `<div class="candidato-fila" style="border-color:#ffe08a;">
+    const filaDescartado = (d) => `<div class="candidato-fila" style="border-color:#ffe08a; align-items:flex-start;">
         <div style="font-size:12px;">
-            <strong>${sanitizar(d.nombre)}</strong>
+            <strong>${sanitizar(d.nombre)}</strong><br>
+            ${detallesCandidato(d)}
             <span style="color:#b9560a;"> · ⚠ ${d.causas.map(c => ETIQUETAS_CAUSA[c] || c).join(', ')}</span>
+            ${renderUsoEnOtraFila(d.uso_en_otra_fila)}
         </div>
         <button class="btn btn-pequeño btn-outline" onclick="seleccionarCandidato('${detalleId}', '${d.jurado_id}', false)">Seleccionar igualmente (excepción)</button>
     </div>`;
 
     cont.innerHTML = `<div style="background:#f8f9fa; border-radius:8px; padding:12px; margin-top:8px;">
-        <div style="font-size:12px; font-weight:700; margin-bottom:6px;">Candidatos válidos (${validos.length})</div>
+        ${cabeceraActual}
+        <div style="font-size:12px; font-weight:700; margin-bottom:6px;">Candidatos válidos / disponibles (${validos.length})</div>
         ${validos.length > 0 ? validos.map(filaValido).join('') : '<div style="font-size:12px; color:#aaa; margin-bottom:6px;">Ningún jurado cumple todas las reglas para este rodeo.</div>'}
         ${descartados.length > 0 ? `<details style="margin-top:8px;">
-            <summary style="cursor:pointer; font-size:12px; color:var(--gris);">Otros jurados, con advertencias (${descartados.length}) — requiere confirmar excepción</summary>
+            <summary style="cursor:pointer; font-size:12px; color:var(--gris);">Ver jurados con advertencias (${descartados.length}) — requiere confirmar excepción</summary>
             <div style="margin-top:6px;">${descartados.map(filaDescartado).join('')}</div>
         </details>` : ''}
     </div>`;
@@ -1090,9 +1168,9 @@ function renderCandidatosModificar(detalleId, resp) {
 
 async function seleccionarCandidato(detalleId, juradoId, confirmarAdvertencias) {
     try {
-        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/seleccionar`,
+        const resp = await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/seleccionar`,
             { jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias });
-        mostrarToast('Selección guardada.', 'success');
+        mostrarToast(resp.jurado_movido_desde ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección guardada.', 'success');
         await recargarPropuestaAbierta();
     } catch (err) {
         await manejarRespuestaSeleccion(err, detalleId, juradoId);
@@ -1118,11 +1196,33 @@ function etiquetaAdvertencia(a) {
     return ETIQUETAS_CAUSA[a.tipo] || a.tipo;
 }
 
+// Sección 8/9 — si alguna advertencia viene de CONFLICTO_INTERNO_PROPUESTA
+// (el jurado ya está en uso en otro rodeo de esta misma propuesta), el
+// diálogo explica claramente de dónde se le quitará y a dónde quedará
+// seleccionado ("mover jurado"), en vez de una advertencia genérica.
 async function mostrarConfirmacionAdvertencias(detalleId, juradoId, info) {
-    const lista = (info.advertencias || []).map(a => `<li>${etiquetaAdvertencia(a)}</li>`).join('');
-    const mensaje = `⚠ <strong>Advertencias para ${sanitizar(info.jurado?.nombre || '')}:</strong>
-        <ul style="text-align:left; margin:10px 0; padding-left:20px; font-size:13px;">${lista}</ul>
-        Esto se registrará como una excepción manual con advertencias. ¿Desea utilizarlo igualmente?`;
+    const filaDestino = propuestaAbierta?.detalle?.find(f => f.id === detalleId);
+    const reglas = (info.advertencias || []).filter(a => a.origen !== 'CONFLICTO_INTERNO_PROPUESTA');
+    const usosPropuesta = (info.advertencias || []).filter(a => a.origen === 'CONFLICTO_INTERNO_PROPUESTA');
+    const nombreJurado = sanitizar(info.jurado?.nombre || '');
+
+    let mensaje = `⚠ <strong>Advertencias para ${nombreJurado}:</strong>`;
+    if (reglas.length > 0) {
+        mensaje += `<ul style="text-align:left; margin:8px 0; padding-left:20px; font-size:13px;">${reglas.map(a => `<li>${etiquetaAdvertencia(a)}</li>`).join('')}</ul>`;
+    }
+    if (usosPropuesta.length > 0) {
+        const destinoTxt = `<strong>${sanitizar(filaDestino?.rodeo?.club || '')}</strong>${filaDestino?.rodeo?.tipo_rodeo_nombre ? ' (' + sanitizar(filaDestino.rodeo.tipo_rodeo_nombre) + ')' : ''}, ${filaDestino?.rodeo?.fecha ? formatFecha(filaDestino.rodeo.fecha) : ''}`;
+        mensaje += `<div style="text-align:left; font-size:13px; margin-top:8px;">
+            <strong>${nombreJurado}</strong> ya está en esta misma propuesta:
+            <ul style="margin:6px 0; padding-left:20px;">${usosPropuesta.map(a =>
+                `<li>${ETIQUETAS_USO_CORTO[a.tipo] || a.tipo} — ${sanitizar(a.club)}${a.tipo_rodeo_nombre ? ' (' + sanitizar(a.tipo_rodeo_nombre) + ')' : ''}, ${formatFecha(a.fecha)}</li>`
+            ).join('')}</ul>
+            Si continúa, ${nombreJurado} será quitado de ${usosPropuesta.length === 1 ? 'ese rodeo' : 'esos rodeos'}
+            (solo donde estaba efectivamente seleccionado — una simple sugerencia del motor sin aceptar no se toca)
+            y quedará seleccionado para ${destinoTxt}.
+        </div>`;
+    }
+    mensaje += `<div style="margin-top:10px;">¿Desea continuar?</div>`;
     const ok = await confirmar(mensaje);
     if (ok) await seleccionarCandidato(detalleId, juradoId, true);
 }

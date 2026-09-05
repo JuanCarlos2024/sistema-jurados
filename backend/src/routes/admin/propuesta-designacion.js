@@ -31,7 +31,8 @@ const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAs
 const { clasificarJurado } = require('../../services/diagnosticoJurados');
 const { calcularBloqueRodeo } = require('../../services/feriados');
 const {
-    construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta
+    construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
+    resolverFilaALiberar, obtenerJuradoEfectivo
 } = require('../../services/propuestaDesignacion');
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
@@ -752,35 +753,75 @@ router.get('/propuestas/:id', async (req, res) => {
         .select(`
             id, rodeo_id, jurado_id_propuesto, jurado_id_seleccionado, estado_revision, origen_seleccion,
             explicacion_json, metricas_json, created_at, updated_at,
-            rodeos(club, fecha, asociacion, tipo_rodeo_nombre)
+            rodeos(
+                club, fecha, asociacion, tipo_rodeo_nombre,
+                tipos_rodeo(clasificacion_designacion_id, clasificaciones_designacion(codigo, nombre)),
+                comunas_chile(nombre)
+            )
         `)
         .eq('propuesta_id', req.params.id)
         .order('created_at');
     if (errD) return res.status(500).json({ error: errD.message });
 
-    // Nombres de jurados en una sola consulta adicional (evita el problema de
-    // relaciones ambiguas de PostgREST al tener dos FKs distintas hacia la
-    // misma tabla usuarios_pagados desde la misma fila).
+    // Nombres + datos básicos de jurados en una sola consulta adicional (evita
+    // el problema de relaciones ambiguas de PostgREST al tener dos FKs
+    // distintas hacia la misma tabla usuarios_pagados desde la misma fila).
     const juradoIds = [...new Set((detalles || []).flatMap(d => [d.jurado_id_propuesto, d.jurado_id_seleccionado]).filter(Boolean))];
-    const nombresPorId = {};
+    const juradoPorId = {};
     if (juradoIds.length > 0) {
-        const { data: jurados } = await supabase.from('usuarios_pagados').select('id, nombre_completo').in('id', juradoIds);
-        (jurados || []).forEach(j => { nombresPorId[j.id] = j.nombre_completo; });
+        const { data: jurados } = await supabase.from('usuarios_pagados').select('id, nombre_completo, categoria, asociacion, comuna').in('id', juradoIds);
+        (jurados || []).forEach(j => { juradoPorId[j.id] = j; });
     }
 
-    const detalleFinal = (detalles || []).map(d => ({
-        id: d.id, rodeo_id: d.rodeo_id,
-        rodeo: d.rodeos || null,
-        jurado_id_propuesto: d.jurado_id_propuesto,
-        nombre_propuesto: d.jurado_id_propuesto ? (nombresPorId[d.jurado_id_propuesto] || null) : null,
-        jurado_id_seleccionado: d.jurado_id_seleccionado,
-        nombre_seleccionado: d.jurado_id_seleccionado ? (nombresPorId[d.jurado_id_seleccionado] || null) : null,
-        estado_revision: d.estado_revision,
-        origen_seleccion: d.origen_seleccion,
-        explicacion_json: d.explicacion_json,
-        metricas_json: d.metricas_json,
-        created_at: d.created_at, updated_at: d.updated_at
-    }));
+    const detalleFinal = (detalles || []).map(d => {
+        const rodeoRaw = d.rodeos || null;
+        const rodeo = rodeoRaw ? {
+            club: rodeoRaw.club, fecha: rodeoRaw.fecha, asociacion: rodeoRaw.asociacion,
+            tipo_rodeo_nombre: rodeoRaw.tipo_rodeo_nombre,
+            clasificacion_nombre: rodeoRaw.tipos_rodeo?.clasificaciones_designacion?.nombre || null,
+            clasificacion_codigo: rodeoRaw.tipos_rodeo?.clasificaciones_designacion?.codigo || null,
+            comuna_nombre: rodeoRaw.comunas_chile?.nombre || null
+        } : null;
+
+        // Jurado EFECTIVO de la fila — SIEMPRE vía obtenerJuradoEfectivo(),
+        // fuente única de verdad (nunca un fallback ad-hoc repetido acá): una
+        // fila SIN_JURADO_ACTUAL da null aunque jurado_id_propuesto (histórico)
+        // siga apuntando a alguien.
+        const juradoEfectivoId = obtenerJuradoEfectivo(d);
+        const infoJurado = juradoEfectivoId ? juradoPorId[juradoEfectivoId] : null;
+        // Métricas del motor (distancia/preferente/designaciones) solo son
+        // válidas para mostrar cuando el jurado efectivo sigue siendo
+        // exactamente el que el motor propuso originalmente — si el
+        // administrador modificó por otro candidato, esas métricas no le
+        // pertenecen y se omiten (no se inventan ni se recalculan aquí).
+        const esElPropuestoPorElMotor = juradoEfectivoId && juradoEfectivoId === d.jurado_id_propuesto &&
+            (!d.jurado_id_seleccionado || d.jurado_id_seleccionado === d.jurado_id_propuesto);
+        const metricasMotor = esElPropuestoPorElMotor ? (d.explicacion_json?.jurado_propuesto || null) : null;
+
+        return {
+            id: d.id, rodeo_id: d.rodeo_id,
+            rodeo,
+            jurado_id_propuesto: d.jurado_id_propuesto,
+            nombre_propuesto: d.jurado_id_propuesto ? (juradoPorId[d.jurado_id_propuesto]?.nombre_completo || null) : null,
+            jurado_id_seleccionado: d.jurado_id_seleccionado,
+            nombre_seleccionado: d.jurado_id_seleccionado ? (juradoPorId[d.jurado_id_seleccionado]?.nombre_completo || null) : null,
+            jurado_efectivo: juradoEfectivoId ? {
+                id: juradoEfectivoId,
+                nombre: infoJurado?.nombre_completo || null,
+                categoria: infoJurado?.categoria || null,
+                asociacion: infoJurado?.asociacion || null,
+                comuna: infoJurado?.comuna || null,
+                distancia_km: metricasMotor?.distancia_km ?? null,
+                categoria_preferente: metricasMotor?.categoria_preferente ?? null,
+                designaciones_temporada_antes: metricasMotor?.designaciones_temporada_antes ?? null
+            } : null,
+            estado_revision: d.estado_revision,
+            origen_seleccion: d.origen_seleccion,
+            explicacion_json: d.explicacion_json,
+            metricas_json: d.metricas_json,
+            created_at: d.created_at, updated_at: d.updated_at
+        };
+    });
 
     res.json({
         propuesta: {
@@ -792,13 +833,52 @@ router.get('/propuestas/:id', async (req, res) => {
     });
 });
 
+// ─── Otras filas "efectivas" de una propuesta (helper compartido) ─────────
+// Trae las demás filas de la MISMA propuesta que tienen un jurado efectivo
+// (seleccionado o, si no, propuesto por el motor — sección 7 de la mejora),
+// ya enriquecidas con su bloque de fechas, para usar con
+// detectarConflictoInterno()/resolverFilaALiberar(). Se usa tanto para
+// mostrar el indicador "propuesto en otro rodeo" en la lista de candidatos
+// como para la reevaluación real al aceptar/seleccionar/mover un jurado.
+async function cargarOtrasFilasEfectivas(propuestaId, detalleIdExcluir) {
+    const { data: otras, error } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('id, estado_revision, jurado_id_seleccionado, jurado_id_propuesto, rodeo_id, rodeos(id, club, fecha, asociacion, duracion_dias, tipo_rodeo_nombre)')
+        .eq('propuesta_id', propuestaId)
+        // SIN_JURADO_ACTUAL/SIN_PROPUESTA/NO_EVALUABLE se excluyen aquí porque
+        // obtenerJuradoEfectivo() siempre devuelve null para ellas — filtrar
+        // antes ahorra filas innecesarias, la fuente de verdad de todos modos
+        // sigue siendo esa función, nunca esta lista de estados repetida.
+        .in('estado_revision', ['ACEPTADO', 'MODIFICADO', 'PENDIENTE'])
+        .neq('id', detalleIdExcluir);
+    if (error) throw new Error(error.message);
+    return (otras || [])
+        .filter(f => f.rodeos?.fecha)
+        .map(f => ({
+            detalle_id: f.id,
+            estado_revision: f.estado_revision,
+            jurado_id_seleccionado: f.jurado_id_seleccionado,
+            jurado_id_propuesto: f.jurado_id_propuesto,
+            rodeo: {
+                id: f.rodeo_id, club: f.rodeos.club, fecha: f.rodeos.fecha, asociacion: f.rodeos.asociacion,
+                tipo_rodeo_nombre: f.rodeos.tipo_rodeo_nombre,
+                bloque: calcularBloqueRodeo(f.rodeos.fecha, f.rodeos.duracion_dias || 1)
+            }
+        }))
+        .filter(f => obtenerJuradoEfectivo(f)); // fuente única de verdad, sin lógica ad-hoc aquí
+}
+
 // ─── GET /propuestas/:propuestaId/detalle/:detalleId/candidatos ───────────
-// Candidatos para la pantalla "Modificar" — reutiliza cargarDatosMotor() +
-// ejecutarSimulacion() (con topN alto para no limitarse a 5) sobre EL MISMO
-// rodeo. NO reimplementa ninguna regla. candidatos_validos = cumplen todas
-// las reglas del motor (ordenados igual que el dry-run); descartados =
-// todos los demás jurados evaluados, con sus causas — para la excepción
-// manual (sección 8) sin necesitar una lista aparte de "los 61".
+// Candidatos para "Designar jurado"/"Modificar" (mismo panel — sección 13 de
+// la mejora) — reutiliza cargarDatosMotor() + ejecutarSimulacion() (con topN
+// alto para no limitarse a 5) sobre EL MISMO rodeo. NO reimplementa ninguna
+// regla. candidatos_validos = cumplen todas las reglas del motor (ordenados
+// igual que el dry-run); descartados = todos los demás jurados evaluados,
+// con sus causas — para la excepción manual (sección 12) sin necesitar una
+// lista aparte de "los 61". Cada candidato trae además `uso_en_otra_fila`
+// (sección 6): si ese jurado ya está efectivo en otro rodeo de esta MISMA
+// propuesta, reutilizando detectarConflictoInterno() — sin reimplementar
+// nada de reglas de fecha/asociación en el frontend.
 router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req, res) => {
     const { data: detalle, error } = await supabase
         .from('propuestas_designacion_detalle')
@@ -811,31 +891,46 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
         return res.status(400).json({ error: 'Este rodeo no es evaluable (faltan datos estructurales de comuna/clasificación)' });
     }
 
-    let resultado;
+    let resultado, rodeoEnriquecido;
     try {
         const contexto = await cargarDatosMotor([detalle.rodeo_id]);
         const simulacion = ejecutarSimulacion(contexto, 999);
         resultado = simulacion.resultados[0];
+        rodeoEnriquecido = contexto.rodeosPorId.get(detalle.rodeo_id) || null;
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
     if (!resultado) return res.status(404).json({ error: 'No se pudo evaluar el rodeo' });
 
+    let otrasFilas = [];
+    try {
+        otrasFilas = await cargarOtrasFilasEfectivas(req.params.propuestaId, req.params.detalleId);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+    const rodeoDestino = rodeoEnriquecido ? { id: detalle.rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque } : null;
+    const conUso = (c) => ({ ...c, uso_en_otra_fila: rodeoDestino ? detectarConflictoInterno(rodeoDestino, c.jurado_id, otrasFilas) : [] });
+
     res.json({
         estado: resultado.estado,
-        candidatos_validos: resultado.top_candidatos || [],
-        descartados: resultado.descartados || [],
+        candidatos_validos: (resultado.top_candidatos || []).map(conUso),
+        descartados: (resultado.descartados || []).map(conUso),
         candidatos_evaluados: resultado.candidatos_evaluados || 0
     });
 });
 
-// ─── Lógica compartida por ACEPTAR y SELECCIONAR (MODIFICAR) ──────────────
+// ─── Lógica compartida por ACEPTAR, SELECCIONAR y DESIGNAR JURADO ─────────
+// (mismo endpoint/función para las tres — sección 13 de la mejora: "Designar
+// jurado" y "Modificar" son el mismo mecanismo, solo cambia la etiqueta
+// visual según si la fila ya tenía jurado o no).
 // Reevalúa al candidato con datos EN VIVO (no el snapshot original — los
-// datos pueden haber cambiado desde que se generó la propuesta, ver sección
-// 15) y detecta conflictos con otras filas ya aceptadas/modificadas de la
-// MISMA propuesta. Si hay advertencias y no vienen confirmadas, no guarda
-// nada y responde 409 con el detalle para que el frontend pida confirmación
-// explícita — nunca se aplica una excepción en silencio.
+// datos pueden haber cambiado desde que se generó la propuesta) y detecta
+// conflictos/uso con otras filas de la MISMA propuesta (incluye PENDIENTE,
+// sección 7). Si hay advertencias y no vienen confirmadas, no guarda nada y
+// responde 409 para que el frontend pida confirmación explícita — nunca se
+// aplica una excepción en silencio. Si el jurado ya estaba SELECCIONADO en
+// otra fila, al confirmar se lo "mueve": esa fila anterior se libera primero
+// (ver resolverFilaALiberar) y solo entonces se escribe la fila nueva.
 async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
     const { propuestaId, detalleId } = req.params;
 
@@ -869,26 +964,17 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
         return res.status(500).json({ error: err.message });
     }
 
-    // Conflicto con OTRAS filas ya aceptadas/modificadas de esta misma propuesta
+    // Conflicto/uso con OTRAS filas de esta misma propuesta (incluye filas
+    // PENDIENTE — sección 7: el jurado_id_propuesto también cuenta como "en
+    // uso" para este chequeo, no solo lo ya aceptado/modificado).
     let conflictos = [];
+    let otrasFilasEnriquecidas = [];
     if (rodeoEnriquecido) {
-        const { data: otrasFilas } = await supabase
-            .from('propuestas_designacion_detalle')
-            .select('jurado_id_seleccionado, rodeo_id, rodeos(id, club, fecha, asociacion, duracion_dias)')
-            .eq('propuesta_id', propuestaId)
-            .in('estado_revision', ['ACEPTADO', 'MODIFICADO'])
-            .neq('id', detalleId);
-
-        const otrasFilasEnriquecidas = (otrasFilas || [])
-            .filter(f => f.rodeos?.fecha)
-            .map(f => ({
-                jurado_id_seleccionado: f.jurado_id_seleccionado,
-                rodeo: {
-                    id: f.rodeo_id, club: f.rodeos.club, fecha: f.rodeos.fecha, asociacion: f.rodeos.asociacion,
-                    bloque: calcularBloqueRodeo(f.rodeos.fecha, f.rodeos.duracion_dias || 1)
-                }
-            }));
-
+        try {
+            otrasFilasEnriquecidas = await cargarOtrasFilasEfectivas(propuestaId, detalleId);
+        } catch (err) {
+            return res.status(500).json({ error: err.message });
+        }
         conflictos = detectarConflictoInterno(
             { id: detalle.rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque },
             juradoId,
@@ -906,6 +992,46 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
             requiereConfirmacion: true,
             advertencias,
             jurado: { id: jurado.id, nombre: jurado.nombre_completo }
+        });
+    }
+
+    // "Mover jurado" (secciones 8-10 de la mejora): si este jurado ya estaba
+    // efectivamente SELECCIONADO (aceptado o modificado, no solo propuesto
+    // por el motor) en otra fila de esta misma propuesta, se libera esa fila
+    // PRIMERO y recién después se escribe la fila nueva — así, ante una falla
+    // a mitad de camino, el peor caso es "nadie seleccionado" y nunca "el
+    // mismo jurado seleccionado en dos rodeos a la vez" (sección 10). NUNCA
+    // se toca jurado_id_propuesto de la fila anterior (sección 15 — registro
+    // histórico de lo que el motor propuso, se conserva siempre).
+    const filaALiberar = resolverFilaALiberar(otrasFilasEnriquecidas, juradoId);
+    if (filaALiberar) {
+        const { data: detalleAnterior } = await supabase
+            .from('propuestas_designacion_detalle')
+            .select('jurado_id_seleccionado, estado_revision, metricas_json')
+            .eq('id', filaALiberar.detalle_id)
+            .single();
+        const metricasAnteriorLimpias = { ...(detalleAnterior?.metricas_json || {}) };
+        delete metricasAnteriorLimpias.advertencias_aceptadas;
+
+        const { error: errLiberar } = await supabase
+            .from('propuestas_designacion_detalle')
+            .update({
+                jurado_id_seleccionado: null, estado_revision: filaALiberar.nuevo_estado,
+                origen_seleccion: null, metricas_json: metricasAnteriorLimpias, updated_at: new Date().toISOString()
+            })
+            .eq('id', filaALiberar.detalle_id);
+        if (errLiberar) return res.status(500).json({ error: 'No se pudo liberar la fila anterior del jurado: ' + errLiberar.message });
+
+        await auditoria.registrar({
+            tabla: 'propuestas_designacion_detalle',
+            registro_id: filaALiberar.detalle_id,
+            accion: 'editar',
+            datos_anteriores: { jurado_id_seleccionado: detalleAnterior?.jurado_id_seleccionado, estado_revision: detalleAnterior?.estado_revision },
+            datos_nuevos: { jurado_id_seleccionado: null, estado_revision: filaALiberar.nuevo_estado },
+            actor_id: req.usuario.id,
+            actor_tipo: 'administrador',
+            descripcion: `${jurado.nombre_completo} fue retirado/movido por el Administrador — pasó a ${rodeoEnriquecido?.club || 'otro rodeo'} (${rodeoEnriquecido?.fecha || ''}) de esta misma propuesta. Estado resultante: ${filaALiberar.nuevo_estado}.`,
+            ip_address: req.ip
         });
     }
 
@@ -935,7 +1061,7 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
         ip_address: req.ip
     });
 
-    res.json({ detalle: actualizado, advertencias });
+    res.json({ detalle: actualizado, advertencias, jurado_movido_desde: filaALiberar ? filaALiberar.detalle_id : null });
 }
 
 // ─── POST /propuestas/:propuestaId/detalle/:detalleId/aceptar ─────────────

@@ -437,6 +437,11 @@ function ejecutarSimulacion(contexto, topN = 5) {
         }
         const descartados = evaluaciones.filter(e => !e.elegible).map(e => ({
             jurado_id: e.jurado.id, nombre: e.jurado.nombre_completo,
+            categoria: e.jurado.categoria, asociacion: e.jurado.asociacion,
+            categoria_preferente: e.categoriaPreferente,
+            comuna_nombre: e.comunaJurado?.nombre || null,
+            distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null,
+            designaciones_antes: e.designacionesAntes,
             causas: e.causas,
             causa_principal: ORDEN_CAUSA_PRINCIPAL.find(c => e.causas.includes(c)) || e.causas[0]
         }));
@@ -474,6 +479,9 @@ function ejecutarSimulacion(contexto, topN = 5) {
         // reimplementar el ranking.
         const topCandidatos = grupo.slice(0, topN).map(e => ({
             jurado_id: e.jurado.id, nombre: e.jurado.nombre_completo, categoria: e.jurado.categoria,
+            asociacion: e.jurado.asociacion,
+            categoria_preferente: e.categoriaPreferente,
+            comuna_nombre: e.comunaJurado?.nombre || null,
             designaciones_antes: e.designacionesAntes,
             distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null
         }));
