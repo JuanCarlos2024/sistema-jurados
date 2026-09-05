@@ -62,6 +62,19 @@ function esAsignacionEfectiva(asignacion) {
     return true;
 }
 
+// ─── Filtro de "rodeos sin jurado efectivo" (buscador del laboratorio) ────
+// Etapa 3.1 — usado por GET /admin/propuesta-designacion/rodeos-disponibles.
+// Reutiliza esAsignacionEfectiva (mismo criterio único, sin duplicarlo): un
+// rodeo cuyas únicas asignaciones son rechazadas y/o anuladas se considera
+// "sin jurado" y debe seguir apareciendo en la búsqueda. Función pura —
+// recibe listas ya cargadas (rodeos + asignaciones de esos rodeos), no hace
+// queries — para que el endpoint la use sin duplicar el filtro y para que
+// sea testeable sin base de datos.
+function filtrarRodeosSinJuradoEfectivo(rodeos, asignaciones) {
+    const rodeosConJurado = new Set((asignaciones || []).filter(esAsignacionEfectiva).map(a => a.rodeo_id));
+    return (rodeos || []).filter(r => !rodeosConJurado.has(r.id));
+}
+
 // ─── Helpers puros de bloques (fin de semana del rodeo) ────────────────────
 function bloquesSeSuperponen(b1, b2) {
     return b1.inicio <= b2.fin && b2.inicio <= b1.fin;
@@ -550,6 +563,7 @@ async function generarSimulacion(rodeoIdsInput) {
 }
 
 module.exports = {
-    generarSimulacion, cargarDatosMotor, ejecutarSimulacion, evaluarCandidato, esAsignacionEfectiva,
+    generarSimulacion, cargarDatosMotor, ejecutarSimulacion, evaluarCandidato,
+    esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo,
     DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL
 };

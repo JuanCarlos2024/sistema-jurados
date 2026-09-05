@@ -31,19 +31,6 @@
             background: #fff3cd; border: 1px solid #ffe08a; border-radius: 10px;
             padding: 12px 16px; font-size: 13px; color: #7a5200; margin-bottom: 16px; line-height: 1.5; font-weight: 600;
         }
-        .rodeo-buscador { position: relative; }
-        .rodeo-sugerencias {
-            position: absolute; z-index: 20; top: 100%; left: 0; right: 0;
-            background: white; border: 1px solid var(--gris-borde); border-radius: 8px;
-            box-shadow: 0 6px 16px rgba(0,0,0,.1); max-height: 260px; overflow-y: auto; margin-top: 4px;
-        }
-        .rodeo-sugerencia-item { padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--gris-claro); }
-        .rodeo-sugerencia-item:hover { background: #f4f6f9; }
-        .chip-rodeo {
-            display: inline-flex; align-items: center; gap: 6px; background: #eef5ff; border: 1px solid #cfe2ff;
-            border-radius: 14px; padding: 4px 10px; font-size: 12px; margin: 3px 4px 3px 0;
-        }
-        .chip-rodeo button { border: none; background: none; cursor: pointer; color: #1b4f8c; font-weight: 700; padding: 0; }
         .resultado-rodeo-card {
             background: white; border: 1px solid var(--gris-borde); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
         }
@@ -99,15 +86,46 @@
                 </div>
 
                 <div class="card" style="padding:16px;">
-                    <div class="form-grupo rodeo-buscador">
-                        <label class="form-label">Buscar rodeo (club o asociación)</label>
-                        <input type="text" id="in-buscar-rodeo" class="form-control" placeholder="Ej: Melipilla, Colchagua..." oninput="debounceBuscarRodeo()" autocomplete="off">
-                        <div id="sugerencias-rodeo" class="rodeo-sugerencias" hidden></div>
+                    <div style="font-size:12px; color:var(--gris); margin-bottom:10px;">
+                        Solo se muestran rodeos activos <strong>sin jurado ya designado</strong> (una designación rechazada o anulada no cuenta — el rodeo igual aparece).
                     </div>
-                    <div id="chips-rodeos-seleccionados" style="margin:8px 0;"></div>
-                    <div class="form-acciones">
-                        <button class="btn btn-primario" id="btn-ejecutar-dryrun" onclick="ejecutarDryRun()" disabled>🧪 Ejecutar simulación (DRY-RUN)</button>
-                        <button class="btn btn-secundario" onclick="limpiarSeleccionRodeos()">Limpiar selección</button>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;">
+                        <div>
+                            <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Fecha desde</label>
+                            <input type="date" id="bd-fecha-desde" class="form-control" style="width:145px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Fecha hasta</label>
+                            <input type="date" id="bd-fecha-hasta" class="form-control" style="width:145px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Asociación</label>
+                            <input type="text" id="bd-asociacion" class="form-control" placeholder="Filtrar asociación..." style="width:175px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Tipo de rodeo</label>
+                            <select id="bd-tipo-rodeo" class="form-control" style="width:200px;"><option value="">Todos los tipos</option></select>
+                        </div>
+                        <div>
+                            <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Club / búsqueda libre</label>
+                            <input type="text" id="bd-buscar" class="form-control" placeholder="Buscar..." style="width:155px;" onkeydown="if(event.key==='Enter')buscarRodeosDisponibles()">
+                        </div>
+                        <button class="btn btn-primario btn-pequeño" onclick="buscarRodeosDisponibles()">Buscar</button>
+                        <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltrosBusqueda()">Limpiar</button>
+                    </div>
+
+                    <div id="bd-resultados" style="min-height:80px; max-height:420px; overflow-y:auto;">
+                        <p style="font-size:13px; color:var(--gris); padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos sin jurado designado.</p>
+                    </div>
+
+                    <div id="bd-footer" style="display:none; margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
+                        <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+                            <span id="bd-contador" style="font-size:13px; color:var(--gris);">0 rodeos seleccionados</span>
+                            <div class="form-acciones" style="margin:0;">
+                                <button class="btn btn-primario" id="btn-ejecutar-dryrun" onclick="ejecutarDryRun()" disabled>🧪 Ejecutar simulación (DRY-RUN)</button>
+                                <button class="btn btn-secundario" onclick="limpiarSeleccionRodeos()">Limpiar selección</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -177,62 +195,134 @@ async function cargar() {
 cargar();
 
 // ─────────────────────────────────────────────────────────────────────────
-// Laboratorio de simulación (DRY-RUN) — llama al motor en modo simulación.
-// NO crea, guarda ni publica ninguna designación. Solo lectura.
+// Laboratorio de simulación (DRY-RUN) — buscador de rodeos SIN jurado
+// designado (adaptado de "Buscar rodeos para evaluar" en evaluaciones.html)
+// + ejecución del motor en modo simulación. NO crea, guarda ni publica
+// ninguna designación. Solo lectura.
 // ─────────────────────────────────────────────────────────────────────────
-let rodeosSeleccionados = []; // [{id, club, asociacion, fecha}]
-let debounceBuscarRodeoTimer;
+let resultadosBusqueda = [];              // último resultado de la búsqueda actual
+const seleccionMapa = new Map();          // id -> {id, club, asociacion, fecha, tipo_rodeo_nombre} — persiste entre búsquedas
 
-function debounceBuscarRodeo() {
-    clearTimeout(debounceBuscarRodeoTimer);
-    debounceBuscarRodeoTimer = setTimeout(buscarRodeoParaSimulacion, 300);
-}
-
-async function buscarRodeoParaSimulacion() {
-    const q = document.getElementById('in-buscar-rodeo').value.trim();
-    const cont = document.getElementById('sugerencias-rodeo');
-    if (q.length < 2) { cont.hidden = true; cont.innerHTML = ''; return; }
+async function cargarTiposRodeoFiltro() {
     try {
-        const resp = await api.get('/admin/rodeos?buscar=' + encodeURIComponent(q) + '&limit=15');
-        const rodeos = (resp.data || []).filter(r => !rodeosSeleccionados.some(s => s.id === r.id));
-        if (rodeos.length === 0) {
-            cont.innerHTML = '<div class="rodeo-sugerencia-item" style="color:#aaa;">Sin resultados</div>';
-            cont.hidden = false;
-            return;
-        }
-        cont.innerHTML = rodeos.map(r => `
-            <div class="rodeo-sugerencia-item" onclick='agregarRodeoSeleccionado(${JSON.stringify({id:r.id, club:r.club, asociacion:r.asociacion, fecha:r.fecha}).replace(/'/g,"&#39;")})'>
-                <strong>${sanitizar(r.club)}</strong> — ${sanitizar(r.asociacion)} — ${formatFecha ? formatFecha(r.fecha) : r.fecha}
-            </div>`).join('');
-        cont.hidden = false;
-    } catch (err) { console.warn('[DryRun] búsqueda de rodeos falló:', err.message); }
+        const tipos = await api.get('/admin/rodeos/tipos/lista?activo=true');
+        const sel = document.getElementById('bd-tipo-rodeo');
+        (tipos || []).forEach(t => sel.insertAdjacentHTML('beforeend', `<option value="${t.id}">${sanitizar(t.nombre)}</option>`));
+    } catch (e) { console.warn('[Búsqueda] no se pudieron cargar tipos de rodeo:', e.message); }
+}
+cargarTiposRodeoFiltro();
+
+function limpiarFiltrosBusqueda() {
+    document.getElementById('bd-fecha-desde').value = '';
+    document.getElementById('bd-fecha-hasta').value = '';
+    document.getElementById('bd-asociacion').value = '';
+    document.getElementById('bd-tipo-rodeo').value = '';
+    document.getElementById('bd-buscar').value = '';
+    resultadosBusqueda = [];
+    document.getElementById('bd-resultados').innerHTML =
+        '<p style="font-size:13px;color:var(--gris);padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos sin jurado designado.</p>';
 }
 
-function agregarRodeoSeleccionado(r) {
-    if (rodeosSeleccionados.some(s => s.id === r.id)) return;
-    rodeosSeleccionados.push(r);
-    document.getElementById('sugerencias-rodeo').hidden = true;
-    document.getElementById('in-buscar-rodeo').value = '';
-    renderChipsRodeos();
+async function buscarRodeosDisponibles() {
+    const params = new URLSearchParams();
+    const fd = document.getElementById('bd-fecha-desde').value;
+    const fh = document.getElementById('bd-fecha-hasta').value;
+    const as = document.getElementById('bd-asociacion').value.trim();
+    const tr = document.getElementById('bd-tipo-rodeo').value;
+    const bs = document.getElementById('bd-buscar').value.trim();
+    if (fd) params.set('fecha_desde', fd);
+    if (fh) params.set('fecha_hasta', fh);
+    if (as) params.set('asociacion', as);
+    if (tr) params.set('tipo_rodeo_id', tr);
+    if (bs) params.set('q', bs);
+
+    const div = document.getElementById('bd-resultados');
+    div.innerHTML = '<div style="padding:20px;text-align:center;"><div class="spinner"></div></div>';
+
+    try {
+        const resp = await api.get('/admin/propuesta-designacion/rodeos-disponibles?' + params.toString());
+        resultadosBusqueda = resp.rodeos || [];
+        renderTablaBusqueda();
+    } catch (err) {
+        div.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
 }
 
-function quitarRodeoSeleccionado(id) {
-    rodeosSeleccionados = rodeosSeleccionados.filter(r => r.id !== id);
-    renderChipsRodeos();
+function renderTablaBusqueda() {
+    const div = document.getElementById('bd-resultados');
+
+    if (resultadosBusqueda.length === 0) {
+        div.innerHTML = '<p style="font-size:13px;color:var(--gris);padding:8px 0;">Sin rodeos encontrados con esos filtros (o todos ya tienen jurado designado).</p>';
+        return;
+    }
+
+    const todosVisiblesSeleccionados = resultadosBusqueda.every(r => seleccionMapa.has(r.id));
+
+    const filas = resultadosBusqueda.map(r => {
+        const estadoDatos = [];
+        if (!r.comuna_nombre) estadoDatos.push('<span style="color:#b9560a;font-size:11px;">⚠ Sin comuna</span>');
+        if (!r.clasificacion_codigo) estadoDatos.push('<span style="color:#b9560a;font-size:11px;">⚠ Sin clasificación</span>');
+        const estadoTexto = estadoDatos.length > 0 ? estadoDatos.join('<br>') : '<span style="color:#1e8449;font-size:11px;">✓ Completo</span>';
+
+        return `<tr>
+            <td style="text-align:center;"><input type="checkbox" class="bd-chk" data-id="${r.id}" ${seleccionMapa.has(r.id) ? 'checked' : ''} onchange="_toggleSeleccionRodeo(this)"></td>
+            <td style="font-size:13px;">${r.fecha ? formatFecha(r.fecha) : '—'}</td>
+            <td style="font-size:13px;">${sanitizar(r.club || '—')}</td>
+            <td style="font-size:13px;">${sanitizar(r.asociacion || '—')}</td>
+            <td style="font-size:12px;">${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
+            <td style="font-size:12px;">${sanitizar(r.clasificacion_nombre || '—')}</td>
+            <td style="font-size:12px;">${sanitizar(r.comuna_nombre || '—')}</td>
+            <td>${estadoTexto}</td>
+        </tr>`;
+    }).join('');
+
+    div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:13px; color:var(--gris);">${resultadosBusqueda.length} rodeo(s) encontrado(s) sin jurado designado</span>
+            <label style="font-size:12px; cursor:pointer; display:flex; gap:6px; align-items:center;">
+                <input type="checkbox" id="bd-sel-todos" ${todosVisiblesSeleccionados ? 'checked' : ''} onchange="_seleccionarTodosVisibles(this.checked)"> Seleccionar todos los visibles
+            </label>
+        </div>
+        <div class="tabla-wrap">
+        <table>
+            <thead><tr>
+                <th style="width:36px;"></th><th>Fecha</th><th>Club</th><th>Asociación</th>
+                <th>Tipo de rodeo</th><th>Clasificación</th><th>Comuna</th><th>Estado de datos</th>
+            </tr></thead>
+            <tbody>${filas}</tbody>
+        </table>
+        </div>`;
+
+    document.getElementById('bd-footer').style.display = '';
+    _actualizarContadorSeleccion();
+}
+
+function _toggleSeleccionRodeo(chk) {
+    const id = chk.dataset.id;
+    const rodeo = resultadosBusqueda.find(r => r.id === id);
+    if (!rodeo) return;
+    if (chk.checked) seleccionMapa.set(id, rodeo);
+    else seleccionMapa.delete(id);
+    _actualizarContadorSeleccion();
+}
+
+function _seleccionarTodosVisibles(checked) {
+    resultadosBusqueda.forEach(r => { if (checked) seleccionMapa.set(r.id, r); else seleccionMapa.delete(r.id); });
+    renderTablaBusqueda();
 }
 
 function limpiarSeleccionRodeos() {
-    rodeosSeleccionados = [];
-    renderChipsRodeos();
+    seleccionMapa.clear();
+    if (resultadosBusqueda.length > 0) renderTablaBusqueda();
+    else _actualizarContadorSeleccion();
     document.getElementById('resultado-dryrun').innerHTML = '';
 }
 
-function renderChipsRodeos() {
-    const cont = document.getElementById('chips-rodeos-seleccionados');
-    cont.innerHTML = rodeosSeleccionados.map(r =>
-        `<span class="chip-rodeo">${sanitizar(r.club)} (${r.fecha})<button onclick="quitarRodeoSeleccionado('${r.id}')" title="Quitar">×</button></span>`
-    ).join('');
-    document.getElementById('btn-ejecutar-dryrun').disabled = rodeosSeleccionados.length === 0;
+function _actualizarContadorSeleccion() {
+    const n = seleccionMapa.size;
+    document.getElementById('bd-contador').textContent = `${n} rodeo${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}`;
+    document.getElementById('btn-ejecutar-dryrun').disabled = n === 0;
+    if (n > 0) document.getElementById('bd-footer').style.display = '';
 }
 
 const ETIQUETAS_CAUSA = {
@@ -251,7 +341,7 @@ async function ejecutarDryRun() {
     btn.disabled = true;
     cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
     try {
-        const resp = await api.post('/admin/propuesta-designacion/dry-run', { rodeo_ids: rodeosSeleccionados.map(r => r.id) });
+        const resp = await api.post('/admin/propuesta-designacion/dry-run', { rodeo_ids: [...seleccionMapa.keys()] });
         renderResultadoDryRun(resp);
     } catch (err) {
         cont.innerHTML = '';
@@ -361,12 +451,6 @@ function renderDescartes(descartes) {
     ).join('')}</div>`;
 }
 
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.rodeo-buscador')) {
-        const s = document.getElementById('sugerencias-rodeo');
-        if (s) s.hidden = true;
-    }
-});
 </script>
 </body>
 </html>

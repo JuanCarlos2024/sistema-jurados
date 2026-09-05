@@ -1,4 +1,4 @@
-const { ejecutarSimulacion, DISTANCIA_MAXIMA_KM, esAsignacionEfectiva } = require('./motorPropuestaDesignacion');
+const { ejecutarSimulacion, DISTANCIA_MAXIMA_KM, esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo } = require('./motorPropuestaDesignacion');
 const { calcularBloqueRodeo, rangoFechas } = require('./feriados');
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -569,5 +569,54 @@ describe('Motor — determinismo (CASO 21)', () => {
         const res1 = construir();
         const res2 = construir();
         expect(JSON.stringify(res1)).toBe(JSON.stringify(res2));
+    });
+});
+
+describe('Motor — Etapa 3.1: buscador "rodeos sin jurado efectivo" (CASO 1-7)', () => {
+    // Mismos rodeos de prueba, solo cambian las asignaciones ya existentes.
+    const rodeos = [{ id: 'r1' }, { id: 'r2' }];
+
+    test('CASO 1: rodeo sin ninguna asignación → aparece', () => {
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, []);
+        expect(res.map(r => r.id)).toEqual(['r1', 'r2']);
+    });
+
+    test('CASO 2: rodeo con asignación activa + pendiente → NO aparece', () => {
+        const asigs = [{ rodeo_id: 'r1', estado: 'activo', estado_designacion: 'pendiente' }];
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+        expect(res.map(r => r.id)).toEqual(['r2']);
+    });
+
+    test('CASO 3: rodeo con asignación activa + aceptada → NO aparece', () => {
+        const asigs = [{ rodeo_id: 'r1', estado: 'activo', estado_designacion: 'aceptado' }];
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+        expect(res.map(r => r.id)).toEqual(['r2']);
+    });
+
+    test('CASO 4: rodeo con asignación activa + estado_designacion NULL (legacy) → NO aparece', () => {
+        const asigs = [{ rodeo_id: 'r1', estado: 'activo', estado_designacion: null }];
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+        expect(res.map(r => r.id)).toEqual(['r2']);
+    });
+
+    test('CASO 5: rodeo solo con asignación rechazada → aparece', () => {
+        const asigs = [{ rodeo_id: 'r1', estado: 'activo', estado_designacion: 'rechazado' }];
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+        expect(res.map(r => r.id)).toEqual(['r1', 'r2']);
+    });
+
+    test('CASO 6: rodeo solo con asignación anulada → aparece', () => {
+        const asigs = [{ rodeo_id: 'r1', estado: 'anulado', estado_designacion: 'aceptado' }];
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+        expect(res.map(r => r.id)).toEqual(['r1', 'r2']);
+    });
+
+    test('CASO 7: rodeo con una rechazada y otra efectiva → NO aparece', () => {
+        const asigs = [
+            { rodeo_id: 'r1', estado: 'activo', estado_designacion: 'rechazado' },
+            { rodeo_id: 'r1', estado: 'activo', estado_designacion: 'pendiente' }
+        ];
+        const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+        expect(res.map(r => r.id)).toEqual(['r2']);
     });
 });

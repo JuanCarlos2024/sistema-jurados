@@ -26,7 +26,7 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { resolverComuna, cargarCatalogoResolucionComunas } = require('../../services/geografia');
 const { soloRolEvaluacion } = require('../../middleware/auth');
-const { generarSimulacion } = require('../../services/motorPropuestaDesignacion');
+const { generarSimulacion, filtrarRodeosSinJuradoEfectivo } = require('../../services/motorPropuestaDesignacion');
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
 router.use(soloRolEvaluacion());
@@ -264,6 +264,66 @@ router.get('/diagnostico', async (req, res) => {
         jurados: diagnosticoJurados,
         generado_en: new Date().toISOString()
     });
+});
+
+// ─── GET /rodeos-disponibles — buscador de rodeos SIN jurado efectivo ─────
+// Alimenta el buscador del laboratorio de simulación (Etapa 3.1). Devuelve
+// exclusivamente rodeos activos que NO tengan ya una asignación de jurado
+// efectiva — mismo criterio único que usa el motor (esAsignacionEfectiva):
+// una asignación rechazada o anulada NO cuenta como "ya tiene jurado".
+// No oculta rodeos por falta de comuna/clasificación — eso lo reporta el
+// dry-run como NO_EVALUABLE; aquí solo se informa para que el admin lo vea.
+//
+// Anti N+1: 2 consultas totales (rodeos + asignaciones de esos rodeos),
+// igual patrón que GET /admin/evaluaciones/rodeos-disponibles.
+router.get('/rodeos-disponibles', async (req, res) => {
+    const { fecha_desde, fecha_hasta, asociacion, tipo_rodeo_id, q } = req.query;
+
+    let query = supabase
+        .from('rodeos')
+        .select(`
+            id, club, asociacion, fecha, tipo_rodeo_id, tipo_rodeo_nombre, comuna_id,
+            tipos_rodeo(clasificaciones_designacion(codigo, nombre)),
+            comunas_chile(nombre)
+        `)
+        .eq('estado', 'activo')
+        .order('fecha', { ascending: true })
+        .limit(200);
+
+    if (fecha_desde)    query = query.gte('fecha', fecha_desde);
+    if (fecha_hasta)    query = query.lte('fecha', fecha_hasta);
+    if (asociacion)     query = query.ilike('asociacion', `%${asociacion}%`);
+    if (tipo_rodeo_id)  query = query.eq('tipo_rodeo_id', tipo_rodeo_id);
+    if (q)              query = query.or(`club.ilike.%${q}%,asociacion.ilike.%${q}%`);
+
+    const { data: rodeos, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!rodeos || rodeos.length === 0) return res.json({ rodeos: [] });
+
+    const rodeoIds = rodeos.map(r => r.id);
+    const { data: asigs, error: errA } = await supabase
+        .from('asignaciones')
+        .select('rodeo_id, estado, estado_designacion')
+        .in('rodeo_id', rodeoIds)
+        .eq('tipo_persona', 'jurado');
+    if (errA) return res.status(500).json({ error: errA.message });
+
+    // Único criterio de "ya tiene jurado" — el mismo que usa el motor
+    // (filtrarRodeosSinJuradoEfectivo reutiliza esAsignacionEfectiva).
+    const disponibles = filtrarRodeosSinJuradoEfectivo(rodeos, asigs)
+        .map(r => ({
+            id: r.id,
+            club: r.club,
+            asociacion: r.asociacion,
+            fecha: r.fecha,
+            tipo_rodeo_nombre: r.tipo_rodeo_nombre,
+            clasificacion_codigo: r.tipos_rodeo?.clasificaciones_designacion?.codigo || null,
+            clasificacion_nombre: r.tipos_rodeo?.clasificaciones_designacion?.nombre || null,
+            comuna_id: r.comuna_id,
+            comuna_nombre: r.comunas_chile?.nombre || null
+        }));
+
+    res.json({ rodeos: disponibles });
 });
 
 // ─── POST /dry-run — motor de propuesta en modo SIMULACIÓN ────────────────
