@@ -1,4 +1,4 @@
-const { ejecutarSimulacion, DISTANCIA_MAXIMA_KM, esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo } = require('./motorPropuestaDesignacion');
+const { ejecutarSimulacion, DISTANCIA_MAXIMA_KM, esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo, evaluarCandidatoDirecto } = require('./motorPropuestaDesignacion');
 const { calcularBloqueRodeo, rangoFechas } = require('./feriados');
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -618,5 +618,112 @@ describe('Motor — Etapa 3.1: buscador "rodeos sin jurado efectivo" (CASO 1-7)'
         ];
         const res = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
         expect(res.map(r => r.id)).toEqual(['r2']);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// evaluarCandidatoDirecto — revalidación de UN jurado específico, sin
+// depender de ningún topN ni de buscar en una lista de candidatos (usada
+// por la revalidación al Guardar una propuesta y por evaluarSeleccion()).
+// TEST F/G/H de la revisión final.
+// ═════════════════════════════════════════════════════════════════════════
+describe('evaluarCandidatoDirecto — TEST F/G/H', () => {
+    // TEST F: Pedro sigue siendo válido aunque el ranking (equidad) ahora
+    // favorecería a otro jurado con menos designaciones — la evaluación
+    // directa de Pedro NUNCA mira a los demás candidatos.
+    test('TEST F: jurado válido pero con muchas más designaciones que otros (perdería el ranking) → sigue elegible', () => {
+        const fecha = '2026-09-05';
+        const pedro = jurado('pedro', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const juan = jurado('juan', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', comunaObj: COMUNA_RODEO_DEFAULT });
+        const asigsHist = (juradoId, n) => Array.from({ length: n }, (_, i) => ({
+            usuario_pagado_id: juradoId, rodeo_id: `hist-${juradoId}-${i}`,
+            rodeos: { fecha: `2026-0${5 - (i % 3)}-0${(i % 9) + 1}`, duracion_dias: 1, asociacion: `Historica${i}` }
+        }));
+        const ctx = contexto({
+            rodeos: [r], jurados: [pedro, juan],
+            disponibilidadPorJurado: { pedro: rangoFechas(fecha, 1), juan: rangoFechas(fecha, 1) },
+            asignacionesTemporada: [...asigsHist('pedro', 8), ...asigsHist('juan', 0)], // Juan ganaría el ranking por equidad
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+
+        // Confirmación: en una corrida completa, Juan (menos designaciones) gana.
+        const resultadoCompleto = ejecutarSimulacion(ctx);
+        expect(resultadoCompleto.resultados[0].jurado_propuesto.jurado_id).toBe('juan');
+
+        // Pero la evaluación DIRECTA de Pedro dice que sigue siendo válido —
+        // el hecho de que Juan gane el ranking no aparece en absoluto acá.
+        const { evaluacion } = evaluarCandidatoDirecto(ctx, 'r1', 'pedro');
+        expect(evaluacion.elegible).toBe(true);
+        expect(evaluacion.causas).toEqual([]);
+    });
+
+    // TEST G: con muchos jurados válidos, Pedro quedaría fuera de un top
+    // reducido (p. ej. topN=5) por tener más designaciones que otros 5 — la
+    // evaluación directa lo encuentra igual, sin ningún límite artificial.
+    test('TEST G: jurado que quedaría fuera de un top reducido por posición, pero cumple todas las reglas → sigue válido por evaluación directa', () => {
+        const fecha = '2026-09-05';
+        const pedro = jurado('pedro', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const otros = Array.from({ length: 6 }, (_, i) => jurado(`otro${i}`, { categoria: 'A', comunaTexto: 'ComunaJurado' }));
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', comunaObj: COMUNA_RODEO_DEFAULT });
+        const disponibilidadPorJurado = { pedro: rangoFechas(fecha, 1) };
+        otros.forEach(o => { disponibilidadPorJurado[o.id] = rangoFechas(fecha, 1); });
+        // Pedro con más designaciones que los 6 "otros" → en un top reducido
+        // (topN=5, orden por equidad) Pedro queda excluido de top_candidatos.
+        const asigsHist = (juradoId, n) => Array.from({ length: n }, (_, i) => ({
+            usuario_pagado_id: juradoId, rodeo_id: `hist-${juradoId}-${i}`,
+            rodeos: { fecha: `2026-0${5 - (i % 3)}-0${(i % 9) + 1}`, duracion_dias: 1, asociacion: `Historica${i}` }
+        }));
+        const ctx = contexto({
+            rodeos: [r], jurados: [pedro, ...otros],
+            disponibilidadPorJurado,
+            asignacionesTemporada: asigsHist('pedro', 10),
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+
+        // Confirmación: con topN=5 (el valor por defecto), Pedro NO aparece
+        // entre los primeros 5 (los 6 "otros", con 0 designaciones, van antes).
+        const resultadoTop5 = ejecutarSimulacion(ctx, 5);
+        expect(resultadoTop5.resultados[0].top_candidatos.some(c => c.jurado_id === 'pedro')).toBe(false);
+
+        // La evaluación directa lo encuentra igual — no depende de esa lista.
+        const { evaluacion } = evaluarCandidatoDirecto(ctx, 'r1', 'pedro');
+        expect(evaluacion.elegible).toBe(true);
+    });
+
+    // TEST H: Pedro sí incumple una regla dura (distancia) → la evaluación
+    // directa lo detecta con su causa, sin necesidad de generarlo desde una lista.
+    test('TEST H: jurado que incumple una regla dura (distancia > 600 km) → no elegible, con la causa', () => {
+        const fecha = '2026-09-05';
+        const comunaLejos = comuna(latADistancia(-30, 700), -70, 'ComunaMuyLejos');
+        const comunaR = comuna(-30, -70, 'ComunaRH');
+        const pedro = jurado('pedro', { categoria: 'A', comunaTexto: comunaLejos.nombre });
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', comunaObj: comunaR });
+        const ctx = contexto({
+            rodeos: [r], jurados: [pedro],
+            disponibilidadPorJurado: { pedro: rangoFechas(fecha, 1) },
+            comunas: [comunaLejos, comunaR]
+        });
+
+        const { evaluacion } = evaluarCandidatoDirecto(ctx, 'r1', 'pedro');
+        expect(evaluacion.elegible).toBe(false);
+        expect(evaluacion.causas).toContain('DISTANCIA_EXCEDIDA');
+        expect(evaluacion.distanciaKm).toBeGreaterThan(DISTANCIA_MAXIMA_KM);
+    });
+
+    test('jurado que no existe/no está activo (no aparece en contexto.jurados) → error JURADO_INACTIVO_O_INEXISTENTE', () => {
+        const fecha = '2026-09-05';
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({ rodeos: [r], jurados: [], comunas: [COMUNA_RODEO_DEFAULT] });
+        const resultado = evaluarCandidatoDirecto(ctx, 'r1', 'jurado-inexistente');
+        expect(resultado.error).toBe('JURADO_INACTIVO_O_INEXISTENTE');
+        expect(resultado.evaluacion).toBeUndefined();
+    });
+
+    test('rodeo que no existe en el contexto → error RODEO_NO_ENCONTRADO', () => {
+        const pedro = jurado('pedro', { comunaTexto: 'ComunaJurado' });
+        const ctx = contexto({ rodeos: [], jurados: [pedro], comunas: [COMUNA_JURADO_DEFAULT] });
+        const resultado = evaluarCandidatoDirecto(ctx, 'rodeo-inexistente', 'pedro');
+        expect(resultado.error).toBe('RODEO_NO_ENCONTRADO');
     });
 });

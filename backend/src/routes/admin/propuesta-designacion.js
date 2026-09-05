@@ -26,14 +26,16 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { resolverComuna, cargarCatalogoResolucionComunas } = require('../../services/geografia');
 const { soloRolEvaluacion } = require('../../middleware/auth');
-const { generarSimulacion, cargarDatosMotor, ejecutarSimulacion, filtrarRodeosSinJuradoEfectivo } = require('../../services/motorPropuestaDesignacion');
+const { generarSimulacion, cargarDatosMotor, ejecutarSimulacion, filtrarRodeosSinJuradoEfectivo, evaluarCandidatoDirecto, TOP_N_TODOS_LOS_CANDIDATOS } = require('../../services/motorPropuestaDesignacion');
 const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
 const { clasificarJurado } = require('../../services/diagnosticoJurados');
 const { calcularBloqueRodeo } = require('../../services/feriados');
 const {
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
-    resolverFilaALiberar, obtenerJuradoEfectivo
+    resolverFilaALiberar, obtenerJuradoEfectivo, ESTADOS_REVISION,
+    evaluarCambiosParaGuardar
 } = require('../../services/propuestaDesignacion');
+const { firmarPreview, verificarPreviewToken, mapaPorRodeo } = require('../../services/previewIntegridad');
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
 router.use(soloRolEvaluacion());
@@ -603,11 +605,19 @@ router.post('/aplicar-comuna-lote', async (req, res) => {
 
 // ─── POST /dry-run — motor de propuesta en modo SIMULACIÓN ────────────────
 // Body: { rodeo_ids: [uuid, ...] }
-// Respuesta: { modo:'DRY_RUN', temporada, resumen, resultados, ... }
+// Respuesta: { modo:'DRY_RUN', temporada, resumen, resultados, preview_token, ... }
 //
 // SOLO LECTURA: no llama a POST /admin/asignaciones, no hace INSERT/UPDATE/
 // DELETE sobre asignaciones/rodeos/usuarios_pagados/disponibilidad. No
 // guarda ningún log ni resultado — cada llamada recalcula todo desde cero.
+//
+// preview_token: firma de integridad (HMAC, ver services/previewIntegridad.js)
+// sobre el snapshot INMUTABLE de este resultado (temporada + por rodeo:
+// estado + jurado_id_propuesto original). Mientras el administrador edita la
+// propuesta en memoria del navegador ANTES de guardar (sin nada persistido
+// todavía), este token viaja de ida y vuelta en cada llamada a /preview/* y
+// a /propuestas — el backend lo verifica siempre antes de confiar en nada
+// del "jurado originalmente propuesto por el motor" que declare el cliente.
 router.post('/dry-run', async (req, res) => {
     const { rodeo_ids } = req.body;
 
@@ -620,7 +630,34 @@ router.post('/dry-run', async (req, res) => {
 
     try {
         const resultado = await generarSimulacion(rodeo_ids);
-        res.json(resultado);
+
+        // Enriquecer cada resultado con tipo de rodeo/clasificación/comuna —
+        // mismo join que ya usa GET /propuestas/:id — para que la tarjeta de
+        // PREVIEW (editable antes de guardar) tenga exactamente los mismos
+        // datos que la tarjeta de un borrador ya guardado (sección 2/16).
+        const { data: rodeosDetalle } = await supabase
+            .from('rodeos')
+            .select('id, tipo_rodeo_nombre, tipos_rodeo(clasificaciones_designacion(codigo, nombre)), comunas_chile(nombre)')
+            .in('id', rodeo_ids);
+        const detallePorId = new Map((rodeosDetalle || []).map(r => [r.id, r]));
+        resultado.resultados.forEach(res2 => {
+            if (!res2.rodeo) return;
+            const d = detallePorId.get(res2.rodeo_id);
+            res2.rodeo.tipo_rodeo_nombre = d?.tipo_rodeo_nombre || null;
+            res2.rodeo.clasificacion_nombre = d?.tipos_rodeo?.clasificaciones_designacion?.nombre || null;
+            res2.rodeo.comuna_nombre = d?.comunas_chile?.nombre || null;
+        });
+
+        const { data: temporadaActiva } = await supabase.from('temporadas').select('id').eq('activa', true).maybeSingle();
+        const preview_token = firmarPreview({
+            temporada_id: temporadaActiva?.id || null,
+            rodeos: resultado.resultados.map(r => ({
+                rodeo_id: r.rodeo_id,
+                estado: r.estado,
+                jurado_id_propuesto: r.estado === 'PROPUESTO' ? r.jurado_propuesto.jurado_id : null
+            }))
+        });
+        res.json({ ...resultado, preview_token });
     } catch (err) {
         console.error('[DRY-RUN] Error generando simulación:', err.message);
         res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
@@ -634,20 +671,23 @@ router.post('/dry-run', async (req, res) => {
 // solo agrega la capa de persistencia + selección/aceptación administrativa.
 // ═════════════════════════════════════════════════════════════════════════
 
-// ─── POST /propuestas — genera y guarda una propuesta BORRADOR ────────────
-// Body: { rodeo_ids: [...] }. Reutiliza EXACTAMENTE generarSimulacion() (el
-// mismo motor del dry-run) y persiste su resultado. No crea nada en
-// `asignaciones`. Advierte (sin bloquear) si algún rodeo ya está en otra
-// propuesta BORRADOR — ver sección 14 del pedido.
+// ─── POST /propuestas — persiste el estado temporal editado como BORRADOR ──
+// Body: { preview_token, estado_temporal }. YA NO vuelve a correr el motor y
+// pisar lo que el administrador editó durante el preview — revalida cada
+// fila contra datos frescos y, si nada cambió desde el dry-run, persiste
+// EXACTAMENTE lo editado. Si algo cambió (nueva asignación, disponibilidad,
+// conflicto nuevo), NO reemplaza en silencio: no guarda nada y devuelve qué
+// filas requieren revisión (todo o nada — el administrador decide, sección
+// 11-12 del pedido). El cliente expresa elecciones; el servidor construye
+// el registro definitivo (`construirDetalleDesdeResultado` sobre datos
+// frescos, nunca lo que mandó el navegador).
 router.post('/propuestas', async (req, res) => {
-    const { rodeo_ids } = req.body;
-    if (!Array.isArray(rodeo_ids) || rodeo_ids.length === 0) {
-        return res.status(400).json({ error: 'rodeo_ids debe ser un array con al menos un id' });
-    }
-    if (rodeo_ids.length > 200) {
-        return res.status(400).json({ error: 'Máximo 200 rodeos por propuesta' });
-    }
-    const idsUnicos = [...new Set(rodeo_ids)];
+    const { preview_token, estado_temporal } = req.body;
+
+    const validacion = validarEstadoTemporal(preview_token, estado_temporal);
+    if (validacion.error) return res.status(400).json({ error: validacion.error });
+    const { snapshot, tokenPorRodeo } = validacion;
+    const idsUnicos = [...tokenPorRodeo.keys()];
 
     // Advertencia (no bloqueante) de rodeos ya presentes en otra propuesta BORRADOR
     let rodeosYaEnOtraPropuesta = [];
@@ -661,27 +701,162 @@ router.post('/propuestas', async (req, res) => {
         rodeosYaEnOtraPropuesta = [...new Set((yaEnOtra || []).map(r => r.rodeo_id))];
     }
 
-    let resultadoSimulacion;
+    // Revalidación EN VIVO — UNA carga batched del motor (cargarDatosMotor,
+    // sin N+1) + UNA consulta de datos reales de rodeos. `resultadoFresco`
+    // (topN por defecto) es solo para mostrar estado/explicación/"por qué
+    // ganó" — la validez de un jurado puntual se decide con
+    // evaluarCandidatoDirecto() más abajo, nunca buscándolo en esta lista
+    // (sección 7/9 de la revisión final: la integridad del guardado no
+    // depende de ningún límite artificial).
+    let contexto, resultadoFresco, rodeosPorId;
     try {
-        resultadoSimulacion = await generarSimulacion(idsUnicos); // mismo motor exacto del dry-run
+        contexto = await cargarDatosMotor(idsUnicos);
+        resultadoFresco = ejecutarSimulacion(contexto);
+        rodeosPorId = await cargarRodeosRealesPorId(idsUnicos);
     } catch (err) {
-        return res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
+        return res.status(500).json({ error: 'No se pudo revalidar la propuesta: ' + err.message });
+    }
+    const frescoPorRodeo = new Map(resultadoFresco.resultados.map(r => [r.rodeo_id, r]));
+    const estadoTemporalPorRodeo = new Map(estado_temporal.map(f => [f.rodeo_id, f]));
+
+    // Filas enriquecidas de TODO el conjunto, para detectarConflictoInterno —
+    // construidas UNA sola vez y reutilizadas por cada fila con selección.
+    const todasFilasEnriquecidas = enriquecerFilasParaConflicto(
+        idsUnicos.map(id => {
+            const f = estadoTemporalPorRodeo.get(id);
+            return {
+                detalle_id: id, estado_revision: f.estado_revision, jurado_id_seleccionado: f.jurado_id_seleccionado,
+                jurado_id_propuesto: tokenPorRodeo.get(id)?.jurado_id_propuesto ?? null, rodeo_id: id
+            };
+        }),
+        rodeosPorId
+    );
+
+    const cambiosDetectados = [];
+    const filasParaPersistir = [];
+
+    for (const rodeoId of idsUnicos) {
+        const fresco = frescoPorRodeo.get(rodeoId);
+        const original = tokenPorRodeo.get(rodeoId);
+        const temporal = estadoTemporalPorRodeo.get(rodeoId);
+
+        if (!fresco) {
+            cambiosDetectados.push({ rodeo_id: rodeoId, motivo: 'El rodeo ya no se pudo revalidar (puede haber sido eliminado o desactivado).' });
+            continue;
+        }
+
+        // Un rodeo que AHORA es NO_EVALUABLE (cambió un dato estructural —
+        // comuna/clasificación) es un cambio real que sí requiere revisión,
+        // sin importar si había o no una selección administrativa.
+        if (fresco.estado === 'NO_EVALUABLE' && original.estado !== 'NO_EVALUABLE') {
+            cambiosDetectados.push({ rodeo_id: rodeoId, motivo: 'El rodeo ya no es evaluable — cambió un dato estructural (comuna/clasificación) desde que se generó la propuesta.' });
+            continue;
+        }
+
+        if (temporal.estado_revision === 'SIN_JURADO_ACTUAL') {
+            // El jurado fue movido a otra fila durante el preview — se
+            // conserva tal cual (histórico intacto, sin jurado vigente aquí).
+            // jurado_id_propuesto SIEMPRE sale del snapshot firmado
+            // (`original`), NUNCA de `fresco` — el histórico no cambia por revalidar.
+            filasParaPersistir.push({
+                rodeo_id: rodeoId, jurado_id_propuesto: original.jurado_id_propuesto, jurado_id_seleccionado: null,
+                estado_revision: 'SIN_JURADO_ACTUAL', origen_seleccion: null, explicacion_json: {}, metricas_json: {}
+            });
+            continue;
+        }
+
+        // Jurado EFECTIVO que se persistiría en esta fila según lo editado
+        // en el preview — misma fuente única de verdad que el resto del
+        // sistema (obtenerJuradoEfectivo), alimentada con el jurado_id_
+        // propuesto INMUTABLE del snapshot (nunca el de `fresco`).
+        const juradoEfectivo = obtenerJuradoEfectivo({
+            estado_revision: temporal.estado_revision, jurado_id_seleccionado: temporal.jurado_id_seleccionado,
+            jurado_id_propuesto: original.jurado_id_propuesto
+        });
+
+        if (!juradoEfectivo) {
+            // SIN_PROPUESTA / NO_EVALUABLE — nunca hubo una decisión
+            // administrativa que proteger; se persiste tal cual el motor lo
+            // ve AHORA (no hay riesgo de pisar ninguna elección).
+            filasParaPersistir.push(construirDetalleDesdeResultado(fresco));
+            continue;
+        }
+
+        // Hay un jurado efectivo (aceptado explícitamente, modificado, o
+        // simplemente la propuesta del motor sin tocar todavía) — la
+        // pregunta de la revalidación es "¿este jurado específico SIGUE
+        // SIENDO VÁLIDO para este rodeo?", NUNCA "¿el motor lo elegiría de
+        // nuevo como ganador?" — un cambio de ranking/equidad por sí solo
+        // NO invalida una selección que sigue cumpliendo todas las reglas
+        // duras (sección 1 de la revisión).
+        // Evaluación DIRECTA de ESTE jurado puntual — nunca "¿aparece entre
+        // los primeros N?" (sección 7/8 de la revisión final). Si no se
+        // encuentra (inactivo/eliminado) o el rodeo/tipo ya no es evaluable,
+        // evaluarCandidatoDirecto() lo indica explícitamente.
+        const resultadoEval = evaluarCandidatoDirecto(contexto, rodeoId, juradoEfectivo);
+        if (resultadoEval.error) {
+            cambiosDetectados.push({ rodeo_id: rodeoId, club: fresco.rodeo?.club, fecha: fresco.rodeo?.fecha, motivo: 'El jurado ya no se pudo evaluar para este rodeo (puede haber dejado de existir o estar activo).' });
+            continue;
+        }
+        const evaluacion = resultadoEval.evaluacion;
+
+        const rodeoInfo = rodeosPorId.get(rodeoId);
+        const conflictosFrescos = rodeoInfo ? detectarConflictoInterno(
+            { id: rodeoId, club: rodeoInfo.club, fecha: rodeoInfo.fecha, asociacion: rodeoInfo.asociacion, bloque: calcularBloqueRodeo(rodeoInfo.fecha, rodeoInfo.duracion_dias || 1) },
+            juradoEfectivo,
+            todasFilasEnriquecidas.filter(f => f.rodeo.id !== rodeoId)
+        ) : [];
+        const advertenciasFrescas = [
+            ...evaluacion.causas.map(c => ({ tipo: c, origen: 'REGLA_MOTOR', distancia_km: evaluacion.distanciaKm, categoria: evaluacion.jurado.categoria, asociacion: evaluacion.jurado.asociacion })),
+            ...conflictosFrescos.map(c => ({ ...c, origen: 'CONFLICTO_INTERNO_PROPUESTA' }))
+        ];
+
+        // Solo una advertencia NUEVA bloquea el guardado — ver
+        // evaluarCambiosParaGuardar() (sección 4 de la revisión).
+        const cambios = evaluarCambiosParaGuardar(advertenciasFrescas, temporal.metricas_json?.advertencias_aceptadas);
+        if (cambios.requiereRevision) {
+            cambiosDetectados.push({
+                rodeo_id: rodeoId, club: fresco.rodeo?.club, fecha: fresco.rodeo?.fecha, jurado_id: juradoEfectivo,
+                motivo: `Surgió una advertencia nueva que no estaba presente cuando se revisó esta selección: ${cambios.advertenciasNuevas.map(a => a.tipo).join(', ')}.`
+            });
+            continue;
+        }
+
+        // Sin cambios que revisar — el backend RECONSTRUYE la clasificación
+        // (nunca confía en estado_revision/origen_seleccion que mande el
+        // frontend, sección 9) usando la misma función pura que todo el
+        // resto del sistema, a partir del jurado efectivo ya validado y las
+        // advertencias frescas (vacías, o solo las ya aceptadas).
+        const { estado_revision, origen_seleccion } = decidirEstadoSeleccion(juradoEfectivo, original.jurado_id_propuesto, advertenciasFrescas);
+        filasParaPersistir.push({
+            rodeo_id: rodeoId,
+            jurado_id_propuesto: original.jurado_id_propuesto, // SIEMPRE el histórico firmado, nunca el ganador fresco
+            jurado_id_seleccionado: juradoEfectivo,
+            estado_revision, origen_seleccion,
+            explicacion_json: construirExplicacionHistorica(fresco, original.jurado_id_propuesto),
+            metricas_json: {
+                candidatos_evaluados: fresco.candidatos_evaluados, candidatos_potenciales_bd: fresco.candidatos_potenciales_bd, descartes: fresco.descartes,
+                ...(advertenciasFrescas.length > 0 ? { advertencias_aceptadas: advertenciasFrescas } : {})
+            }
+        });
     }
 
-    const { data: temporadaActiva } = await supabase.from('temporadas').select('id').eq('activa', true).maybeSingle();
+    if (cambiosDetectados.length > 0) {
+        return res.status(409).json({
+            requiereRevision: true,
+            cambios: cambiosDetectados,
+            mensaje: 'Algunas selecciones cambiaron desde que se generó esta propuesta y requieren revisión antes de guardar. No se guardó nada.'
+        });
+    }
 
     const { data: propuesta, error: errProp } = await supabase
         .from('propuestas_designacion')
-        .insert({ temporada_id: temporadaActiva?.id || null, estado: 'BORRADOR', creado_por: req.usuario.id })
+        .insert({ temporada_id: snapshot.temporada_id, estado: 'BORRADOR', creado_por: req.usuario.id })
         .select()
         .single();
     if (errProp) return res.status(500).json({ error: errProp.message });
 
-    const filas = resultadoSimulacion.resultados.map(r => ({
-        propuesta_id: propuesta.id,
-        ...construirDetalleDesdeResultado(r)
-    }));
-
+    const filas = filasParaPersistir.map(f => ({ propuesta_id: propuesta.id, ...f }));
     const { data: detalles, error: errDet } = await supabase
         .from('propuestas_designacion_detalle')
         .insert(filas)
@@ -695,7 +870,7 @@ router.post('/propuestas', async (req, res) => {
         datos_nuevos: { rodeos: idsUnicos.length, resumen: resumenPropuesta(detalles) },
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: `Propuesta borrador creada con ${idsUnicos.length} rodeo(s)`,
+        descripcion: `Propuesta borrador creada con ${idsUnicos.length} rodeo(s), conservando las ediciones hechas durante el preview`,
         ip_address: req.ip
     });
 
@@ -833,39 +1008,137 @@ router.get('/propuestas/:id', async (req, res) => {
     });
 });
 
-// ─── Otras filas "efectivas" de una propuesta (helper compartido) ─────────
+// ─── Enriquece filas crudas con bloque de fechas real (helper compartido) ─
+// Misma forma para el camino PERSISTIDO (filas de propuestas_designacion_
+// detalle) y para el camino PREVIEW (filas construidas a partir del
+// estado_temporal del cliente + un preview_token verificado) — así
+// detectarConflictoInterno()/resolverFilaALiberar() nunca se reimplementan
+// ni se bifurcan por modo.
+// @param filasRaw [{ detalle_id, estado_revision, jurado_id_seleccionado, jurado_id_propuesto, rodeo_id }]
+// @param rodeosPorId Map(rodeo_id -> { club, fecha, asociacion, tipo_rodeo_nombre, duracion_dias })
+function enriquecerFilasParaConflicto(filasRaw, rodeosPorId) {
+    return (filasRaw || [])
+        .map(f => {
+            const r = rodeosPorId.get(f.rodeo_id);
+            if (!r || !r.fecha) return null;
+            return {
+                detalle_id: f.detalle_id, estado_revision: f.estado_revision,
+                jurado_id_seleccionado: f.jurado_id_seleccionado, jurado_id_propuesto: f.jurado_id_propuesto,
+                rodeo: {
+                    id: f.rodeo_id, club: r.club, fecha: r.fecha, asociacion: r.asociacion,
+                    tipo_rodeo_nombre: r.tipo_rodeo_nombre, bloque: calcularBloqueRodeo(r.fecha, r.duracion_dias || 1)
+                }
+            };
+        })
+        .filter(f => f && obtenerJuradoEfectivo(f)); // fuente única de verdad, sin lógica ad-hoc aquí
+}
+
+// ─── Datos reales de un conjunto de rodeos, indexados por id (helper) ─────
+// Usado por el camino PREVIEW para construir `rodeosPorId` — SIEMPRE se
+// vuelve a consultar la BD real; el cliente nunca puede declarar club/
+// fecha/asociación de un rodeo, solo qué jurado le asignó.
+async function cargarRodeosRealesPorId(rodeoIds) {
+    const idsUnicos = [...new Set(rodeoIds)];
+    if (idsUnicos.length === 0) return new Map();
+    const { data, error } = await supabase
+        .from('rodeos')
+        .select('id, club, fecha, asociacion, tipo_rodeo_nombre, duracion_dias')
+        .in('id', idsUnicos);
+    if (error) throw new Error(error.message);
+    const mapa = new Map();
+    (data || []).forEach(r => mapa.set(r.id, r));
+    return mapa;
+}
+
+// ─── Valida integridad + coherencia del estado_temporal recibido (PREVIEW) ─
+// 1) el preview_token debe tener firma válida (ver services/previewIntegridad);
+// 2) estado_temporal debe traer EXACTAMENTE el mismo conjunto de rodeo_ids
+//    que el snapshot original — sin duplicados, sin faltantes, sin rodeos
+//    ajenos inventados (sección 5 del pedido: "no confiar en otras_filas
+//    parcial");
+// 3) cada fila debe tener una forma mínima válida.
+// El cliente NUNCA puede declarar jurado_id_propuesto — siempre sale del
+// snapshot firmado (sección 7).
+// @returns { error } | { snapshot, tokenPorRodeo }
+function validarEstadoTemporal(previewToken, estadoTemporal) {
+    const snapshot = verificarPreviewToken(previewToken);
+    if (!snapshot) return { error: 'preview_token inválido, alterado o ausente. Vuelva a ejecutar la simulación.' };
+    if (!Array.isArray(estadoTemporal) || estadoTemporal.length === 0) {
+        return { error: 'estado_temporal debe ser un array con al menos una fila' };
+    }
+
+    const tokenPorRodeo = mapaPorRodeo(snapshot);
+    const idsToken = new Set(tokenPorRodeo.keys());
+    const idsRecibidos = estadoTemporal.map(f => f?.rodeo_id);
+    const idsRecibidosSet = new Set(idsRecibidos);
+
+    if (idsRecibidos.length !== idsRecibidosSet.size) {
+        return { error: 'estado_temporal contiene rodeos duplicados' };
+    }
+    if (idsRecibidosSet.size !== idsToken.size || [...idsRecibidosSet].some(id => !idsToken.has(id))) {
+        return { error: 'estado_temporal no coincide con los rodeos de esta simulación (incompleto o con rodeos ajenos)' };
+    }
+    for (const fila of estadoTemporal) {
+        if (!ESTADOS_REVISION.includes(fila.estado_revision)) {
+            return { error: `estado_revision inválido en rodeo ${fila.rodeo_id}` };
+        }
+        if (fila.jurado_id_seleccionado != null && typeof fila.jurado_id_seleccionado !== 'string') {
+            return { error: `jurado_id_seleccionado inválido en rodeo ${fila.rodeo_id}` };
+        }
+    }
+    return { snapshot, tokenPorRodeo };
+}
+
+// ─── Reconstruye explicacion_json para un jurado HISTÓRICO al revalidar ───
+// Al guardar, jurado_id_propuesto siempre es el del snapshot firmado
+// (`juradoIdOriginal`), pero `fresco.jurado_propuesto` (el ganador de ESTA
+// corrida) puede ser otra persona si el ranking/equidad cambió — eso NO
+// invalida al jurado original (sección 1 de la revisión), pero significa
+// que no podemos usar `fresco.jurado_propuesto` tal cual para describirlo
+// sin mezclar datos de dos personas distintas.
+//   - Si el ganador actual sigue siendo el mismo: se usa tal cual (incluye
+//     `checks` detallados, que el motor solo calcula para el ganador).
+//   - Si cambió: se reconstruye desde `top_candidatos` (fresco, específico
+//     de ese jurado) — sin `checks` detallados, pero estar en
+//     top_candidatos ya implica que pasó todas las reglas duras al evaluarlo.
+function construirExplicacionHistorica(fresco, juradoIdOriginal) {
+    if (!juradoIdOriginal) return {};
+    if (fresco.estado === 'PROPUESTO' && fresco.jurado_propuesto?.jurado_id === juradoIdOriginal) {
+        return { jurado_propuesto: fresco.jurado_propuesto, top_candidatos: fresco.top_candidatos || [] };
+    }
+    const c = (fresco.top_candidatos || []).find(x => x.jurado_id === juradoIdOriginal);
+    if (!c) return {};
+    return {
+        jurado_propuesto: {
+            jurado_id: c.jurado_id, nombre: c.nombre, categoria: c.categoria, categoria_preferente: c.categoria_preferente,
+            comuna_canonica: c.comuna_nombre, distancia_km: c.distancia_km,
+            designaciones_temporada_antes: c.designaciones_antes, designaciones_temporada_despues: c.designaciones_antes + 1
+        },
+        top_candidatos: fresco.top_candidatos || []
+    };
+}
+
+// ─── Otras filas "efectivas" de una propuesta YA GUARDADA (persistida) ────
 // Trae las demás filas de la MISMA propuesta que tienen un jurado efectivo
-// (seleccionado o, si no, propuesto por el motor — sección 7 de la mejora),
-// ya enriquecidas con su bloque de fechas, para usar con
-// detectarConflictoInterno()/resolverFilaALiberar(). Se usa tanto para
-// mostrar el indicador "propuesto en otro rodeo" en la lista de candidatos
-// como para la reevaluación real al aceptar/seleccionar/mover un jurado.
+// (seleccionado o, si no, propuesto por el motor — sección 7), ya
+// enriquecidas. Para el camino PREVIEW (sin propuesta_id todavía) ver los
+// endpoints /preview/* más abajo, que arman el mismo tipo de fila a partir
+// del estado_temporal + preview_token en vez de una consulta a esta tabla.
 async function cargarOtrasFilasEfectivas(propuestaId, detalleIdExcluir) {
     const { data: otras, error } = await supabase
         .from('propuestas_designacion_detalle')
         .select('id, estado_revision, jurado_id_seleccionado, jurado_id_propuesto, rodeo_id, rodeos(id, club, fecha, asociacion, duracion_dias, tipo_rodeo_nombre)')
         .eq('propuesta_id', propuestaId)
-        // SIN_JURADO_ACTUAL/SIN_PROPUESTA/NO_EVALUABLE se excluyen aquí porque
-        // obtenerJuradoEfectivo() siempre devuelve null para ellas — filtrar
-        // antes ahorra filas innecesarias, la fuente de verdad de todos modos
-        // sigue siendo esa función, nunca esta lista de estados repetida.
         .in('estado_revision', ['ACEPTADO', 'MODIFICADO', 'PENDIENTE'])
         .neq('id', detalleIdExcluir);
     if (error) throw new Error(error.message);
-    return (otras || [])
-        .filter(f => f.rodeos?.fecha)
-        .map(f => ({
-            detalle_id: f.id,
-            estado_revision: f.estado_revision,
-            jurado_id_seleccionado: f.jurado_id_seleccionado,
-            jurado_id_propuesto: f.jurado_id_propuesto,
-            rodeo: {
-                id: f.rodeo_id, club: f.rodeos.club, fecha: f.rodeos.fecha, asociacion: f.rodeos.asociacion,
-                tipo_rodeo_nombre: f.rodeos.tipo_rodeo_nombre,
-                bloque: calcularBloqueRodeo(f.rodeos.fecha, f.rodeos.duracion_dias || 1)
-            }
-        }))
-        .filter(f => obtenerJuradoEfectivo(f)); // fuente única de verdad, sin lógica ad-hoc aquí
+    const rodeosPorId = new Map();
+    (otras || []).forEach(f => { if (f.rodeos) rodeosPorId.set(f.rodeo_id, f.rodeos); });
+    const filasRaw = (otras || []).map(f => ({
+        detalle_id: f.id, estado_revision: f.estado_revision,
+        jurado_id_seleccionado: f.jurado_id_seleccionado, jurado_id_propuesto: f.jurado_id_propuesto, rodeo_id: f.rodeo_id
+    }));
+    return enriquecerFilasParaConflicto(filasRaw, rodeosPorId);
 }
 
 // ─── GET /propuestas/:propuestaId/detalle/:detalleId/candidatos ───────────
@@ -894,7 +1167,7 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
     let resultado, rodeoEnriquecido;
     try {
         const contexto = await cargarDatosMotor([detalle.rodeo_id]);
-        const simulacion = ejecutarSimulacion(contexto, 999);
+        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS);
         resultado = simulacion.resultados[0];
         rodeoEnriquecido = contexto.rodeosPorId.get(detalle.rodeo_id) || null;
     } catch (err) {
@@ -919,12 +1192,112 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
     });
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// PREVIEW — edición ANTES de guardar el borrador (mejora post-Etapa 4).
+// Ambos endpoints son STATELESS: no dependen de propuesta_id/detalle_id
+// persistidos, reciben en cada llamada el preview_token (firmado en
+// /dry-run) + el estado_temporal COMPLETO que el administrador está
+// revisando en memoria del navegador. CERO escrituras en BD — reutilizan
+// exactamente las mismas funciones que el camino persistido.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── POST /preview/candidatos — candidatos ANTES de guardar el borrador ──
+// Misma forma que GET .../candidatos pero stateless. Body:
+// { rodeo_id, preview_token, estado_temporal }.
+router.post('/preview/candidatos', async (req, res) => {
+    const { rodeo_id, preview_token, estado_temporal } = req.body;
+    if (!rodeo_id) return res.status(400).json({ error: 'rodeo_id requerido' });
+
+    const validacion = validarEstadoTemporal(preview_token, estado_temporal);
+    if (validacion.error) return res.status(400).json({ error: validacion.error });
+    const { tokenPorRodeo } = validacion;
+    if (!tokenPorRodeo.has(rodeo_id)) return res.status(400).json({ error: 'rodeo_id no pertenece a este preview' });
+    if (tokenPorRodeo.get(rodeo_id).estado === 'NO_EVALUABLE') {
+        return res.status(400).json({ error: 'Este rodeo no es evaluable (faltan datos estructurales de comuna/clasificación)' });
+    }
+
+    let resultado, rodeoEnriquecido;
+    try {
+        const contexto = await cargarDatosMotor([rodeo_id]);
+        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS);
+        resultado = simulacion.resultados[0];
+        rodeoEnriquecido = contexto.rodeosPorId.get(rodeo_id) || null;
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+    if (!resultado) return res.status(404).json({ error: 'No se pudo evaluar el rodeo' });
+
+    let otrasFilas = [];
+    try {
+        const otras = estado_temporal.filter(f => f.rodeo_id !== rodeo_id);
+        const rodeosPorId = await cargarRodeosRealesPorId(otras.map(f => f.rodeo_id));
+        const filasRaw = otras.map(f => ({
+            detalle_id: f.rodeo_id, estado_revision: f.estado_revision, jurado_id_seleccionado: f.jurado_id_seleccionado,
+            jurado_id_propuesto: tokenPorRodeo.get(f.rodeo_id)?.jurado_id_propuesto ?? null, rodeo_id: f.rodeo_id
+        }));
+        otrasFilas = enriquecerFilasParaConflicto(filasRaw, rodeosPorId);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+
+    const rodeoDestino = rodeoEnriquecido ? { id: rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque } : null;
+    const conUso = (c) => ({ ...c, uso_en_otra_fila: rodeoDestino ? detectarConflictoInterno(rodeoDestino, c.jurado_id, otrasFilas) : [] });
+
+    res.json({
+        estado: resultado.estado,
+        candidatos_validos: (resultado.top_candidatos || []).map(conUso),
+        descartados: (resultado.descartados || []).map(conUso),
+        candidatos_evaluados: resultado.candidatos_evaluados || 0
+    });
+});
+
+// ─── Evalúa (sin persistir) qué pasaría si se selecciona `juradoId` para ──
+// `rodeoId` — evaluación DIRECTA del jurado específico (evaluarCandidatoDirecto,
+// nunca busca en una lista/topN — sección 7/8 de la revisión final) +
+// conflictos/uso con `otrasFilasEnriquecidas` (ya construidas por quien
+// llama, sea desde BD persistida o desde estado_temporal de un preview). Es
+// la ÚNICA lógica de evaluación — compartida por procesarSeleccion
+// (persistido), POST /preview/seleccionar (stateless) y la revalidación de
+// POST /propuestas al guardar. Nunca se duplica en ningún otro lugar.
+// @returns { error } | { jurado, advertencias, rodeoEnriquecido }
+async function evaluarSeleccion(rodeoId, juradoId, otrasFilasEnriquecidas) {
+    if (!juradoId) return { error: 'jurado_id requerido' };
+
+    let evaluacion, rodeoEnriquecido;
+    try {
+        const contexto = await cargarDatosMotor([rodeoId]);
+        rodeoEnriquecido = contexto.rodeosPorId.get(rodeoId) || null;
+        const resultado = evaluarCandidatoDirecto(contexto, rodeoId, juradoId);
+        if (resultado.error === 'JURADO_INACTIVO_O_INEXISTENTE') return { error: 'Jurado inválido o inactivo' };
+        if (resultado.error) return { error: 'No se pudo evaluar el rodeo para este jurado (' + resultado.error + ')' };
+        evaluacion = resultado.evaluacion;
+    } catch (err) {
+        return { error: err.message };
+    }
+
+    let conflictos = [];
+    if (rodeoEnriquecido) {
+        conflictos = detectarConflictoInterno(
+            { id: rodeoId, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque },
+            juradoId, otrasFilasEnriquecidas
+        );
+    }
+
+    // Los campos extra (distancia_km/categoria/asociacion) alimentan
+    // fingerprintAdvertencia() al guardar — ver propuestaDesignacion.js.
+    const advertencias = [
+        ...evaluacion.causas.map(c => ({ tipo: c, origen: 'REGLA_MOTOR', distancia_km: evaluacion.distanciaKm, categoria: evaluacion.jurado.categoria, asociacion: evaluacion.jurado.asociacion })),
+        ...conflictos.map(c => ({ ...c, origen: 'CONFLICTO_INTERNO_PROPUESTA' }))
+    ];
+    const jurado = { id: evaluacion.jurado.id, nombre_completo: evaluacion.jurado.nombre_completo };
+    return { jurado, advertencias, rodeoEnriquecido };
+}
+
 // ─── Lógica compartida por ACEPTAR, SELECCIONAR y DESIGNAR JURADO ─────────
 // (mismo endpoint/función para las tres — sección 13 de la mejora: "Designar
 // jurado" y "Modificar" son el mismo mecanismo, solo cambia la etiqueta
 // visual según si la fila ya tenía jurado o no).
-// Reevalúa al candidato con datos EN VIVO (no el snapshot original — los
-// datos pueden haber cambiado desde que se generó la propuesta) y detecta
+// Reevalúa al candidato con datos EN VIVO (evaluarSeleccion) y detecta
 // conflictos/uso con otras filas de la MISMA propuesta (incluye PENDIENTE,
 // sección 7). Si hay advertencias y no vienen confirmadas, no guarda nada y
 // responde 409 para que el frontend pida confirmación explícita — nunca se
@@ -943,49 +1316,17 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
     if (detalle.estado_revision === 'NO_EVALUABLE') {
         return res.status(400).json({ error: 'Este rodeo no es evaluable — no se puede seleccionar un jurado' });
     }
-    if (!juradoId) return res.status(400).json({ error: 'jurado_id requerido' });
 
-    const { data: jurado } = await supabase.from('usuarios_pagados').select('id, nombre_completo, activo, tipo_persona').eq('id', juradoId).single();
-    if (!jurado || !jurado.activo || jurado.tipo_persona !== 'jurado') return res.status(400).json({ error: 'Jurado inválido o inactivo' });
-
-    // Reevaluación EN VIVO contra las reglas del motor (sin reimplementarlas)
-    let causas = [];
-    let rodeoEnriquecido = null;
+    let otrasFilasEnriquecidas = [];
     try {
-        const contexto = await cargarDatosMotor([detalle.rodeo_id]);
-        const simulacion = ejecutarSimulacion(contexto, 999);
-        const resultadoSimulacion = simulacion.resultados[0];
-        rodeoEnriquecido = contexto.rodeosPorId.get(detalle.rodeo_id) || null;
-        if (resultadoSimulacion) {
-            const descartado = (resultadoSimulacion.descartados || []).find(d => d.jurado_id === juradoId);
-            if (descartado) causas = descartado.causas;
-        }
+        otrasFilasEnriquecidas = await cargarOtrasFilasEfectivas(propuestaId, detalleId);
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
 
-    // Conflicto/uso con OTRAS filas de esta misma propuesta (incluye filas
-    // PENDIENTE — sección 7: el jurado_id_propuesto también cuenta como "en
-    // uso" para este chequeo, no solo lo ya aceptado/modificado).
-    let conflictos = [];
-    let otrasFilasEnriquecidas = [];
-    if (rodeoEnriquecido) {
-        try {
-            otrasFilasEnriquecidas = await cargarOtrasFilasEfectivas(propuestaId, detalleId);
-        } catch (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        conflictos = detectarConflictoInterno(
-            { id: detalle.rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque },
-            juradoId,
-            otrasFilasEnriquecidas
-        );
-    }
-
-    const advertencias = [
-        ...causas.map(c => ({ tipo: c, origen: 'REGLA_MOTOR' })),
-        ...conflictos.map(c => ({ ...c, origen: 'CONFLICTO_INTERNO_PROPUESTA' }))
-    ];
+    const evaluacion = await evaluarSeleccion(detalle.rodeo_id, juradoId, otrasFilasEnriquecidas);
+    if (evaluacion.error) return res.status(400).json({ error: evaluacion.error });
+    const { jurado, advertencias, rodeoEnriquecido } = evaluacion;
 
     if (advertencias.length > 0 && !confirmarAdvertencias) {
         return res.status(409).json({
@@ -1063,6 +1404,64 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
 
     res.json({ detalle: actualizado, advertencias, jurado_movido_desde: filaALiberar ? filaALiberar.detalle_id : null });
 }
+
+// ─── POST /preview/seleccionar — elegir/mover jurado ANTES de guardar ─────
+// Stateless — mismo mecanismo que procesarSeleccion pero SIN persistir.
+// Body: { rodeo_id, jurado_id, preview_token, estado_temporal, confirmar_advertencias }.
+// Devuelve el CAMBIO AUTORIZADO por el backend (destino +, si corresponde,
+// la fila de origen que debe liberarse) para que el frontend lo aplique tal
+// cual a su array temporal — nunca decide el estado por su cuenta.
+router.post('/preview/seleccionar', async (req, res) => {
+    const { rodeo_id, jurado_id, preview_token, estado_temporal, confirmar_advertencias } = req.body;
+    if (!rodeo_id) return res.status(400).json({ error: 'rodeo_id requerido' });
+
+    const validacion = validarEstadoTemporal(preview_token, estado_temporal);
+    if (validacion.error) return res.status(400).json({ error: validacion.error });
+    const { tokenPorRodeo } = validacion;
+    if (!tokenPorRodeo.has(rodeo_id)) return res.status(400).json({ error: 'rodeo_id no pertenece a este preview' });
+    const infoRodeoToken = tokenPorRodeo.get(rodeo_id);
+    if (infoRodeoToken.estado === 'NO_EVALUABLE') {
+        return res.status(400).json({ error: 'Este rodeo no es evaluable — no se puede seleccionar un jurado' });
+    }
+
+    let otrasFilasEnriquecidas = [];
+    try {
+        const otras = estado_temporal.filter(f => f.rodeo_id !== rodeo_id);
+        const rodeosPorId = await cargarRodeosRealesPorId(otras.map(f => f.rodeo_id));
+        const filasRaw = otras.map(f => ({
+            detalle_id: f.rodeo_id, estado_revision: f.estado_revision, jurado_id_seleccionado: f.jurado_id_seleccionado,
+            jurado_id_propuesto: tokenPorRodeo.get(f.rodeo_id)?.jurado_id_propuesto ?? null, rodeo_id: f.rodeo_id
+        }));
+        otrasFilasEnriquecidas = enriquecerFilasParaConflicto(filasRaw, rodeosPorId);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+
+    const evaluacion = await evaluarSeleccion(rodeo_id, jurado_id, otrasFilasEnriquecidas);
+    if (evaluacion.error) return res.status(400).json({ error: evaluacion.error });
+    const { jurado, advertencias } = evaluacion;
+
+    if (advertencias.length > 0 && confirmar_advertencias !== true) {
+        return res.status(409).json({
+            requiereConfirmacion: true, advertencias, jurado: { id: jurado.id, nombre: jurado.nombre_completo }
+        });
+    }
+
+    // "Mover" en memoria (secciones 8-10): si el jurado ya era efectivo en
+    // otra fila del estado_temporal, el backend indica cómo debe quedar esa
+    // fila de origen — el frontend la aplica tal cual, nunca la inventa.
+    const filaALiberar = resolverFilaALiberar(otrasFilasEnriquecidas, jurado_id);
+    const { estado_revision, origen_seleccion } = decidirEstadoSeleccion(jurado_id, infoRodeoToken.jurado_id_propuesto, advertencias);
+
+    res.json({
+        destino: {
+            rodeo_id, jurado_id_seleccionado: jurado_id, estado_revision, origen_seleccion,
+            advertencias_aceptadas: advertencias.length > 0 ? advertencias : null
+        },
+        origen_liberado: filaALiberar ? { rodeo_id: filaALiberar.detalle_id, estado_revision: filaALiberar.nuevo_estado } : null,
+        advertencias
+    });
+});
 
 // ─── POST /propuestas/:propuestaId/detalle/:detalleId/aceptar ─────────────
 // "El Administrador está conforme con la sugerencia del motor." NO crea

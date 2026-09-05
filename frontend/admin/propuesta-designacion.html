@@ -741,6 +741,22 @@ const ETIQUETAS_CAUSA = {
     JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia mayor a 600 km'
 };
 
+// ═════════════════════════════════════════════════════════════════════════
+// PREVIEW — edición de la propuesta ANTES de guardar el borrador.
+// La pantalla de simulación pasa a ser completamente editable: el
+// administrador puede aceptar/designar/modificar/mover jurados sobre el
+// resultado del motor SIN que nada se guarde en BD todavía (0 INSERT/
+// UPDATE/DELETE). El estado editado vive únicamente en `previewTemporal`
+// (memoria del navegador) — si recarga la página antes de guardar, se
+// pierde, y eso es correcto: todavía no existe ningún borrador.
+//
+// El backend nunca confía en lo que declare este objeto salvo "qué jurado
+// quiero en qué rodeo" — toda regla/estado se revalida siempre server-side
+// (/preview/candidatos, /preview/seleccionar, y al Guardar) usando el mismo
+// motor y las mismas funciones puras que el camino ya persistido.
+// ═════════════════════════════════════════════════════════════════════════
+let previewTemporal = null; // { preview_token, temporada, detalle:[...], originalPorRodeo:Map, jurados_utilizados, metricas }
+
 async function ejecutarDryRun() {
     const btn = document.getElementById('btn-ejecutar-dryrun');
     const cont = document.getElementById('resultado-dryrun');
@@ -748,7 +764,8 @@ async function ejecutarDryRun() {
     cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
     try {
         const resp = await api.post('/admin/propuesta-designacion/dry-run', { rodeo_ids: [...seleccionMapa.keys()] });
-        renderResultadoDryRun(resp);
+        iniciarPreviewTemporal(resp);
+        renderPreviewTemporal();
     } catch (err) {
         cont.innerHTML = '';
         mostrarError(err);
@@ -757,81 +774,106 @@ async function ejecutarDryRun() {
     }
 }
 
-function renderResultadoDryRun(resp) {
+// Traduce cada resultado del motor a la MISMA forma que usa una fila de
+// propuesta ya guardada (construirDetalleDesdeResultado en el backend) —
+// es solo reestructuración de datos ya calculados por el motor, ninguna
+// regla nueva se decide acá.
+function construirFilaPreviewDesdeResultado(r) {
+    const base = { id: r.rodeo_id, rodeo_id: r.rodeo_id, rodeo: r.rodeo || null, origen_seleccion: null, jurado_id_seleccionado: null, nombre_seleccionado: null };
+    if (r.estado === 'PROPUESTO') {
+        const jp = r.jurado_propuesto;
+        return {
+            ...base, jurado_id_propuesto: jp.jurado_id, nombre_propuesto: jp.nombre,
+            estado_revision: 'PENDIENTE',
+            explicacion_json: { jurado_propuesto: jp, top_candidatos: r.top_candidatos || [] },
+            metricas_json: { candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes },
+            jurado_efectivo: { id: jp.jurado_id, nombre: jp.nombre, categoria: jp.categoria, categoria_preferente: jp.categoria_preferente, comuna: jp.comuna_canonica, distancia_km: jp.distancia_km, designaciones_temporada_antes: jp.designaciones_temporada_antes }
+        };
+    }
+    if (r.estado === 'SIN_PROPUESTA') {
+        return {
+            ...base, jurado_id_propuesto: null, nombre_propuesto: null, estado_revision: 'SIN_PROPUESTA',
+            explicacion_json: { descartados: r.descartados || [] },
+            metricas_json: { candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes },
+            jurado_efectivo: null
+        };
+    }
+    return { ...base, jurado_id_propuesto: null, nombre_propuesto: null, estado_revision: 'NO_EVALUABLE', explicacion_json: { causa: r.causa || null }, metricas_json: {}, jurado_efectivo: null };
+}
+
+function iniciarPreviewTemporal(resp) {
+    const detalle = resp.resultados.map(construirFilaPreviewDesdeResultado);
+    previewTemporal = {
+        preview_token: resp.preview_token,
+        temporada: resp.temporada,
+        detalle,
+        // Copia inmutable del punto de partida — usada por "Revertir" en
+        // preview (volver exactamente a lo que el motor propuso, sin llamar
+        // al backend: descartar una elección no decide ninguna regla nueva).
+        originalPorRodeo: new Map(detalle.map(d => [d.rodeo_id, JSON.parse(JSON.stringify(d))])),
+        jurados_utilizados: resp.jurados_utilizados || [],
+        metricas: resp.metricas,
+        cambiosPendientes: []
+    };
+}
+
+// Tally de estados — mismo cálculo simple que resumenPropuesta() en el
+// backend, aquí solo para mostrar KPIs; no decide nada, solo cuenta lo que
+// el backend ya decidió para cada fila.
+function previewResumen() {
+    const detalle = previewTemporal?.detalle || [];
+    const contar = (estado) => detalle.filter(f => f.estado_revision === estado).length;
+    const modificados = contar('MODIFICADO');
+    const pendientes = contar('PENDIENTE');
+    return {
+        total_rodeos: detalle.length,
+        modificados, pendientes,
+        sin_propuesta: contar('SIN_PROPUESTA'), no_evaluables: contar('NO_EVALUABLE'), sin_jurado_actual: contar('SIN_JURADO_ACTUAL'),
+        con_jurado_actual: detalle.filter(f => f.jurado_efectivo).length
+    };
+}
+
+function renderPreviewTemporal() {
     const cont = document.getElementById('resultado-dryrun');
-    const r = resp.resumen;
+    if (!previewTemporal) { cont.innerHTML = ''; return; }
+    const r = previewResumen();
+    const avisoCambios = (previewTemporal.cambiosPendientes && previewTemporal.cambiosPendientes.length > 0)
+        ? `<div class="alerta alerta-error" style="margin-bottom:16px;">
+            <strong>⚠ ${previewTemporal.cambiosPendientes.length} selección(es) cambiaron desde que se generó esta propuesta y requieren revisión — no se guardó nada:</strong>
+            <ul style="margin:8px 0 0 20px;">${previewTemporal.cambiosPendientes.map(c => `<li>${sanitizar(c.club || c.rodeo_id)}${c.fecha ? ' — ' + formatFecha(c.fecha) : ''}: ${sanitizar(c.motivo)}</li>`).join('')}</ul>
+            Revise esas filas (Designar jurado / Modificar) y vuelva a intentar guardar.
+        </div>` : '';
+
     let html = `
         <div class="aviso-simulacion">
-            🧪 MODO: ${resp.modo} — Temporada: ${sanitizar(resp.temporada || '—')} — Nada de esto fue guardado.
+            🧪 PROPUESTA SIN GUARDAR (DRY-RUN) — Temporada: ${sanitizar(previewTemporal.temporada || '—')} — Nada de esto está guardado todavía. Puede editarla libremente antes de guardar.
         </div>
+        ${avisoCambios}
         <div class="kpi-grid" style="margin-bottom:16px;">
-            ${kpi(r.rodeos_solicitados, 'Rodeos solicitados')}
-            ${kpi(r.propuestos, 'Propuestos', 'verde')}
+            ${kpi(r.total_rodeos, 'Rodeos')}
+            ${kpi(r.con_jurado_actual, 'Con jurado actual', 'verde')}
+            ${kpi(r.modificados, 'Modificados manualmente')}
             ${kpi(r.sin_propuesta, 'Sin propuesta', 'naranja')}
+            ${kpi(r.sin_jurado_actual, 'Sin jurado (movido)', 'naranja')}
             ${kpi(r.no_evaluables, 'No evaluables')}
-            ${kpi(r.candidatos_analizados, 'Candidatos analizados')}
         </div>
         <div class="form-acciones" style="margin-bottom:16px;">
             <button class="btn btn-primario" id="btn-guardar-propuesta" onclick="guardarComoPropuesta()">💾 Guardar como propuesta (borrador)</button>
         </div>
         <div style="font-size:11px; color:var(--gris); margin-bottom:16px;">
-            ${resp.metricas.tiempo_ejecucion_ms} ms total (carga BD: ${resp.metricas.tiempo_carga_bd_ms} ms · motor en memoria: ${resp.metricas.tiempo_motor_memoria_ms} ms)
-            · ~${resp.metricas.queries_aproximadas} consultas · ${resp.metricas.jurados_activos_considerados} jurados activos considerados
-        </div>`;
+            ${previewTemporal.metricas.tiempo_ejecucion_ms} ms total (carga BD: ${previewTemporal.metricas.tiempo_carga_bd_ms} ms · motor en memoria: ${previewTemporal.metricas.tiempo_motor_memoria_ms} ms)
+            · ~${previewTemporal.metricas.queries_aproximadas} consultas · ${previewTemporal.metricas.jurados_activos_considerados} jurados activos considerados
+        </div>
+        <div>${previewTemporal.detalle.map(d => renderFilaDetallePropuesta(d, 'preview')).join('')}</div>`;
 
-    html += resp.resultados.map(res => {
-        const cabecera = `
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <div><strong>${sanitizar(res.rodeo?.club || '')}</strong> ${res.rodeo?.fecha ? '— ' + res.rodeo.fecha : ''} ${res.rodeo?.asociacion ? '— ' + sanitizar(res.rodeo.asociacion) : ''}</div>
-                <span class="badge-estado ${res.estado}">${res.estado.replace('_',' ')}</span>
-            </div>`;
-
-        if (res.estado === 'NO_EVALUABLE') {
-            return `<div class="resultado-rodeo-card">${cabecera}
-                <div style="font-size:13px; color:#6b7280;">Causa: ${ETIQUETAS_CAUSA[res.causa] || res.causa}</div>
-            </div>`;
-        }
-
-        if (res.estado === 'SIN_PROPUESTA') {
-            return `<div class="resultado-rodeo-card">${cabecera}
-                <div style="font-size:13px; color:#b9560a; margin-bottom:6px;">Ningún jurado cumple todas las reglas (${res.candidatos_evaluados} candidatos evaluados, ${res.candidatos_potenciales_bd ?? '—'} potenciales según BD).</div>
-                ${renderDescartes(res.descartes)}
-            </div>`;
-        }
-
-        // PROPUESTO
-        const jp = res.jurado_propuesto;
-        const checks = jp.checks;
-        const lineaCheck = (ok, label) => `<div class="check-linea ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${label}</div>`;
-        return `<div class="resultado-rodeo-card">${cabecera}
-            <div style="font-size:11px; color:var(--gris); margin-bottom:6px;">Candidatos potenciales (según BD, antes de esta corrida): <strong>${res.candidatos_potenciales_bd ?? '—'}</strong></div>
-            <div style="font-size:14px; font-weight:700;">${sanitizar(jp.nombre)}</div>
-            <div style="font-size:12px; color:var(--gris); margin-bottom:6px;">
-                Categoría ${sanitizar(jp.categoria || '—')}${jp.categoria_preferente ? ' (preferente)' : ''} ·
-                Distancia: ${jp.distancia_km !== null ? jp.distancia_km + ' km' : '—'} ·
-                Comuna: ${sanitizar(jp.comuna_canonica || '—')}${jp.origen_comuna ? ' (' + jp.origen_comuna + ')' : ''} ·
-                Designaciones temporada antes: ${jp.designaciones_temporada_antes}
-            </div>
-            ${lineaCheck(checks.disponible, 'Disponible')}
-            ${lineaCheck(checks.asociacion_diferente, 'Asociación diferente')}
-            ${lineaCheck(checks.no_repite_asociacion, 'No repite asociación en la temporada')}
-            ${lineaCheck(checks.sin_rodeo_mismo_finde, 'Sin otro rodeo ese fin de semana')}
-            ${lineaCheck(checks.sin_finde_consecutivo, 'No salió el fin de semana anterior')}
-            ${lineaCheck(checks.dentro_600km, 'Dentro de 600 km')}
-            ${lineaCheck(checks.categoria_compatible, 'Categoría compatible')}
-            <details style="margin-top:8px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">¿Por qué ganó? — Top ${res.top_candidatos?.length || 0} candidatos finales</summary>${renderTopCandidatos(res.top_candidatos)}</details>
-            <details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">Ver descartes (${res.candidatos_evaluados} candidatos evaluados)</summary>${renderDescartes(res.descartes)}</details>
-        </div>`;
-    }).join('');
-
-    if (resp.jurados_utilizados && resp.jurados_utilizados.length > 0) {
+    if (previewTemporal.jurados_utilizados.length > 0) {
         html += `
         <div class="dash-seccion-titulo" style="margin-top:20px;">Jurados utilizados en esta simulación</div>
         <div class="card" style="padding:0; overflow-x:auto;">
             <table>
                 <thead><tr><th>Nombre</th><th>Designaciones antes</th><th>Propuestas nuevas</th><th>Total temporal</th></tr></thead>
                 <tbody>
-                ${resp.jurados_utilizados.map(j => `<tr>
+                ${previewTemporal.jurados_utilizados.map(j => `<tr>
                     <td>${sanitizar(j.nombre || j.jurado_id)}</td>
                     <td style="text-align:center;">${j.designaciones_antes}</td>
                     <td style="text-align:center;">${j.propuestas_nuevas}</td>
@@ -843,6 +885,53 @@ function renderResultadoDryRun(resp) {
     }
 
     cont.innerHTML = html;
+}
+
+// ─── Guardar como propuesta (BORRADOR) — resumen previo + confirmación ───
+async function guardarComoPropuesta() {
+    if (!previewTemporal) return;
+    const r = previewResumen();
+    const mensaje = `<strong>Guardar propuesta como borrador</strong>
+        <div style="text-align:left; margin-top:10px; font-size:13px; line-height:1.8;">
+            Rodeos: <strong>${r.total_rodeos}</strong><br>
+            Con jurado actual: <strong>${r.con_jurado_actual}</strong><br>
+            Modificados manualmente: <strong>${r.modificados}</strong><br>
+            Sin jurado actual (movido): <strong>${r.sin_jurado_actual}</strong><br>
+            Sin propuesta: <strong>${r.sin_propuesta}</strong><br>
+            No evaluables: <strong>${r.no_evaluables}</strong>
+        </div>`;
+    const ok = await confirmar(mensaje);
+    if (!ok) return;
+
+    const btn = document.getElementById('btn-guardar-propuesta');
+    if (btn) btn.disabled = true;
+    try {
+        const estado_temporal = previewTemporal.detalle.map(d => ({
+            rodeo_id: d.rodeo_id, jurado_id_seleccionado: d.jurado_id_seleccionado,
+            estado_revision: d.estado_revision, origen_seleccion: d.origen_seleccion,
+            metricas_json: d.metricas_json
+        }));
+        const resp = await api.post('/admin/propuesta-designacion/propuestas', { preview_token: previewTemporal.preview_token, estado_temporal });
+        let msg = `Propuesta guardada como borrador (${resp.propuesta.resumen.total_rodeos} rodeo(s)), conservando las ediciones hechas.`;
+        if (resp.rodeos_ya_en_otra_propuesta?.length > 0) {
+            msg += ` ⚠ ${resp.rodeos_ya_en_otra_propuesta.length} de estos rodeos ya estaban en otra propuesta borrador — no se bloqueó, revíselo antes de confirmar.`;
+        }
+        mostrarToast(msg, 'success');
+        previewTemporal = null;
+        document.getElementById('resultado-dryrun').innerHTML = '';
+        await cargarListaPropuestas();
+        await abrirPropuesta(resp.propuesta.id);
+    } catch (err) {
+        if (err.status === 409 && err.data?.requiereRevision) {
+            previewTemporal.cambiosPendientes = err.data.cambios || [];
+            renderPreviewTemporal();
+            mostrarError(err.data.mensaje || 'Algunas selecciones cambiaron y requieren revisión. No se guardó nada.');
+        } else {
+            mostrarError(err);
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 function renderTopCandidatos(top) {
@@ -887,27 +976,7 @@ const ETIQUETAS_USO_CORTO = {
     YA_USADO_EN_PROPUESTA: 'ℹ️ Otra fecha, sin conflicto de reglas'
 };
 
-let propuestaAbierta = null; // { propuesta, resumen, detalle } de la propuesta actualmente abierta en pantalla
-
-async function guardarComoPropuesta() {
-    if (seleccionMapa.size === 0) return;
-    const btn = document.getElementById('btn-guardar-propuesta');
-    btn.disabled = true;
-    try {
-        const resp = await api.post('/admin/propuesta-designacion/propuestas', { rodeo_ids: [...seleccionMapa.keys()] });
-        let msg = `Propuesta guardada como borrador (${resp.propuesta.resumen.total_rodeos} rodeo(s)).`;
-        if (resp.rodeos_ya_en_otra_propuesta?.length > 0) {
-            msg += ` ⚠ ${resp.rodeos_ya_en_otra_propuesta.length} de estos rodeos ya estaban en otra propuesta borrador — no se bloqueó, revíselo antes de confirmar.`;
-        }
-        mostrarToast(msg, 'success');
-        await cargarListaPropuestas();
-        await abrirPropuesta(resp.propuesta.id);
-    } catch (err) {
-        mostrarError(err);
-    } finally {
-        btn.disabled = false;
-    }
-}
+let propuestaAbierta = null; // { propuesta, resumen, detalle } de la propuesta actualmente abierta en pantalla (BORRADOR ya guardado)
 
 async function cargarListaPropuestas() {
     const cont = document.getElementById('lista-propuestas');
@@ -984,17 +1053,20 @@ function renderVistaPropuesta() {
             ${kpi(resumen.sin_jurado_actual, 'Sin jurado (movido)', 'naranja')}
             ${kpi(resumen.no_evaluables, 'No evaluables')}
         </div>
-        <div>${detalle.map(renderFilaDetallePropuesta).join('')}</div>
+        <div>${detalle.map(d => renderFilaDetallePropuesta(d, 'borrador')).join('')}</div>
         <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
             <button class="btn btn-primario" disabled title="Disponible en la siguiente etapa">Confirmar propuesta — Disponible en siguiente etapa</button>
         </div>
     </div>`;
 }
 
-// Tarjeta de una fila de la propuesta — sección 1/2/16 de la mejora: el tipo
-// de rodeo y la clasificación quedan SIEMPRE visibles (nunca dentro de un
-// "ver detalles"), junto con los datos del jurado propuesto/seleccionado.
-function renderFilaDetallePropuesta(d) {
+// Tarjeta de una fila de propuesta — REUTILIZADA para PREVIEW (sin guardar,
+// modo='preview') y BORRADOR (ya persistido, modo='borrador'). El tipo de
+// rodeo y la clasificación quedan SIEMPRE visibles (nunca dentro de un "ver
+// detalles"), junto con los datos del jurado propuesto/seleccionado y —
+// cuando el jurado efectivo sigue siendo el propuesto por el motor— las
+// reglas/"por qué ganó"/descartes (sección 2 del pedido de preview).
+function renderFilaDetallePropuesta(d, modo) {
     if (d.estado_revision === 'NO_EVALUABLE') {
         return `<div class="resultado-rodeo-card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
@@ -1015,24 +1087,52 @@ function renderFilaDetallePropuesta(d) {
         ? `<div style="font-size:11px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
         : '';
 
+    // Reglas/"por qué ganó"/descartes — solo mientras el jurado efectivo
+    // siga siendo el que el motor propuso originalmente (si se modificó
+    // manualmente, esos checks describen a otra persona y no corresponde
+    // mostrarlos como si fueran del jurado actual).
+    const esElPropuestoDelMotor = d.jurado_id_propuesto && (!d.jurado_id_seleccionado || d.jurado_id_seleccionado === d.jurado_id_propuesto);
+    let detallesExtra = '';
+    if (esElPropuestoDelMotor && d.explicacion_json?.jurado_propuesto?.checks) {
+        const checks = d.explicacion_json.jurado_propuesto.checks;
+        const lineaCheck = (ok, label) => `<div class="check-linea ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${label}</div>`;
+        detallesExtra += `<div style="margin-top:8px;">
+            ${lineaCheck(checks.disponible, 'Disponible')}
+            ${lineaCheck(checks.asociacion_diferente, 'Asociación diferente')}
+            ${lineaCheck(checks.no_repite_asociacion, 'No repite asociación en la temporada')}
+            ${lineaCheck(checks.sin_rodeo_mismo_finde, 'Sin otro rodeo ese fin de semana')}
+            ${lineaCheck(checks.sin_finde_consecutivo, 'No salió el fin de semana anterior')}
+            ${lineaCheck(checks.dentro_600km, 'Dentro de 600 km')}
+            ${lineaCheck(checks.categoria_compatible, 'Categoría compatible')}
+        </div>`;
+    }
+    if (d.explicacion_json?.top_candidatos?.length > 0) {
+        detallesExtra += `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">¿Por qué ganó? — Top ${d.explicacion_json.top_candidatos.length} candidatos finales</summary>${renderTopCandidatos(d.explicacion_json.top_candidatos)}</details>`;
+    }
+    if (d.metricas_json?.descartes) {
+        detallesExtra += `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">Ver descartes (${d.metricas_json.candidatos_evaluados ?? '—'} candidatos evaluados)</summary>${renderDescartes(d.metricas_json.descartes)}</details>`;
+    }
+
     // "Designar jurado" y "Modificar" son el MISMO botón/mecanismo (sección
     // 13) — solo cambia la etiqueta según si la fila ya tiene jurado en uso.
+    // Todas las acciones llevan el `modo` para que el dispatcher sepa si
+    // trabajar en memoria (preview) o contra la propuesta persistida.
     const etiquetaBoton = j ? 'Modificar' : 'Designar jurado';
     let acciones = '';
     if (d.estado_revision === 'PENDIENTE') {
-        acciones = `<button class="btn btn-pequeño btn-primario" onclick="aceptarDetalle('${d.id}')">Aceptar</button>
-                    <button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">${etiquetaBoton}</button>`;
+        acciones = `<button class="btn btn-pequeño btn-primario" onclick="aceptarDetalle('${modo}', '${d.id}')">Aceptar</button>
+                    <button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
     } else if (d.estado_revision === 'ACEPTADO' || d.estado_revision === 'MODIFICADO') {
-        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">${etiquetaBoton}</button>
-                    <button class="btn btn-pequeño btn-secundario" onclick="revertirDetalle('${d.id}')">Revertir</button>`;
+        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${modo}', '${d.id}')">${etiquetaBoton}</button>
+                    <button class="btn btn-pequeño btn-secundario" onclick="revertirDetalle('${modo}', '${d.id}')">Revertir</button>`;
     } else if (d.estado_revision === 'SIN_PROPUESTA' || d.estado_revision === 'SIN_JURADO_ACTUAL') {
         // SIN_JURADO_ACTUAL: no se ofrece "Aceptar" — el jurado que el motor
         // propuso originalmente ya fue movido a otro rodeo de esta propuesta;
         // requiere una decisión administrativa nueva, no una simple confirmación.
-        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${d.id}')">${etiquetaBoton}</button>`;
+        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
     }
 
-    return `<div class="resultado-rodeo-card" id="fila-detalle-${d.id}">
+    return `<div class="resultado-rodeo-card" id="fila-detalle-${modo}-${d.id}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
             <div style="flex:1 1 260px;">
                 <div style="font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:3px;">Rodeo</div>
@@ -1064,8 +1164,9 @@ function renderFilaDetallePropuesta(d) {
         </div>
         ${infoOrigen}
         ${avisoAdvertencia}
+        ${detallesExtra}
         <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">${acciones}</div>
-        <div id="modificar-${d.id}"></div>
+        <div id="modificar-${modo}-${d.id}"></div>
     </div>`;
 }
 
@@ -1077,32 +1178,66 @@ async function recargarPropuestaAbierta() {
     cargarListaPropuestas(); // refresca contadores del listado general
 }
 
-async function aceptarDetalle(detalleId) {
+// ─── Helpers de despacho por modo (preview en memoria vs borrador persistido) ─
+function filaPorModoId(modo, id) {
+    if (modo === 'preview') return previewTemporal?.detalle?.find(f => f.id === id) || null;
+    return propuestaAbierta?.detalle?.find(f => f.id === id) || null;
+}
+
+function rerenderModo(modo) {
+    if (modo === 'preview') renderPreviewTemporal();
+    else renderVistaPropuesta();
+}
+
+async function aceptarDetalle(modo, id) {
+    if (modo === 'preview') {
+        const fila = filaPorModoId('preview', id);
+        if (!fila?.jurado_id_propuesto) return;
+        await seleccionarCandidato('preview', id, fila.jurado_id_propuesto, false, fila.nombre_propuesto);
+        return;
+    }
     try {
-        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/aceptar`, {});
+        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/aceptar`, {});
         mostrarToast('Jurado propuesto aceptado.', 'success');
         await recargarPropuestaAbierta();
     } catch (err) {
-        await manejarRespuestaSeleccion(err, detalleId, null);
+        await manejarRespuestaSeleccion('borrador', id, null, err);
     }
 }
 
-function toggleModificar(detalleId) {
-    const cont = document.getElementById('modificar-' + detalleId);
+function toggleModificar(modo, id) {
+    const cont = document.getElementById('modificar-' + modo + '-' + id);
     if (!cont) return;
     if (cont.innerHTML.trim() !== '') { cont.innerHTML = ''; return; }
-    cargarCandidatos(detalleId);
+    cargarCandidatos(modo, id);
 }
 
-async function cargarCandidatos(detalleId) {
-    const cont = document.getElementById('modificar-' + detalleId);
+async function cargarCandidatos(modo, id) {
+    const cont = document.getElementById('modificar-' + modo + '-' + id);
     cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
     try {
-        const resp = await api.get(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/candidatos`);
-        renderCandidatosModificar(detalleId, resp);
+        let resp;
+        if (modo === 'preview') {
+            resp = await api.post('/admin/propuesta-designacion/preview/candidatos', {
+                rodeo_id: id, preview_token: previewTemporal.preview_token, estado_temporal: estadoTemporalPayload()
+            });
+        } else {
+            resp = await api.get(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/candidatos`);
+        }
+        renderCandidatosModificar(modo, id, resp);
     } catch (err) {
         cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
     }
+}
+
+// Proyección liviana del estado_temporal para mandar al backend — solo lo
+// que el backend necesita para revalidar (nunca club/fecha/nombre, eso
+// siempre lo vuelve a buscar el servidor en BD real).
+function estadoTemporalPayload() {
+    return (previewTemporal?.detalle || []).map(d => ({
+        rodeo_id: d.rodeo_id, jurado_id_seleccionado: d.jurado_id_seleccionado,
+        estado_revision: d.estado_revision, origen_seleccion: d.origen_seleccion, metricas_json: d.metricas_json
+    }));
 }
 
 // Etiqueta corta "ya usado en otro rodeo de esta propuesta" para un
@@ -1117,11 +1252,11 @@ function renderUsoEnOtraFila(usos) {
         </div>`).join('')}</div>`;
 }
 
-function renderCandidatosModificar(detalleId, resp) {
-    const cont = document.getElementById('modificar-' + detalleId);
+function renderCandidatosModificar(modo, id, resp) {
+    const cont = document.getElementById('modificar-' + modo + '-' + id);
     const validos = resp.candidatos_validos || [];
     const descartados = resp.descartados || [];
-    const fila = propuestaAbierta?.detalle?.find(f => f.id === detalleId);
+    const fila = filaPorModoId(modo, id);
 
     // Sección 14 — "Jurado actual de la propuesta": qué propuso el motor vs
     // qué eligió el administrador, para que quede claro qué se está cambiando.
@@ -1142,7 +1277,7 @@ function renderCandidatosModificar(detalleId, resp) {
             <span style="color:#1e8449;"> · ✓ cumple todas las reglas</span>
             ${renderUsoEnOtraFila(c.uso_en_otra_fila)}
         </div>
-        <button class="btn btn-pequeño btn-primario" onclick="seleccionarCandidato('${detalleId}', '${c.jurado_id}', false)">Seleccionar</button>
+        <button class="btn btn-pequeño btn-primario" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${sanitizar(c.nombre).replace(/'/g, "\\'")}')">Seleccionar</button>
     </div>`;
 
     const filaDescartado = (d) => `<div class="candidato-fila" style="border-color:#ffe08a; align-items:flex-start;">
@@ -1152,7 +1287,7 @@ function renderCandidatosModificar(detalleId, resp) {
             <span style="color:#b9560a;"> · ⚠ ${d.causas.map(c => ETIQUETAS_CAUSA[c] || c).join(', ')}</span>
             ${renderUsoEnOtraFila(d.uso_en_otra_fila)}
         </div>
-        <button class="btn btn-pequeño btn-outline" onclick="seleccionarCandidato('${detalleId}', '${d.jurado_id}', false)">Seleccionar igualmente (excepción)</button>
+        <button class="btn btn-pequeño btn-outline" onclick="seleccionarCandidato('${modo}', '${id}', '${d.jurado_id}', false, '${sanitizar(d.nombre).replace(/'/g, "\\'")}')">Seleccionar igualmente (excepción)</button>
     </div>`;
 
     cont.innerHTML = `<div style="background:#f8f9fa; border-radius:8px; padding:12px; margin-top:8px;">
@@ -1166,24 +1301,70 @@ function renderCandidatosModificar(detalleId, resp) {
     </div>`;
 }
 
-async function seleccionarCandidato(detalleId, juradoId, confirmarAdvertencias) {
+async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, juradoNombre) {
+    if (modo === 'preview') {
+        try {
+            const resp = await api.post('/admin/propuesta-designacion/preview/seleccionar', {
+                rodeo_id: id, jurado_id: juradoId, preview_token: previewTemporal.preview_token,
+                estado_temporal: estadoTemporalPayload(), confirmar_advertencias: confirmarAdvertencias
+            });
+            aplicarResultadoPreview(resp.destino, resp.origen_liberado, juradoNombre);
+            mostrarToast(resp.origen_liberado ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección aplicada (todavía sin guardar).', 'success');
+            renderPreviewTemporal();
+        } catch (err) {
+            await manejarRespuestaSeleccion('preview', id, juradoId, err, juradoNombre);
+        }
+        return;
+    }
     try {
-        const resp = await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/seleccionar`,
+        const resp = await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/seleccionar`,
             { jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias });
         mostrarToast(resp.jurado_movido_desde ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección guardada.', 'success');
         await recargarPropuestaAbierta();
     } catch (err) {
-        await manejarRespuestaSeleccion(err, detalleId, juradoId);
+        await manejarRespuestaSeleccion('borrador', id, juradoId, err);
     }
+}
+
+// Aplica al array previewTemporal.detalle el cambio que el backend AUTORIZÓ
+// (nunca lo que decidiría el frontend por su cuenta) — sección 9 del pedido.
+function aplicarResultadoPreview(destino, origenLiberado, juradoNombre) {
+    const filaDestino = previewTemporal.detalle.find(f => f.rodeo_id === destino.rodeo_id);
+    if (filaDestino) {
+        filaDestino.jurado_id_seleccionado = destino.jurado_id_seleccionado;
+        filaDestino.nombre_seleccionado = juradoNombre || null;
+        filaDestino.estado_revision = destino.estado_revision;
+        filaDestino.origen_seleccion = destino.origen_seleccion;
+        filaDestino.metricas_json = { ...(filaDestino.metricas_json || {}) };
+        if (destino.advertencias_aceptadas) filaDestino.metricas_json.advertencias_aceptadas = destino.advertencias_aceptadas;
+        else delete filaDestino.metricas_json.advertencias_aceptadas;
+        filaDestino.jurado_efectivo = { id: destino.jurado_id_seleccionado, nombre: juradoNombre || null, categoria: null, categoria_preferente: null, comuna: null, distancia_km: null, designaciones_temporada_antes: null };
+    }
+    if (origenLiberado) {
+        const filaOrigen = previewTemporal.detalle.find(f => f.rodeo_id === origenLiberado.rodeo_id);
+        if (filaOrigen) {
+            filaOrigen.jurado_id_seleccionado = null;
+            filaOrigen.nombre_seleccionado = null;
+            filaOrigen.estado_revision = origenLiberado.estado_revision;
+            filaOrigen.origen_seleccion = null;
+            filaOrigen.metricas_json = { ...(filaOrigen.metricas_json || {}) };
+            delete filaOrigen.metricas_json.advertencias_aceptadas;
+            filaOrigen.jurado_efectivo = origenLiberado.estado_revision === 'PENDIENTE'
+                ? { id: filaOrigen.jurado_id_propuesto, nombre: filaOrigen.nombre_propuesto, categoria: null, categoria_preferente: null, comuna: null, distancia_km: null, designaciones_temporada_antes: null }
+                : null;
+        }
+    }
+    // Guardar ya no está bloqueado por un cambio previo que el administrador acaba de resolver.
+    previewTemporal.cambiosPendientes = [];
 }
 
 // El backend responde 409 { requiereConfirmacion, advertencias, jurado } cuando
 // la selección incumple una regla del motor o genera un conflicto interno con
 // otra fila ya aceptada/modificada de la MISMA propuesta. Nunca se guarda nada
 // en ese caso hasta que el administrador confirme explícitamente la excepción.
-async function manejarRespuestaSeleccion(err, detalleId, juradoId) {
+async function manejarRespuestaSeleccion(modo, id, juradoId, err, juradoNombre) {
     if (err.status === 409 && err.data?.requiereConfirmacion) {
-        await mostrarConfirmacionAdvertencias(detalleId, juradoId || err.data.jurado?.id, err.data);
+        await mostrarConfirmacionAdvertencias(modo, id, juradoId || err.data.jurado?.id, err.data, juradoNombre);
         return;
     }
     mostrarError(err);
@@ -1200,11 +1381,11 @@ function etiquetaAdvertencia(a) {
 // (el jurado ya está en uso en otro rodeo de esta misma propuesta), el
 // diálogo explica claramente de dónde se le quitará y a dónde quedará
 // seleccionado ("mover jurado"), en vez de una advertencia genérica.
-async function mostrarConfirmacionAdvertencias(detalleId, juradoId, info) {
-    const filaDestino = propuestaAbierta?.detalle?.find(f => f.id === detalleId);
+async function mostrarConfirmacionAdvertencias(modo, id, juradoId, info, juradoNombre) {
+    const filaDestino = filaPorModoId(modo, id);
     const reglas = (info.advertencias || []).filter(a => a.origen !== 'CONFLICTO_INTERNO_PROPUESTA');
     const usosPropuesta = (info.advertencias || []).filter(a => a.origen === 'CONFLICTO_INTERNO_PROPUESTA');
-    const nombreJurado = sanitizar(info.jurado?.nombre || '');
+    const nombreJurado = sanitizar(info.jurado?.nombre || juradoNombre || '');
 
     let mensaje = `⚠ <strong>Advertencias para ${nombreJurado}:</strong>`;
     if (reglas.length > 0) {
@@ -1224,14 +1405,26 @@ async function mostrarConfirmacionAdvertencias(detalleId, juradoId, info) {
     }
     mensaje += `<div style="margin-top:10px;">¿Desea continuar?</div>`;
     const ok = await confirmar(mensaje);
-    if (ok) await seleccionarCandidato(detalleId, juradoId, true);
+    if (ok) await seleccionarCandidato(modo, id, juradoId, true, juradoNombre || info.jurado?.nombre);
 }
 
-async function revertirDetalle(detalleId) {
+async function revertirDetalle(modo, id) {
     const ok = await confirmar('¿Revertir esta selección? El rodeo volverá a quedar pendiente de revisión, sin jurado seleccionado.');
     if (!ok) return;
+
+    if (modo === 'preview') {
+        // Descartar una elección propia y volver al punto de partida no
+        // decide ninguna regla nueva — se restaura la copia inmutable
+        // guardada al ejecutar el dry-run, sin llamar al backend.
+        const original = previewTemporal.originalPorRodeo.get(id);
+        const idx = previewTemporal.detalle.findIndex(f => f.rodeo_id === id);
+        if (original && idx !== -1) previewTemporal.detalle[idx] = JSON.parse(JSON.stringify(original));
+        mostrarToast('Selección revertida.', 'success');
+        renderPreviewTemporal();
+        return;
+    }
     try {
-        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/revertir`, {});
+        await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/revertir`, {});
         mostrarToast('Selección revertida.', 'success');
         await recargarPropuestaAbierta();
     } catch (err) {

@@ -1,6 +1,6 @@
 const {
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
-    resolverFilaALiberar, obtenerJuradoEfectivo
+    resolverFilaALiberar, obtenerJuradoEfectivo, fingerprintAdvertencia, evaluarCambiosParaGuardar
 } = require('./propuestaDesignacion');
 const { calcularBloqueRodeo } = require('./feriados');
 
@@ -288,5 +288,121 @@ describe('resumenPropuesta', () => {
         expect(r.aceptados).toBe(0);
         expect(r.modificados).toBe(0);
         expect(r.sin_jurado_actual).toBe(1);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Revalidación al GUARDAR — corrección post-revisión: un cambio de ranking
+// NO invalida una selección que sigue cumpliendo las reglas duras (ver
+// evaluarCandidatoDirecto en motorPropuestaDesignacion.js/TEST F/G/H); solo
+// una advertencia NUEVA — con identidad MATERIAL, no solo tipo+rodeo —
+// bloquea el guardado.
+// ═════════════════════════════════════════════════════════════════════════
+describe('fingerprintAdvertencia — TEST A-E', () => {
+    // TEST A: misma advertencia, mismos datos → ya aceptada, no bloquea.
+    test('TEST A: misma advertencia y mismas condiciones relevantes → ya aceptada, no requiere revisión', () => {
+        const advertenciasFrescas = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR', distancia_km: 612 }];
+        const advertenciasPrevias = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR', distancia_km: 610 }]; // 610 vs 612: misma decena, no material
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias);
+        expect(r.requiereRevision).toBe(false);
+    });
+
+    // TEST B: advertencia completamente nueva (tipo distinto) → requiereRevision.
+    test('TEST B: advertencia de tipo completamente nuevo → requiere revisión', () => {
+        const advertenciasFrescas = [{ tipo: 'MISMA_ASOCIACION', origen: 'REGLA_MOTOR', asociacion: 'Ñuble' }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, []);
+        expect(r.requiereRevision).toBe(true);
+    });
+
+    // TEST C: mismo tipo (conflicto interno) pero cambia el rodeo conflictivo → requiereRevision.
+    test('TEST C: mismo tipo pero cambia el rodeo conflictivo → requiere revisión', () => {
+        const advertenciasFrescas = [{ tipo: 'MISMO_FINDE', origen: 'CONFLICTO_INTERNO_PROPUESTA', rodeo_id: 'rNuevo', club: 'Club Nuevo' }];
+        const advertenciasPrevias = [{ tipo: 'MISMO_FINDE', origen: 'CONFLICTO_INTERNO_PROPUESTA', rodeo_id: 'rViejo', club: 'Club Viejo' }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias);
+        expect(r.requiereRevision).toBe(true);
+    });
+
+    // TEST D: mismo tipo pero cambia MATERIALMENTE la condición relevante —
+    // el ejemplo exacto de la revisión: 610 km aceptados → ahora 950 km.
+    test('TEST D: mismo tipo (DISTANCIA_EXCEDIDA) pero la distancia cambió materialmente (610→950 km) → requiere revisión', () => {
+        const advertenciasFrescas = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR', distancia_km: 950 }];
+        const advertenciasPrevias = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR', distancia_km: 610 }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias);
+        expect(r.requiereRevision).toBe(true);
+        expect(r.advertenciasNuevas).toEqual([{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR', distancia_km: 950 }]);
+    });
+
+    // TEST E: la advertencia previamente aceptada desaparece (el jurado
+    // mejoró de condición) → no bloquea el guardado.
+    test('TEST E: advertencia previamente aceptada que desaparece → no bloquea', () => {
+        const advertenciasPrevias = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR', distancia_km: 610 }];
+        const r = evaluarCambiosParaGuardar([], advertenciasPrevias);
+        expect(r.requiereRevision).toBe(false);
+    });
+
+    test('CATEGORIA_INCOMPATIBLE: mismo tipo, misma categoría → no material; categoría distinta → material', () => {
+        const previa = [{ tipo: 'CATEGORIA_INCOMPATIBLE', origen: 'REGLA_MOTOR', categoria: 'C' }];
+        expect(evaluarCambiosParaGuardar([{ tipo: 'CATEGORIA_INCOMPATIBLE', origen: 'REGLA_MOTOR', categoria: 'C' }], previa).requiereRevision).toBe(false);
+        expect(evaluarCambiosParaGuardar([{ tipo: 'CATEGORIA_INCOMPATIBLE', origen: 'REGLA_MOTOR', categoria: 'B' }], previa).requiereRevision).toBe(true);
+    });
+
+    test('causas sin dato estructurado adicional (DISPONIBILIDAD) comparan solo por tipo — sin inventar un dato que el motor no entrega', () => {
+        const previa = [{ tipo: 'DISPONIBILIDAD', origen: 'REGLA_MOTOR' }];
+        expect(evaluarCambiosParaGuardar([{ tipo: 'DISPONIBILIDAD', origen: 'REGLA_MOTOR' }], previa).requiereRevision).toBe(false);
+    });
+});
+
+describe('evaluarCambiosParaGuardar', () => {
+    // TEST 3 (variante): apareció una asignación efectiva nueva → causa
+    // DISPONIBILIDAD que antes no estaba aceptada → requiere revisión.
+    test('TEST 3: causa nueva (p. ej. apareció asignación efectiva) → requiere revisión', () => {
+        const advertenciasFrescas = [{ tipo: 'DISPONIBILIDAD', origen: 'REGLA_MOTOR' }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, []);
+        expect(r.requiereRevision).toBe(true);
+        expect(r.advertenciasNuevas.map(a => a.tipo)).toEqual(['DISPONIBILIDAD']);
+    });
+
+    // TEST 4: la MISMA advertencia que ya se había aceptado durante el
+    // preview sigue apareciendo → NO es una revisión nueva.
+    test('TEST 4: advertencia ya aceptada y sin cambios → NO requiere revisión nueva', () => {
+        const advertenciasFrescas = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR' }];
+        const advertenciasPrevias = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR' }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias);
+        expect(r.requiereRevision).toBe(false);
+        expect(r.advertenciasNuevas).toEqual([]);
+    });
+
+    // TEST 5: había una advertencia aceptada, pero apareció una SEGUNDA
+    // adicional que no estaba — la nueva sí bloquea, aunque la primera ya
+    // estuviera revisada.
+    test('TEST 5: advertencia adicional nueva sobre una ya aceptada → requiere revisión (solo la nueva)', () => {
+        const advertenciasFrescas = [
+            { tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR' },
+            { tipo: 'MISMO_FINDE', origen: 'CONFLICTO_INTERNO_PROPUESTA', rodeo_id: 'rB' }
+        ];
+        const advertenciasPrevias = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR' }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias);
+        expect(r.requiereRevision).toBe(true);
+        expect(r.advertenciasNuevas).toEqual([{ tipo: 'MISMO_FINDE', origen: 'CONFLICTO_INTERNO_PROPUESTA', rodeo_id: 'rB' }]);
+    });
+
+    test('una advertencia previamente aceptada que YA NO aparece (mejoró) → no bloquea', () => {
+        const advertenciasPrevias = [{ tipo: 'DISTANCIA_EXCEDIDA', origen: 'REGLA_MOTOR' }];
+        const r = evaluarCambiosParaGuardar([], advertenciasPrevias);
+        expect(r.requiereRevision).toBe(false);
+    });
+
+    test('sin advertencias frescas ni previas → no requiere revisión', () => {
+        expect(evaluarCambiosParaGuardar([], [])).toEqual({ requiereRevision: false, advertenciasNuevas: [] });
+        expect(evaluarCambiosParaGuardar(undefined, undefined)).toEqual({ requiereRevision: false, advertenciasNuevas: [] });
+    });
+
+    // Dos advertencias CONFLICTO_INTERNO_PROPUESTA del mismo tipo pero
+    // contra rodeos distintos no deben confundirse entre sí.
+    test('mismo tipo de advertencia pero contra otro rodeo distinto → cuenta como nueva', () => {
+        const advertenciasFrescas = [{ tipo: 'MISMO_FINDE', origen: 'CONFLICTO_INTERNO_PROPUESTA', rodeo_id: 'rC' }];
+        const advertenciasPrevias = [{ tipo: 'MISMO_FINDE', origen: 'CONFLICTO_INTERNO_PROPUESTA', rodeo_id: 'rB' }];
+        const r = evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias);
+        expect(r.requiereRevision).toBe(true);
     });
 });

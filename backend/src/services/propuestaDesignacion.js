@@ -227,6 +227,71 @@ function resolverFilaALiberar(otrasFilas, juradoId) {
     return { detalle_id: fila.detalle_id, nuevo_estado: nuevoEstado };
 }
 
+// ─── Identidad MATERIAL de una advertencia (fingerprint) ─────────────────
+// NO usa el texto visual (puede cambiar por redacción sin que cambie la
+// regla) ni solo `tipo` (610 km y 950 km de exceso son ambas
+// DISTANCIA_EXCEDIDA, pero son un cambio material distinto). Compara según
+// el tipo, usando ÚNICAMENTE los campos estructurados que el motor ya
+// entrega — no se inventa ningún dato que el motor no calcule:
+//
+//   CONFLICTO_INTERNO_PROPUESTA (MISMO_FINDE / FINDE_CONSECUTIVO /
+//   ASOCIACION_REPETIDA_EN_PROPUESTA / YA_USADO_EN_PROPUESTA):
+//     tipo + rodeo_id del OTRO rodeo involucrado en el conflicto — ya es la
+//     identidad material real (detectarConflictoInterno ya lo entrega): si
+//     el rodeo conflictivo cambia, es un conflicto distinto.
+//
+//   REGLA_MOTOR (causas de evaluarCandidato() sobre el jurado en este rodeo):
+//     DISTANCIA_EXCEDIDA            → tipo + distancia_km redondeada a la
+//                                      decena (610→610, 611→610, 950→950 —
+//                                      no trata <10km de diferencia como
+//                                      material, pero sí un salto real).
+//     CATEGORIA_INCOMPATIBLE        → tipo + categoría del jurado.
+//     MISMA_ASOCIACION,
+//     ASOCIACION_REPETIDA_TEMPORADA → tipo + asociación relevante.
+//     resto (DISPONIBILIDAD, MISMO_FINDE/FINDE_CONSECUTIVO contra BD,
+//     JURADO_SIN_COMUNA_RESOLVIBLE) → solo el tipo — evaluarCandidato() no
+//     expone hoy ningún dato estructurado adicional para estas causas; no
+//     se inventa ninguno. Si el motor llega a exponerlo en el futuro, este
+//     es el único lugar que necesitaría ampliarse.
+//
+// @param a advertencia { tipo, origen, rodeo_id?, distancia_km?, categoria?, asociacion? }
+function fingerprintAdvertencia(a) {
+    if (a.origen === 'CONFLICTO_INTERNO_PROPUESTA') {
+        return `${a.tipo}:${a.rodeo_id || ''}`;
+    }
+    switch (a.tipo) {
+        case 'DISTANCIA_EXCEDIDA':
+            return `DISTANCIA_EXCEDIDA:${a.distancia_km != null ? Math.round(a.distancia_km / 10) * 10 : ''}`;
+        case 'CATEGORIA_INCOMPATIBLE':
+            return `CATEGORIA_INCOMPATIBLE:${a.categoria || ''}`;
+        case 'MISMA_ASOCIACION':
+        case 'ASOCIACION_REPETIDA_TEMPORADA':
+            return `${a.tipo}:${a.asociacion || ''}`;
+        default:
+            return a.tipo;
+    }
+}
+
+// ─── Revalidación al GUARDAR — ¿hay algo NUEVO que revisar? ──────────────
+// Compara las advertencias FRESCAS (recalculadas en vivo al guardar: causas
+// de regla + conflictos internos) contra las que ya estaban aceptadas
+// cuando se hizo la selección durante el preview, usando fingerprintAdvertencia()
+// (identidad MATERIAL, no solo tipo+rodeo). Solo una advertencia NUEVA
+// bloquea el guardado — una que ya se revisó y sigue igual, o que
+// desapareció, NO genera una revisión innecesaria (sección 2: A. misma
+// advertencia y mismas condiciones → ya aceptada; B. nueva → revisión;
+// C. mismo tipo pero cambió materialmente → revisión; D. desapareció → no
+// bloquea). Nunca oculta una advertencia nueva.
+//
+// @param advertenciasFrescas - recalculadas ahora mismo
+// @param advertenciasPrevias - ya aceptadas durante el preview (metricas_json.advertencias_aceptadas)
+// @returns { requiereRevision: boolean, advertenciasNuevas: [...] }
+function evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias) {
+    const firmasPrevias = new Set((advertenciasPrevias || []).map(fingerprintAdvertencia));
+    const advertenciasNuevas = (advertenciasFrescas || []).filter(a => !firmasPrevias.has(fingerprintAdvertencia(a)));
+    return { requiereRevision: advertenciasNuevas.length > 0, advertenciasNuevas };
+}
+
 // ─── Resumen de una propuesta a partir de sus filas de detalle ───────────
 function resumenPropuesta(filasDetalle) {
     const contar = (estado) => (filasDetalle || []).filter(f => f.estado_revision === estado).length;
@@ -245,5 +310,6 @@ module.exports = {
     ESTADOS_REVISION, ORIGENES_SELECCION,
     obtenerJuradoEfectivo,
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
-    resolverFilaALiberar
+    resolverFilaALiberar,
+    fingerprintAdvertencia, evaluarCambiosParaGuardar
 };

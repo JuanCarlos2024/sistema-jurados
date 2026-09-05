@@ -24,6 +24,18 @@ const { calcularBloqueRodeo, contarSabadosEntre, rangoFechas } = require('./feri
 const DISTANCIA_MAXIMA_KM = 600;
 const PAGINA = 900; // mismo tamaño de página usado en el resto del proyecto (analisis-preguntas.js, jurados-disponibles)
 
+// topN para ejecutarSimulacion()/generarSimulacion(): cuántos candidatos del
+// grupo final (ya filtrado por preferencia de categoría) se devuelven en
+// top_candidatos. Con el topN por defecto (5) es "los 5 mejores, para
+// auditoría del dry-run". Las pantallas que necesitan "prácticamente todos
+// los candidatos elegibles" (paneles de Designar/Modificar, revalidación al
+// guardar) usan esta constante en vez de repetir un número mágico: es mayor
+// que cualquier tamaño realista del padrón de jurados activos (~110 hoy), así
+// que `grupo.slice(0, topN)` nunca trunca — no es un sentinel ni un hack,
+// es simplemente "sin límite práctico" expresado como un topN válido de la
+// misma API pública que ya usa el dry-run.
+const TOP_N_TODOS_LOS_CANDIDATOS = 999;
+
 // Orden de prioridad para decidir la "causa_principal" cuando un candidato
 // incumple más de una regla (se cuentan TODAS las causas en el resumen de
 // descartes — opción B del enunciado — pero causa_principal usa este orden
@@ -152,6 +164,67 @@ function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPor
         disponible, mismaAsoc, repiteAsociacionTemporada, mismoFinde, findeConsecutivo,
         designacionesAntes
     };
+}
+
+// ─── Estado SOLO-BD (asociaciones/bloques/designaciones) por jurado ──────
+// Reduce `asignacionesTemporada` (ya cargada por cargarDatosMotor) a los 3
+// mapas que evaluarCandidato() necesita como `estado`. Extraído para que
+// ejecutarSimulacion() (que además le suma asignaciones TEMPORALES de la
+// propia corrida) y evaluarCandidatoDirecto() (que solo necesita el estado
+// real de BD, sin ninguna corrida encima) compartan la MISMA reducción —
+// nunca dos implementaciones de "cómo se arma el estado" para las mismas reglas.
+function construirEstadoDesdeBD(asignacionesTemporada) {
+    const designacionesPorJurado = new Map();  // jurado_id -> Set(rodeo_id)
+    const bloquesPorJurado = new Map();        // jurado_id -> [{inicio,fin}, ...]
+    const asociacionesPorJurado = new Map();   // jurado_id -> Set(asociacion_normalizada)
+
+    for (const a of (asignacionesTemporada || [])) {
+        if (!designacionesPorJurado.has(a.usuario_pagado_id)) designacionesPorJurado.set(a.usuario_pagado_id, new Set());
+        designacionesPorJurado.get(a.usuario_pagado_id).add(a.rodeo_id);
+
+        if (!bloquesPorJurado.has(a.usuario_pagado_id)) bloquesPorJurado.set(a.usuario_pagado_id, []);
+        bloquesPorJurado.get(a.usuario_pagado_id).push(calcularBloqueRodeo(a.rodeos.fecha, a.rodeos.duracion_dias || 1));
+
+        if (a.rodeos.asociacion) {
+            if (!asociacionesPorJurado.has(a.usuario_pagado_id)) asociacionesPorJurado.set(a.usuario_pagado_id, new Set());
+            asociacionesPorJurado.get(a.usuario_pagado_id).add(normalizarAsociacion(a.rodeos.asociacion));
+        }
+    }
+    return { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado };
+}
+
+// ─── Evalúa UN jurado específico para UN rodeo específico, DIRECTAMENTE ──
+// Sin depender de ningún topN ni de buscar en una lista de candidatos — el
+// llamador ya sabe exactamente qué jurado quiere verificar. Llama a
+// evaluarCandidato() (la única implementación de las reglas) con el
+// contexto real de BD, la misma que usa toda corrida normal del motor.
+// Responde "¿este jurado específico sigue siendo válido?" (disponibilidad,
+// asociación, categoría, distancia, fin de semana/consecutivo, historial),
+// NUNCA "¿seguiría siendo el número 1 del ranking?" — un cambio de equidad
+// entre jurados no aparece acá en absoluto, porque esta función ni siquiera
+// mira a los demás candidatos.
+//
+// Usada por la revalidación al Guardar una propuesta y por la evaluación de
+// una selección administrativa (aceptar/designar/modificar/mover) — ambas
+// necesitan "¿sigue siendo válido este jurado puntual?", nunca un ranking.
+//
+// @param contexto - de cargarDatosMotor([rodeoId]) (o un lote más grande que lo incluya)
+// @param rodeoId, juradoId
+// @returns { evaluacion: <resultado de evaluarCandidato()> } | { error: 'JURADO_INACTIVO_O_INEXISTENTE'|'RODEO_NO_ENCONTRADO'|'TIPO_SIN_CLASIFICACION' }
+function evaluarCandidatoDirecto(contexto, rodeoId, juradoId) {
+    const jurado = (contexto.jurados || []).find(j => j.id === juradoId);
+    if (!jurado) return { error: 'JURADO_INACTIVO_O_INEXISTENTE' }; // contexto.jurados ya viene filtrado a activo=true, tipo_persona='jurado'
+
+    const rodeo = contexto.rodeosPorId.get(rodeoId);
+    if (!rodeo) return { error: 'RODEO_NO_ENCONTRADO' };
+
+    const matriz = rodeo.clasificacion_codigo ? contexto.matrizPorCodigo[rodeo.clasificacion_codigo] : null;
+    if (!matriz) return { error: 'TIPO_SIN_CLASIFICACION' };
+
+    const comunaJuradoPorId = new Map([[jurado.id, resolverComuna(jurado.comuna, contexto.catalogoComunas)]]);
+    const estado = construirEstadoDesdeBD(contexto.asignacionesTemporada);
+
+    return { evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -314,25 +387,11 @@ function ejecutarSimulacion(contexto, topN = 5) {
     const { idsSolicitados, temporada, rodeosPorId, matrizPorCodigo, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
 
     // ── Estado temporal de la corrida (BD + asignaciones temporales unificadas) ──
-    // Sembrado desde la BD (asignacionesTemporada) y mutado a medida que el
-    // motor va proponiendo jurados dentro de esta misma simulación. Nunca se
-    // escribe en BD — vive solo en memoria durante esta función.
-    const designacionesPorJurado = new Map();  // jurado_id -> Set(rodeo_id)  (para equidad: COUNT DISTINCT rodeo_id)
-    const bloquesPorJurado = new Map();        // jurado_id -> [{inicio,fin}, ...]
-    const asociacionesPorJurado = new Map();   // jurado_id -> Set(asociacion_normalizada)
-
-    for (const a of asignacionesTemporada) {
-        if (!designacionesPorJurado.has(a.usuario_pagado_id)) designacionesPorJurado.set(a.usuario_pagado_id, new Set());
-        designacionesPorJurado.get(a.usuario_pagado_id).add(a.rodeo_id);
-
-        if (!bloquesPorJurado.has(a.usuario_pagado_id)) bloquesPorJurado.set(a.usuario_pagado_id, []);
-        bloquesPorJurado.get(a.usuario_pagado_id).push(calcularBloqueRodeo(a.rodeos.fecha, a.rodeos.duracion_dias || 1));
-
-        if (a.rodeos.asociacion) {
-            if (!asociacionesPorJurado.has(a.usuario_pagado_id)) asociacionesPorJurado.set(a.usuario_pagado_id, new Set());
-            asociacionesPorJurado.get(a.usuario_pagado_id).add(normalizarAsociacion(a.rodeos.asociacion));
-        }
-    }
+    // Sembrado desde la BD (asignacionesTemporada, vía construirEstadoDesdeBD
+    // — misma reducción que usa evaluarCandidatoDirecto(), nunca duplicada) y
+    // mutado a medida que el motor va proponiendo jurados dentro de esta
+    // misma simulación. Nunca se escribe en BD — vive solo en memoria.
+    const { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado } = construirEstadoDesdeBD(asignacionesTemporada);
 
     // Snapshot de designaciones SOLO-BD por jurado (antes de cualquier
     // propuesta de esta corrida) — para el resumen final de distribución
@@ -575,7 +634,8 @@ async function generarSimulacion(rodeoIdsInput, topN = 5) {
 
 module.exports = {
     generarSimulacion, cargarDatosMotor, ejecutarSimulacion, evaluarCandidato,
+    evaluarCandidatoDirecto, construirEstadoDesdeBD,
     esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo,
     bloquesSeSuperponen, bloquesSonConsecutivos,
-    DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL
+    DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL, TOP_N_TODOS_LOS_CANDIDATOS
 };
