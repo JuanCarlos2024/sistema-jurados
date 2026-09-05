@@ -52,20 +52,59 @@
         .badge-estado.PROPUESTO { background: #e6f7ec; color: #1e8449; }
         .badge-estado.SIN_PROPUESTA { background: #fdeee0; color: #b9560a; }
         .badge-estado.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
-        .check-linea { font-size: 12px; margin: 2px 0; }
+        .check-linea { font-size: 14px; margin: 3px 0; }
         .check-linea.ok { color: #1e8449; }
         .check-linea.no { color: #b9560a; }
-        .badge-revision { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; text-transform: uppercase; letter-spacing: .3px; }
+        .badge-revision { font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 12px; text-transform: uppercase; letter-spacing: .3px; }
         .badge-revision.PENDIENTE { background: #f0f1f2; color: #6b7280; }
         .badge-revision.ACEPTADO { background: #e6f7ec; color: #1e8449; }
         .badge-revision.MODIFICADO { background: #eaf4fb; color: #1a5276; }
         .badge-revision.SIN_PROPUESTA { background: #fdeee0; color: #b9560a; }
         .badge-revision.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
         .badge-revision.SIN_JURADO_ACTUAL { background: #fdeee0; color: #b9560a; }
-        .candidato-fila {
-            display: flex; justify-content: space-between; align-items: center; gap: 10px;
-            padding: 8px 10px; border: 1px solid var(--gris-borde); border-radius: 8px; margin-bottom: 6px; background: white;
+
+        /* ── Modal Designar/Modificar jurado — mejora de legibilidad + UX ── */
+        .modal-candidatos {
+            max-width: 1180px; width: 88vw; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden; /* el scroll vive SOLO en .mc-lista */
         }
+        .mc-contexto {
+            padding: 16px 22px; border-bottom: 1px solid var(--gris-borde); flex-shrink: 0;
+            font-size: 15px; line-height: 1.7;
+        }
+        .mc-contexto .mc-rodeo-nombre { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+        .mc-contexto .mc-actual { font-size: 14px; color: var(--gris); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--gris-borde); }
+        .mc-filtros {
+            padding: 14px 22px; border-bottom: 1px solid var(--gris-borde); flex-shrink: 0;
+            display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+            position: sticky; top: 0; background: white; z-index: 3;
+        }
+        .mc-filtros label { font-size: 13px; color: var(--gris); display: block; margin-bottom: 3px; }
+        .mc-filtros .form-control { font-size: 14px; }
+        .mc-checks { padding: 8px 22px 0; display: flex; gap: 16px; flex-wrap: wrap; flex-shrink: 0; }
+        .mc-checks label { font-size: 14px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+        .mc-contadores {
+            padding: 10px 22px; font-size: 14px; color: var(--gris); border-bottom: 1px solid var(--gris-borde);
+            flex-shrink: 0; display: flex; gap: 18px; flex-wrap: wrap;
+        }
+        .mc-contadores strong { color: var(--texto); }
+        .mc-lista { flex: 1; overflow-y: auto; padding: 14px 22px 22px; }
+        .mc-grupo-titulo {
+            font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+            color: var(--gris); margin: 14px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--gris-borde);
+        }
+        .mc-grupo-titulo:first-child { margin-top: 0; }
+        .mc-fila {
+            display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;
+            padding: 12px 14px; border: 1px solid var(--gris-borde); border-radius: 10px; margin-bottom: 8px; background: white;
+        }
+        .mc-fila.con-advertencia { border-color: #ffe08a; background: #fffdf7; }
+        .mc-fila .mc-nombre { font-size: 16px; font-weight: 700; }
+        .mc-fila .mc-detalle { font-size: 14px; color: var(--gris); margin-top: 3px; line-height: 1.6; }
+        .mc-fila .mc-reglas { margin-top: 6px; }
+        .mc-fila .mc-uso-otra-fila { font-size: 13px; color: #8a5a00; margin-top: 6px; line-height: 1.6; }
+        .mc-fila .btn { flex-shrink: 0; white-space: nowrap; font-size: 14px; padding: 8px 14px; }
+        .mc-vacio { text-align: center; padding: 40px 20px; color: var(--gris); font-size: 15px; }
     </style>
 </head>
 <body>
@@ -187,10 +226,28 @@
     </div>
 </div>
 
+<!-- Modal Designar/Modificar Jurado — UN SOLO componente reutilizado para
+     Designar, Modificar, seleccionar con excepción y mover jurado, tanto en
+     PREVIEW (sin guardar) como en BORRADOR ya persistido. -->
+<div class="modal-overlay oculto" id="modal-candidatos-overlay">
+    <div class="modal modal-candidatos">
+        <div class="modal-header">
+            <h3 id="mc-titulo">Designar / Modificar jurado</h3>
+            <button class="modal-cerrar" onclick="cerrarModalCandidatos()">×</button>
+        </div>
+        <div class="mc-contexto" id="mc-contexto"></div>
+        <div class="mc-filtros" id="mc-filtros-cont"></div>
+        <div class="mc-checks" id="mc-checks"></div>
+        <div class="mc-contadores" id="mc-contadores"></div>
+        <div class="mc-lista" id="mc-lista"></div>
+    </div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
+<script src="/js/candidatosFiltro.js"></script>
 <script>
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
@@ -891,8 +948,8 @@ function renderPreviewTemporal() {
 async function guardarComoPropuesta() {
     if (!previewTemporal) return;
     const r = previewResumen();
-    const mensaje = `<strong>Guardar propuesta como borrador</strong>
-        <div style="text-align:left; margin-top:10px; font-size:13px; line-height:1.8;">
+    const mensaje = `<strong style="font-size:16px;">Guardar propuesta como borrador</strong>
+        <div style="text-align:left; margin-top:10px; font-size:14px; line-height:1.8;">
             Rodeos: <strong>${r.total_rodeos}</strong><br>
             Con jurado actual: <strong>${r.con_jurado_actual}</strong><br>
             Modificados manualmente: <strong>${r.modificados}</strong><br>
@@ -935,16 +992,16 @@ async function guardarComoPropuesta() {
 }
 
 function renderTopCandidatos(top) {
-    if (!top || top.length === 0) return '<div style="font-size:12px; color:#aaa;">Sin candidatos.</div>';
-    return `<ol style="font-size:12px; margin:4px 0 0 18px; padding:0;">${top.map(c =>
+    if (!top || top.length === 0) return '<div style="font-size:14px; color:#aaa;">Sin candidatos.</div>';
+    return `<ol style="font-size:14px; margin:6px 0 0 18px; padding:0; line-height:1.6;">${top.map(c =>
         `<li>${sanitizar(c.nombre)} — categoría ${sanitizar(c.categoria || '—')} — ${c.designaciones_antes} designaciones — ${c.distancia_km !== null ? c.distancia_km + ' km' : '—'}</li>`
     ).join('')}</ol>`;
 }
 
 function renderDescartes(descartes) {
     const entradas = Object.entries(descartes || {}).filter(([, n]) => n > 0);
-    if (entradas.length === 0) return '<div style="font-size:12px; color:#aaa;">Sin descartes registrados.</div>';
-    return `<div style="font-size:12px; margin-top:4px;">${entradas.map(([causa, n]) =>
+    if (entradas.length === 0) return '<div style="font-size:14px; color:#aaa;">Sin descartes registrados.</div>';
+    return `<div style="font-size:14px; margin-top:6px; line-height:1.6;">${entradas.map(([causa, n]) =>
         `<div>${ETIQUETAS_CAUSA[causa] || causa}: <strong>${n}</strong></div>`
     ).join('')}</div>`;
 }
@@ -1070,21 +1127,21 @@ function renderFilaDetallePropuesta(d, modo) {
     if (d.estado_revision === 'NO_EVALUABLE') {
         return `<div class="resultado-rodeo-card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
-                <div><strong>${sanitizar(d.rodeo?.club || '—')}</strong> ${d.rodeo?.fecha ? '— ' + formatFecha(d.rodeo.fecha) : ''}</div>
+                <div style="font-size:15px;"><strong>${sanitizar(d.rodeo?.club || '—')}</strong> ${d.rodeo?.fecha ? '— ' + formatFecha(d.rodeo.fecha) : ''}</div>
                 <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
             </div>
-            <div style="font-size:13px; color:#6b7280;">Causa: ${ETIQUETAS_CAUSA[d.explicacion_json?.causa] || d.explicacion_json?.causa || '—'}</div>
+            <div style="font-size:14px; color:#6b7280;">Causa: ${ETIQUETAS_CAUSA[d.explicacion_json?.causa] || d.explicacion_json?.causa || '—'}</div>
         </div>`;
     }
 
     const r = d.rodeo || {};
     const j = d.jurado_efectivo;
     const infoOrigen = (d.jurado_id_seleccionado && d.jurado_id_propuesto && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
-        ? `<div style="font-size:11px; color:var(--gris); margin-top:6px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
+        ? `<div style="font-size:14px; color:var(--gris); margin-top:6px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
         : '';
     const advertenciasGuardadas = d.metricas_json?.advertencias_aceptadas;
     const avisoAdvertencia = (advertenciasGuardadas && advertenciasGuardadas.length > 0)
-        ? `<div style="font-size:11px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
+        ? `<div style="font-size:14px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
         : '';
 
     // Reglas/"por qué ganó"/descartes — solo mientras el jurado efectivo
@@ -1107,37 +1164,37 @@ function renderFilaDetallePropuesta(d, modo) {
         </div>`;
     }
     if (d.explicacion_json?.top_candidatos?.length > 0) {
-        detallesExtra += `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">¿Por qué ganó? — Top ${d.explicacion_json.top_candidatos.length} candidatos finales</summary>${renderTopCandidatos(d.explicacion_json.top_candidatos)}</details>`;
+        detallesExtra += `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:14px; color:var(--gris);">¿Por qué ganó? — Top ${d.explicacion_json.top_candidatos.length} candidatos finales</summary>${renderTopCandidatos(d.explicacion_json.top_candidatos)}</details>`;
     }
     if (d.metricas_json?.descartes) {
-        detallesExtra += `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:var(--gris);">Ver descartes (${d.metricas_json.candidatos_evaluados ?? '—'} candidatos evaluados)</summary>${renderDescartes(d.metricas_json.descartes)}</details>`;
+        detallesExtra += `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:14px; color:var(--gris);">Ver descartes (${d.metricas_json.candidatos_evaluados ?? '—'} candidatos evaluados)</summary>${renderDescartes(d.metricas_json.descartes)}</details>`;
     }
 
-    // "Designar jurado" y "Modificar" son el MISMO botón/mecanismo (sección
-    // 13) — solo cambia la etiqueta según si la fila ya tiene jurado en uso.
-    // Todas las acciones llevan el `modo` para que el dispatcher sepa si
-    // trabajar en memoria (preview) o contra la propuesta persistida.
+    // "Designar jurado" y "Modificar" abren el MISMO modal (sección 20 de la
+    // mejora UX) — solo cambia la etiqueta según si la fila ya tiene jurado
+    // en uso. Todas las acciones llevan el `modo` para que el dispatcher
+    // sepa si trabajar en memoria (preview) o contra la propuesta persistida.
     const etiquetaBoton = j ? 'Modificar' : 'Designar jurado';
     let acciones = '';
     if (d.estado_revision === 'PENDIENTE') {
-        acciones = `<button class="btn btn-pequeño btn-primario" onclick="aceptarDetalle('${modo}', '${d.id}')">Aceptar</button>
-                    <button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
+        acciones = `<button class="btn btn-primario" style="font-size:14px;" onclick="aceptarDetalle('${modo}', '${d.id}')">Aceptar</button>
+                    <button class="btn btn-outline" style="font-size:14px;" onclick="abrirModalCandidatos('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
     } else if (d.estado_revision === 'ACEPTADO' || d.estado_revision === 'MODIFICADO') {
-        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${modo}', '${d.id}')">${etiquetaBoton}</button>
-                    <button class="btn btn-pequeño btn-secundario" onclick="revertirDetalle('${modo}', '${d.id}')">Revertir</button>`;
+        acciones = `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirModalCandidatos('${modo}', '${d.id}')">${etiquetaBoton}</button>
+                    <button class="btn btn-secundario" style="font-size:14px;" onclick="revertirDetalle('${modo}', '${d.id}')">Revertir</button>`;
     } else if (d.estado_revision === 'SIN_PROPUESTA' || d.estado_revision === 'SIN_JURADO_ACTUAL') {
         // SIN_JURADO_ACTUAL: no se ofrece "Aceptar" — el jurado que el motor
         // propuso originalmente ya fue movido a otro rodeo de esta propuesta;
         // requiere una decisión administrativa nueva, no una simple confirmación.
-        acciones = `<button class="btn btn-pequeño btn-outline" onclick="toggleModificar('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
+        acciones = `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirModalCandidatos('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
     }
 
     return `<div class="resultado-rodeo-card" id="fila-detalle-${modo}-${d.id}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
             <div style="flex:1 1 260px;">
-                <div style="font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:3px;">Rodeo</div>
-                <div style="font-weight:700; font-size:14px;">${sanitizar(r.club || '—')}</div>
-                <div style="font-size:12px; color:var(--gris); line-height:1.7;">
+                <div style="font-size:13px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Rodeo</div>
+                <div style="font-weight:700; font-size:16px;">${sanitizar(r.club || '—')}</div>
+                <div style="font-size:14px; color:var(--gris); line-height:1.75; margin-top:2px;">
                     ${sanitizar(r.asociacion || '—')} · ${r.fecha ? formatFecha(r.fecha) : '—'}<br>
                     <strong>Tipo:</strong> ${sanitizar(r.tipo_rodeo_nombre || '—')}<br>
                     <strong>Clasificación:</strong> ${sanitizar(r.clasificacion_nombre || '—')}
@@ -1145,18 +1202,18 @@ function renderFilaDetallePropuesta(d, modo) {
                 </div>
             </div>
             <div style="flex:1 1 220px;">
-                <div style="font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:3px;">Propuesta</div>
+                <div style="font-size:13px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Propuesta</div>
                 ${j ? `
-                    <div style="font-weight:700; font-size:14px;">${sanitizar(j.nombre || '—')}</div>
-                    <div style="font-size:12px; color:var(--gris); line-height:1.7;">
+                    <div style="font-weight:700; font-size:16px;">${sanitizar(j.nombre || '—')}</div>
+                    <div style="font-size:14px; color:var(--gris); line-height:1.75; margin-top:2px;">
                         Categoría ${sanitizar(j.categoria || '—')}${j.categoria_preferente ? ' (preferente)' : ''}<br>
                         ${j.comuna ? 'Comuna: ' + sanitizar(j.comuna) + '<br>' : ''}
                         ${j.distancia_km !== null ? 'Distancia: ' + j.distancia_km + ' km<br>' : ''}
                         ${j.designaciones_temporada_antes !== null ? 'Designaciones temporada: ' + j.designaciones_temporada_antes : ''}
                     </div>` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
-                        ? `<div style="font-size:12px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong><br>
+                        ? `<div style="font-size:14px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong><br>
                            <span style="color:#b9560a;">Ese jurado fue movido a otro rodeo de esta propuesta — requiere una nueva decisión.</span></div>`
-                        : '<span style="color:#aaa; font-size:13px;">Sin jurado designado</span>')}
+                        : '<span style="color:#aaa; font-size:15px;">Sin jurado designado</span>')}
             </div>
             <div>
                 <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
@@ -1165,8 +1222,7 @@ function renderFilaDetallePropuesta(d, modo) {
         ${infoOrigen}
         ${avisoAdvertencia}
         ${detallesExtra}
-        <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">${acciones}</div>
-        <div id="modificar-${modo}-${d.id}"></div>
+        <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">${acciones}</div>
     </div>`;
 }
 
@@ -1205,31 +1261,6 @@ async function aceptarDetalle(modo, id) {
     }
 }
 
-function toggleModificar(modo, id) {
-    const cont = document.getElementById('modificar-' + modo + '-' + id);
-    if (!cont) return;
-    if (cont.innerHTML.trim() !== '') { cont.innerHTML = ''; return; }
-    cargarCandidatos(modo, id);
-}
-
-async function cargarCandidatos(modo, id) {
-    const cont = document.getElementById('modificar-' + modo + '-' + id);
-    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
-    try {
-        let resp;
-        if (modo === 'preview') {
-            resp = await api.post('/admin/propuesta-designacion/preview/candidatos', {
-                rodeo_id: id, preview_token: previewTemporal.preview_token, estado_temporal: estadoTemporalPayload()
-            });
-        } else {
-            resp = await api.get(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/candidatos`);
-        }
-        renderCandidatosModificar(modo, id, resp);
-    } catch (err) {
-        cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
-    }
-}
-
 // Proyección liviana del estado_temporal para mandar al backend — solo lo
 // que el backend necesita para revalidar (nunca club/fecha/nombre, eso
 // siempre lo vuelve a buscar el servidor en BD real).
@@ -1240,65 +1271,205 @@ function estadoTemporalPayload() {
     }));
 }
 
-// Etiqueta corta "ya usado en otro rodeo de esta propuesta" para un
-// candidato de la lista (sección 6) — reutiliza los mismos 4 tipos que
-// devuelve detectarConflictoInterno(), sin reimplementar ninguna regla.
-function renderUsoEnOtraFila(usos) {
-    if (!usos || usos.length === 0) return '';
-    return `<div style="margin-top:4px;">${usos.map(u => `
-        <div style="font-size:11px; color:#8a5a00;">
-            ⚠ PROPUESTO EN OTRO RODEO — ${ETIQUETAS_USO_CORTO[u.tipo] || u.tipo}<br>
-            &nbsp;&nbsp;Rodeo: ${sanitizar(u.tipo_rodeo_nombre || '—')} · Club: ${sanitizar(u.club)} · Fecha: ${formatFecha(u.fecha)}${u.asociacion ? ' · Asociación: ' + sanitizar(u.asociacion) : ''}
-        </div>`).join('')}</div>`;
+// ═════════════════════════════════════════════════════════════════════════
+// Modal Designar/Modificar Jurado — mejora UX (legibilidad + selector
+// centralizado). UN SOLO componente para Designar, Modificar, seleccionar
+// con excepción y mover jurado — en PREVIEW (memoria) y BORRADOR
+// (persistido), mismos endpoints ya existentes, misma experiencia visual.
+//
+// Los filtros (búsqueda, categoría, asociación, ocultar no disponibles/ya
+// designados/repetición de asociación, orden) son PURAMENTE de
+// presentación — filtrarYOrdenarCandidatos() (/js/candidatosFiltro.js)
+// nunca decide validez; eso sigue viniendo siempre del backend.
+// ═════════════════════════════════════════════════════════════════════════
+const FILTROS_MODAL_DEFECTO = {
+    busqueda: '', categoria: 'todas', asociacion: 'todas',
+    ocultarNoDisponibles: false, ocultarYaDesignados: false, ocultarRepeticionAsociacion: false,
+    ordenarPor: 'designaciones'
+};
+let modalCandidatos = null; // { modo, id, candidatosValidos, candidatosDescartados, filtros }
+
+function abrirModalCandidatos(modo, id) {
+    modalCandidatos = { modo, id, candidatosValidos: [], candidatosDescartados: [], filtros: { ...FILTROS_MODAL_DEFECTO } };
+    document.getElementById('modal-candidatos-overlay').classList.remove('oculto');
+    document.getElementById('mc-filtros-cont').innerHTML = '';
+    document.getElementById('mc-checks').innerHTML = '';
+    document.getElementById('mc-contadores').innerHTML = '';
+    document.getElementById('mc-lista').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    renderModalContexto();
+    cargarModalCandidatos();
 }
 
-function renderCandidatosModificar(modo, id, resp) {
-    const cont = document.getElementById('modificar-' + modo + '-' + id);
-    const validos = resp.candidatos_validos || [];
-    const descartados = resp.descartados || [];
+function cerrarModalCandidatos() {
+    document.getElementById('modal-candidatos-overlay').classList.add('oculto');
+    modalCandidatos = null;
+}
+
+// Sección 4/19 — contexto del rodeo + "jurado actual de la propuesta"
+// (qué propuso el motor vs qué eligió el administrador), siempre visible.
+function renderModalContexto() {
+    const { modo, id } = modalCandidatos;
     const fila = filaPorModoId(modo, id);
+    const r = fila?.rodeo || {};
+    document.getElementById('mc-titulo').textContent = fila?.jurado_efectivo ? 'Modificar jurado' : 'Designar jurado';
+    document.getElementById('mc-contexto').innerHTML = `
+        <div class="mc-rodeo-nombre">${sanitizar(r.club || '—')}</div>
+        Tipo: <strong>${sanitizar(r.tipo_rodeo_nombre || '—')}</strong> ·
+        Clasificación: <strong>${sanitizar(r.clasificacion_nombre || '—')}</strong><br>
+        Fecha: <strong>${r.fecha ? formatFecha(r.fecha) : '—'}</strong> ·
+        Asociación: <strong>${sanitizar(r.asociacion || '—')}</strong>
+        ${r.comuna_nombre ? ' · Comuna: <strong>' + sanitizar(r.comuna_nombre) + '</strong>' : ''}
+        <div class="mc-actual">
+            <strong>Jurado actual de la propuesta</strong><br>
+            Motor propuso: <strong>${fila?.nombre_propuesto ? sanitizar(fila.nombre_propuesto) : '—'}</strong><br>
+            Administrador seleccionó: <strong>${fila?.nombre_seleccionado ? sanitizar(fila.nombre_seleccionado) : '—'}</strong>
+        </div>`;
+}
 
-    // Sección 14 — "Jurado actual de la propuesta": qué propuso el motor vs
-    // qué eligió el administrador, para que quede claro qué se está cambiando.
-    const cabeceraActual = fila ? `<div style="font-size:12px; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--gris-borde);">
-        <div style="font-weight:700; margin-bottom:2px;">Jurado actual de la propuesta</div>
-        Motor propuso: <strong>${fila.nombre_propuesto ? sanitizar(fila.nombre_propuesto) : '—'}</strong><br>
-        Administrador seleccionó: <strong>${fila.nombre_seleccionado ? sanitizar(fila.nombre_seleccionado) : '—'}</strong>
-    </div>` : '';
+async function cargarModalCandidatos() {
+    const { modo, id } = modalCandidatos;
+    const lista = document.getElementById('mc-lista');
+    try {
+        let resp;
+        if (modo === 'preview') {
+            resp = await api.post('/admin/propuesta-designacion/preview/candidatos', {
+                rodeo_id: id, preview_token: previewTemporal.preview_token, estado_temporal: estadoTemporalPayload()
+            });
+        } else {
+            resp = await api.get(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/candidatos`);
+        }
+        if (!modalCandidatos) return; // el administrador cerró el modal mientras cargaba
+        modalCandidatos.candidatosValidos = resp.candidatos_validos || [];
+        modalCandidatos.candidatosDescartados = resp.descartados || [];
+        renderModalFiltros();
+        aplicarFiltrosModal();
+    } catch (err) {
+        lista.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
+}
 
-    const detallesCandidato = (c) => `Categoría ${sanitizar(c.categoria || '—')}${c.categoria_preferente ? ' (preferente)' : ''} —
-        ${sanitizar(c.asociacion || '—')} — ${c.comuna_nombre ? sanitizar(c.comuna_nombre) : '—'} —
-        ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} — ${c.designaciones_antes} designación(es) esta temporada`;
-
-    const filaValido = (c) => `<div class="candidato-fila" style="align-items:flex-start;">
-        <div style="font-size:12px;">
-            <strong>${sanitizar(c.nombre)}</strong><br>
-            ${detallesCandidato(c)}
-            <span style="color:#1e8449;"> · ✓ cumple todas las reglas</span>
-            ${renderUsoEnOtraFila(c.uso_en_otra_fila)}
+function renderModalFiltros() {
+    const f = modalCandidatos.filtros;
+    const asociaciones = obtenerAsociacionesCandidatos(modalCandidatos.candidatosValidos, modalCandidatos.candidatosDescartados);
+    document.getElementById('mc-filtros-cont').innerHTML = `
+        <div style="flex:2 1 200px;">
+            <label for="mc-busqueda">Buscar por nombre...</label>
+            <input type="text" id="mc-busqueda" class="form-control" placeholder="Buscar por nombre..." value="${sanitizar(f.busqueda)}" oninput="cambiarFiltroModal('busqueda', this.value)">
         </div>
-        <button class="btn btn-pequeño btn-primario" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${sanitizar(c.nombre).replace(/'/g, "\\'")}')">Seleccionar</button>
-    </div>`;
-
-    const filaDescartado = (d) => `<div class="candidato-fila" style="border-color:#ffe08a; align-items:flex-start;">
-        <div style="font-size:12px;">
-            <strong>${sanitizar(d.nombre)}</strong><br>
-            ${detallesCandidato(d)}
-            <span style="color:#b9560a;"> · ⚠ ${d.causas.map(c => ETIQUETAS_CAUSA[c] || c).join(', ')}</span>
-            ${renderUsoEnOtraFila(d.uso_en_otra_fila)}
+        <div>
+            <label for="mc-categoria">Categoría</label>
+            <select id="mc-categoria" class="form-control" onchange="cambiarFiltroModal('categoria', this.value)">
+                <option value="todas" ${f.categoria === 'todas' ? 'selected' : ''}>Todas las categorías</option>
+                <option value="A" ${f.categoria === 'A' ? 'selected' : ''}>A</option>
+                <option value="B" ${f.categoria === 'B' ? 'selected' : ''}>B</option>
+                <option value="C" ${f.categoria === 'C' ? 'selected' : ''}>C</option>
+            </select>
         </div>
-        <button class="btn btn-pequeño btn-outline" onclick="seleccionarCandidato('${modo}', '${id}', '${d.jurado_id}', false, '${sanitizar(d.nombre).replace(/'/g, "\\'")}')">Seleccionar igualmente (excepción)</button>
-    </div>`;
+        <div>
+            <label for="mc-asociacion">Asociación</label>
+            <select id="mc-asociacion" class="form-control" onchange="cambiarFiltroModal('asociacion', this.value)">
+                <option value="todas" ${f.asociacion === 'todas' ? 'selected' : ''}>Todas las asociaciones</option>
+                ${asociaciones.map(a => `<option value="${sanitizar(a)}" ${f.asociacion === a ? 'selected' : ''}>${sanitizar(a)}</option>`).join('')}
+            </select>
+        </div>
+        <div>
+            <label for="mc-orden">Ordenar por</label>
+            <select id="mc-orden" class="form-control" onchange="cambiarFiltroModal('ordenarPor', this.value)">
+                <option value="designaciones" ${f.ordenarPor === 'designaciones' ? 'selected' : ''}>Menos designaciones</option>
+                <option value="distancia" ${f.ordenarPor === 'distancia' ? 'selected' : ''}>Menor distancia</option>
+                <option value="nombre" ${f.ordenarPor === 'nombre' ? 'selected' : ''}>Nombre</option>
+            </select>
+        </div>
+        <button class="btn btn-secundario" style="font-size:14px;" onclick="limpiarFiltrosModal()">Limpiar filtros</button>`;
+    document.getElementById('mc-checks').innerHTML = `
+        <label><input type="checkbox" id="mc-ocultar-nodisp" ${f.ocultarNoDisponibles ? 'checked' : ''} onchange="cambiarFiltroModal('ocultarNoDisponibles', this.checked)"> Ocultar no disponibles</label>
+        <label><input type="checkbox" id="mc-ocultar-designados" ${f.ocultarYaDesignados ? 'checked' : ''} onchange="cambiarFiltroModal('ocultarYaDesignados', this.checked)"> Ocultar ya designados</label>
+        <label><input type="checkbox" id="mc-ocultar-repite" ${f.ocultarRepeticionAsociacion ? 'checked' : ''} onchange="cambiarFiltroModal('ocultarRepeticionAsociacion', this.checked)"> Ocultar repetición de asociación</label>`;
+}
 
-    cont.innerHTML = `<div style="background:#f8f9fa; border-radius:8px; padding:12px; margin-top:8px;">
-        ${cabeceraActual}
-        <div style="font-size:12px; font-weight:700; margin-bottom:6px;">Candidatos válidos / disponibles (${validos.length})</div>
-        ${validos.length > 0 ? validos.map(filaValido).join('') : '<div style="font-size:12px; color:#aaa; margin-bottom:6px;">Ningún jurado cumple todas las reglas para este rodeo.</div>'}
-        ${descartados.length > 0 ? `<details style="margin-top:8px;">
-            <summary style="cursor:pointer; font-size:12px; color:var(--gris);">Ver jurados con advertencias (${descartados.length}) — requiere confirmar excepción</summary>
-            <div style="margin-top:6px;">${descartados.map(filaDescartado).join('')}</div>
-        </details>` : ''}
+function cambiarFiltroModal(clave, valor) {
+    if (!modalCandidatos) return;
+    modalCandidatos.filtros[clave] = valor;
+    aplicarFiltrosModal();
+}
+
+function limpiarFiltrosModal() {
+    if (!modalCandidatos) return;
+    modalCandidatos.filtros = { ...FILTROS_MODAL_DEFECTO };
+    renderModalFiltros();
+    aplicarFiltrosModal();
+}
+
+function aplicarFiltrosModal() {
+    const { candidatosValidos, candidatosDescartados, filtros } = modalCandidatos;
+    const { validos, descartados } = filtrarYOrdenarCandidatos(candidatosValidos, candidatosDescartados, filtros);
+    const totalOriginal = candidatosValidos.length + candidatosDescartados.length;
+    document.getElementById('mc-contadores').innerHTML = `
+        <span>Total: <strong>${totalOriginal}</strong></span>
+        <span>Válidos: <strong>${candidatosValidos.length}</strong></span>
+        <span>Con advertencias: <strong>${candidatosDescartados.length}</strong></span>
+        <span>Mostrados actualmente: <strong>${validos.length + descartados.length}</strong></span>`;
+    renderModalLista(validos, descartados, totalOriginal);
+}
+
+// ✓/⚠ por cada causa — reutiliza ETIQUETAS_CAUSA (mismas etiquetas que el
+// resto de la pantalla), nunca texto de reglas inventado en el frontend.
+function renderMotivosCandidato(c) {
+    if (!c.causas || c.causas.length === 0) {
+        return `<div class="mc-reglas"><span class="check-linea ok">✓ Cumple todas las reglas duras</span></div>`;
+    }
+    return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${ETIQUETAS_CAUSA[cod] || cod}</div>`).join('')}</div>`;
+}
+
+// "Propuesto en otro rodeo" (sección 6/13) — reutiliza los mismos 4 tipos
+// que devuelve detectarConflictoInterno(), sin reimplementar ninguna regla.
+function renderUsoEnOtraFilaModal(usos) {
+    if (!usos || usos.length === 0) return '';
+    return `<div class="mc-uso-otra-fila">${usos.map(u => `
+        ⚠ PROPUESTO EN OTRO RODEO — ${ETIQUETAS_USO_CORTO[u.tipo] || u.tipo}<br>
+        &nbsp;&nbsp;${sanitizar(u.tipo_rodeo_nombre || '—')} · ${sanitizar(u.club)} · ${formatFecha(u.fecha)}${u.asociacion ? ' · ' + sanitizar(u.asociacion) : ''}
+    `).join('<br>')}</div>`;
+}
+
+function renderFilaCandidatoModal(c, esValido) {
+    const { modo, id } = modalCandidatos;
+    const detalle = `${sanitizar(c.comuna_nombre || '—')} · ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} · ${c.designaciones_antes} designación(es) esta temporada`;
+    const nombreEscapado = sanitizar(c.nombre).replace(/'/g, "\\'");
+    const boton = esValido
+        ? `<button class="btn btn-primario" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar</button>`
+        : `<button class="btn btn-outline" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar igualmente</button>`;
+    return `<div class="mc-fila ${esValido ? '' : 'con-advertencia'}">
+        <div style="min-width:0;">
+            <div class="mc-nombre">${sanitizar(c.nombre)} <span style="font-weight:400; font-size:14px; color:var(--gris);">Categoría ${sanitizar(c.categoria || '—')}${c.categoria_preferente ? ' ★ Preferente' : ''}</span></div>
+            <div class="mc-detalle">${sanitizar(c.asociacion || '—')} · ${detalle}</div>
+            ${renderMotivosCandidato(c)}
+            ${renderUsoEnOtraFilaModal(c.uso_en_otra_fila)}
+        </div>
+        ${boton}
     </div>`;
+}
+
+// Sección 17 — válidos siempre primero, sin importar los filtros; orden
+// dentro de cada grupo según el selector. Vacío por filtros ≠ vacío por
+// falta de candidatos del motor (sección 23.C).
+function renderModalLista(validos, descartados, totalOriginal) {
+    const lista = document.getElementById('mc-lista');
+    if (validos.length === 0 && descartados.length === 0) {
+        lista.innerHTML = totalOriginal === 0
+            ? `<div class="mc-vacio">El motor no encontró candidatos para este rodeo.</div>`
+            : `<div class="mc-vacio">No hay jurados que coincidan con los filtros actuales.<br><br><button class="btn btn-secundario" onclick="limpiarFiltrosModal()">Limpiar filtros</button></div>`;
+        return;
+    }
+    let html = '';
+    if (validos.length > 0) {
+        html += `<div class="mc-grupo-titulo">Candidatos válidos / disponibles (${validos.length})</div>`;
+        html += validos.map(c => renderFilaCandidatoModal(c, true)).join('');
+    }
+    if (descartados.length > 0) {
+        html += `<div class="mc-grupo-titulo">Con advertencias / descartados (${descartados.length}) — requiere confirmar excepción</div>`;
+        html += descartados.map(c => renderFilaCandidatoModal(c, false)).join('');
+    }
+    lista.innerHTML = html;
 }
 
 async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, juradoNombre) {
@@ -1310,6 +1481,7 @@ async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, j
             });
             aplicarResultadoPreview(resp.destino, resp.origen_liberado, juradoNombre);
             mostrarToast(resp.origen_liberado ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección aplicada (todavía sin guardar).', 'success');
+            cerrarModalCandidatos();
             renderPreviewTemporal();
         } catch (err) {
             await manejarRespuestaSeleccion('preview', id, juradoId, err, juradoNombre);
@@ -1320,6 +1492,7 @@ async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, j
         const resp = await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/seleccionar`,
             { jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias });
         mostrarToast(resp.jurado_movido_desde ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección guardada.', 'success');
+        cerrarModalCandidatos();
         await recargarPropuestaAbierta();
     } catch (err) {
         await manejarRespuestaSeleccion('borrador', id, juradoId, err);
@@ -1387,13 +1560,13 @@ async function mostrarConfirmacionAdvertencias(modo, id, juradoId, info, juradoN
     const usosPropuesta = (info.advertencias || []).filter(a => a.origen === 'CONFLICTO_INTERNO_PROPUESTA');
     const nombreJurado = sanitizar(info.jurado?.nombre || juradoNombre || '');
 
-    let mensaje = `⚠ <strong>Advertencias para ${nombreJurado}:</strong>`;
+    let mensaje = `⚠ <strong style="font-size:16px;">Advertencias para ${nombreJurado}:</strong>`;
     if (reglas.length > 0) {
-        mensaje += `<ul style="text-align:left; margin:8px 0; padding-left:20px; font-size:13px;">${reglas.map(a => `<li>${etiquetaAdvertencia(a)}</li>`).join('')}</ul>`;
+        mensaje += `<ul style="text-align:left; margin:8px 0; padding-left:20px; font-size:14px; line-height:1.6;">${reglas.map(a => `<li>${etiquetaAdvertencia(a)}</li>`).join('')}</ul>`;
     }
     if (usosPropuesta.length > 0) {
         const destinoTxt = `<strong>${sanitizar(filaDestino?.rodeo?.club || '')}</strong>${filaDestino?.rodeo?.tipo_rodeo_nombre ? ' (' + sanitizar(filaDestino.rodeo.tipo_rodeo_nombre) + ')' : ''}, ${filaDestino?.rodeo?.fecha ? formatFecha(filaDestino.rodeo.fecha) : ''}`;
-        mensaje += `<div style="text-align:left; font-size:13px; margin-top:8px;">
+        mensaje += `<div style="text-align:left; font-size:14px; margin-top:8px; line-height:1.6;">
             <strong>${nombreJurado}</strong> ya está en esta misma propuesta:
             <ul style="margin:6px 0; padding-left:20px;">${usosPropuesta.map(a =>
                 `<li>${ETIQUETAS_USO_CORTO[a.tipo] || a.tipo} — ${sanitizar(a.club)}${a.tipo_rodeo_nombre ? ' (' + sanitizar(a.tipo_rodeo_nombre) + ')' : ''}, ${formatFecha(a.fecha)}</li>`
