@@ -27,6 +27,7 @@ const auditoria = require('../../services/auditoria');
 const { resolverComuna, cargarCatalogoResolucionComunas } = require('../../services/geografia');
 const { soloRolEvaluacion } = require('../../middleware/auth');
 const { generarSimulacion, filtrarRodeosSinJuradoEfectivo } = require('../../services/motorPropuestaDesignacion');
+const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
 router.use(soloRolEvaluacion());
@@ -266,6 +267,42 @@ router.get('/diagnostico', async (req, res) => {
     });
 });
 
+// Detecta "la tabla todavía no existe" tanto en el código de error crudo de
+// Postgres (42P01) como en el de PostgREST/Supabase (que valida contra su
+// caché de esquema antes de tocar la BD y devuelve PGRST205/PGRST202 con un
+// mensaje tipo "Could not find the table ... in the schema cache").
+function esErrorTablaInexistente(error) {
+    if (!error) return false;
+    if (error.code === '42P01' || error.code === 'PGRST205' || error.code === 'PGRST202') return true;
+    return /could not find the table|does not exist/i.test(error.message || '');
+}
+
+// Carga el mapa de ubicaciones habituales (club_ubicaciones) activas, para
+// las claves club+asociación pedidas. Si la tabla todavía no existe (la
+// migración 046 aún no fue aplicada), degrada a "sin sugerencias de este
+// tipo" en vez de romper el buscador — así el endpoint sigue funcionando
+// exactamente igual que hoy hasta que la migración se autorice y aplique.
+async function cargarMapaUbicacionesHabituales(pares) {
+    const mapa = new Map();
+    if (pares.length === 0) return mapa;
+
+    const { data, error } = await supabase
+        .from('club_ubicaciones')
+        .select('club_nombre_normalizado, asociacion_normalizada, comuna_id, comunas_chile(nombre)')
+        .eq('activo', true);
+
+    if (error) {
+        if (esErrorTablaInexistente(error)) return mapa; // tabla no existe todavía — degradar, no romper
+        throw new Error(error.message);
+    }
+
+    for (const row of (data || [])) {
+        const clave = `${row.club_nombre_normalizado}||${row.asociacion_normalizada}`;
+        mapa.set(clave, { comuna_id: row.comuna_id, comuna_nombre: row.comunas_chile?.nombre || null });
+    }
+    return mapa;
+}
+
 // ─── GET /rodeos-disponibles — buscador de rodeos SIN jurado efectivo ─────
 // Alimenta el buscador del laboratorio de simulación (Etapa 3.1). Devuelve
 // exclusivamente rodeos activos que NO tengan ya una asignación de jurado
@@ -273,11 +310,13 @@ router.get('/diagnostico', async (req, res) => {
 // una asignación rechazada o anulada NO cuenta como "ya tiene jurado".
 // No oculta rodeos por falta de comuna/clasificación — eso lo reporta el
 // dry-run como NO_EVALUABLE; aquí solo se informa para que el admin lo vea.
+// Incluye, para los rodeos sin comuna, una sugerencia SEGURA (nunca aplicada
+// automáticamente): ver services/clubUbicaciones.js.
 //
-// Anti N+1: 2 consultas totales (rodeos + asignaciones de esos rodeos),
-// igual patrón que GET /admin/evaluaciones/rodeos-disponibles.
+// Anti N+1: consultas fijas (rodeos + asignaciones + catálogo de comunas +
+// ubicaciones habituales), sin importar cuántos rodeos falten comuna.
 router.get('/rodeos-disponibles', async (req, res) => {
-    const { fecha_desde, fecha_hasta, asociacion, tipo_rodeo_id, q } = req.query;
+    const { fecha_desde, fecha_hasta, asociacion, tipo_rodeo_id, q, estado_datos } = req.query;
 
     let query = supabase
         .from('rodeos')
@@ -310,20 +349,167 @@ router.get('/rodeos-disponibles', async (req, res) => {
 
     // Único criterio de "ya tiene jurado" — el mismo que usa el motor
     // (filtrarRodeosSinJuradoEfectivo reutiliza esAsignacionEfectiva).
-    const disponibles = filtrarRodeosSinJuradoEfectivo(rodeos, asigs)
-        .map(r => ({
+    const sinJurado = filtrarRodeosSinJuradoEfectivo(rodeos, asigs);
+
+    // Catálogo de comunas + ubicaciones habituales, solo si hace falta
+    // (algún rodeo visible carece de comuna) — evita trabajo innecesario.
+    const necesitaSugerencia = sinJurado.some(r => !r.comuna_id);
+    let catalogoComunas = null, mapaHabitual = new Map();
+    if (necesitaSugerencia) {
+        try {
+            catalogoComunas = await cargarCatalogoResolucionComunas();
+            mapaHabitual = await cargarMapaUbicacionesHabituales(sinJurado);
+        } catch (err) {
+            return res.status(500).json({ error: err.message });
+        }
+    }
+
+    let disponibles = sinJurado.map(r => {
+        const clasificacion_codigo = r.tipos_rodeo?.clasificaciones_designacion?.codigo || null;
+        const comuna_nombre = r.comunas_chile?.nombre || null;
+
+        let sugerencia_comuna = null;
+        if (!r.comuna_id && catalogoComunas) {
+            sugerencia_comuna = sugerirComunaParaClub(r.club, r.asociacion, mapaHabitual, catalogoComunas);
+        }
+
+        return {
             id: r.id,
             club: r.club,
             asociacion: r.asociacion,
             fecha: r.fecha,
             tipo_rodeo_nombre: r.tipo_rodeo_nombre,
-            clasificacion_codigo: r.tipos_rodeo?.clasificaciones_designacion?.codigo || null,
+            clasificacion_codigo,
             clasificacion_nombre: r.tipos_rodeo?.clasificaciones_designacion?.nombre || null,
             comuna_id: r.comuna_id,
-            comuna_nombre: r.comunas_chile?.nombre || null
-        }));
+            comuna_nombre,
+            sugerencia_comuna
+        };
+    });
+
+    // Filtro "Estado de datos" (derivado, se aplica sobre lo ya calculado)
+    if (estado_datos === 'sin_comuna')        disponibles = disponibles.filter(r => !r.comuna_nombre);
+    else if (estado_datos === 'sin_clasificacion') disponibles = disponibles.filter(r => !r.clasificacion_codigo);
+    else if (estado_datos === 'completo')     disponibles = disponibles.filter(r => r.comuna_nombre && r.clasificacion_codigo);
 
     res.json({ rodeos: disponibles });
+});
+
+// ─── POST /club-ubicacion — guardar/actualizar comuna habitual de un club ──
+// Body: { club, asociacion, comuna_id }. Upsert por club+asociación
+// normalizados (activo=true). Es solo una SUGERENCIA a futuro — no toca
+// ningún rodeo. Solo Administrador (allowlist del router).
+router.post('/club-ubicacion', async (req, res) => {
+    const { club, asociacion, comuna_id } = req.body;
+    if (!club || !asociacion || !comuna_id) {
+        return res.status(400).json({ error: 'club, asociacion y comuna_id son requeridos' });
+    }
+
+    const { data: comuna } = await supabase.from('comunas_chile').select('id, nombre').eq('id', comuna_id).single();
+    if (!comuna) return res.status(400).json({ error: 'Comuna no encontrada' });
+
+    const payload = {
+        club_nombre: club.trim(),
+        club_nombre_normalizado: normalizarClub(club),
+        asociacion: asociacion.trim(),
+        asociacion_normalizada: normalizarAsociacionClub(asociacion),
+        comuna_id,
+        confirmado_por: req.usuario.id,
+        confirmado_en: new Date().toISOString(),
+        activo: true,
+        updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+        .from('club_ubicaciones')
+        .upsert(payload, { onConflict: 'club_nombre_normalizado,asociacion_normalizada' })
+        .select()
+        .single();
+
+    if (error) {
+        if (esErrorTablaInexistente(error)) {
+            return res.status(409).json({ error: 'La tabla club_ubicaciones todavía no existe (migración 046 pendiente de aplicar)' });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+
+    await auditoria.registrar({
+        tabla: 'club_ubicaciones',
+        registro_id: data.id,
+        accion: 'crear',
+        datos_nuevos: { club: payload.club_nombre, asociacion: payload.asociacion, comuna_id, comuna_nombre: comuna.nombre },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Comuna habitual guardada: ${payload.club_nombre} (${payload.asociacion}) → ${comuna.nombre}`,
+        ip_address: req.ip
+    });
+
+    res.json(data);
+});
+
+// ─── GET /rodeos-mismo-club — otros rodeos del mismo club+asociación sin comuna ──
+// Usado para el prompt "Existen X rodeos sin comuna de este mismo club" —
+// SOLO informa, no aplica nada. Comparación EXACTA normalizada (no ILIKE,
+// no fuzzy) para no agrupar clubes distintos por coincidencia parcial.
+router.get('/rodeos-mismo-club', async (req, res) => {
+    const { club, asociacion, excluir } = req.query;
+    if (!club || !asociacion) return res.status(400).json({ error: 'club y asociacion son requeridos' });
+
+    const clubNorm = normalizarClub(club);
+    const asocNorm = normalizarAsociacionClub(asociacion);
+
+    const { data, error } = await supabase
+        .from('rodeos')
+        .select('id, club, asociacion, fecha')
+        .eq('estado', 'activo')
+        .is('comuna_id', null);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const coincidencias = (data || []).filter(r =>
+        r.id !== excluir &&
+        normalizarClub(r.club) === clubNorm &&
+        normalizarAsociacionClub(r.asociacion) === asocNorm
+    );
+
+    res.json({ rodeos: coincidencias });
+});
+
+// ─── POST /aplicar-comuna-lote — aplicar una comuna a rodeos EXPLÍCITAMENTE elegidos ──
+// Body: { comuna_id, rodeo_ids: [...] }. Requiere que el admin haya
+// confirmado la lista exacta (ver GET /rodeos-mismo-club) — nunca aplica
+// "todos los que coincidan" automáticamente. Solo actualiza rodeos activos
+// cuya comuna_id sea NULL (no sobrescribe una comuna ya cargada por lote).
+router.post('/aplicar-comuna-lote', async (req, res) => {
+    const { comuna_id, rodeo_ids } = req.body;
+    if (!comuna_id || !Array.isArray(rodeo_ids) || rodeo_ids.length === 0) {
+        return res.status(400).json({ error: 'comuna_id y rodeo_ids (array no vacío) son requeridos' });
+    }
+
+    const { data: comuna } = await supabase.from('comunas_chile').select('id, nombre').eq('id', comuna_id).single();
+    if (!comuna) return res.status(400).json({ error: 'Comuna no encontrada' });
+
+    const { data: actualizados, error } = await supabase
+        .from('rodeos')
+        .update({ comuna_id, updated_at: new Date().toISOString() })
+        .in('id', rodeo_ids)
+        .eq('estado', 'activo')
+        .is('comuna_id', null)
+        .select('id, club, fecha');
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'rodeos',
+        registro_id: null,
+        accion: 'editar',
+        datos_nuevos: { comuna_id, comuna_nombre: comuna.nombre, rodeos_afectados: (actualizados || []).map(r => r.id) },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Comuna "${comuna.nombre}" aplicada en lote a ${(actualizados || []).length} rodeo(s) (confirmado manualmente)`,
+        ip_address: req.ip
+    });
+
+    res.json({ mensaje: `${(actualizados || []).length} rodeo(s) actualizado(s)`, actualizados: actualizados || [] });
 });
 
 // ─── POST /dry-run — motor de propuesta en modo SIMULACIÓN ────────────────

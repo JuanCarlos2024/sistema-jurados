@@ -110,9 +110,20 @@
                             <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Club / búsqueda libre</label>
                             <input type="text" id="bd-buscar" class="form-control" placeholder="Buscar..." style="width:155px;" onkeydown="if(event.key==='Enter')buscarRodeosDisponibles()">
                         </div>
+                        <div>
+                            <label style="font-size:12px; display:block; margin-bottom:3px; color:var(--gris);">Estado de datos</label>
+                            <select id="bd-estado-datos" class="form-control" style="width:150px;">
+                                <option value="">Todos</option>
+                                <option value="sin_comuna">Sin comuna</option>
+                                <option value="sin_clasificacion">Sin clasificación</option>
+                                <option value="completo">Completo</option>
+                            </select>
+                        </div>
                         <button class="btn btn-primario btn-pequeño" onclick="buscarRodeosDisponibles()">Buscar</button>
                         <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltrosBusqueda()">Limpiar</button>
                     </div>
+
+                    <datalist id="dl-comunas-busqueda"></datalist>
 
                     <div id="bd-resultados" style="min-height:80px; max-height:420px; overflow-y:auto;">
                         <p style="font-size:13px; color:var(--gris); padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos sin jurado designado.</p>
@@ -202,6 +213,8 @@ cargar();
 // ─────────────────────────────────────────────────────────────────────────
 let resultadosBusqueda = [];              // último resultado de la búsqueda actual
 const seleccionMapa = new Map();          // id -> {id, club, asociacion, fecha, tipo_rodeo_nombre} — persiste entre búsquedas
+const editandoComuna = new Set();         // rodeo_ids cuya celda Comuna está en modo edición
+let catalogoComunas = [];                 // catálogo completo (346), para el datalist de comuna
 
 async function cargarTiposRodeoFiltro() {
     try {
@@ -212,12 +225,22 @@ async function cargarTiposRodeoFiltro() {
 }
 cargarTiposRodeoFiltro();
 
+async function cargarCatalogoComunasBusqueda() {
+    try {
+        catalogoComunas = await api.get('/admin/propuesta-designacion/comunas');
+        const dl = document.getElementById('dl-comunas-busqueda');
+        dl.innerHTML = catalogoComunas.map(c => `<option value="${sanitizar(c.nombre)}">`).join('');
+    } catch (e) { console.warn('[Búsqueda] no se pudo cargar el catálogo de comunas:', e.message); }
+}
+cargarCatalogoComunasBusqueda();
+
 function limpiarFiltrosBusqueda() {
     document.getElementById('bd-fecha-desde').value = '';
     document.getElementById('bd-fecha-hasta').value = '';
     document.getElementById('bd-asociacion').value = '';
     document.getElementById('bd-tipo-rodeo').value = '';
     document.getElementById('bd-buscar').value = '';
+    document.getElementById('bd-estado-datos').value = '';
     resultadosBusqueda = [];
     document.getElementById('bd-resultados').innerHTML =
         '<p style="font-size:13px;color:var(--gris);padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos sin jurado designado.</p>';
@@ -230,11 +253,13 @@ async function buscarRodeosDisponibles() {
     const as = document.getElementById('bd-asociacion').value.trim();
     const tr = document.getElementById('bd-tipo-rodeo').value;
     const bs = document.getElementById('bd-buscar').value.trim();
+    const ed = document.getElementById('bd-estado-datos').value;
     if (fd) params.set('fecha_desde', fd);
     if (fh) params.set('fecha_hasta', fh);
     if (as) params.set('asociacion', as);
     if (tr) params.set('tipo_rodeo_id', tr);
     if (bs) params.set('q', bs);
+    if (ed) params.set('estado_datos', ed);
 
     const div = document.getElementById('bd-resultados');
     div.innerHTML = '<div style="padding:20px;text-align:center;"><div class="spinner"></div></div>';
@@ -242,6 +267,7 @@ async function buscarRodeosDisponibles() {
     try {
         const resp = await api.get('/admin/propuesta-designacion/rodeos-disponibles?' + params.toString());
         resultadosBusqueda = resp.rodeos || [];
+        editandoComuna.clear();
         renderTablaBusqueda();
     } catch (err) {
         div.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
@@ -271,7 +297,7 @@ function renderTablaBusqueda() {
             <td style="font-size:13px;">${sanitizar(r.asociacion || '—')}</td>
             <td style="font-size:12px;">${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
             <td style="font-size:12px;">${sanitizar(r.clasificacion_nombre || '—')}</td>
-            <td style="font-size:12px;">${sanitizar(r.comuna_nombre || '—')}</td>
+            <td style="min-width:170px;">${renderCeldaComuna(r)}</td>
             <td>${estadoTexto}</td>
         </tr>`;
     }).join('');
@@ -323,6 +349,138 @@ function _actualizarContadorSeleccion() {
     document.getElementById('bd-contador').textContent = `${n} rodeo${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}`;
     document.getElementById('btn-ejecutar-dryrun').disabled = n === 0;
     if (n > 0) document.getElementById('bd-footer').style.display = '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Edición inline de comuna — asignar/corregir la comuna de un rodeo sin
+// salir de esta pantalla. Reutiliza PATCH /admin/rodeos/:id (mismo camino
+// de escritura ya validado, con auditoría y permisos existentes). Las
+// sugerencias son SIEMPRE opt-in: nunca se guarda nada sin que el
+// Administrador presione "Usar" o "Guardar" explícitamente.
+// ─────────────────────────────────────────────────────────────────────────
+function renderCeldaComuna(r) {
+    const enEdicion = editandoComuna.has(r.id);
+
+    if (r.comuna_nombre && !enEdicion) {
+        return `${sanitizar(r.comuna_nombre)}
+            <button class="btn-link" style="font-size:11px; border:none; background:none; color:var(--primario); cursor:pointer; padding:0; margin-left:4px;" onclick="_iniciarEdicionComuna('${r.id}')">Editar</button>`;
+    }
+
+    let html = '';
+    const sug = r.sugerencia_comuna;
+    if (sug && !enEdicion) {
+        html += `<div style="font-size:11px; margin-bottom:4px; color:#1b4f8c;">Sugerida: <strong>${sanitizar(sug.comuna_nombre)}</strong>
+            <button class="btn btn-pequeño btn-outline" style="padding:1px 8px; margin-left:4px;" onclick="_usarSugerenciaComuna('${r.id}')">Usar</button></div>`;
+    }
+
+    html += `
+        <div style="display:flex; gap:4px; align-items:center;">
+            <input type="text" list="dl-comunas-busqueda" class="form-control" style="width:130px; font-size:12px; padding:4px 6px;"
+                   id="in-comuna-${r.id}" placeholder="Seleccionar comuna..." value="${sanitizar(r.comuna_nombre || '')}" autocomplete="off">
+            <button class="btn btn-pequeño btn-primario" style="padding:3px 10px;" onclick="_guardarComunaDesdeInput('${r.id}')">Guardar</button>
+        </div>
+        <label style="font-size:10px; display:flex; gap:4px; align-items:flex-start; margin-top:4px; cursor:pointer; color:var(--gris);">
+            <input type="checkbox" id="chk-habitual-${r.id}" checked style="margin-top:1px;"> Guardar también como comuna habitual del club
+        </label>`;
+
+    if (enEdicion) {
+        html += `<button class="btn-link" style="font-size:10px; border:none; background:none; color:var(--gris); cursor:pointer; padding:0; margin-top:2px;" onclick="_cancelarEdicionComuna('${r.id}')">Cancelar</button>`;
+    }
+
+    return html;
+}
+
+function _iniciarEdicionComuna(rodeoId) {
+    editandoComuna.add(rodeoId);
+    renderTablaBusqueda();
+    document.getElementById('in-comuna-' + rodeoId)?.focus();
+}
+
+function _cancelarEdicionComuna(rodeoId) {
+    editandoComuna.delete(rodeoId);
+    renderTablaBusqueda();
+}
+
+async function _usarSugerenciaComuna(rodeoId) {
+    const r = resultadosBusqueda.find(x => x.id === rodeoId);
+    if (!r?.sugerencia_comuna) return;
+    await _guardarComunaRodeo(rodeoId, r.sugerencia_comuna.comuna_id, r.sugerencia_comuna.comuna_nombre, true);
+}
+
+async function _guardarComunaDesdeInput(rodeoId) {
+    const input = document.getElementById('in-comuna-' + rodeoId);
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Seleccione una comuna de la lista', 'error'); return; }
+    const match = catalogoComunas.find(c => c.nombre.toLowerCase() === nombre.toLowerCase());
+    if (!match) { mostrarToast('Esa comuna no existe en el catálogo. Selecciónela de la lista desplegable.', 'error'); return; }
+    const guardarHabitual = document.getElementById('chk-habitual-' + rodeoId)?.checked ?? true;
+    await _guardarComunaRodeo(rodeoId, match.id, match.nombre, guardarHabitual);
+}
+
+async function _guardarComunaRodeo(rodeoId, comunaId, comunaNombre, guardarHabitual) {
+    const r = resultadosBusqueda.find(x => x.id === rodeoId);
+    if (!r) return;
+    try {
+        // Mismo endpoint que usa el formulario de edición de Rodeos — no se
+        // crea un camino de escritura nuevo para el dato definitivo.
+        await api.patch(`/admin/rodeos/${rodeoId}`, { comuna_id: comunaId });
+
+        r.comuna_id = comunaId;
+        r.comuna_nombre = comunaNombre;
+        r.sugerencia_comuna = null;
+        editandoComuna.delete(rodeoId);
+        mostrarToast('Comuna guardada correctamente', 'success');
+        renderTablaBusqueda();
+
+        if (guardarHabitual) {
+            try {
+                await api.post('/admin/propuesta-designacion/club-ubicacion', { club: r.club, asociacion: r.asociacion, comuna_id: comunaId });
+            } catch (e) {
+                console.warn('[Comuna habitual] no se pudo guardar:', e.message);
+                mostrarToast('La comuna del rodeo se guardó, pero no se pudo guardar como habitual del club: ' + e.message, 'error');
+            }
+        }
+
+        // ¿Existen otros rodeos del mismo club+asociación todavía sin comuna?
+        try {
+            const params = new URLSearchParams({ club: r.club, asociacion: r.asociacion, excluir: rodeoId });
+            const otros = await api.get('/admin/propuesta-designacion/rodeos-mismo-club?' + params.toString());
+            if (otros.rodeos && otros.rodeos.length > 0) {
+                await _ofrecerAplicarAOtros(otros.rodeos, comunaId, comunaNombre);
+            }
+        } catch (e) {
+            console.warn('[Comuna] no se pudo verificar otros rodeos del mismo club:', e.message);
+        }
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+async function _ofrecerAplicarAOtros(rodeosCoincidentes, comunaId, comunaNombre) {
+    const lista = rodeosCoincidentes.map(r => `<li>${formatFecha(r.fecha)} — ${sanitizar(r.club)}</li>`).join('');
+    const mensaje = `
+        <strong>Existen ${rodeosCoincidentes.length} rodeo(s) más del mismo club sin comuna:</strong>
+        <ul style="text-align:left; margin:10px 0; padding-left:20px; font-size:13px;">${lista}</ul>
+        ¿Aplicar también "${sanitizar(comunaNombre)}" a esos rodeos?`;
+
+    const ok = await confirmar(mensaje);
+    if (!ok) return;
+
+    try {
+        const resp = await api.post('/admin/propuesta-designacion/aplicar-comuna-lote', {
+            comuna_id: comunaId,
+            rodeo_ids: rodeosCoincidentes.map(r => r.id)
+        });
+        mostrarToast(resp.mensaje || 'Comuna aplicada a los rodeos seleccionados', 'success');
+        // Actualizar en memoria los que sigan visibles en la búsqueda actual
+        const idsActualizados = new Set((resp.actualizados || []).map(a => a.id));
+        resultadosBusqueda.forEach(r => {
+            if (idsActualizados.has(r.id)) { r.comuna_id = comunaId; r.comuna_nombre = comunaNombre; r.sugerencia_comuna = null; }
+        });
+        renderTablaBusqueda();
+    } catch (err) {
+        mostrarError(err);
+    }
 }
 
 const ETIQUETAS_CAUSA = {
