@@ -176,7 +176,7 @@ router.post('/', async (req, res) => {
 
 // PATCH /api/admin/usuarios/:id
 router.patch('/:id', async (req, res) => {
-    const { nombre_completo, email, telefono, direccion, comuna, ciudad } = req.body;
+    const { nombre_completo, email, telefono, direccion, comuna, ciudad, asociacion } = req.body;
 
     const { data: anterior } = await supabase
         .from('usuarios_pagados')
@@ -193,6 +193,10 @@ router.patch('/:id', async (req, res) => {
     if (direccion !== undefined) cambios.direccion = direccion;
     if (comuna !== undefined) cambios.comuna = comuna;
     if (ciudad !== undefined) cambios.ciudad = ciudad;
+    // Edición manual y explícita de asociación (ej. desde "Datos pendientes"
+    // de Propuesta de Designación) — NO se normaliza ni se fusiona con
+    // ninguna otra; se guarda tal cual la escribe/confirma el administrador.
+    if (asociacion !== undefined) cambios.asociacion = asociacion ? asociacion.trim() : null;
     cambios.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase

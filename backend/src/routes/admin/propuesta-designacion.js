@@ -28,6 +28,7 @@ const { resolverComuna, cargarCatalogoResolucionComunas } = require('../../servi
 const { soloRolEvaluacion } = require('../../middleware/auth');
 const { generarSimulacion, filtrarRodeosSinJuradoEfectivo } = require('../../services/motorPropuestaDesignacion');
 const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
+const { clasificarJurado } = require('../../services/diagnosticoJurados');
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
 router.use(soloRolEvaluacion());
@@ -166,6 +167,29 @@ router.patch('/tipos-rodeo/:id/clasificacion', async (req, res) => {
     res.json(data);
 });
 
+// ─── GET /asociaciones-existentes — valores DISTINCT ya usados en el sistema ──
+// Alimenta el datalist de sugerencias al completar la asociación de un
+// jurado (panel "Datos pendientes"). Devuelve exactamente los valores tal
+// como están guardados hoy en rodeos.asociacion y usuarios_pagados.asociacion
+// — SIN normalizar, SIN fusionar, SIN fuzzy matching. "BÍO-BÍO" y
+// "RÍO BÍO-BÍO" (o cualquier otro par distinto) aparecen como dos entradas
+// separadas, tal cual están en la base. Sigue siendo posible escribir un
+// valor nuevo que no esté en la lista — esto es solo una sugerencia.
+router.get('/asociaciones-existentes', async (req, res) => {
+    const [{ data: rodeosAsoc, error: e1 }, { data: usuariosAsoc, error: e2 }] = await Promise.all([
+        supabase.from('rodeos').select('asociacion').eq('estado', 'activo'),
+        supabase.from('usuarios_pagados').select('asociacion').eq('activo', true)
+    ]);
+    if (e1) return res.status(500).json({ error: e1.message });
+    if (e2) return res.status(500).json({ error: e2.message });
+
+    const valores = new Set();
+    for (const r of (rodeosAsoc || [])) if (r.asociacion && r.asociacion.trim()) valores.add(r.asociacion.trim());
+    for (const u of (usuariosAsoc || [])) if (u.asociacion && u.asociacion.trim()) valores.add(u.asociacion.trim());
+
+    res.json({ asociaciones: [...valores].sort((a, b) => a.localeCompare(b, 'es')) });
+});
+
 // ─── GET /diagnostico — contadores de datos incompletos (solo lectura) ────
 // No muta nada. Pensado para saber, antes de construir el motor, qué datos
 // faltan: comuna/clasificación en rodeos, categoría/comuna/asociación en
@@ -229,23 +253,18 @@ router.get('/diagnostico', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 
+    // Misma función que usa GET /jurados-pendientes — un solo criterio, para
+    // que el contador de aquí y la lista de allá nunca puedan divergir.
     let conCategoria = 0, sinCategoria = 0;
     let conComuna = 0, sinComuna = 0, comunaResuelta = 0, comunaNoReconocida = 0;
     let asociacionVacia = 0;
 
     for (const j of (jurados || [])) {
-        if (j.categoria && ['A', 'B', 'C'].includes(j.categoria)) conCategoria++; else sinCategoria++;
-
-        const comunaTexto = (j.comuna || '').trim();
-        if (comunaTexto) {
-            conComuna++;
-            const resultado = resolverComuna(comunaTexto, catalogoComunas);
-            if (resultado.resuelto) comunaResuelta++; else comunaNoReconocida++;
-        } else {
-            sinComuna++;
-        }
-
-        if (!j.asociacion || !j.asociacion.trim()) asociacionVacia++;
+        const c = clasificarJurado(j, catalogoComunas);
+        if (c.sinCategoria) sinCategoria++; else conCategoria++;
+        if (c.sinComuna) sinComuna++; else conComuna++;
+        if (c.comunaNoReconocida) comunaNoReconocida++; else if (!c.sinComuna) comunaResuelta++;
+        if (c.sinAsociacion) asociacionVacia++;
     }
 
     const diagnosticoJurados = {
@@ -265,6 +284,71 @@ router.get('/diagnostico', async (req, res) => {
         jurados: diagnosticoJurados,
         generado_en: new Date().toISOString()
     });
+});
+
+// ─── GET /jurados-pendientes?tipo= — lista exacta de jurados afectados ────
+// Complemento de /diagnostico: éste da contadores, este otro da las filas
+// reales para poder corregirlas sin buscar manualmente. Usa exactamente el
+// mismo criterio (clasificarJurado) que /diagnostico, así el número del
+// indicador y la cantidad de filas devueltas siempre coinciden. Solo
+// lectura — no modifica nada.
+router.get('/jurados-pendientes', async (req, res) => {
+    const { tipo } = req.query;
+    const tiposValidos = ['sin_categoria', 'sin_comuna', 'sin_asociacion', 'comuna_no_reconocida'];
+    if (!tiposValidos.includes(tipo)) {
+        return res.status(400).json({ error: `tipo inválido. Valores permitidos: ${tiposValidos.join(', ')}` });
+    }
+
+    const { data: jurados, error } = await supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, codigo_interno, categoria, comuna, asociacion')
+        .eq('activo', true)
+        .eq('tipo_persona', 'jurado')
+        .order('nombre_completo');
+    if (error) return res.status(500).json({ error: error.message });
+
+    let catalogoComunas;
+    try {
+        catalogoComunas = await cargarCatalogoResolucionComunas();
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+
+    const CAMPO = { sin_categoria: 'sinCategoria', sin_comuna: 'sinComuna', sin_asociacion: 'sinAsociacion', comuna_no_reconocida: 'comunaNoReconocida' };
+    const campo = CAMPO[tipo];
+
+    const afectados = (jurados || [])
+        .filter(j => clasificarJurado(j, catalogoComunas)[campo])
+        .map(j => ({
+            id: j.id, nombre_completo: j.nombre_completo, codigo_interno: j.codigo_interno,
+            categoria: j.categoria, comuna: j.comuna, asociacion: j.asociacion
+        }));
+
+    res.json({ jurados: afectados });
+});
+
+// ─── GET /tipos-rodeo-afectando-rodeos — qué tipos causan "rodeos sin ────
+// clasificación" (la clasificación se define en el TIPO, no en el rodeo).
+// Devuelve solo tipos sin clasificar que además tienen al menos un rodeo
+// activo — para que la acción "Corregir Tipo de Rodeo" apunte exactamente
+// a los tipos que están causando el problema hoy, no a cualquier tipo sin
+// clasificar aunque no lo use nadie. Solo lectura.
+router.get('/tipos-rodeo-afectando-rodeos', async (req, res) => {
+    const { data: rodeos, error } = await supabase
+        .from('rodeos')
+        .select('tipo_rodeo_id, tipo_rodeo_nombre, tipos_rodeo(clasificacion_designacion_id)')
+        .eq('estado', 'activo');
+    if (error) return res.status(500).json({ error: error.message });
+
+    const conteo = new Map(); // tipo_rodeo_id -> { nombre, cantidad }
+    for (const r of (rodeos || [])) {
+        if (r.tipos_rodeo?.clasificacion_designacion_id) continue; // ya clasificado, no es el problema
+        if (!r.tipo_rodeo_id) continue;
+        if (!conteo.has(r.tipo_rodeo_id)) conteo.set(r.tipo_rodeo_id, { tipo_rodeo_id: r.tipo_rodeo_id, nombre: r.tipo_rodeo_nombre, cantidad_rodeos: 0 });
+        conteo.get(r.tipo_rodeo_id).cantidad_rodeos++;
+    }
+
+    res.json({ tipos: [...conteo.values()].sort((a, b) => b.cantidad_rodeos - a.cantidad_rodeos) });
 });
 
 // Detecta "la tabla todavía no existe" tanto en el código de error crudo de

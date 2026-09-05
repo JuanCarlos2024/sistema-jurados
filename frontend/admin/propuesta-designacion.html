@@ -23,6 +23,20 @@
         .kpi-card .val.naranja { color: #e67e22; }
         .kpi-card .val.rojo   { color: #c0392b; }
         .kpi-card .lbl { font-size: 12px; color: var(--gris); margin-top: 4px; line-height: 1.3; }
+        button.kpi-card {
+            font: inherit; cursor: pointer; width: 100%; appearance: none; -webkit-appearance: none;
+        }
+        button.kpi-card:hover, button.kpi-card:focus-visible {
+            border-color: var(--primario); box-shadow: 0 0 0 2px rgba(41,128,185,.18); outline: none;
+        }
+        .kpi-card .accion-hint { font-size: 10px; color: var(--primario); margin-top: 5px; font-weight: 700; }
+        .pendiente-card {
+            background: white; border: 1px solid var(--gris-borde); border-radius: 10px;
+            padding: 12px 14px; margin-bottom: 10px; display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+        }
+        .pendiente-card .datos { flex: 1 1 260px; font-size: 13px; }
+        .pendiente-card .datos .nombre { font-weight: 700; margin-bottom: 2px; }
+        .pendiente-card .datos .detalle { color: var(--gris); font-size: 12px; line-height: 1.5; }
         .aviso-etapa {
             background: #eef5ff; border: 1px solid #cfe2ff; border-radius: 10px;
             padding: 12px 16px; font-size: 13px; color: #1b4f8c; margin-bottom: 20px; line-height: 1.5;
@@ -78,6 +92,8 @@
                 <div class="spinner-wrap"><div class="spinner"></div></div>
             </div>
 
+            <div id="panel-pendientes"></div>
+
             <div class="dash-seccion" style="margin-top:28px;">
                 <div class="dash-seccion-titulo">🧪 Laboratorio de simulación (DRY-RUN)</div>
                 <div class="aviso-simulacion">
@@ -124,6 +140,7 @@
                     </div>
 
                     <datalist id="dl-comunas-busqueda"></datalist>
+                    <datalist id="dl-asociaciones-existentes"></datalist>
 
                     <div id="bd-resultados" style="min-height:80px; max-height:420px; overflow-y:auto;">
                         <p style="font-size:13px; color:var(--gris); padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos sin jurado designado.</p>
@@ -158,6 +175,20 @@ function kpi(valor, etiqueta, clase) {
     return `<div class="kpi-card"><div class="val ${clase||''}">${valor}</div><div class="lbl">${etiqueta}</div></div>`;
 }
 
+// KPI accionable: si valor > 0 y se pasa una expresión de click, se renderiza
+// como un <button> real (accesible por teclado, foco visible, rol semántico
+// nativo) que la ejecuta. Si valor es 0, se muestra como informativo normal
+// (nada que corregir). `expresionOnclick` debe ser una llamada completa, ej:
+// "abrirRodeosSinComuna()" o "abrirDatosPendientesJurados('sin_categoria')".
+function kpiAccionable(valor, etiqueta, clase, expresionOnclick) {
+    if (!valor || valor <= 0 || !expresionOnclick) return kpi(valor, etiqueta, clase);
+    return `<button type="button" class="kpi-card" onclick="${expresionOnclick}">
+        <div class="val ${clase||''}">${valor}</div>
+        <div class="lbl">${etiqueta}</div>
+        <div class="accion-hint">Ver y corregir ›</div>
+    </button>`;
+}
+
 async function cargar() {
     const cont = document.getElementById('contenido');
     try {
@@ -167,9 +198,9 @@ async function cargar() {
                 <div class="dash-seccion-titulo">Rodeos activos (${d.rodeos.total})</div>
                 <div class="kpi-grid">
                     ${kpi(d.rodeos.con_comuna, 'Con comuna', 'verde')}
-                    ${kpi(d.rodeos.sin_comuna, 'Sin comuna', 'naranja')}
+                    ${kpiAccionable(d.rodeos.sin_comuna, 'Sin comuna', 'naranja', 'abrirRodeosSinComuna()')}
                     ${kpi(d.rodeos.con_clasificacion, 'Con clasificación (vía tipo)', 'verde')}
-                    ${kpi(d.rodeos.sin_clasificacion, 'Sin clasificación (vía tipo)', 'naranja')}
+                    ${kpiAccionable(d.rodeos.sin_clasificacion, 'Sin clasificación (vía tipo)', 'naranja', 'abrirRodeosSinClasificacion()')}
                 </div>
             </div>
 
@@ -177,7 +208,7 @@ async function cargar() {
                 <div class="dash-seccion-titulo">Tipos de rodeo activos (${d.tipos_rodeo.total})</div>
                 <div class="kpi-grid">
                     ${kpi(d.tipos_rodeo.clasificados, 'Clasificados', 'verde')}
-                    ${kpi(d.tipos_rodeo.sin_clasificar, 'Sin clasificar', 'naranja')}
+                    ${kpiAccionable(d.tipos_rodeo.sin_clasificar, 'Sin clasificar', 'naranja', 'abrirTiposSinClasificar()')}
                 </div>
             </div>
 
@@ -185,12 +216,12 @@ async function cargar() {
                 <div class="dash-seccion-titulo">Jurados activos (${d.jurados.total})</div>
                 <div class="kpi-grid">
                     ${kpi(d.jurados.con_categoria, 'Con categoría A/B/C', 'verde')}
-                    ${kpi(d.jurados.sin_categoria, 'Sin categoría', 'rojo')}
+                    ${kpiAccionable(d.jurados.sin_categoria, 'Sin categoría', 'rojo', "abrirDatosPendientesJurados('sin_categoria')")}
                     ${kpi(d.jurados.con_comuna_texto, 'Con comuna (texto)', 'verde')}
-                    ${kpi(d.jurados.sin_comuna_texto, 'Sin comuna', 'naranja')}
+                    ${kpiAccionable(d.jurados.sin_comuna_texto, 'Sin comuna', 'naranja', "abrirDatosPendientesJurados('sin_comuna')")}
                     ${kpi(d.jurados.comuna_resuelta_contra_catalogo, 'Comuna reconocida en catálogo', 'verde')}
-                    ${kpi(d.jurados.comuna_no_reconocida_contra_catalogo, 'Comuna NO reconocida en catálogo', 'rojo')}
-                    ${kpi(d.jurados.asociacion_vacia_o_nula, 'Asociación vacía o nula', 'naranja')}
+                    ${kpiAccionable(d.jurados.comuna_no_reconocida_contra_catalogo, 'Comuna NO reconocida en catálogo', 'rojo', "abrirDatosPendientesJurados('comuna_no_reconocida')")}
+                    ${kpiAccionable(d.jurados.asociacion_vacia_o_nula, 'Asociación vacía o nula', 'naranja', "abrirDatosPendientesJurados('sin_asociacion')")}
                 </div>
             </div>
 
@@ -204,6 +235,186 @@ async function cargar() {
 }
 
 cargar();
+
+// ─────────────────────────────────────────────────────────────────────────
+// Datos pendientes — hace accionables los indicadores de datos incompletos:
+// click → ver exactamente los registros afectados → corregir → guardar.
+// Reutiliza los mecanismos de edición YA EXISTENTES (PATCH /admin/usuarios,
+// PATCH /admin/usuarios/:id/categoria) — no crea un camino de escritura
+// nuevo para jurados. Solo lectura de listados vía los nuevos endpoints de
+// diagnóstico (jurados-pendientes, tipos-rodeo-afectando-rodeos).
+// ─────────────────────────────────────────────────────────────────────────
+const ETIQUETAS_PENDIENTE = {
+    sin_categoria: 'Jurados sin categoría',
+    sin_comuna: 'Jurados sin comuna',
+    sin_asociacion: 'Jurados con asociación vacía',
+    comuna_no_reconocida: 'Jurados con comuna no reconocida en el catálogo'
+};
+
+async function abrirDatosPendientesJurados(tipo) {
+    const panel = document.getElementById('panel-pendientes');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const resp = await api.get('/admin/propuesta-designacion/jurados-pendientes?tipo=' + tipo);
+        renderPanelJuradosPendientes(tipo, resp.jurados || []);
+    } catch (err) {
+        panel.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
+}
+
+function renderPanelJuradosPendientes(tipo, jurados) {
+    const panel = document.getElementById('panel-pendientes');
+    if (jurados.length === 0) {
+        panel.innerHTML = `<div class="card" style="padding:16px;">
+            <div class="alerta alerta-exito" style="margin:0;">✓ No quedan jurados pendientes en esta categoría.</div>
+        </div>`;
+        return;
+    }
+
+    const tarjetas = jurados.map(j => renderTarjetaJuradoPendiente(tipo, j)).join('');
+    panel.innerHTML = `
+        <div class="card" style="padding:16px;">
+            <div class="dash-seccion-titulo" style="border:none; padding:0; margin-bottom:4px;">
+                ${ETIQUETAS_PENDIENTE[tipo]} — <span id="pend-contador">${jurados.length}</span> pendiente(s)
+            </div>
+            <div style="font-size:12px; color:var(--gris); margin-bottom:12px;">
+                Confirme cada dato manualmente. No se completa ni se corrige nada automáticamente.
+            </div>
+            <div id="pend-lista">${tarjetas}</div>
+        </div>`;
+}
+
+function renderTarjetaJuradoPendiente(tipo, j) {
+    const detalle = `Asociación: ${sanitizar(j.asociacion || '—')} · Categoría: ${sanitizar(j.categoria || '—')} · Comuna: ${sanitizar(j.comuna || '—')}`;
+
+    let campoAccion = '';
+    if (tipo === 'sin_categoria') {
+        campoAccion = `
+            <select id="pend-input-${j.id}" class="form-control" style="width:110px;">
+                <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+            </select>
+            <button class="btn btn-pequeño btn-primario" onclick="_guardarCategoriaPendiente('${j.id}')">Guardar</button>`;
+    } else if (tipo === 'sin_comuna' || tipo === 'comuna_no_reconocida') {
+        campoAccion = `
+            <input type="text" id="pend-input-${j.id}" list="dl-comunas-busqueda" class="form-control" style="width:170px;" placeholder="Seleccionar comuna..." autocomplete="off">
+            <button class="btn btn-pequeño btn-primario" onclick="_guardarComunaPendiente('${j.id}')">Guardar</button>`;
+    } else if (tipo === 'sin_asociacion') {
+        campoAccion = `
+            <input type="text" id="pend-input-${j.id}" list="dl-asociaciones-existentes" class="form-control" style="width:170px;" placeholder="Buscar o escribir asociación..." autocomplete="off">
+            <button class="btn btn-pequeño btn-primario" onclick="_guardarAsociacionPendiente('${j.id}')">Guardar</button>`;
+    }
+
+    return `<div class="pendiente-card" id="pend-card-${j.id}">
+        <div class="datos">
+            <div class="nombre">${sanitizar(j.nombre_completo)}${j.codigo_interno ? ' <span style="color:var(--gris); font-weight:400;">(' + sanitizar(j.codigo_interno) + ')</span>' : ''}</div>
+            <div class="detalle">${detalle}</div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">${campoAccion}</div>
+    </div>`;
+}
+
+async function _guardarCategoriaPendiente(id) {
+    const cat = document.getElementById('pend-input-' + id).value;
+    try {
+        await api.patch('/admin/usuarios/' + id + '/categoria', { categoria: cat });
+        mostrarToast('Categoría actualizada a ' + cat, 'success');
+        _quitarTarjetaPendiente(id);
+    } catch (err) { mostrarError(err); }
+}
+
+async function _guardarComunaPendiente(id) {
+    const input = document.getElementById('pend-input-' + id);
+    const nombre = input.value.trim();
+    if (!nombre) { mostrarToast('Seleccione una comuna de la lista', 'error'); return; }
+    const match = catalogoComunas.find(c => c.nombre.toLowerCase() === nombre.toLowerCase());
+    if (!match) { mostrarToast('Esa comuna no existe en el catálogo. Selecciónela de la lista desplegable.', 'error'); return; }
+    try {
+        // Guarda el NOMBRE CANÓNICO como texto (usuarios_pagados.comuna sigue
+        // siendo texto legacy — no se migra a comuna_id en esta mejora). Al
+        // ser el nombre exacto del catálogo, resolverComuna() lo reconocerá
+        // siempre (coincidencia directa), mejorando el diagnóstico.
+        await api.patch('/admin/usuarios/' + id, { comuna: match.nombre });
+        mostrarToast('Comuna guardada correctamente', 'success');
+        _quitarTarjetaPendiente(id);
+    } catch (err) { mostrarError(err); }
+}
+
+async function _guardarAsociacionPendiente(id) {
+    const valor = document.getElementById('pend-input-' + id).value.trim();
+    if (!valor) { mostrarToast('Ingrese el nombre de la asociación', 'error'); return; }
+    try {
+        // Texto libre, tal como lo escribe el administrador — sin normalizar
+        // ni comparar contra otras asociaciones existentes (evita fusiones
+        // incorrectas: "MAIPO" y "MAIPO NORTE", por ejemplo, deben seguir
+        // siendo asociaciones distintas).
+        await api.patch('/admin/usuarios/' + id, { asociacion: valor });
+        mostrarToast('Asociación guardada correctamente', 'success');
+        _quitarTarjetaPendiente(id);
+    } catch (err) { mostrarError(err); }
+}
+
+function _quitarTarjetaPendiente(id) {
+    document.getElementById('pend-card-' + id)?.remove();
+    const contador = document.getElementById('pend-contador');
+    if (contador) {
+        const restantes = document.querySelectorAll('#pend-lista .pendiente-card').length;
+        contador.textContent = restantes;
+        if (restantes === 0) {
+            document.getElementById('pend-lista').innerHTML = '<div class="alerta alerta-exito" style="margin:0;">✓ No quedan jurados pendientes en esta categoría.</div>';
+        }
+    }
+    cargar(); // refresca los indicadores superiores en segundo plano
+}
+
+// ── Rodeos sin comuna → reutiliza el buscador ya construido, filtrado ────
+function abrirRodeosSinComuna() {
+    document.getElementById('panel-pendientes').innerHTML = '';
+    document.getElementById('bd-fecha-desde').value = '';
+    document.getElementById('bd-fecha-hasta').value = '';
+    document.getElementById('bd-asociacion').value = '';
+    document.getElementById('bd-tipo-rodeo').value = '';
+    document.getElementById('bd-buscar').value = '';
+    document.getElementById('bd-estado-datos').value = 'sin_comuna';
+    document.getElementById('bd-estado-datos').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    buscarRodeosDisponibles();
+}
+
+// ── Rodeos sin clasificación → identifica los TIPOS que originan el ──────
+// problema (la clasificación se define en el tipo, no en el rodeo) ───────
+async function abrirRodeosSinClasificacion() {
+    const panel = document.getElementById('panel-pendientes');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const resp = await api.get('/admin/propuesta-designacion/tipos-rodeo-afectando-rodeos');
+        const tipos = resp.tipos || [];
+        if (tipos.length === 0) {
+            panel.innerHTML = `<div class="card" style="padding:16px;"><div class="alerta alerta-exito" style="margin:0;">✓ No hay rodeos activos afectados por tipos sin clasificar.</div></div>`;
+            return;
+        }
+        panel.innerHTML = `<div class="card" style="padding:16px;">
+            <div class="dash-seccion-titulo" style="border:none; padding:0; margin-bottom:4px;">Tipos de rodeo que originan el problema</div>
+            <div style="font-size:12px; color:var(--gris); margin-bottom:12px;">
+                La clasificación se define en el <strong>tipo de rodeo</strong>, no en cada rodeo individual. Corrija el tipo para resolver todos sus rodeos a la vez.
+            </div>
+            ${tipos.map(t => `<div class="pendiente-card">
+                <div class="datos">
+                    <div class="nombre">${sanitizar(t.nombre)}</div>
+                    <div class="detalle">${t.cantidad_rodeos} rodeo(s) activo(s) afectado(s)</div>
+                </div>
+                <a class="btn btn-pequeño btn-primario" href="/admin/rodeos.html?abrir=tipos&filtro=sin_clasificar">Corregir Tipo de Rodeo</a>
+            </div>`).join('')}
+        </div>`;
+    } catch (err) {
+        panel.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
+}
+
+// ── Tipos sin clasificar → ir directo a Rodeos → Tipos de Rodeo, filtrado ──
+function abrirTiposSinClasificar() {
+    location.href = '/admin/rodeos.html?abrir=tipos&filtro=sin_clasificar';
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Laboratorio de simulación (DRY-RUN) — buscador de rodeos SIN jurado
@@ -233,6 +444,18 @@ async function cargarCatalogoComunasBusqueda() {
     } catch (e) { console.warn('[Búsqueda] no se pudo cargar el catálogo de comunas:', e.message); }
 }
 cargarCatalogoComunasBusqueda();
+
+// Sugerencias de asociación (valores EXISTENTES tal cual, sin normalizar ni
+// fusionar) para reducir errores de digitación al completar "Asociación
+// vacía o nula" — el campo sigue siendo texto libre, esto solo sugiere.
+async function cargarAsociacionesExistentes() {
+    try {
+        const resp = await api.get('/admin/propuesta-designacion/asociaciones-existentes');
+        const dl = document.getElementById('dl-asociaciones-existentes');
+        dl.innerHTML = (resp.asociaciones || []).map(a => `<option value="${sanitizar(a)}">`).join('');
+    } catch (e) { console.warn('[Datos pendientes] no se pudieron cargar asociaciones existentes:', e.message); }
+}
+cargarAsociacionesExistentes();
 
 function limpiarFiltrosBusqueda() {
     document.getElementById('bd-fecha-desde').value = '';

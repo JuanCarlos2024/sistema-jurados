@@ -297,6 +297,14 @@ async function init() {
     }
     poblarFiltrosAvanzados();
     cargar();
+
+    // Acceso directo desde Propuesta de Designación → Datos pendientes:
+    // /admin/rodeos.html?abrir=tipos&filtro=sin_clasificar
+    const params = new URLSearchParams(location.search);
+    if (params.get('abrir') === 'tipos') {
+        mostrarTipos(params.get('filtro') === 'sin_clasificar');
+        history.replaceState(null, '', location.pathname); // limpia la URL, no repetir al refrescar
+    }
 }
 
 function poblarFiltrosAvanzados() {
@@ -1283,15 +1291,21 @@ async function abrirPublicarDesignaciones(rodeoId) {
     } catch (e) { mostrarError(e); }
 }
 
-async function mostrarTipos() {
-    const [data, clasif] = await Promise.all([
+async function mostrarTipos(soloSinClasificar) {
+    const [dataCompleta, clasif] = await Promise.all([
         api.get('/admin/rodeos/tipos/lista'),
         api.get('/admin/propuesta-designacion/tipos-rodeo-clasificacion').catch(() => [])
     ]);
     const clasifPorId = {};
     (clasif||[]).forEach(c => { clasifPorId[c.id] = c.clasificacion_nombre; });
+    const data = soloSinClasificar ? (dataCompleta||[]).filter(t => !clasifPorId[t.id]) : dataCompleta;
+
     document.getElementById('modal-titulo').textContent = 'Tipos de Rodeo';
     document.getElementById('modal-body').innerHTML = `
+        ${soloSinClasificar ? `<div class="alerta alerta-info" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+            <span>Mostrando solo tipos <strong>sin clasificación de designación</strong> (${data.length}).</span>
+            <button class="btn btn-pequeño btn-outline" onclick="mostrarTipos(false)">Ver todos</button>
+        </div>` : ''}
         <div class="form-acciones" style="margin-bottom:16px;">
             <button class="btn btn-primario btn-pequeño" onclick="formularioTipo(null)">+ Nuevo tipo</button>
         </div>
