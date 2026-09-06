@@ -20,7 +20,16 @@ const supabase = require('../config/supabase');
 const { resolverComuna, calcularDistanciaKm, cargarCatalogoResolucionComunas } = require('./geografia');
 const { normalizarAsociacion, mismaAsociacion } = require('./asociaciones');
 const { calcularBloqueRodeo, contarSabadosEntre, rangoFechas } = require('./feriados');
+const {
+    construirConfiguracionDefaultV1, validarConfiguracion, configuracionRequiereDistancia
+} = require('./configuracionDesignacion');
 
+// Etapa 2 — Configuración de Propuesta de Designación. Valor histórico
+// (equivalente a configuracion.distancia_maxima_km de la Versión 1) que se
+// mantiene exportado únicamente por compatibilidad con tests existentes y
+// como referencia documental — YA NO se lee dentro de evaluarCandidato():
+// la evaluación real usa siempre configuracion.regla_distancia_maxima_activa
+// + configuracion.distancia_maxima_km (ver sección 11 del pedido de Etapa 2).
 const DISTANCIA_MAXIMA_KM = 600;
 const PAGINA = 900; // mismo tamaño de página usado en el resto del proyecto (analisis-preguntas.js, jurados-disponibles)
 
@@ -101,6 +110,87 @@ function bloquesSonConsecutivos(b1, b2) {
     return false;
 }
 
+// ─── Deriva, desde configuracion.matriz (modelo versionado de la Etapa 1:
+// por clasificación, un array con LAS 3 categorías A/B/C siempre presentes,
+// cada una con {categoria, elegible, orden_preferencia}), la estructura
+// interna que evaluarCandidato() necesita: { elegibles: Set,
+// ordenPorCategoria: Map }. Reemplaza la derivación legacy que antes se
+// armaba desde clasificacion_categoria_matriz (contexto.matrizPorCodigo) —
+// la selección configurable usa SIEMPRE esta matriz derivada de la
+// configuración, nunca la de contexto (ver notas de "puente temporal" en
+// cargarDatosMotor y ejecutarSimulacion).
+function construirMatrizPorClasificacionDesdeConfiguracion(configuracionMatriz) {
+    const resultado = {};
+    for (const [clasifCodigo, filas] of Object.entries(configuracionMatriz || {})) {
+        const elegibles = new Set();
+        const ordenPorCategoria = new Map();
+        for (const f of (filas || [])) {
+            if (f.elegible) {
+                elegibles.add(f.categoria);
+                ordenPorCategoria.set(f.categoria, f.orden_preferencia);
+            }
+        }
+        resultado[clasifCodigo] = { elegibles, ordenPorCategoria };
+    }
+    return resultado;
+}
+
+// ─── Comparación de dos candidatos (ya evaluados) según UN criterio ───────
+// Recibe los resultados de evaluarCandidato() para a y b — nunca vuelve a
+// tocar la BD ni recalcula nada, solo lee los campos ya calculados.
+//   PRIORIDAD_CATEGORIA           → categoriaOrdenPreferencia ascendente
+//                                    (menor número = mejor categoría).
+//   MENOS_DESIGNACIONES_TEMPORADA → designacionesAntes ascendente.
+//   MENOR_DISTANCIA               → distanciaKm ascendente, valor REAL sin
+//                                    redondeo ni tolerancia (sección 19 del
+//                                    pedido — "10.1 km gana a 10.2 km" es
+//                                    intencional cuando este criterio ocupa
+//                                    la primera prioridad).
+// Un código desconocido nunca debería llegar aquí (validarConfiguracion ya
+// lo rechaza antes de ejecutar) — se trata como empate (0) por seguridad.
+function compararPorCriterio(criterioCodigo, a, b) {
+    switch (criterioCodigo) {
+        case 'PRIORIDAD_CATEGORIA': {
+            const oa = a.categoriaOrdenPreferencia ?? Infinity;
+            const ob = b.categoriaOrdenPreferencia ?? Infinity;
+            return oa - ob;
+        }
+        case 'MENOS_DESIGNACIONES_TEMPORADA':
+            return a.designacionesAntes - b.designacionesAntes;
+        case 'MENOR_DISTANCIA': {
+            const da = a.distanciaKm ?? Infinity;
+            const db = b.distanciaKm ?? Infinity;
+            return da - db;
+        }
+        default:
+            return 0;
+    }
+}
+
+// ─── Comparador jerárquico determinístico — Nivel 1 de la configuración ──
+// Recorre configuracion.ordenCriterios en su orden configurado (1..N,
+// SOLO los criterios activos — un código ausente = inactivo, igual que en
+// la migración 050) y compara por el primero que no empate. Si TODOS
+// empatan, el desempate final es SIEMPRE por jurado_id ascendente — nunca
+// configurable, garantiza que el motor sea determinístico pase lo que pase
+// en la configuración (sección 6/18 del pedido).
+// @param ordenCriterios [{criterio_codigo, orden}] — no necesita venir
+//   preordenado, esta función lo ordena internamente.
+// @returns (a, b) => number — comparador listo para Array.prototype.sort().
+function construirComparadorJerarquico(ordenCriterios) {
+    const criteriosEnOrden = [...(ordenCriterios || [])]
+        .sort((a, b) => a.orden - b.orden)
+        .map(c => c.criterio_codigo);
+
+    return (a, b) => {
+        for (const codigo of criteriosEnOrden) {
+            const cmp = compararPorCriterio(codigo, a, b);
+            if (cmp !== 0) return cmp;
+        }
+        return a.jurado.id < b.jurado.id ? -1 : (a.jurado.id > b.jurado.id ? 1 : 0);
+    };
+}
+
 // ─── Evaluación de un candidato contra un rodeo (única implementación) ────
 // Se llama DOS veces por par (rodeo, jurado) durante una corrida:
 //   1. En la pasada preliminar de dificultad (Etapa 3.1) — usando el estado
@@ -112,55 +202,91 @@ function bloquesSonConsecutivos(b1, b2) {
 //      misma corrida (que en la pasada 1 todavía no existían).
 // Es la MISMA función en ambos casos — no hay una segunda versión de las
 // reglas. La única diferencia es qué snapshot de `estado` se le pasa.
-function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPorId, estado) {
+//
+// @param configuracion — Etapa 2: objeto validado (ver validarConfiguracion())
+//   con las reglas booleanas activables y los parámetros de distancia. Las
+//   reglas ESTRUCTURALES (disponibilidad, categoría-como-regla, desempate)
+//   NUNCA se leen desde acá — siguen siempre activas, tal como antes.
+function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPorId, estado, configuracion) {
     const { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado } = estado;
     const causas = [];
 
-    // Regla 0 — disponibilidad para TODAS las fechas del rodeo
+    // Regla 0 — disponibilidad para TODAS las fechas del rodeo (ESTRUCTURAL,
+    // nunca configurable — ver sección 6 del pedido de Etapa 2).
     const dispJurado = disponibilidad.get(jurado.id);
     const disponible = !!dispJurado && rodeo.fechas.every(f => dispJurado.has(f));
     if (!disponible) causas.push('DISPONIBILIDAD');
 
-    // Regla 1 — misma asociación (comparación conservadora, sin fuzzy)
+    // Regla 1 — misma asociación (comparación conservadora, sin fuzzy).
+    // El HECHO (mismaAsoc) se calcula siempre — solo la CAUSA depende de la
+    // configuración (sección 7): con la regla desactivada, un jurado de la
+    // asociación organizadora deja de ser descartado por esto, pero el dato
+    // informativo (checks.asociacion_diferente) sigue siendo veraz.
     const mismaAsoc = mismaAsociacion(jurado.asociacion, rodeo.asociacion);
-    if (mismaAsoc) causas.push('MISMA_ASOCIACION');
+    if (configuracion.regla_asociacion_organizadora_activa && mismaAsoc) causas.push('MISMA_ASOCIACION');
 
-    // Regla 2 — no repetir asociación en TODA la temporada (BD [+ temporal si el snapshot lo incluye])
+    // Regla 2 — no repetir asociación en TODA la temporada (sección 8).
     const asocNorm = normalizarAsociacion(rodeo.asociacion);
     const asociacionesUsadas = asociacionesPorJurado.get(jurado.id);
     const repiteAsociacionTemporada = !!asociacionesUsadas && asociacionesUsadas.has(asocNorm);
-    if (repiteAsociacionTemporada) causas.push('ASOCIACION_REPETIDA_TEMPORADA');
+    if (configuracion.regla_no_repetir_asociacion_activa && repiteAsociacionTemporada) causas.push('ASOCIACION_REPETIDA_TEMPORADA');
 
-    // Regla 3/4 — mismo fin de semana / fin de semana consecutivo
+    // Regla 3/4 — mismo fin de semana / fin de semana consecutivo (secciones
+    // 9/10) — dos flags INDEPENDIENTES; bloquesSonConsecutivos()/feriados.js
+    // no se tocan, solo se condiciona si la causa se genera o no.
     const bloquesJurado = bloquesPorJurado.get(jurado.id) || [];
     const mismoFinde = bloquesJurado.some(b => bloquesSeSuperponen(b, rodeo.bloque));
     const findeConsecutivo = !mismoFinde && bloquesJurado.some(b => bloquesSonConsecutivos(b, rodeo.bloque));
-    if (mismoFinde) causas.push('MISMO_FINDE');
-    if (findeConsecutivo) causas.push('FINDE_CONSECUTIVO');
+    if (configuracion.regla_un_rodeo_por_finde_activa && mismoFinde) causas.push('MISMO_FINDE');
+    if (configuracion.regla_finde_consecutivo_activa && findeConsecutivo) causas.push('FINDE_CONSECUTIVO');
 
-    // Regla 6 — categoría elegible según matriz
+    // Regla 6 — categoría elegible según matriz. La REGLA es SIEMPRE
+    // estructural (nunca se desactiva) — lo único configurable es el
+    // CONTENIDO de la matriz (sección 15). categoriaOrdenPreferencia
+    // reemplaza al antiguo booleano categoriaPreferente: es la posición de
+    // preferencia (menor = mejor) que usa PRIORIDAD_CATEGORIA en el
+    // comparador jerárquico (sección 16) — queda undefined si la categoría
+    // no es elegible, pero en ese caso el candidato ya se descarta por
+    // CATEGORIA_INCOMPATIBLE y ese valor nunca se usa para ordenar.
     const categoriaCompatible = matriz.elegibles.has(jurado.categoria);
     if (!categoriaCompatible) causas.push('CATEGORIA_INCOMPATIBLE');
-    const categoriaPreferente = matriz.preferentes.has(jurado.categoria);
+    const categoriaOrdenPreferencia = matriz.ordenPorCategoria.get(jurado.categoria);
 
-    // Regla 5 — distancia (solo calculable si el jurado resuelve comuna)
+    // Regla 5 — distancia. La comuna solo es indispensable si la
+    // configuración realmente USA distancia (regla dura activa o
+    // MENOR_DISTANCIA como criterio de ranking) — configuracionRequiere
+    // Distancia() es la única fuente de esa decisión (secciones 12/13).
+    // Con V1 (ambas activas) el comportamiento es idéntico al actual.
+    const necesitaDistancia = configuracionRequiereDistancia(configuracion);
     const comunaJurado = comunaJuradoPorId.get(jurado.id);
     let distanciaKm = null;
-    if (!comunaJurado || !comunaJurado.resuelto) {
-        causas.push('JURADO_SIN_COMUNA_RESOLVIBLE');
-    } else {
+    if (necesitaDistancia) {
+        if (!comunaJurado || !comunaJurado.resuelto) {
+            causas.push('JURADO_SIN_COMUNA_RESOLVIBLE');
+        } else {
+            distanciaKm = calcularDistanciaKm(
+                comunaJurado.latitud, comunaJurado.longitud,
+                rodeo.comuna_resuelta.latitud, rodeo.comuna_resuelta.longitud
+            );
+            if (configuracion.regla_distancia_maxima_activa &&
+                (distanciaKm === null || distanciaKm > configuracion.distancia_maxima_km)) {
+                causas.push('DISTANCIA_EXCEDIDA');
+            }
+        }
+    } else if (comunaJurado && comunaJurado.resuelto && rodeo.comuna_resuelta) {
+        // Ninguna regla usa distancia hoy — se calcula igual como dato
+        // informativo (nunca descarta a nadie) si ambas comunas resuelven.
         distanciaKm = calcularDistanciaKm(
             comunaJurado.latitud, comunaJurado.longitud,
             rodeo.comuna_resuelta.latitud, rodeo.comuna_resuelta.longitud
         );
-        if (distanciaKm === null || distanciaKm > DISTANCIA_MAXIMA_KM) causas.push('DISTANCIA_EXCEDIDA');
     }
 
     const designacionesAntes = designacionesPorJurado.get(jurado.id)?.size || 0;
 
     return {
         jurado, causas, elegible: causas.length === 0,
-        distanciaKm, comunaJurado, categoriaPreferente, categoriaCompatible,
+        distanciaKm, comunaJurado, categoriaOrdenPreferencia, categoriaCompatible,
         disponible, mismaAsoc, repiteAsociacionTemporada, mismoFinde, findeConsecutivo,
         designacionesAntes
     };
@@ -210,21 +336,32 @@ function construirEstadoDesdeBD(asignacionesTemporada) {
 //
 // @param contexto - de cargarDatosMotor([rodeoId]) (o un lote más grande que lo incluya)
 // @param rodeoId, juradoId
+// @param configuracion - Etapa 2: por defecto Versión 1 (equivalente exacta
+//   al motor actual). Se valida igual que en ejecutarSimulacion() — nunca se
+//   relajan reglas silenciosamente ante una configuración inválida.
 // @returns { evaluacion: <resultado de evaluarCandidato()> } | { error: 'JURADO_INACTIVO_O_INEXISTENTE'|'RODEO_NO_ENCONTRADO'|'TIPO_SIN_CLASIFICACION' }
-function evaluarCandidatoDirecto(contexto, rodeoId, juradoId) {
+function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = construirConfiguracionDefaultV1()) {
+    const val = validarConfiguracion(configuracion);
+    if (!val.valido) throw new Error(`Configuración de designación inválida: ${val.error}`);
+
     const jurado = (contexto.jurados || []).find(j => j.id === juradoId);
     if (!jurado) return { error: 'JURADO_INACTIVO_O_INEXISTENTE' }; // contexto.jurados ya viene filtrado a activo=true, tipo_persona='jurado'
 
     const rodeo = contexto.rodeosPorId.get(rodeoId);
     if (!rodeo) return { error: 'RODEO_NO_ENCONTRADO' };
 
-    const matriz = rodeo.clasificacion_codigo ? contexto.matrizPorCodigo[rodeo.clasificacion_codigo] : null;
+    // Misma matriz derivada de la configuración que usa ejecutarSimulacion()
+    // — nunca la legacy de contexto.matrizPorCodigo (ver nota de "puente
+    // temporal" en cargarDatosMotor). Con V1 el resultado es idéntico al
+    // que hoy da la tabla clasificacion_categoria_matriz.
+    const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
+    const matriz = rodeo.clasificacion_codigo ? matrizPorClasificacion[rodeo.clasificacion_codigo] : null;
     if (!matriz) return { error: 'TIPO_SIN_CLASIFICACION' };
 
     const comunaJuradoPorId = new Map([[jurado.id, resolverComuna(jurado.comuna, contexto.catalogoComunas)]]);
     const estado = construirEstadoDesdeBD(contexto.asignacionesTemporada);
 
-    return { evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado) };
+    return { evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado, configuracion) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -260,8 +397,22 @@ async function cargarDatosMotor(rodeoIdsInput) {
         rodeosRaw = data || [];
     }
 
-    // 3. Matriz de clasificación (6 clasificaciones + 11 filas de matriz) —
-    //    se arma un mapa {codigo: {elegibles:Set, preferentes:Set}}.
+    // 3. Matriz de clasificación LEGACY (6 clasificaciones + 11 filas de
+    //    matriz) — PUENTE TEMPORAL de la Etapa 2 (Configuración de Propuesta
+    //    de Designación). Desde el refactor de ejecutarSimulacion(), esta
+    //    carga YA NO decide nada: la selección real usa exclusivamente
+    //    configuracion.matriz (por ahora, Versión 1 hardcodeada vía
+    //    construirConfiguracionDefaultV1(), verificada byte a byte
+    //    equivalente a esta misma tabla al aplicar la migración 050). Se
+    //    mantiene esta consulta sin tocar — ni se elimina, ni se usa para
+    //    decidir — por instrucción explícita, hasta que la Etapa 3 conecte
+    //    la configuración activa real desde BD; contexto.matrizPorCodigo
+    //    queda disponible para inspección/tests de equivalencia mientras
+    //    tanto. RIESGO CONOCIDO Y ACEPTADO: si alguien edita
+    //    clasificacion_categoria_matriz directamente (vía SQL) durante esta
+    //    etapa, el motor NO lo reflejará — seguirá usando el V1 hardcodeado
+    //    hasta la Etapa 3.
+    //    Se arma igual que siempre un mapa {codigo: {elegibles:Set, preferentes:Set}}.
     const { data: clasifRows, error: errClasif } = await supabase
         .from('clasificaciones_designacion').select('id, codigo');
     queries++;
@@ -382,9 +533,42 @@ async function cargarDatosMotor(rodeoIdsInput) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // CAPA 2 — Simulación (función pura: no toca la BD, testeable con fixtures)
+//
+// Etapa 2 — Configuración de Propuesta de Designación: `configuracion` es
+// SIEMPRE requerida en la práctica (tiene un default a Versión 1, ver más
+// abajo) y se valida antes de ejecutar nada — jamás se relajan reglas
+// silenciosamente ante una configuración inválida (sección 5/38 del pedido):
+// se lanza un Error controlado que el llamador puede capturar (todavía sin
+// mapear a un código HTTP — eso es de una etapa posterior).
+//
+// IMPORTANTE — orden de parámetros: `configuracion` se agregó AL FINAL,
+// después de `topN`, deliberadamente. `topN` ya era el 2º parámetro
+// posicional consumido por llamadores productivos reales (ej.
+// propuesta-designacion.js llama a `ejecutarSimulacion(contexto,
+// TOP_N_TODOS_LOS_CANDIDATOS)` para los paneles de Designar/Modificar) — si
+// `configuracion` se hubiera insertado en 2º lugar, ese `999` pasaría a
+// interpretarse como `configuracion` y rompería esos endpoints en
+// producción (detectado en la revisión de cierre de Etapa 2 buscando TODOS
+// los llamadores reales antes de commitear). Con `configuracion` al final,
+// ningún llamador existente (ruta ni tests previos) cambia de
+// comportamiento sin tocar ese archivo.
+//
+// PUENTE TEMPORAL (sección 29): esta función YA NO lee contexto.matrizPorCodigo
+// (la matriz legacy cargada desde clasificacion_categoria_matriz) para
+// decidir nada — usa exclusivamente configuracion.matriz. Con la Versión 1
+// (default de esta etapa), ambas matrices son equivalentes byte a byte
+// (verificado al aplicar la migración 050), así que el resultado hoy es
+// idéntico al de antes del refactor. contexto.matrizPorCodigo sigue viniendo
+// en el contexto sin tocar — no se usa acá, queda disponible para
+// inspección o asserts de equivalencia hasta que la Etapa 3 conecte la
+// configuración activa real desde BD.
 // ─────────────────────────────────────────────────────────────────────────
-function ejecutarSimulacion(contexto, topN = 5) {
-    const { idsSolicitados, temporada, rodeosPorId, matrizPorCodigo, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
+function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfiguracionDefaultV1()) {
+    const val = validarConfiguracion(configuracion);
+    if (!val.valido) throw new Error(`Configuración de designación inválida: ${val.error}`);
+
+    const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
+    const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
 
     // ── Estado temporal de la corrida (BD + asignaciones temporales unificadas) ──
     // Sembrado desde la BD (asignacionesTemporada, vía construirEstadoDesdeBD
@@ -446,7 +630,7 @@ function ejecutarSimulacion(contexto, topN = 5) {
             resultados.push({ rodeo_id: id, estado: 'NO_EVALUABLE', causa: 'RODEO_SIN_COMUNA', rodeo: { club: rodeo.club, fecha: rodeo.fecha, asociacion: rodeo.asociacion } });
             continue;
         }
-        if (!rodeo.clasificacion_codigo || !matrizPorCodigo[rodeo.clasificacion_codigo]) {
+        if (!rodeo.clasificacion_codigo || !matrizPorClasificacion[rodeo.clasificacion_codigo]) {
             resultados.push({ rodeo_id: id, estado: 'NO_EVALUABLE', causa: 'TIPO_SIN_CLASIFICACION', rodeo: { club: rodeo.club, fecha: rodeo.fecha, asociacion: rodeo.asociacion } });
             continue;
         }
@@ -466,9 +650,9 @@ function ejecutarSimulacion(contexto, topN = 5) {
     // un snapshot de estado distinto (sin mutaciones de esta corrida todavía).
     const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado };
     for (const rodeo of rodeosEvaluables) {
-        const matriz = matrizPorCodigo[rodeo.clasificacion_codigo];
+        const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
         rodeo._candidatosPotenciales = jurados.filter(j =>
-            evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoSoloBD).elegible
+            evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoSoloBD, configuracion).elegible
         ).length;
         rodeo._restrictividad = matriz.elegibles.size;
     }
@@ -485,8 +669,8 @@ function ejecutarSimulacion(contexto, topN = 5) {
     // las propuestas ya hechas a rodeos anteriores en esta misma corrida.
     const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado };
     for (const rodeo of rodeosEvaluables) {
-        const matriz = matrizPorCodigo[rodeo.clasificacion_codigo];
-        const evaluaciones = jurados.map(j => evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoActual));
+        const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
+        const evaluaciones = jurados.map(j => evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoActual, configuracion));
 
         // ── Resumen de descartes (se cuentan TODAS las causas detectadas —
         //    un candidato puede aportar a más de un contador a la vez) ──
@@ -497,7 +681,7 @@ function ejecutarSimulacion(contexto, topN = 5) {
         const descartados = evaluaciones.filter(e => !e.elegible).map(e => ({
             jurado_id: e.jurado.id, nombre: e.jurado.nombre_completo,
             categoria: e.jurado.categoria, asociacion: e.jurado.asociacion,
-            categoria_preferente: e.categoriaPreferente,
+            categoria_preferente: e.categoriaOrdenPreferencia === 1,
             comuna_nombre: e.comunaJurado?.nombre || null,
             distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null,
             designaciones_antes: e.designacionesAntes,
@@ -518,28 +702,40 @@ function ejecutarSimulacion(contexto, topN = 5) {
             continue;
         }
 
-        // ── Prioridad de categoría: preferente primero, si existe alguno ──
-        const preferentes = candidatosValidos.filter(e => e.categoriaPreferente);
-        const grupo = preferentes.length > 0 ? preferentes : candidatosValidos;
-        const usoPreferente = preferentes.length > 0;
+        // ── Comparador jerárquico según el Nivel 1 configurado ────────────
+        // Nivel 2 (orden_preferencia por categoría) ya quedó resuelto por
+        // candidato dentro de evaluarCandidato() — acá solo se aplica el
+        // ORDEN GLOBAL de criterios (configuracion.ordenCriterios).
+        const criteriosOrdenados = [...configuracion.ordenCriterios].sort((a, b) => a.orden - b.orden);
+        const primerCriterioEsCategoria = criteriosOrdenados[0]?.criterio_codigo === 'PRIORIDAD_CATEGORIA';
+        const comparador = construirComparadorJerarquico(configuracion.ordenCriterios);
 
-        // ── Equidad → menor distancia → usuario_pagado_id ascendente (estable) ──
-        grupo.sort((a, b) => {
-            if (a.designacionesAntes !== b.designacionesAntes) return a.designacionesAntes - b.designacionesAntes;
-            const da = a.distanciaKm ?? Infinity, db = b.distanciaKm ?? Infinity;
-            if (da !== db) return da - db;
-            return a.jurado.id < b.jurado.id ? -1 : (a.jurado.id > b.jurado.id ? 1 : 0);
-        });
+        // Paridad EXACTA con el comportamiento actual (sección 2 del pedido
+        // de Etapa 2): si PRIORIDAD_CATEGORIA es el criterio Nº1, el grupo
+        // se reduce a la categoría de mejor (=menor) orden_preferencia
+        // disponible ANTES de aplicar el resto del comparador — reproduce
+        // el filtro "preferente primero" tal cual existe hoy, incluyendo
+        // que top_candidatos muestre solo ese nivel. Si PRIORIDAD_CATEGORIA
+        // no es el criterio Nº1 (o está inactivo), NO se reduce nada: el
+        // comparador jerárquico ya la aplica en su posición configurada
+        // sobre TODOS los candidatos elegibles (ej. sección 19/20/21 del
+        // pedido — distancia u equidad pueden decidir antes que categoría).
+        let grupo = candidatosValidos;
+        if (primerCriterioEsCategoria) {
+            const mejorOrden = Math.min(...candidatosValidos.map(e => e.categoriaOrdenPreferencia));
+            grupo = candidatosValidos.filter(e => e.categoriaOrdenPreferencia === mejorOrden);
+        }
+        grupo = [...grupo].sort(comparador);
 
-        // Top N candidatos finales del grupo usado (preferente u otro elegible),
-        // ya en el orden de desempate — para auditoría del dry-run (N=5 por
-        // defecto) y, con un N mayor, para la pantalla "Modificar" de una
-        // propuesta guardada (Etapa 4), que necesita ver más candidatos sin
+        // Top N candidatos finales del grupo usado, ya en el orden de
+        // desempate — para auditoría del dry-run (N=5 por defecto) y, con
+        // un N mayor, para la pantalla "Modificar" de una propuesta
+        // guardada (Etapa 4), que necesita ver más candidatos sin
         // reimplementar el ranking.
         const topCandidatos = grupo.slice(0, topN).map(e => ({
             jurado_id: e.jurado.id, nombre: e.jurado.nombre_completo, categoria: e.jurado.categoria,
             asociacion: e.jurado.asociacion,
-            categoria_preferente: e.categoriaPreferente,
+            categoria_preferente: e.categoriaOrdenPreferencia === 1,
             comuna_nombre: e.comunaJurado?.nombre || null,
             designaciones_antes: e.designacionesAntes,
             distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null
@@ -557,7 +753,7 @@ function ejecutarSimulacion(contexto, topN = 5) {
                 jurado_id: ganador.jurado.id,
                 nombre: ganador.jurado.nombre_completo,
                 categoria: ganador.jurado.categoria,
-                categoria_preferente: usoPreferente,
+                categoria_preferente: ganador.categoriaOrdenPreferencia === 1,
                 comuna_canonica: ganador.comunaJurado?.nombre || null,
                 origen_comuna: ganador.comunaJurado?.origen || null,
                 distancia_km: ganador.distanciaKm !== null ? Math.round(ganador.distanciaKm * 10) / 10 : null,
@@ -569,7 +765,8 @@ function ejecutarSimulacion(contexto, topN = 5) {
                     no_repite_asociacion: !ganador.repiteAsociacionTemporada,
                     sin_rodeo_mismo_finde: !ganador.mismoFinde,
                     sin_finde_consecutivo: !ganador.findeConsecutivo,
-                    dentro_600km: ganador.distanciaKm !== null && ganador.distanciaKm <= DISTANCIA_MAXIMA_KM,
+                    dentro_600km: !configuracion.regla_distancia_maxima_activa ||
+                        (ganador.distanciaKm !== null && ganador.distanciaKm <= configuracion.distancia_maxima_km),
                     categoria_compatible: ganador.categoriaCompatible
                 }
             },
@@ -614,11 +811,20 @@ function ejecutarSimulacion(contexto, topN = 5) {
     };
 }
 
-async function generarSimulacion(rodeoIdsInput, topN = 5) {
+// Etapa 2 — Configuración de Propuesta de Designación. `configuracion` es
+// un parámetro NUEVO y OPCIONAL (por defecto Versión 1) agregado al final
+// para no romper ningún llamador existente (la ruta sigue invocando
+// generarSimulacion(rodeoIdsInput, topN) exactamente igual que hoy). Esto
+// es el "puente temporal" de la sección 29 del pedido: el contexto se sigue
+// cargando de la BD normalmente (incluida la matriz legacy, sin tocar), y
+// justo antes de ejecutar se resuelve/usa la Versión 1 explícita desde
+// código — todavía NO se consulta configuracion_designacion_versiones
+// (eso es Etapa 3).
+async function generarSimulacion(rodeoIdsInput, topN = 5, configuracion = construirConfiguracionDefaultV1()) {
     const inicioMs = Date.now();
     const contexto = await cargarDatosMotor(rodeoIdsInput);
     const finCargaMs = Date.now();
-    const resultado = ejecutarSimulacion(contexto, topN);
+    const resultado = ejecutarSimulacion(contexto, topN, configuracion);
     const finMotorMs = Date.now();
     resultado.temporada = contexto.temporada ? contexto.temporada.nombre : null;
     resultado.modo = 'DRY_RUN';
@@ -637,5 +843,8 @@ module.exports = {
     evaluarCandidatoDirecto, construirEstadoDesdeBD,
     esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo,
     bloquesSeSuperponen, bloquesSonConsecutivos,
+    // Etapa 2 — Configuración de Propuesta de Designación (funciones puras
+    // nuevas, testeables sin BD; ver informe de entrega).
+    construirMatrizPorClasificacionDesdeConfiguracion, compararPorCriterio, construirComparadorJerarquico,
     DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL, TOP_N_TODOS_LOS_CANDIDATOS
 };
