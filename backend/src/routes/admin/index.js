@@ -49,5 +49,6 @@ router.use('/reporte-deportivo', require('./reporte-deportivo'));
 router.use('/notificaciones', require('./notificaciones'));
 router.use('/material-complementario', require('./material-complementario'));
 router.use('/propuesta-designacion', require('./propuesta-designacion'));
+router.use('/temporadas', require('./temporadas'));
 
 module.exports = router;

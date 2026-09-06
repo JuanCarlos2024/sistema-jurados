@@ -71,6 +71,18 @@
                 </div>
             </div>
 
+            <!-- Temporadas -->
+            <div class="card">
+                <div class="card-titulo flex justify-between items-center">
+                    <span>📅 Temporadas</span>
+                    <button class="btn btn-primario btn-pequeño" onclick="abrirNuevaTemporada()">+ Nueva temporada</button>
+                </div>
+                <div id="alerta-sin-temporada" style="display:none; margin-bottom:14px;"></div>
+                <div id="tabla-temporadas">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+
             <!-- Evaluación técnica — abarca full width -->
             <div class="card" style="grid-column:1/-1;">
                 <div class="card-titulo">📝 Evaluación técnica — Configuración completa</div>
@@ -129,7 +141,146 @@ protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
 async function init() {
-    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins(), cargarEvalConfig()]);
+    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins(), cargarEvalConfig(), cargarTemporadas()]);
+}
+
+// ── Temporadas ──────────────────────────────────────────────────────────
+function formatFechaCorta(f) {
+    if (!f) return '—';
+    return new Date(f + 'T12:00:00').toLocaleDateString('es-CL');
+}
+
+async function cargarTemporadas() {
+    const div = document.getElementById('tabla-temporadas');
+    const alertaDiv = document.getElementById('alerta-sin-temporada');
+    try {
+        const data = await api.get('/admin/temporadas');
+        const temporadas = data.temporadas || [];
+
+        if (data.sin_temporada > 0) {
+            alertaDiv.style.display = 'block';
+            alertaDiv.innerHTML = `<div class="alerta alerta-advertencia">
+                ⚠️ <strong>${data.sin_temporada}</strong> de ${data.total_rodeos} rodeo(s) activos aún no tienen temporada asignada.
+                <a href="/admin/rodeos.html?temporada=sin_temporada" style="font-weight:600;">Ir a clasificarlos →</a>
+            </div>`;
+        } else {
+            alertaDiv.style.display = 'none';
+        }
+
+        if (temporadas.length === 0) {
+            div.innerHTML = '<p class="texto-gris">Sin temporadas configuradas</p>';
+            return;
+        }
+
+        div.innerHTML = `<table>
+            <thead><tr><th>Nombre</th><th>Inicio</th><th>Término</th><th>Estado</th><th>Rodeos</th><th>Acciones</th></tr></thead>
+            <tbody>
+            ${temporadas.map(t => `<tr>
+                <td><strong>${sanitizar(t.nombre)}</strong></td>
+                <td>${formatFechaCorta(t.fecha_inicio)}</td>
+                <td>${formatFechaCorta(t.fecha_fin)}</td>
+                <td>${t.activa ? '<span class="badge badge-activo">ACTIVA</span>' : '<span class="badge badge-inactivo">Inactiva</span>'}</td>
+                <td>${t.rodeos_count}</td>
+                <td>
+                    <div class="flex gap-8">
+                        <button class="btn btn-pequeño btn-outline" onclick='abrirEditarTemporada(${JSON.stringify(t).replace(/'/g,"&apos;")})'>Editar</button>
+                        <button class="btn btn-pequeño btn-secundario" onclick="verRodeosTemporada('${t.id}', '${sanitizar(t.nombre).replace(/'/g,"\\'")}')">Ver rodeos</button>
+                    </div>
+                </td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    } catch (err) { div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
+}
+
+function abrirNuevaTemporada() {
+    document.getElementById('modal-titulo').textContent = 'Nueva temporada';
+    document.getElementById('modal-body').innerHTML = formTemporada(null);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function abrirEditarTemporada(t) {
+    document.getElementById('modal-titulo').textContent = 'Editar temporada — ' + t.nombre;
+    document.getElementById('modal-body').innerHTML = formTemporada(t);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function formTemporada(t) {
+    return `<form onsubmit="guardarTemporada(event, '${t?.id || ''}')">
+        <div class="form-grupo">
+            <label class="form-label">Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" class="form-control" required value="${sanitizar(t?.nombre || '')}" placeholder="Ej: 2026-2027">
+        </div>
+        <div class="form-fila">
+            <div class="form-grupo">
+                <label class="form-label">Fecha inicio <span class="req">*</span></label>
+                <input type="date" name="fecha_inicio" class="form-control" required value="${t?.fecha_inicio || ''}">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Fecha término <span class="req">*</span></label>
+                <input type="date" name="fecha_fin" class="form-control" required value="${t?.fecha_fin || ''}">
+            </div>
+        </div>
+        <div class="form-grupo">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" name="activa" value="true" ${t?.activa ? 'checked' : ''}>
+                Temporada activa
+            </label>
+            <div class="form-hint">Solo puede haber una temporada activa a la vez. Activar esta desactivará la anterior solo si usted lo confirma.</div>
+        </div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">${t ? 'Guardar cambios' : 'Crear temporada'}</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+}
+
+async function guardarTemporada(e, id) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const fd = new FormData(e.target);
+    const datos = { nombre: fd.get('nombre'), fecha_inicio: fd.get('fecha_inicio'), fecha_fin: fd.get('fecha_fin'), activa: fd.has('activa') };
+    try {
+        if (id) await api.patch('/admin/temporadas/' + id, datos);
+        else await api.post('/admin/temporadas', datos);
+        mostrarToast('Temporada guardada', 'success');
+        cerrarModal();
+        cargarTemporadas();
+    } catch (err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+async function verRodeosTemporada(id, nombre) {
+    document.getElementById('modal-titulo').textContent = 'Rodeos — ' + nombre;
+    document.getElementById('modal-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-overlay').classList.remove('oculto');
+    try {
+        const resp = await api.get('/admin/temporadas/' + id + '/rodeos');
+        const rodeos = resp.data || [];
+        if (rodeos.length === 0) {
+            document.getElementById('modal-body').innerHTML = '<p class="texto-gris">Ningún rodeo tiene asignada esta temporada todavía.</p>';
+            return;
+        }
+        document.getElementById('modal-body').innerHTML = `
+            <div style="max-height:400px; overflow-y:auto;">
+                <table>
+                    <thead><tr><th>Club</th><th>Asociación</th><th>Fecha</th><th>Tipo</th></tr></thead>
+                    <tbody>
+                    ${rodeos.map(r => `<tr>
+                        <td>${sanitizar(r.club)}</td>
+                        <td>${sanitizar(r.asociacion)}</td>
+                        <td>${formatFechaCorta(r.fecha)}</td>
+                        <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div class="form-acciones" style="margin-top:14px;">
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
+            </div>`;
+    } catch (err) {
+        document.getElementById('modal-body').innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
 }
 
 function toggleTabla(id) {

@@ -52,6 +52,7 @@
             <div class="topbar-acciones">
                 <button class="btn btn-secundario" onclick="mostrarCategorias()">Categorías</button>
                 <button class="btn btn-secundario" onclick="mostrarTipos()">Tipos de Rodeo</button>
+                <button class="btn btn-outline" id="btn-lote-temporada" onclick="abrirLoteTemporada()" style="display:none;">📅 Asignar temporada (lote)</button>
                 <button class="btn btn-primario" onclick="abrirNuevoRodeo()">+ Nuevo rodeo</button>
             </div>
         </div>
@@ -177,8 +178,18 @@
                             <option value="importado">Importado (Excel)</option>
                         </select>
                     </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Temporada</label>
+                        <select id="f-temporada" class="form-control" onchange="cargar()">
+                            <option value="">Todas</option>
+                            <option value="sin_temporada">Sin temporada</option>
+                        </select>
+                    </div>
                 </div>
             </div>
+
+            <!-- Contador clickeable de rodeos sin temporada (sección 17) -->
+            <div id="alerta-sin-temporada-rodeos" class="oculto" style="margin-bottom:14px;"></div>
 
             <div class="card">
                 <div id="tabla-wrap" class="tabla-wrap">
@@ -224,6 +235,58 @@
 </div>
 </div>
 
+<!-- Modal Asignación masiva de temporada (sección 18) -->
+<div class="modal-overlay oculto" id="modal-lote-overlay">
+<div class="modal" style="max-width:920px; width:90vw; max-height:85vh; display:flex; flex-direction:column;">
+    <div class="modal-header">
+        <h3>Asignar temporada a varios rodeos</h3>
+        <button class="modal-cerrar" onclick="cerrarModalLote()">×</button>
+    </div>
+    <div class="modal-body" style="overflow-y:auto; flex:1;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:12px;">
+            <div class="form-grupo" style="margin-bottom:0;">
+                <label class="form-label">Temporada actual</label>
+                <select id="lote-f-temporada-actual" class="form-control">
+                    <option value="sin_temporada">Sin temporada</option>
+                    <option value="">Cualquiera</option>
+                </select>
+            </div>
+            <div class="form-grupo" style="margin-bottom:0;">
+                <label class="form-label">Fecha desde</label>
+                <input type="date" id="lote-f-desde" class="form-control">
+            </div>
+            <div class="form-grupo" style="margin-bottom:0;">
+                <label class="form-label">Fecha hasta</label>
+                <input type="date" id="lote-f-hasta" class="form-control">
+            </div>
+            <div class="form-grupo" style="margin-bottom:0;">
+                <label class="form-label">Asociación</label>
+                <input type="text" id="lote-f-asoc" class="form-control" placeholder="Nombre asociación">
+            </div>
+            <div class="form-grupo" style="margin-bottom:0;">
+                <label class="form-label">Tipo de rodeo</label>
+                <select id="lote-f-tipo" class="form-control"><option value="">Todos</option></select>
+            </div>
+        </div>
+        <div class="form-acciones" style="margin-top:0; margin-bottom:14px;">
+            <button type="button" class="btn btn-secundario btn-pequeño" onclick="buscarRodeosLote()">Buscar</button>
+        </div>
+        <div id="lote-resultado">
+            <p class="texto-gris">Ajuste los filtros y pulse "Buscar" para ver rodeos.</p>
+        </div>
+    </div>
+    <div style="padding:14px 20px; border-top:1px solid var(--gris-borde); display:flex; gap:12px; align-items:center; flex-wrap:wrap; flex-shrink:0;">
+        <div class="form-grupo" style="margin-bottom:0; flex:1; min-width:200px;">
+            <label class="form-label">Asignar temporada</label>
+            <select id="lote-temporada-destino" class="form-control"></select>
+        </div>
+        <span id="lote-contador-sel" style="font-size:13px; color:var(--gris);">0 rodeo(s) seleccionado(s)</span>
+        <button type="button" class="btn btn-primario" onclick="aplicarLoteTemporada()">Aplicar a seleccionados</button>
+        <button type="button" class="btn btn-secundario" onclick="cerrarModalLote()">Cerrar</button>
+    </div>
+</div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
@@ -238,10 +301,14 @@ const esMonitor        = _rolEvalRodeos === 'monitor';
 const esDirector       = _rolEvalRodeos === 'director';
 const esAnalistaRodeos = _rolEvalRodeos === 'analista';
 const esComisionRodeos = _rolEvalRodeos === 'comision_tecnica';
+const esAdminPlenoRodeos = _rolEvalRodeos === null; // solo admin pleno asigna temporada
 
 // Monitor / Comisión Técnica: ocultar acciones de admin en el topbar
 if (esMonitor || esComisionRodeos) {
     document.querySelectorAll('.topbar-acciones button').forEach(b => b.style.display = 'none');
+} else if (esAdminPlenoRodeos) {
+    // Asignar temporada por lote: solo administrador pleno (sección 25)
+    document.getElementById('btn-lote-temporada').style.display = '';
 }
 
 let paginaActual = 1;
@@ -271,17 +338,19 @@ function poblarAnios() {
 
 let todosJurados = [];
 let todosDelegados = [];
+let temporadasDisponibles = [];
 
 async function init() {
     poblarAnios();
     try {
-        const [tipos, cats, jurados, delegados, comunas, clasificaciones] = await Promise.all([
+        const [tipos, cats, jurados, delegados, comunas, clasificaciones, temporadas] = await Promise.all([
             api.get('/admin/rodeos/tipos/lista?activo=true'),
             api.get('/admin/reportes/categorias-rodeo/lista?activo=true'),
             api.get('/admin/usuarios?tipo=jurado&activo=true&limit=500'),
             api.get('/admin/usuarios?tipo=delegado_rentado&activo=true&limit=500'),
             api.get('/admin/propuesta-designacion/comunas').catch(() => []),
-            api.get('/admin/propuesta-designacion/clasificaciones').catch(() => [])
+            api.get('/admin/propuesta-designacion/clasificaciones').catch(() => []),
+            api.get('/admin/temporadas').catch(() => ({ temporadas: [] }))
         ]);
         tiposRodeo      = tipos  || [];
         categoriasRodeo = cats   || [];
@@ -289,22 +358,32 @@ async function init() {
         todosDelegados  = delegados?.data || [];
         comunasChile    = comunas || [];
         clasificacionesDesignacion = clasificaciones || [];
+        temporadasDisponibles = temporadas?.temporadas || [];
     } catch(err) {
         console.warn('[Rodeos] No se pudieron cargar datos iniciales:', err.message);
         tiposRodeo = []; categoriasRodeo = [];
         todosJurados = []; todosDelegados = [];
         comunasChile = []; clasificacionesDesignacion = [];
+        temporadasDisponibles = [];
     }
     poblarFiltrosAvanzados();
-    cargar();
+    await actualizarContadorSinTemporada();
 
     // Acceso directo desde Propuesta de Designación → Datos pendientes:
     // /admin/rodeos.html?abrir=tipos&filtro=sin_clasificar
+    // /admin/rodeos.html?temporada=sin_temporada (desde Configuración → Temporadas)
     const params = new URLSearchParams(location.search);
     if (params.get('abrir') === 'tipos') {
         mostrarTipos(params.get('filtro') === 'sin_clasificar');
         history.replaceState(null, '', location.pathname); // limpia la URL, no repetir al refrescar
     }
+    if (params.get('temporada') === 'sin_temporada') {
+        document.getElementById('panel-filtros-avz').classList.remove('oculto');
+        document.getElementById('f-temporada').value = 'sin_temporada';
+        history.replaceState(null, '', location.pathname);
+    }
+
+    cargar();
 }
 
 function poblarFiltrosAvanzados() {
@@ -328,6 +407,39 @@ function poblarFiltrosAvanzados() {
     todosDelegados.forEach(u => {
         const o = document.createElement('option'); o.value = u.id; o.textContent = u.nombre_completo; fDeleg.appendChild(o);
     });
+    // Temporada
+    const fTemp = document.getElementById('f-temporada');
+    if (fTemp) {
+        fTemp.innerHTML = '<option value="">Todas</option><option value="sin_temporada">Sin temporada</option>';
+        temporadasDisponibles.forEach(t => {
+            const o = document.createElement('option'); o.value = t.id; o.textContent = t.nombre; fTemp.appendChild(o);
+        });
+    }
+}
+
+// ── Contador "RODEOS SIN TEMPORADA" (sección 17) — clickeable, filtra de
+// inmediato por temporada_id IS NULL. Misma fuente que Configuración →
+// Temporadas (GET /admin/temporadas/conteos), sin duplicar el cálculo.
+async function actualizarContadorSinTemporada() {
+    const div = document.getElementById('alerta-sin-temporada-rodeos');
+    if (!div) return;
+    try {
+        const data = await api.get('/admin/temporadas/conteos');
+        if (data.sin_temporada > 0) {
+            div.classList.remove('oculto');
+            div.innerHTML = `<div class="alerta alerta-advertencia" style="cursor:pointer;" onclick="filtrarSinTemporada()">
+                ⚠️ <strong>RODEOS SIN TEMPORADA: ${data.sin_temporada}</strong> de ${data.total_rodeos} — clic para filtrar
+            </div>`;
+        } else {
+            div.classList.add('oculto');
+        }
+    } catch (e) { /* no bloquea la carga de la página */ }
+}
+
+function filtrarSinTemporada() {
+    document.getElementById('panel-filtros-avz').classList.remove('oculto');
+    document.getElementById('f-temporada').value = 'sin_temporada';
+    cargar();
 }
 
 function toggleFiltros() {
@@ -340,7 +452,7 @@ function toggleFiltros() {
 function limpiar() {
     ['f-mes','f-año','f-buscar','f-cat','f-tipo','f-asoc','f-club',
      'f-jurado','f-delegado','f-desde','f-hasta','f-est-j','f-est-d',
-     'f-cj','f-cd','f-video','f-origen'].forEach(id => {
+     'f-cj','f-cd','f-video','f-origen','f-temporada'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -371,6 +483,7 @@ async function cargar(pagina = 1) {
         cartilla_delegado: gv('f-cd'),
         video:           gv('f-video'),
         origen:          gv('f-origen'),
+        temporada:       gv('f-temporada'),
         page:  paginaActual,
         limit: POR_PAGINA
     });
@@ -780,6 +893,22 @@ function formRodeo(r) {
         `<option value="${t.id}" data-dias="${t.duracion_dias}" data-cat="${t.categoria_rodeo_id||''}" ${r?.tipo_rodeo_id===t.id?'selected':''}>${sanitizar(t.nombre)} (${t.duracion_dias} día(s))</option>`
     ).join('');
     const cats  = categoriasRodeo.map(c => `<option value="${c.id}" ${r?.categoria_rodeo_id===c.id?'selected':''}>${sanitizar(c.nombre)}</option>`).join('');
+    const opcionesTemporada = temporadasDisponibles.map(t =>
+        `<option value="${t.id}" ${r?.temporada_id===t.id?'selected':''}>${sanitizar(t.nombre)}</option>`
+    ).join('');
+    const campoTemporada = esAdminPlenoRodeos
+        ? `<div class="form-grupo">
+            <label class="form-label">Temporada</label>
+            <select name="temporada_id" id="sel-temporada-rodeo" class="form-control">
+                <option value="">Sin temporada</option>
+                ${opcionesTemporada}
+            </select>
+        </div>`
+        : `<div class="form-grupo">
+            <label class="form-label">Temporada</label>
+            <input type="text" class="form-control" value="${sanitizar(r?.temporada_nombre || 'Sin temporada')}" disabled>
+            <div class="form-hint">Solo un administrador pleno puede cambiar la temporada.</div>
+        </div>`;
     return `<form onsubmit="guardarRodeo(event)">
         <div class="form-fila">
             <div class="form-grupo">
@@ -827,6 +956,9 @@ function formRodeo(r) {
             </div>
         </div>
         <div class="form-fila">
+            ${campoTemporada}
+        </div>
+        <div class="form-fila">
             <div class="form-grupo" style="flex:1 1 100%;">
                 <label class="form-label">Observación</label>
                 <textarea name="observacion" class="form-control" rows="2">${sanitizar(r?.observacion||'')}</textarea>
@@ -849,11 +981,12 @@ function sincronizarComunaId(inputEl) {
     document.getElementById('in-comuna-id').value = match ? match.id : '';
 }
 
-async function guardarRodeo(e) {
+async function guardarRodeo(e, confirmarFueraRango = false) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
     const datos = Object.fromEntries(new FormData(e.target));
+    if (confirmarFueraRango) datos.confirmar_fuera_rango = true;
     try {
         if (rodeoActual) {
             await api.patch('/admin/rodeos/' + rodeoActual.id, datos);
@@ -864,7 +997,19 @@ async function guardarRodeo(e) {
         }
         cerrarModal();
         cargar(paginaActual);
-    } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+        actualizarContadorSinTemporada();
+    } catch(err) {
+        // 409 con fueraDeRango: la fecha del rodeo cae fuera del rango de la
+        // temporada elegida — advertir y pedir confirmación explícita antes
+        // de reintentar (sección 15). Nunca se modifica rodeo.fecha.
+        if (err.status === 409 && err.data?.fueraDeRango) {
+            btn.disabled = false;
+            const ok = await confirmar(`${err.message}<br><br>¿Confirma de todas formas la asignación a "${sanitizar(err.data.temporada?.nombre || '')}"?`);
+            if (ok) await guardarRodeo(e, true);
+            return;
+        }
+        mostrarError(err);
+    } finally { btn.disabled = false; }
 }
 
 async function guardarDatosMonitor(rodeoId) {
@@ -1706,6 +1851,137 @@ async function exportar() {
 }
 
 document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+// ── Asignación masiva de temporada (sección 18) ─────────────────────────
+// Siempre decisión manual: nunca se aplica nada sin que el administrador
+// pulse "Aplicar a seleccionados", y si hay rodeos fuera de rango, sin que
+// además confirme explícitamente el resumen (sección 19).
+let loteRodeos = [];
+let loteSeleccionados = new Set();
+
+function abrirLoteTemporada() {
+    document.getElementById('lote-f-temporada-actual').value = 'sin_temporada';
+    document.getElementById('lote-f-desde').value = '';
+    document.getElementById('lote-f-hasta').value = '';
+    document.getElementById('lote-f-asoc').value = '';
+    const fTipo = document.getElementById('lote-f-tipo');
+    fTipo.innerHTML = '<option value="">Todos</option>' + tiposRodeo.map(t => `<option value="${t.id}">${sanitizar(t.nombre)}</option>`).join('');
+    const fDestino = document.getElementById('lote-temporada-destino');
+    fDestino.innerHTML = temporadasDisponibles.map(t => `<option value="${t.id}">${sanitizar(t.nombre)}</option>`).join('');
+    loteRodeos = [];
+    loteSeleccionados = new Set();
+    document.getElementById('lote-resultado').innerHTML = '<p class="texto-gris">Ajuste los filtros y pulse "Buscar" para ver rodeos.</p>';
+    actualizarContadorSeleccionLote();
+    document.getElementById('modal-lote-overlay').classList.remove('oculto');
+}
+
+function cerrarModalLote() { document.getElementById('modal-lote-overlay').classList.add('oculto'); }
+document.getElementById('modal-lote-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModalLote(); });
+
+async function buscarRodeosLote() {
+    const div = document.getElementById('lote-resultado');
+    div.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    const p = toQueryString({
+        temporada:   document.getElementById('lote-f-temporada-actual').value,
+        fecha_desde: document.getElementById('lote-f-desde').value,
+        fecha_hasta: document.getElementById('lote-f-hasta').value,
+        asociacion:  document.getElementById('lote-f-asoc').value,
+        tipo_rodeo_id: document.getElementById('lote-f-tipo').value,
+        limit: 500,
+        page: 1
+    });
+    try {
+        const data = await api.get('/admin/rodeos?' + p);
+        loteRodeos = data.data || [];
+        loteSeleccionados = new Set();
+        renderTablaLote();
+    } catch (err) {
+        div.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
+}
+
+function renderTablaLote() {
+    const div = document.getElementById('lote-resultado');
+    if (loteRodeos.length === 0) {
+        div.innerHTML = '<p class="texto-gris">Sin rodeos para estos filtros.</p>';
+        actualizarContadorSeleccionLote();
+        return;
+    }
+    div.innerHTML = `
+        <table>
+            <thead><tr>
+                <th style="width:32px;"><input type="checkbox" id="lote-check-todos" onchange="toggleSeleccionarTodosLote(this.checked)"></th>
+                <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Temporada actual</th>
+            </tr></thead>
+            <tbody>
+            ${loteRodeos.map(r => `<tr>
+                <td><input type="checkbox" class="lote-check-fila" data-id="${r.id}" ${loteSeleccionados.has(r.id)?'checked':''} onchange="toggleSeleccionLote('${r.id}', this.checked)"></td>
+                <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
+                <td>${sanitizar(r.club)}</td>
+                <td>${sanitizar(r.asociacion)}</td>
+                <td>${sanitizar(r.tipo_rodeo_nombre || '—')}</td>
+                <td>${r.temporada_nombre ? sanitizar(r.temporada_nombre) : '<span style="color:#aaa;">Sin temporada</span>'}</td>
+            </tr>`).join('')}
+            </tbody>
+        </table>`;
+    actualizarContadorSeleccionLote();
+}
+
+function toggleSeleccionLote(id, marcado) {
+    if (marcado) loteSeleccionados.add(id); else loteSeleccionados.delete(id);
+    actualizarContadorSeleccionLote();
+}
+
+function toggleSeleccionarTodosLote(marcado) {
+    loteSeleccionados = new Set(marcado ? loteRodeos.map(r => r.id) : []);
+    document.querySelectorAll('.lote-check-fila').forEach(chk => chk.checked = marcado);
+    actualizarContadorSeleccionLote();
+}
+
+function actualizarContadorSeleccionLote() {
+    const span = document.getElementById('lote-contador-sel');
+    if (span) span.textContent = `${loteSeleccionados.size} rodeo(s) seleccionado(s)`;
+}
+
+async function aplicarLoteTemporada(confirmarFueraRango = false) {
+    if (loteSeleccionados.size === 0) return mostrarToast('Seleccione al menos un rodeo', 'error');
+    const temporada_id = document.getElementById('lote-temporada-destino').value;
+    if (!temporada_id) return mostrarToast('Seleccione la temporada a asignar', 'error');
+
+    try {
+        const resp = await api.post('/admin/rodeos/asignar-temporada-lote', {
+            rodeo_ids: [...loteSeleccionados],
+            temporada_id,
+            confirmar_fuera_rango: confirmarFueraRango
+        });
+        mostrarToast(`Temporada asignada a ${resp.actualizados} rodeo(s)`, 'success');
+        cerrarModalLote();
+        cargar(paginaActual);
+        actualizarContadorSinTemporada();
+    } catch (err) {
+        // 409 con resumen dentro/fuera de rango — mostrar exactamente qué
+        // rodeos quedan fuera y pedir confirmación explícita (sección 19).
+        if (err.status === 409 && err.data?.requiereConfirmacion) {
+            const { resumen, fuera_de_rango } = err.data;
+            const lista = (fuera_de_rango || []).map(r => `<li>${sanitizar(r.club)} — ${formatFecha(r.fecha)}</li>`).join('');
+            const mensaje = `<strong>Resumen antes de aplicar:</strong>
+                <div style="text-align:left; margin:10px 0; font-size:14px; line-height:1.7;">
+                    Rodeos seleccionados: <strong>${resumen.seleccionados}</strong><br>
+                    Dentro del rango: <strong>${resumen.dentro_rango}</strong><br>
+                    Fuera del rango: <strong>${resumen.fuera_rango}</strong>
+                </div>
+                <div style="text-align:left; font-size:13px;">
+                    ⚠ Los siguientes quedan fuera del rango de la temporada elegida:
+                    <ul style="margin:6px 0; padding-left:20px; max-height:160px; overflow-y:auto;">${lista}</ul>
+                </div>
+                ¿Continuar de todas formas con los ${resumen.seleccionados} rodeo(s) seleccionados?`;
+            const ok = await confirmar(mensaje);
+            if (ok) await aplicarLoteTemporada(true);
+            return;
+        }
+        mostrarError(err);
+    }
+}
 
 // ── Adjuntos Admin ───────────────────────────────────────────────
 let adjAdminRodeoId = null;

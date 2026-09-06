@@ -3,7 +3,21 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
-const { soloNoMonitor, soloNoAnalista, soloNoComisionTecnica } = require('../../middleware/auth');
+const { soloNoMonitor, soloNoAnalista, soloNoComisionTecnica, soloRolEvaluacion } = require('../../middleware/auth');
+const {
+    evaluarAsignacionIndividual, evaluarAsignacionLote,
+    resolverFiltroTemporadaRodeos, construirAuditoriaAsignacionTemporada
+} = require('../../services/temporadas');
+
+// Asignar/quitar temporada a un rodeo es una acción restringida a
+// administrador pleno (rol_evaluacion === null) — a diferencia del resto de
+// la edición de rodeos, que sí permiten monitor/director/etc. Se aplica
+// como chequeo puntual sobre el campo, no como middleware de ruta, para no
+// restringir el resto de PATCH /:id (club, fecha, tipo, comuna...), que
+// sigue funcionando exactamente igual que hoy para esos roles.
+function esAdminPleno(req) {
+    return (req.usuario.rol_evaluacion || null) === null;
+}
 
 // ─── Helper: intersectar arrays de IDs para filtros complejos ───
 function intersectIds(current, newIds) {
@@ -85,7 +99,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     const {
         mes, año, buscar, club, asociacion,
         tipo_rodeo_id, tipo, categoria_rodeo_id, origen, estado,
-        fecha_desde, fecha_hasta,
+        fecha_desde, fecha_hasta, temporada,
         jurado_id, delegado_id, estado_jurado, estado_delegado,
         cartilla_jurado, cartilla_delegado, video,
         page = 1, limit = 50
@@ -134,6 +148,7 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             id, club, asociacion, fecha, tipo_rodeo_nombre, tipo_rodeo_id,
             categoria_rodeo_id, categoria_rodeo_nombre, duracion_dias, origen, estado, created_at,
             comuna_id, comunas_chile(nombre),
+            temporada_id, temporadas(nombre),
             tipos_rodeo(categoria_rodeo_id, categorias_rodeo(nombre))
         `, { count: 'exact' })
         .order('fecha', { ascending: false })
@@ -170,6 +185,10 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     if (club && !buscar)       query = query.ilike('club', `%${club}%`);
     if (asociacion && !buscar) query = query.ilike('asociacion', `%${asociacion}%`);
 
+    const filtroTemporada = resolverFiltroTemporadaRodeos(temporada);
+    if (filtroTemporada.tipo === 'sin_temporada') query = query.is('temporada_id', null);
+    else if (filtroTemporada.tipo === 'especifica') query = query.eq('temporada_id', filtroTemporada.valor);
+
     if (fecha_desde) query = query.gte('fecha', fecha_desde);
     if (fecha_hasta) query = query.lte('fecha', fecha_hasta);
 
@@ -201,9 +220,11 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
                 }
             }
             r.comuna_nombre = r.comunas_chile?.nombre || null;
+            r.temporada_nombre = r.temporadas?.nombre || null;
             // Limpiar los joins auxiliares de la respuesta
             delete r.tipos_rodeo;
             delete r.comunas_chile;
+            delete r.temporadas;
         });
     }
 
@@ -442,10 +463,23 @@ router.put('/:id/notas-secundarias', async (req, res) => {
 
 // POST /api/admin/rodeos
 router.post('/', soloNoMonitor, async (req, res) => {
-    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, comuna_id } = req.body;
+    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, comuna_id, temporada_id, confirmar_fuera_rango } = req.body;
 
     if (!club || !asociacion || !fecha || !tipo_rodeo_id) {
         return res.status(400).json({ error: 'club, asociacion, fecha y tipo_rodeo_id son requeridos' });
+    }
+
+    if (temporada_id && !esAdminPleno(req)) {
+        return res.status(403).json({ error: 'Solo un administrador pleno puede asignar temporada' });
+    }
+
+    let temporadaResuelta = null;
+    if (temporada_id) {
+        const { data: temp } = await supabase.from('temporadas').select('id, nombre, fecha_inicio, fecha_fin').eq('id', temporada_id).single();
+        if (!temp) return res.status(400).json({ error: 'Temporada no encontrada' });
+        temporadaResuelta = temp;
+        const evalu = evaluarAsignacionIndividual(fecha, temporadaResuelta, !!confirmar_fuera_rango);
+        if (!evalu.permitido) return res.status(409).json({ error: evalu.mensaje, fueraDeRango: true, temporada: temporadaResuelta });
     }
 
     const { data: tipo } = await supabase
@@ -476,6 +510,7 @@ router.post('/', soloNoMonitor, async (req, res) => {
             categoria_rodeo_id: categoria_rodeo_id || null,
             categoria_rodeo_nombre,
             comuna_id: comuna_id || null,
+            temporada_id: temporada_id || null,
             observacion,
             origen: 'manual',
             created_by: req.usuario.id
@@ -489,7 +524,7 @@ router.post('/', soloNoMonitor, async (req, res) => {
         tabla: 'rodeos',
         registro_id: data.id,
         accion: 'crear',
-        datos_nuevos: { club, asociacion, fecha, tipo_rodeo_nombre: tipo.nombre },
+        datos_nuevos: { club, asociacion, fecha, tipo_rodeo_nombre: tipo.nombre, temporada_id: temporada_id || null },
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
         descripcion: `Rodeo creado: ${club} - ${tipo.nombre} - ${fecha}`,
@@ -501,7 +536,11 @@ router.post('/', soloNoMonitor, async (req, res) => {
 
 // PATCH /api/admin/rodeos/:id
 router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
-    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, estado, comuna_id } = req.body;
+    const { club, asociacion, fecha, tipo_rodeo_id, categoria_rodeo_id, observacion, estado, comuna_id, temporada_id, confirmar_fuera_rango } = req.body;
+
+    if (temporada_id !== undefined && !esAdminPleno(req)) {
+        return res.status(403).json({ error: 'Solo un administrador pleno puede asignar temporada' });
+    }
 
     const { data: anterior } = await supabase
         .from('rodeos')
@@ -511,6 +550,20 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
 
     if (!anterior) return res.status(404).json({ error: 'Rodeo no encontrado' });
 
+    // Validar fecha vs. rango de la temporada ANTES de tocar nada — nunca se
+    // modifica rodeo.fecha por esto, solo se advierte/bloquea la asignación.
+    let temporadaResuelta = null;
+    if (temporada_id) {
+        const { data: temp } = await supabase.from('temporadas').select('id, nombre, fecha_inicio, fecha_fin').eq('id', temporada_id).single();
+        if (!temp) return res.status(400).json({ error: 'Temporada no encontrada' });
+        temporadaResuelta = temp;
+        const fechaEfectiva = fecha || anterior.fecha;
+        const evalu = evaluarAsignacionIndividual(fechaEfectiva, temporadaResuelta, !!confirmar_fuera_rango);
+        if (!evalu.permitido) {
+            return res.status(409).json({ error: evalu.mensaje, fueraDeRango: true, temporada: temporadaResuelta });
+        }
+    }
+
     const cambios = { updated_at: new Date().toISOString() };
     if (club) cambios.club = club.trim();
     if (asociacion) cambios.asociacion = asociacion.trim();
@@ -518,6 +571,7 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
     if (observacion !== undefined) cambios.observacion = observacion;
     if (estado) cambios.estado = estado;
     if (comuna_id !== undefined) cambios.comuna_id = comuna_id || null;
+    if (temporada_id !== undefined) cambios.temporada_id = temporada_id || null;
 
     if (tipo_rodeo_id && tipo_rodeo_id !== anterior.tipo_rodeo_id) {
         const { data: tipo } = await supabase
@@ -564,7 +618,80 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
         ip_address: req.ip
     });
 
+    // Auditoría dedicada de temporada — además de la genérica de arriba, para
+    // poder filtrar/reportar cambios de temporada por separado (sección 13).
+    if (temporada_id !== undefined && anterior.temporada_id !== cambios.temporada_id) {
+        await auditoria.registrar({
+            ...construirAuditoriaAsignacionTemporada(anterior, anterior.temporada_id, cambios.temporada_id, req.usuario.id),
+            ip_address: req.ip
+        });
+    }
+
     res.json(data);
+});
+
+// POST /api/admin/rodeos/asignar-temporada-lote
+// Asignación manual por lote — nunca automática, nunca cambia rodeo.fecha.
+// Solo administrador pleno. 4 queries fijas sin importar el tamaño del lote
+// (temporada, rodeos, update, auditoría) — nunca una consulta por rodeo.
+router.post('/asignar-temporada-lote', soloRolEvaluacion(), async (req, res) => {
+    const { rodeo_ids, temporada_id, confirmar_fuera_rango } = req.body;
+
+    if (!Array.isArray(rodeo_ids) || rodeo_ids.length === 0) {
+        return res.status(400).json({ error: 'rodeo_ids debe ser un arreglo no vacío' });
+    }
+    if (!temporada_id) return res.status(400).json({ error: 'temporada_id es requerido' });
+
+    const { data: temporada, error: errT } = await supabase
+        .from('temporadas').select('id, nombre, fecha_inicio, fecha_fin').eq('id', temporada_id).single();
+    if (errT || !temporada) return res.status(400).json({ error: 'Temporada no encontrada' });
+
+    const { data: rodeos, error: errR } = await supabase
+        .from('rodeos')
+        .select('id, club, asociacion, fecha, temporada_id')
+        .in('id', rodeo_ids)
+        .eq('estado', 'activo');
+    if (errR) return res.status(500).json({ error: errR.message });
+
+    const evalu = evaluarAsignacionLote(rodeos || [], temporada, !!confirmar_fuera_rango);
+    if (evalu.requiereConfirmacion) {
+        return res.status(409).json({
+            requiereConfirmacion: true,
+            mensaje: '⚠ Algunos rodeos seleccionados quedan fuera del rango de la temporada elegida.',
+            resumen: evalu.resumen,
+            fuera_de_rango: evalu.fuera.map(r => ({ id: r.id, club: r.club, fecha: r.fecha }))
+        });
+    }
+
+    const idsAAplicar = (rodeos || []).map(r => r.id);
+    if (idsAAplicar.length === 0) return res.json({ actualizados: 0, resumen: evalu.resumen });
+
+    const { error: errU } = await supabase
+        .from('rodeos')
+        .update({ temporada_id, updated_at: new Date().toISOString() })
+        .in('id', idsAAplicar);
+    if (errU) return res.status(500).json({ error: errU.message });
+
+    // Auditoría: un registro por rodeo (trazabilidad individual, sección 20)
+    // + un resumen de la acción de lote — un único INSERT batch, no N+1.
+    const registrosPorRodeo = rodeos.map(r => ({
+        ...construirAuditoriaAsignacionTemporada(r, r.temporada_id, temporada_id, req.usuario.id),
+        ip_address: req.ip
+    }));
+    const registroLote = {
+        tabla: 'rodeos',
+        registro_id: null,
+        accion: 'asignar_temporada_lote',
+        datos_anteriores: null,
+        datos_nuevos: { temporada_id, temporada_nombre: temporada.nombre, rodeo_ids: idsAAplicar },
+        actor_id: String(req.usuario.id),
+        actor_tipo: 'administrador',
+        descripcion: `Asignación en lote de temporada "${temporada.nombre}" a ${idsAAplicar.length} rodeo(s)`,
+        ip_address: req.ip
+    };
+    await supabase.from('auditoria').insert([...registrosPorRodeo, registroLote]);
+
+    res.json({ actualizados: idsAAplicar.length, resumen: evalu.resumen });
 });
 
 // DELETE /api/admin/rodeos/:id (eliminar — soft delete en cascada)
