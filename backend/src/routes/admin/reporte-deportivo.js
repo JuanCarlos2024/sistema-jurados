@@ -270,6 +270,14 @@ async function obtenerDatos(q, paginar = true) {
         const cartilla_id        = cartillaEnviada?.id || null;
         const cartilla_tiene_pdf = !!(cartillaEnviada?.storage_path_pdf);
 
+        // Mejora Reporte Deportivo — campos operativos de la cartilla del
+        // jurado (cartillas_jurado.datos, misma cartilla "enviada" que ya se
+        // usa arriba para cartilla_id/cartilla_tiene_pdf — no se agrega
+        // ninguna consulta nueva). 'si'/'no' → Sí/No/— igual que en el
+        // Reporte Cartillas Jurado (reporte-cartillas.js: helper siNo()).
+        const datosCartilla = cartillaEnviada?.datos || {};
+        const _siNo = (v) => v === 'si' ? 'Sí' : v === 'no' ? 'No' : null;
+
         const po1 = dm?.puntaje_oficial_1er ?? null;
         const po2 = dm?.puntaje_oficial_2do ?? null;
         const po3 = dm?.puntaje_oficial_3er ?? null;
@@ -347,7 +355,23 @@ async function obtenerDatos(q, paginar = true) {
             cartilla_id:          cartilla_id,
             cartilla_tiene_pdf:   cartilla_tiene_pdf,
             fecha_envio_cartilla: fechaEnvioCartilla,
-            eval_updated_at: ev?.updated_at || null
+            eval_updated_at: ev?.updated_at || null,
+            // Cartilla — campos operativos (mejora Reporte Deportivo). null
+            // cuando la cartilla no existe/no fue enviada o el campo no fue
+            // respondido (cartillas antiguas o borrador) — nunca inventado.
+            cartilla_hora_inicio:               datosCartilla.hora_inicio || null,
+            cartilla_serie_campeones_2_vueltas: _siNo(datosCartilla.serie_campeones_2_vueltas),
+            cartilla_caseta_adecuada:           _siNo(datosCartilla.caseta_adecuada),
+            cartilla_hubo_faltas:               _siNo(datosCartilla.hubo_faltas),
+            cartilla_hubo_ganado_fuera_peso:    _siNo(datosCartilla.hubo_ganado_fuera_peso),
+            cartilla_hubo_movimiento_rienda:    _siNo(datosCartilla.hubo_movimiento_rienda),
+            // Detalle asociado (Excel Detallado) — mismos campos reales,
+            // sin transformar todavía; el formateo a texto ocurre en
+            // /export-detalle, que es quien decide cómo mostrarlos.
+            cartilla_descripcion_faltas: datosCartilla.descripcion_faltas || null,
+            cartilla_clasificacion_peso: datosCartilla.clasificacion_peso || null,
+            cartilla_filas_ganado:       Array.isArray(datosCartilla.filas_ganado) ? datosCartilla.filas_ganado : [],
+            cartilla_registros_rienda:   Array.isArray(datosCartilla.registros_rienda) ? datosCartilla.registros_rienda : []
         };
     });
 
@@ -424,6 +448,13 @@ router.get('/export', async (req, res) => {
             { header: 'Casos Derivados Comisión',   key: 'derivadas_comision', width: 20 },
             { header: 'Apelaciones Acogidas',       key: 'apelaciones_acogidas',   width: 20 },
             { header: 'Apelaciones Rechazadas',     key: 'apelaciones_rechazadas', width: 20 },
+            // ── Campos operativos de la cartilla del jurado (mejora) ──
+            { header: 'Hora de Inicio',                       key: 'cartilla_hora_inicio',               width: 14 },
+            { header: 'Serie Campeones - 2 Vueltas',          key: 'cartilla_serie_campeones_2_vueltas',  width: 20 },
+            { header: 'Caseta Adecuada',                      key: 'cartilla_caseta_adecuada',            width: 16 },
+            { header: 'Faltas Disciplinarias/Reglamentarias', key: 'cartilla_hubo_faltas',                width: 24 },
+            { header: 'Ganado Fuera del Peso Reglamentario',  key: 'cartilla_hubo_ganado_fuera_peso',     width: 26 },
+            { header: 'Movimiento a la Rienda',               key: 'cartilla_hubo_movimiento_rienda',     width: 20 },
         ];
 
         ws.getRow(1).eachCell(cell => {
@@ -486,6 +517,16 @@ router.get('/export', async (req, res) => {
                 derivadas_comision:     f.derivadas_comision,
                 apelaciones_acogidas:   f.apelaciones_acogidas,
                 apelaciones_rechazadas: f.apelaciones_rechazadas,
+                // Cartilla — campos operativos (mejora). '' cuando no hay
+                // cartilla enviada o el campo no fue respondido — mismo
+                // criterio que el resto de las columnas de este Excel
+                // (ej. puntaje_oficial_1er) para valores ausentes.
+                cartilla_hora_inicio:               f.cartilla_hora_inicio || '',
+                cartilla_serie_campeones_2_vueltas: f.cartilla_serie_campeones_2_vueltas || '',
+                cartilla_caseta_adecuada:           f.cartilla_caseta_adecuada || '',
+                cartilla_hubo_faltas:               f.cartilla_hubo_faltas || '',
+                cartilla_hubo_ganado_fuera_peso:    f.cartilla_hubo_ganado_fuera_peso || '',
+                cartilla_hubo_movimiento_rienda:    f.cartilla_hubo_movimiento_rienda || '',
             });
 
             if (f.resultados_alterados) {
@@ -557,6 +598,41 @@ router.get('/export-detalle', async (req, res) => {
             for (const e of (evJefe || [])) comentJefeByEval[e.id] = e.comentario_jefe || '';
         }
 
+        // ── Formateo de detalle deportivo (mejora) ──────────────────────────────
+        // Consolida filas_ganado[]/registros_rienda[] en UN texto multilínea por
+        // rodeo (mismo criterio ya usado en este archivo para "observaciones" —
+        // varias fuentes en una sola celda) en vez de generar filas nuevas: estas
+        // listas no tienen relación con los "casos" de evaluación (dimensión
+        // distinta), así que cruzarlas fila a fila no tendría sentido y podría
+        // multiplicar filas sin motivo. Nunca lanza con datos ausentes/parciales.
+        const fmtGanado = (f) => {
+            if (f.cartilla_hubo_ganado_fuera_peso !== 'Sí') return '—';
+            const partes = [];
+            if (f.cartilla_clasificacion_peso) partes.push(`Clasificación: ${f.cartilla_clasificacion_peso}`);
+            for (const fg of (f.cartilla_filas_ganado || [])) {
+                const linea = [
+                    fg.serie ? `Serie: ${fg.serie}` : '',
+                    fg.cantidad ? `Cant: ${fg.cantidad}` : '',
+                    fg.porcentaje ? `%: ${fg.porcentaje}` : '',
+                    fg.observacion ? `Obs: ${fg.observacion}` : ''
+                ].filter(Boolean).join(' — ');
+                if (linea) partes.push(linea);
+            }
+            return partes.join('\n') || 'Sí (sin registros)';
+        };
+        const fmtRienda = (f) => {
+            if (f.cartilla_hubo_movimiento_rienda !== 'Sí') return '—';
+            const partes = (f.cartilla_registros_rienda || []).map(rr => [
+                rr.nombre_socio ? `${rr.nombre_socio}${rr.rut_socio ? ' (' + rr.rut_socio + ')' : ''}` : '',
+                rr.nro_socio ? `N° socio: ${rr.nro_socio}` : '',
+                rr.nombre_equino ? `Equino: ${rr.nombre_equino}${rr.nro_inscripcion ? ' (N° ' + rr.nro_inscripcion + ')' : ''}` : '',
+                rr.categoria ? `Categoría: ${rr.categoria}` : '',
+                rr.sistema ? `Sistema: ${rr.sistema}` : '',
+                rr.puntaje ? `Puntaje: ${rr.puntaje}` : ''
+            ].filter(Boolean).join(' — ')).filter(Boolean);
+            return partes.join('\n') || 'Sí (sin registros)';
+        };
+
         const TIPO_CASO_LABEL = {
             interpretativa: 'Apreciación',
             reglamentaria:  'Reglamentaria',
@@ -605,7 +681,19 @@ router.get('/export-detalle', async (req, res) => {
                 puntaje_revisado: puntajeRevisado,
                 analisis:         f.obs_analista || '—',
                 resultado_alterado: altTexto,
-                observaciones:    obsConsolidadas
+                observaciones:    obsConsolidadas,
+                // Información deportiva de la cartilla (mejora) — se repite
+                // por cada fila de caso del mismo rodeo, igual que club_asociacion/
+                // fecha/etc. arriba, para que cada fila del Excel quede autocontenida.
+                cartilla_hora_inicio:               f.cartilla_hora_inicio || '—',
+                cartilla_serie_campeones_2_vueltas: f.cartilla_serie_campeones_2_vueltas || '—',
+                cartilla_caseta_adecuada:           f.cartilla_caseta_adecuada || '—',
+                cartilla_hubo_faltas:               f.cartilla_hubo_faltas || '—',
+                cartilla_descripcion_faltas:        f.cartilla_hubo_faltas === 'Sí' ? (f.cartilla_descripcion_faltas || '—') : '—',
+                cartilla_hubo_ganado_fuera_peso:    f.cartilla_hubo_ganado_fuera_peso || '—',
+                cartilla_detalle_ganado:            fmtGanado(f),
+                cartilla_hubo_movimiento_rienda:    f.cartilla_hubo_movimiento_rienda || '—',
+                cartilla_detalle_rienda:            fmtRienda(f)
             };
 
             if (casos.length === 0) {
@@ -652,7 +740,18 @@ router.get('/export-detalle', async (req, res) => {
             { header: 'Desc. Pts',                                   key: 'descuento',          width: 10 },
             { header: 'Comentario Analista',                         key: 'comentario_analista',width: 44 },
             { header: 'Comentario Comisión',                         key: 'comentario_comision',width: 44 },
-            { header: 'Observaciones (Jurado / Analista / Jefe / Monitor / Admin)', key: 'observaciones', width: 60 }
+            { header: 'Observaciones (Jurado / Analista / Jefe / Monitor / Admin)', key: 'observaciones', width: 60 },
+            // ── Información deportiva de la cartilla (mejora) — agregadas al final,
+            //    ninguna columna existente se elimina ni cambia de lugar ──
+            { header: 'Hora de Inicio',                       key: 'cartilla_hora_inicio',               width: 14 },
+            { header: 'Serie Campeones - 2 Vueltas',          key: 'cartilla_serie_campeones_2_vueltas',  width: 20 },
+            { header: 'Caseta Adecuada',                      key: 'cartilla_caseta_adecuada',            width: 16 },
+            { header: 'Faltas Disciplinarias/Reglamentarias', key: 'cartilla_hubo_faltas',                width: 24 },
+            { header: 'Descripción de la Falta',              key: 'cartilla_descripcion_faltas',         width: 46 },
+            { header: 'Ganado Fuera del Peso Reglamentario',  key: 'cartilla_hubo_ganado_fuera_peso',     width: 26 },
+            { header: 'Detalle Ganado Fuera de Peso',         key: 'cartilla_detalle_ganado',             width: 46 },
+            { header: 'Movimiento a la Rienda',               key: 'cartilla_hubo_movimiento_rienda',     width: 20 },
+            { header: 'Detalle Movimiento a la Rienda',       key: 'cartilla_detalle_rienda',             width: 50 },
         ];
 
         // Estilo encabezado
@@ -672,7 +771,10 @@ router.get('/export-detalle', async (req, res) => {
             right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
         };
         const ROJO_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBD0' } };
-        const ALT_TEXT_COLS = new Set(['analisis', 'descripcion_caso', 'comentario_analista', 'comentario_comision', 'observaciones']);
+        const ALT_TEXT_COLS = new Set([
+            'analisis', 'descripcion_caso', 'comentario_analista', 'comentario_comision', 'observaciones',
+            'cartilla_descripcion_faltas', 'cartilla_detalle_ganado', 'cartilla_detalle_rienda'
+        ]);
         const LINK_COL = 'video_url';
 
         for (const r of excelRows) {

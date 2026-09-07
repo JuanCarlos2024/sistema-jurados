@@ -153,7 +153,8 @@
                     <div class="flex gap-8" style="flex-wrap:wrap;">
                         <button type="submit" class="btn btn-primario">Buscar</button>
                         <button type="button" class="btn btn-outline" onclick="limpiarFiltros()">Limpiar filtros</button>
-                        <button type="button" class="btn btn-secundario" onclick="exportar()" id="btn-exportar" disabled>Exportar CSV/Excel</button>
+                        <button type="button" class="btn btn-success" onclick="exportarExcel()" id="btn-exportar" disabled>Exportar Excel</button>
+                        <button type="button" class="btn btn-secundario" onclick="exportarExcelDetallado()" id="btn-exportar-det" disabled>Exportar Excel Detallado</button>
                     </div>
                 </form>
             </div>
@@ -205,6 +206,7 @@ async function buscar(e) {
     div.innerHTML = '<div class="alerta alerta-info">Cargando…</div>';
     document.getElementById('resumen-bar').style.display = 'none';
     document.getElementById('btn-exportar').disabled = true;
+    document.getElementById('btn-exportar-det').disabled = true;
 
     try {
         const qs  = new URLSearchParams(params).toString();
@@ -254,6 +256,7 @@ function renderTabla(datos) {
         div.innerHTML = '<div class="alerta alerta-advertencia">No se encontraron resultados con los filtros aplicados.</div>';
         bar.style.display = 'none';
         document.getElementById('btn-exportar').disabled = true;
+        document.getElementById('btn-exportar-det').disabled = true;
         return;
     }
 
@@ -266,6 +269,7 @@ function renderTabla(datos) {
         <span class="resumen-stat">${cartillasUnicas}</span> cartilla(s) distintas
     `;
     document.getElementById('btn-exportar').disabled = false;
+    document.getElementById('btn-exportar-det').disabled = false;
 
     const html = `
     <div style="overflow-x:auto;">
@@ -308,17 +312,41 @@ function renderTabla(datos) {
 }
 
 // ─── Exportar ─────────────────────────────────────────────────────────────────
+// Se usa api.descargar() (fetch + Blob + header Authorization) — el mismo
+// mecanismo que ya usan el resto de las exportaciones del sistema (Reporte
+// Deportivo, cartillas PDF, etc.). El botón anterior ("Exportar CSV/Excel")
+// generaba un enlace <a href> plano sin ese header: verificarToken() exige
+// el header Authorization siempre, así que esa descarga fallaba con 401 en
+// producción — se corrige de paso al reemplazar el mecanismo.
 
-function exportar() {
+async function exportarExcel() {
     if (!_ultimosFiltros) return;
-    const qs = new URLSearchParams(_ultimosFiltros).toString();
-    const url = '/api/admin/reportes/cartillas-jurado/exportar' + (qs ? '?' + qs : '');
-    const a   = document.createElement('a');
-    a.href    = url;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const btn = document.getElementById('btn-exportar');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        const qs = new URLSearchParams(_ultimosFiltros).toString();
+        await api.descargar('/admin/reportes/cartillas-jurado/exportar-excel' + (qs ? '?' + qs : ''),
+            `reporte_cartillas_jurado_resumen_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Exportar Excel';
+    }
+}
+
+async function exportarExcelDetallado() {
+    if (!_ultimosFiltros) return;
+    const btn = document.getElementById('btn-exportar-det');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        const qs = new URLSearchParams(_ultimosFiltros).toString();
+        await api.descargar('/admin/reportes/cartillas-jurado/exportar-excel-detalle' + (qs ? '?' + qs : ''),
+            `reporte_cartillas_jurado_detalle_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar detallado', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Exportar Excel Detallado';
+    }
 }
 
 // ─── Habilitar/deshabilitar filtro Respuesta ──────────────────────────────────
@@ -342,6 +370,7 @@ function limpiarFiltros() {
         '<div class="alerta alerta-info" style="font-size:13px;">Usa los filtros y haz clic en <strong>Buscar</strong> para ver resultados.</div>';
     document.getElementById('resumen-bar').style.display = 'none';
     document.getElementById('btn-exportar').disabled = true;
+    document.getElementById('btn-exportar-det').disabled = true;
 }
 </script>
 </body>
