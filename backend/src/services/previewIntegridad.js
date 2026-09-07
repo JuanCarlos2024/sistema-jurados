@@ -29,10 +29,28 @@
 // La firma HMAC solo garantiza que NO fue alterado, no lo oculta. Por eso
 // el snapshot contiene exclusivamente identificadores y enums ya visibles
 // en la propia pantalla de dry-run — nunca nada sensible:
-//   v (versión del formato), temporada_id, y por rodeo: rodeo_id, estado
+//   v (versión del formato), temporada_id, configuracion_version_id
+//   (Etapa 3), y por rodeo: rodeo_id, estado
 //   ('PROPUESTO'|'SIN_PROPUESTA'|'NO_EVALUABLE'), jurado_id_propuesto.
 // Ningún password, secreto, JWT, service key, email, ni ningún dato que no
 // esté ya expuesto en la respuesta del propio dry-run.
+//
+// ─── configuracion_version_id (Etapa 3) ───────────────────────────────
+// Firmado igual que temporada_id/rodeos/jurado_id_propuesto — nunca se
+// confía en un configuracion_version_id que mande el cliente libremente
+// (sección 11 del pedido). Un preview queda ATADO PARA SIEMPRE a la
+// configuración con la que se generó: si mientras el administrador revisa
+// el preview otro administrador activa una versión distinta, este token ya
+// firmado sigue devolviendo la MISMA configuracion_version_id — el
+// resultado de decodificarlo no cambia nunca, sea cual sea la configuración
+// activa en ese momento (sección 21, escenario V1→V2).
+//
+// VERSION_SNAPSHOT subió de 1 a 2 exactamente por este campo nuevo: un
+// token firmado ANTES de la Etapa 3 (v=1, sin configuracion_version_id) se
+// RECHAZA explícitamente — nunca se asume V1 en su lugar. El preview es
+// efímero (vive en memoria del navegador, nunca en BD), así que pedir
+// volver a ejecutar la simulación es aceptable y evita adivinar con qué
+// configuración se generó un token de un formato anterior (sección 13).
 //
 // ─── FIRMA HMAC con separación de dominio ─────────────────────────────
 // Reutiliza JWT_SECRET (ya existente, ya usado exclusivamente en backend)
@@ -48,19 +66,24 @@ const crypto = require('crypto');
 
 const SECRETO = process.env.JWT_SECRET || 'fallback_secret_change_in_prod';
 const DOMINIO = 'propuesta-designacion-preview-v1:';
-const VERSION_SNAPSHOT = 1;
+// Nota: el prefijo de dominio HMAC ("...preview-v1:") es un identificador de
+// PROPÓSITO fijo (separa esta firma de cualquier otro uso futuro de
+// JWT_SECRET) — no tiene relación con VERSION_SNAPSHOT (el formato del
+// payload en sí), que es el que subió de 1 a 2 en la Etapa 3.
+const VERSION_SNAPSHOT = 2;
 
 function calcularFirma(payloadB64) {
     return crypto.createHmac('sha256', SECRETO).update(DOMINIO + payloadB64).digest('hex');
 }
 
 // ─── Firma un snapshot inmutable del resultado original del motor ────────
-// @param snapshot { temporada_id, rodeos: [{ rodeo_id, estado, jurado_id_propuesto }] }
+// @param snapshot { temporada_id, configuracion_version_id, rodeos: [{ rodeo_id, estado, jurado_id_propuesto }] }
 // @returns preview_token (string opaco, firmado — no cifrado)
 function firmarPreview(snapshot) {
     const payload = {
         v: VERSION_SNAPSHOT,
         temporada_id: snapshot.temporada_id ?? null,
+        configuracion_version_id: snapshot.configuracion_version_id,
         rodeos: (snapshot.rodeos || []).map(r => ({
             rodeo_id: r.rodeo_id,
             estado: r.estado,
@@ -78,7 +101,7 @@ function firmarPreview(snapshot) {
 // capturar. La comparación de firma es en tiempo constante
 // (crypto.timingSafeEqual), y SIEMPRE se verifica el largo de ambos buffers
 // antes de llamarla (timingSafeEqual lanza si los largos difieren).
-// @returns snapshot { temporada_id, rodeos: [...] } | null si es inválido/alterado
+// @returns snapshot { temporada_id, configuracion_version_id, rodeos: [...] } | null si es inválido/alterado/legacy
 function verificarPreviewToken(token) {
     if (!token || typeof token !== 'string') return null;
     const idx = token.lastIndexOf('.');
@@ -95,7 +118,12 @@ function verificarPreviewToken(token) {
 
     try {
         const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+        // v !== VERSION_SNAPSHOT rechaza CUALQUIER formato distinto al actual —
+        // en particular, un token legacy v=1 (Etapa 2, sin configuracion_
+        // version_id) queda rechazado acá mismo, nunca se le asume V1 en
+        // silencio (sección 13 del pedido de Etapa 3).
         if (payload.v !== VERSION_SNAPSHOT || !Array.isArray(payload.rodeos)) return null;
+        if (typeof payload.configuracion_version_id !== 'string' || !payload.configuracion_version_id) return null;
         return payload;
     } catch {
         return null;

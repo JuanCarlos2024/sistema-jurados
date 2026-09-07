@@ -12,16 +12,6 @@ const { calcularBloqueRodeo, rangoFechas } = require('./feriados');
 // ─────────────────────────────────────────────────────────────────────────
 const TEMPORADA = { nombre: '2026-2027', fecha_inicio: '2026-04-15', fecha_fin: '2027-04-15' };
 
-// Matriz real (Etapa 2, verificada en BD): elegibles + preferente por clasificación.
-const MATRIZ = {
-    interclubes:      { elegibles: new Set(['B','C']), preferentes: new Set(['C']) },
-    provincial:        { elegibles: new Set(['A','B']), preferentes: new Set(['B']) },
-    interasociaciones: { elegibles: new Set(['A','B']), preferentes: new Set(['A']) },
-    zonal:             { elegibles: new Set(['A','B']), preferentes: new Set(['A']) },
-    clasificatorio:    { elegibles: new Set(['A','B']), preferentes: new Set(['A']) },
-    nacional:          { elegibles: new Set(['A']),      preferentes: new Set(['A']) }
-};
-
 // Dos puntos sobre el mismo meridiano separados por una distancia EXACTA
 // (misma fórmula que calcularDistanciaKm cuando dLng=0: distancia = R * dLatRad),
 // para poder probar el límite de 600 km sin depender de coordenadas reales.
@@ -56,7 +46,7 @@ function rodeoInterno(id, { clasificacion_codigo = 'provincial', asociacion = 'O
     };
 }
 
-function contexto({ rodeos, jurados, disponibilidadPorJurado = {}, asignacionesTemporada = [], comunas = [], alias = [], temporada = TEMPORADA, matriz = MATRIZ }) {
+function contexto({ rodeos, jurados, disponibilidadPorJurado = {}, asignacionesTemporada = [], comunas = [], alias = [], temporada = TEMPORADA }) {
     const rodeosPorId = new Map(rodeos.map(r => [r.id, r]));
     const disponibilidad = new Map();
     for (const [juradoId, fechas] of Object.entries(disponibilidadPorJurado)) {
@@ -66,7 +56,6 @@ function contexto({ rodeos, jurados, disponibilidadPorJurado = {}, asignacionesT
         idsSolicitados: rodeos.map(r => r.id),
         temporada,
         rodeosPorId,
-        matrizPorCodigo: matriz,
         jurados,
         catalogoComunas: catalogoConComunas(comunas, alias),
         disponibilidad,

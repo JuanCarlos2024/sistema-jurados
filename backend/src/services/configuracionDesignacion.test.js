@@ -4,7 +4,8 @@ const {
     SCHEMA_VERSION_SOPORTADO, CRITERIOS_CONOCIDOS,
     validarDistancia, validarOrdenCriterios, validarMatrizClasificacion, validarMatrizCompleta,
     validarConfiguracion, configuracionRequiereDistancia,
-    construirConfiguracionDefaultV1, clonarConfiguracion, compararConfiguraciones
+    construirConfiguracionDefaultV1, clonarConfiguracion, compararConfiguraciones,
+    reconstruirConfiguracionDesdeFilas
 } = require('./configuracionDesignacion');
 
 const defaultV1 = construirConfiguracionDefaultV1();
@@ -482,5 +483,79 @@ describe('migración 050 — coherencia con el servicio puro', () => {
     });
     test('la matriz versionada exige 18 filas (6 clasificaciones × 3 categorías) antes de activar', () => {
         expect(sql).toMatch(/v_count_matriz\s*<>\s*18/);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// ETAPA 3 — reconstruirConfiguracionDesdeFilas: filas de BD → configuración
+// tipada. Fixture de filas EQUIVALENTES a las que produjo el seed de la
+// migración 050 (verificadas en vivo) — reconstruida, debe ser
+// funcionalmente idéntica a construirConfiguracionDefaultV1() (sección 31
+// del pedido: "test de reconstrucción de V1").
+// ═════════════════════════════════════════════════════════════════════════
+describe('Etapa 3 — reconstruirConfiguracionDesdeFilas: equivalencia V1 BD vs Default V1', () => {
+    // Fila de configuracion_designacion_versiones tal cual la devuelve
+    // Supabase hoy para V1 — incluyendo distancia_maxima_km como STRING
+    // ("600"), que es el tipo real observado en producción para una columna
+    // NUMERIC servida por PostgREST.
+    const versionRowV1 = {
+        id: 'v1-uuid', numero_version: 1, schema_version: 1,
+        regla_distancia_maxima_activa: true, distancia_maxima_km: '600',
+        regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
+        regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true
+    };
+    const criteriosRowsV1 = [
+        { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+        { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 2 },
+        { criterio_codigo: 'MENOR_DISTANCIA', orden: 3 }
+    ];
+    // 18 filas — mismo dato real verificado en BD (11 elegibles, 7 no elegibles).
+    const matrizRowsV1 = [
+        { clasificacion_codigo: 'interclubes', categoria: 'A', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'interclubes', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'interclubes', categoria: 'C', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'provincial', categoria: 'A', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'provincial', categoria: 'B', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'provincial', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'interasociaciones', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'interasociaciones', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'interasociaciones', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'zonal', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'zonal', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'zonal', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'clasificatorio', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'clasificatorio', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'clasificatorio', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'nacional', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'nacional', categoria: 'B', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'nacional', categoria: 'C', elegible: false, orden_preferencia: null }
+    ];
+
+    test('la configuración reconstruida es funcionalmente idéntica a construirConfiguracionDefaultV1()', () => {
+        const reconstruida = reconstruirConfiguracionDesdeFilas(versionRowV1, criteriosRowsV1, matrizRowsV1);
+        const { schema_version, regla_distancia_maxima_activa, distancia_maxima_km,
+            regla_no_repetir_asociacion_activa, regla_un_rodeo_por_finde_activa,
+            regla_finde_consecutivo_activa, regla_asociacion_organizadora_activa,
+            ordenCriterios, matriz } = defaultV1;
+        expect(reconstruida).toEqual({
+            schema_version, regla_distancia_maxima_activa, distancia_maxima_km,
+            regla_no_repetir_asociacion_activa, regla_un_rodeo_por_finde_activa,
+            regla_finde_consecutivo_activa, regla_asociacion_organizadora_activa,
+            ordenCriterios, matriz
+        });
+    });
+    test('distancia_maxima_km se normaliza de string ("600") a number (600)', () => {
+        const reconstruida = reconstruirConfiguracionDesdeFilas(versionRowV1, criteriosRowsV1, matrizRowsV1);
+        expect(reconstruida.distancia_maxima_km).toBe(600);
+        expect(typeof reconstruida.distancia_maxima_km).toBe('number');
+    });
+    test('distancia_maxima_km NULL se preserva como null (nunca se convierte a 0)', () => {
+        const versionSinDistancia = { ...versionRowV1, regla_distancia_maxima_activa: false, distancia_maxima_km: null };
+        const reconstruida = reconstruirConfiguracionDesdeFilas(versionSinDistancia, criteriosRowsV1, matrizRowsV1);
+        expect(reconstruida.distancia_maxima_km).toBeNull();
+    });
+    test('la reconstrucción pasa validarConfiguracion()', () => {
+        const reconstruida = reconstruirConfiguracionDesdeFilas(versionRowV1, criteriosRowsV1, matrizRowsV1);
+        expect(validarConfiguracion(reconstruida)).toEqual({ valido: true });
     });
 });

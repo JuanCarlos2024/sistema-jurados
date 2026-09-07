@@ -36,6 +36,15 @@ const {
     evaluarCambiosParaGuardar
 } = require('../../services/propuestaDesignacion');
 const { firmarPreview, verificarPreviewToken, mapaPorRodeo } = require('../../services/previewIntegridad');
+const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId } = require('../../services/configuracionDesignacionRepositorio');
+
+// ─── Respuesta uniforme cuando la configuración de designación no se pudo
+// resolver o resultó inválida — NUNCA se ejecuta el motor en ese caso
+// (sección 6/7 del pedido de Etapa 3: fallar cerrado, jamás
+// construirConfiguracionDefaultV1() como respaldo productivo).
+function responderConfiguracionNoResuelta(res, carga) {
+    return res.status(500).json({ error: carga.error, detalle: carga.detalle });
+}
 
 // Allowlist: solo administrador pleno (rol_evaluacion === null) hoy.
 router.use(soloRolEvaluacion());
@@ -628,8 +637,23 @@ router.post('/dry-run', async (req, res) => {
         return res.status(400).json({ error: 'Máximo 200 rodeos por corrida de simulación' });
     }
 
+    // Etapa 3 — resolver la configuración de designación UNA SOLA VEZ, ANTES
+    // de tocar el motor. Una simulación NUEVA usa exclusivamente la versión
+    // ACTIVA — si no hay exactamente una, o resultó inválida, no se ejecuta
+    // el motor (sección 7/8 del pedido): nunca construirConfiguracionDefaultV1()
+    // como respaldo productivo.
+    let cargaConfig;
     try {
-        const resultado = await generarSimulacion(rodeo_ids);
+        cargaConfig = await cargarConfiguracionDesignacionActiva();
+    } catch (err) {
+        console.error('[DRY-RUN] Error cargando configuración de designación:', err.message);
+        return res.status(500).json({ error: 'No se pudo cargar la configuración de designación: ' + err.message });
+    }
+    if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
+    const { configuracion, meta: configuracionMeta } = cargaConfig;
+
+    try {
+        const resultado = await generarSimulacion(rodeo_ids, 5, configuracion);
 
         // Enriquecer cada resultado con tipo de rodeo/clasificación/comuna —
         // mismo join que ya usa GET /propuestas/:id — para que la tarjeta de
@@ -651,13 +675,16 @@ router.post('/dry-run', async (req, res) => {
         const { data: temporadaActiva } = await supabase.from('temporadas').select('id').eq('activa', true).maybeSingle();
         const preview_token = firmarPreview({
             temporada_id: temporadaActiva?.id || null,
+            configuracion_version_id: configuracionMeta.id,
             rodeos: resultado.resultados.map(r => ({
                 rodeo_id: r.rodeo_id,
                 estado: r.estado,
                 jurado_id_propuesto: r.estado === 'PROPUESTO' ? r.jurado_propuesto.jurado_id : null
             }))
         });
-        res.json({ ...resultado, preview_token });
+        // Metadata NO sensible de la configuración usada — el frontend puede
+        // ignorarla todavía (sección 14 del pedido; sin UI en esta etapa).
+        res.json({ ...resultado, preview_token, configuracion: configuracionMeta });
     } catch (err) {
         console.error('[DRY-RUN] Error generando simulación:', err.message);
         res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
@@ -689,6 +716,22 @@ router.post('/propuestas', async (req, res) => {
     const { snapshot, tokenPorRodeo } = validacion;
     const idsUnicos = [...tokenPorRodeo.keys()];
 
+    // Etapa 3 — la ÚNICA fuente de configuracion_version_id es el
+    // preview_token YA VERIFICADO (snapshot) — NUNCA req.body (sección 18/19
+    // del pedido: el cliente ni siquiera puede enviarlo, la desestructuración
+    // de arriba solo lee preview_token/estado_temporal). Se carga por ID
+    // (nunca "la activa del momento" — sección 20/22: un guardado revalida
+    // con la MISMA versión con la que se generó el preview, aunque mientras
+    // tanto se haya activado otra).
+    let cargaConfig;
+    try {
+        cargaConfig = await cargarConfiguracionDesignacionPorId(snapshot.configuracion_version_id);
+    } catch (err) {
+        return res.status(500).json({ error: 'No se pudo cargar la configuración de designación: ' + err.message });
+    }
+    if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
+    const { configuracion } = cargaConfig;
+
     // Advertencia (no bloqueante) de rodeos ya presentes en otra propuesta BORRADOR
     let rodeosYaEnOtraPropuesta = [];
     {
@@ -711,7 +754,7 @@ router.post('/propuestas', async (req, res) => {
     let contexto, resultadoFresco, rodeosPorId;
     try {
         contexto = await cargarDatosMotor(idsUnicos);
-        resultadoFresco = ejecutarSimulacion(contexto);
+        resultadoFresco = ejecutarSimulacion(contexto, 5, configuracion); // Etapa 3: configuración explícita, nunca el default
         rodeosPorId = await cargarRodeosRealesPorId(idsUnicos);
     } catch (err) {
         return res.status(500).json({ error: 'No se pudo revalidar la propuesta: ' + err.message });
@@ -793,7 +836,7 @@ router.post('/propuestas', async (req, res) => {
         // los primeros N?" (sección 7/8 de la revisión final). Si no se
         // encuentra (inactivo/eliminado) o el rodeo/tipo ya no es evaluable,
         // evaluarCandidatoDirecto() lo indica explícitamente.
-        const resultadoEval = evaluarCandidatoDirecto(contexto, rodeoId, juradoEfectivo);
+        const resultadoEval = evaluarCandidatoDirecto(contexto, rodeoId, juradoEfectivo, configuracion); // Etapa 3: versión del snapshot, nunca el default
         if (resultadoEval.error) {
             cambiosDetectados.push({ rodeo_id: rodeoId, club: fresco.rodeo?.club, fecha: fresco.rodeo?.fecha, motivo: 'El jurado ya no se pudo evaluar para este rodeo (puede haber dejado de existir o estar activo).' });
             continue;
@@ -851,7 +894,9 @@ router.post('/propuestas', async (req, res) => {
 
     const { data: propuesta, error: errProp } = await supabase
         .from('propuestas_designacion')
-        .insert({ temporada_id: snapshot.temporada_id, estado: 'BORRADOR', creado_por: req.usuario.id })
+        // configuracion_version_id sale EXCLUSIVAMENTE del snapshot firmado
+        // (nunca de req.body — sección 18/19 del pedido de Etapa 3).
+        .insert({ temporada_id: snapshot.temporada_id, configuracion_version_id: snapshot.configuracion_version_id, estado: 'BORRADOR', creado_por: req.usuario.id })
         .select()
         .single();
     if (errProp) return res.status(500).json({ error: errProp.message });
@@ -1153,9 +1198,11 @@ async function cargarOtrasFilasEfectivas(propuestaId, detalleIdExcluir) {
 // propuesta, reutilizando detectarConflictoInterno() — sin reimplementar
 // nada de reglas de fecha/asociación en el frontend.
 router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req, res) => {
+    // Etapa 3, sección 16: el embed reutiliza la FK propuesta_id →
+    // propuestas_designacion(id) ya existente — evita una consulta extra.
     const { data: detalle, error } = await supabase
         .from('propuestas_designacion_detalle')
-        .select('id, rodeo_id, estado_revision')
+        .select('id, rodeo_id, estado_revision, propuestas_designacion(configuracion_version_id)')
         .eq('id', req.params.detalleId)
         .eq('propuesta_id', req.params.propuestaId)
         .single();
@@ -1164,10 +1211,23 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
         return res.status(400).json({ error: 'Este rodeo no es evaluable (faltan datos estructurales de comuna/clasificación)' });
     }
 
+    // Un borrador persistido SIEMPRE usa SU PROPIA configuracion_version_id
+    // — nunca la activa en este momento (sección 17/25).
+    const configuracionVersionId = detalle.propuestas_designacion?.configuracion_version_id;
+    if (!configuracionVersionId) {
+        return res.status(500).json({
+            error: 'CONFIGURACION_PROPUESTA_NO_RESUELTA',
+            detalle: 'Esta propuesta no tiene una configuración de designación asociada.'
+        });
+    }
+    const cargaConfig = await cargarConfiguracionDesignacionPorId(configuracionVersionId);
+    if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
+    const { configuracion } = cargaConfig;
+
     let resultado, rodeoEnriquecido;
     try {
         const contexto = await cargarDatosMotor([detalle.rodeo_id]);
-        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS);
+        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS, configuracion);
         resultado = simulacion.resultados[0];
         rodeoEnriquecido = contexto.rodeosPorId.get(detalle.rodeo_id) || null;
     } catch (err) {
@@ -1210,16 +1270,22 @@ router.post('/preview/candidatos', async (req, res) => {
 
     const validacion = validarEstadoTemporal(preview_token, estado_temporal);
     if (validacion.error) return res.status(400).json({ error: validacion.error });
-    const { tokenPorRodeo } = validacion;
+    const { snapshot, tokenPorRodeo } = validacion;
     if (!tokenPorRodeo.has(rodeo_id)) return res.status(400).json({ error: 'rodeo_id no pertenece a este preview' });
     if (tokenPorRodeo.get(rodeo_id).estado === 'NO_EVALUABLE') {
         return res.status(400).json({ error: 'Este rodeo no es evaluable (faltan datos estructurales de comuna/clasificación)' });
     }
 
+    // Etapa 3, sección 14: candidatos de un preview SIEMPRE se calculan con
+    // la configuración firmada en el token, nunca con la activa "de paso".
+    const cargaConfig = await cargarConfiguracionDesignacionPorId(snapshot.configuracion_version_id);
+    if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
+    const { configuracion } = cargaConfig;
+
     let resultado, rodeoEnriquecido;
     try {
         const contexto = await cargarDatosMotor([rodeo_id]);
-        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS);
+        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS, configuracion);
         resultado = simulacion.resultados[0];
         rodeoEnriquecido = contexto.rodeosPorId.get(rodeo_id) || null;
     } catch (err) {
@@ -1259,15 +1325,22 @@ router.post('/preview/candidatos', async (req, res) => {
 // la ÚNICA lógica de evaluación — compartida por procesarSeleccion
 // (persistido), POST /preview/seleccionar (stateless) y la revalidación de
 // POST /propuestas al guardar. Nunca se duplica en ningún otro lugar.
+// `configuracion` es OBLIGATORIA (sin default) — Etapa 3, sección 10: nunca
+// depender del default en producción. Cada llamador resuelve SU PROPIA fuente
+// correcta antes de invocar (procesarSeleccion → la de la propuesta guardada;
+// POST /preview/seleccionar → la firmada en el preview_token) — nunca la
+// activa "de paso", para no romper la atadura permanente preview/borrador ↔
+// versión con la que se generaron.
 // @returns { error } | { jurado, advertencias, rodeoEnriquecido }
-async function evaluarSeleccion(rodeoId, juradoId, otrasFilasEnriquecidas) {
+async function evaluarSeleccion(rodeoId, juradoId, otrasFilasEnriquecidas, configuracion) {
     if (!juradoId) return { error: 'jurado_id requerido' };
+    if (!configuracion) throw new Error('evaluarSeleccion: configuracion es obligatoria (Etapa 3) — el llamador debe resolverla antes de invocar');
 
     let evaluacion, rodeoEnriquecido;
     try {
         const contexto = await cargarDatosMotor([rodeoId]);
         rodeoEnriquecido = contexto.rodeosPorId.get(rodeoId) || null;
-        const resultado = evaluarCandidatoDirecto(contexto, rodeoId, juradoId);
+        const resultado = evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion);
         if (resultado.error === 'JURADO_INACTIVO_O_INEXISTENTE') return { error: 'Jurado inválido o inactivo' };
         if (resultado.error) return { error: 'No se pudo evaluar el rodeo para este jurado (' + resultado.error + ')' };
         evaluacion = resultado.evaluacion;
@@ -1307,9 +1380,23 @@ async function evaluarSeleccion(rodeoId, juradoId, otrasFilasEnriquecidas) {
 async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
     const { propuestaId, detalleId } = req.params;
 
-    const { data: propuesta } = await supabase.from('propuestas_designacion').select('id, estado').eq('id', propuestaId).single();
+    const { data: propuesta } = await supabase.from('propuestas_designacion').select('id, estado, configuracion_version_id').eq('id', propuestaId).single();
     if (!propuesta) return res.status(404).json({ error: 'Propuesta no encontrada' });
     if (propuesta.estado !== 'BORRADOR') return res.status(400).json({ error: 'Solo se puede modificar una propuesta en estado BORRADOR' });
+
+    // Etapa 3, sección 25: una propuesta persistida SIEMPRE resuelve su
+    // configuración con su PROPIA configuracion_version_id — nunca la activa
+    // en este momento. NULL es un caso controlado y distinto de "no existe"
+    // o "inválida" (CONFIGURACION_PROPUESTA_NO_RESUELTA), nunca se asume V1.
+    if (!propuesta.configuracion_version_id) {
+        return res.status(500).json({
+            error: 'CONFIGURACION_PROPUESTA_NO_RESUELTA',
+            detalle: 'Esta propuesta no tiene una configuración de designación asociada.'
+        });
+    }
+    const cargaConfig = await cargarConfiguracionDesignacionPorId(propuesta.configuracion_version_id);
+    if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
+    const { configuracion } = cargaConfig;
 
     const { data: detalle } = await supabase.from('propuestas_designacion_detalle').select('*').eq('id', detalleId).eq('propuesta_id', propuestaId).single();
     if (!detalle) return res.status(404).json({ error: 'Detalle no encontrado' });
@@ -1324,7 +1411,7 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias) {
         return res.status(500).json({ error: err.message });
     }
 
-    const evaluacion = await evaluarSeleccion(detalle.rodeo_id, juradoId, otrasFilasEnriquecidas);
+    const evaluacion = await evaluarSeleccion(detalle.rodeo_id, juradoId, otrasFilasEnriquecidas, configuracion);
     if (evaluacion.error) return res.status(400).json({ error: evaluacion.error });
     const { jurado, advertencias, rodeoEnriquecido } = evaluacion;
 
@@ -1417,12 +1504,20 @@ router.post('/preview/seleccionar', async (req, res) => {
 
     const validacion = validarEstadoTemporal(preview_token, estado_temporal);
     if (validacion.error) return res.status(400).json({ error: validacion.error });
-    const { tokenPorRodeo } = validacion;
+    const { snapshot, tokenPorRodeo } = validacion;
     if (!tokenPorRodeo.has(rodeo_id)) return res.status(400).json({ error: 'rodeo_id no pertenece a este preview' });
     const infoRodeoToken = tokenPorRodeo.get(rodeo_id);
     if (infoRodeoToken.estado === 'NO_EVALUABLE') {
         return res.status(400).json({ error: 'Este rodeo no es evaluable — no se puede seleccionar un jurado' });
     }
+
+    // Etapa 3, sección 15: el preview es STATELESS pero sigue atado PARA
+    // SIEMPRE a la configuración firmada en su propio token — nunca a la
+    // activa en este momento, aunque otro administrador haya activado otra
+    // versión mientras este preview seguía abierto en el navegador.
+    const cargaConfig = await cargarConfiguracionDesignacionPorId(snapshot.configuracion_version_id);
+    if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
+    const { configuracion } = cargaConfig;
 
     let otrasFilasEnriquecidas = [];
     try {
@@ -1437,7 +1532,7 @@ router.post('/preview/seleccionar', async (req, res) => {
         return res.status(500).json({ error: err.message });
     }
 
-    const evaluacion = await evaluarSeleccion(rodeo_id, jurado_id, otrasFilasEnriquecidas);
+    const evaluacion = await evaluarSeleccion(rodeo_id, jurado_id, otrasFilasEnriquecidas, configuracion);
     if (evaluacion.error) return res.status(400).json({ error: evaluacion.error });
     const { jurado, advertencias } = evaluacion;
 

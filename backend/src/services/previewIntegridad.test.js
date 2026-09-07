@@ -2,6 +2,7 @@ const { firmarPreview, verificarPreviewToken, mapaPorRodeo } = require('./previe
 
 const snapshotEjemplo = {
     temporada_id: 't1',
+    configuracion_version_id: 'config-v1-uuid',
     rodeos: [
         { rodeo_id: 'r1', estado: 'PROPUESTO', jurado_id_propuesto: 'j1' },
         { rodeo_id: 'r2', estado: 'SIN_PROPUESTA', jurado_id_propuesto: null },
@@ -17,6 +18,7 @@ describe('firmarPreview / verificarPreviewToken', () => {
         const verificado = verificarPreviewToken(token);
         expect(verificado).not.toBeNull();
         expect(verificado.temporada_id).toBe('t1');
+        expect(verificado.configuracion_version_id).toBe('config-v1-uuid');
         expect(verificado.rodeos).toEqual(snapshotEjemplo.rodeos);
     });
 
@@ -98,10 +100,10 @@ describe('firmarPreview / verificarPreviewToken', () => {
         expect(verificarPreviewToken(tokenSinDominio)).toBeNull();
     });
 
-    test('el snapshot firmado no contiene campos ajenos a v/temporada_id/rodeos (nada sensible)', () => {
+    test('el snapshot firmado no contiene campos ajenos a v/temporada_id/configuracion_version_id/rodeos (nada sensible)', () => {
         const token = firmarPreview(snapshotEjemplo);
         const verificado = verificarPreviewToken(token);
-        expect(Object.keys(verificado).sort()).toEqual(['rodeos', 'temporada_id', 'v']);
+        expect(Object.keys(verificado).sort()).toEqual(['configuracion_version_id', 'rodeos', 'temporada_id', 'v']);
         verificado.rodeos.forEach(r => expect(Object.keys(r).sort()).toEqual(['estado', 'jurado_id_propuesto', 'rodeo_id']));
     });
 
@@ -109,6 +111,81 @@ describe('firmarPreview / verificarPreviewToken', () => {
         const tokenA = firmarPreview(snapshotEjemplo);
         const tokenB = firmarPreview({ ...snapshotEjemplo, temporada_id: 't2' });
         expect(tokenA).not.toBe(tokenB);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// ETAPA 3 — configuracion_version_id firmado (sección 33 del pedido)
+// ═════════════════════════════════════════════════════════════════════════
+
+// TEST A
+describe('TEST A: el token nuevo contiene configuracion_version_id', () => {
+    test('verificarPreviewToken devuelve configuracion_version_id intacto', () => {
+        const token = firmarPreview(snapshotEjemplo);
+        const verificado = verificarPreviewToken(token);
+        expect(verificado.configuracion_version_id).toBe('config-v1-uuid');
+    });
+});
+
+// TEST B
+describe('TEST B: alterar (tamper) configuracion_version_id invalida la firma', () => {
+    test('cambiar configuracion_version_id sin refirmar → rechazado', () => {
+        const token = firmarPreview(snapshotEjemplo);
+        const idx = token.lastIndexOf('.');
+        const payload = JSON.parse(Buffer.from(token.slice(0, idx), 'base64url').toString('utf8'));
+        payload.configuracion_version_id = 'config-v2-que-el-cliente-quiere-forzar';
+        const payloadAlterado = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+        const tokenAlterado = payloadAlterado + '.' + token.slice(idx + 1); // firma vieja, payload nuevo
+        expect(verificarPreviewToken(tokenAlterado)).toBeNull();
+    });
+});
+
+// TEST C
+describe('TEST C: token legacy (v=1, sin configuracion_version_id) es rechazado, nunca asume V1', () => {
+    test('un payload v=1 con la forma anterior a Etapa 3 se rechaza aunque la firma sea válida para ESE payload', () => {
+        // Construye un token "legacy" firmándolo con el MISMO mecanismo (mismo
+        // secreto/dominio) pero con v=1 y sin configuracion_version_id —
+        // simula exactamente un token emitido antes de la Etapa 3.
+        const crypto = require('crypto');
+        const SECRETO = process.env.JWT_SECRET || 'fallback_secret_change_in_prod';
+        const DOMINIO = 'propuesta-designacion-preview-v1:';
+        const payloadLegacy = { v: 1, temporada_id: 't1', rodeos: snapshotEjemplo.rodeos };
+        const payloadB64 = Buffer.from(JSON.stringify(payloadLegacy), 'utf8').toString('base64url');
+        const firma = crypto.createHmac('sha256', SECRETO).update(DOMINIO + payloadB64).digest('hex');
+        const tokenLegacy = `${payloadB64}.${firma}`;
+
+        // La firma es válida para ESE payload — pero v !== VERSION_SNAPSHOT (2)
+        // lo rechaza igual: nunca se asume V1 en silencio, el administrador
+        // debe volver a ejecutar la simulación (preview es efímero).
+        expect(verificarPreviewToken(tokenLegacy)).toBeNull();
+    });
+});
+
+// TEST D
+describe('TEST D: el payload no contiene secretos (repetido explícitamente para Etapa 3)', () => {
+    test('configuracion_version_id es solo un identificador, no un dato sensible, y no se agregó ningún otro campo', () => {
+        const token = firmarPreview(snapshotEjemplo);
+        const verificado = verificarPreviewToken(token);
+        const claves = Object.keys(verificado).sort();
+        expect(claves).toEqual(['configuracion_version_id', 'rodeos', 'temporada_id', 'v']);
+        expect(typeof verificado.configuracion_version_id).toBe('string');
+    });
+});
+
+// TEST E
+describe('TEST E: el token conserva su versión aunque la configuración activa cambie después', () => {
+    test('firmar dos previews con configuracion_version_id distintos produce tokens independientes, cada uno fiel a su propia versión', () => {
+        const tokenV1 = firmarPreview({ ...snapshotEjemplo, configuracion_version_id: 'config-v1-uuid' });
+        const tokenV2 = firmarPreview({ ...snapshotEjemplo, configuracion_version_id: 'config-v2-uuid' });
+
+        // Simula: "V2 se activó DESPUÉS de generar tokenV1" — tokenV1, ya
+        // firmado, no se ve afectado por absolutamente nada externo; solo
+        // depende de su propio payload congelado en el momento de la firma.
+        const verificadoV1 = verificarPreviewToken(tokenV1);
+        const verificadoV2 = verificarPreviewToken(tokenV2);
+        expect(verificadoV1.configuracion_version_id).toBe('config-v1-uuid');
+        expect(verificadoV2.configuracion_version_id).toBe('config-v2-uuid');
+        expect(tokenV1).not.toBe(tokenV2);
     });
 });
 

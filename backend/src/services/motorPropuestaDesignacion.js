@@ -115,10 +115,9 @@ function bloquesSonConsecutivos(b1, b2) {
 // cada una con {categoria, elegible, orden_preferencia}), la estructura
 // interna que evaluarCandidato() necesita: { elegibles: Set,
 // ordenPorCategoria: Map }. Reemplaza la derivación legacy que antes se
-// armaba desde clasificacion_categoria_matriz (contexto.matrizPorCodigo) —
-// la selección configurable usa SIEMPRE esta matriz derivada de la
-// configuración, nunca la de contexto (ver notas de "puente temporal" en
-// cargarDatosMotor y ejecutarSimulacion).
+// armaba desde clasificacion_categoria_matriz (contexto.matrizPorCodigo,
+// retirado en Etapa 3 — ver cargarDatosMotor) — la selección usa SIEMPRE
+// esta matriz derivada de la configuración (BD real desde Etapa 3).
 function construirMatrizPorClasificacionDesdeConfiguracion(configuracionMatriz) {
     const resultado = {};
     for (const [clasifCodigo, filas] of Object.entries(configuracionMatriz || {})) {
@@ -351,9 +350,8 @@ function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = co
     if (!rodeo) return { error: 'RODEO_NO_ENCONTRADO' };
 
     // Misma matriz derivada de la configuración que usa ejecutarSimulacion()
-    // — nunca la legacy de contexto.matrizPorCodigo (ver nota de "puente
-    // temporal" en cargarDatosMotor). Con V1 el resultado es idéntico al
-    // que hoy da la tabla clasificacion_categoria_matriz.
+    // — la legacy clasificacion_categoria_matriz/contexto.matrizPorCodigo ya
+    // no se consulta desde cargarDatosMotor (retirada en Etapa 3).
     const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
     const matriz = rodeo.clasificacion_codigo ? matrizPorClasificacion[rodeo.clasificacion_codigo] : null;
     if (!matriz) return { error: 'TIPO_SIN_CLASIFICACION' };
@@ -397,47 +395,15 @@ async function cargarDatosMotor(rodeoIdsInput) {
         rodeosRaw = data || [];
     }
 
-    // 3. Matriz de clasificación LEGACY (6 clasificaciones + 11 filas de
-    //    matriz) — PUENTE TEMPORAL de la Etapa 2 (Configuración de Propuesta
-    //    de Designación). Desde el refactor de ejecutarSimulacion(), esta
-    //    carga YA NO decide nada: la selección real usa exclusivamente
-    //    configuracion.matriz (por ahora, Versión 1 hardcodeada vía
-    //    construirConfiguracionDefaultV1(), verificada byte a byte
-    //    equivalente a esta misma tabla al aplicar la migración 050). Se
-    //    mantiene esta consulta sin tocar — ni se elimina, ni se usa para
-    //    decidir — por instrucción explícita, hasta que la Etapa 3 conecte
-    //    la configuración activa real desde BD; contexto.matrizPorCodigo
-    //    queda disponible para inspección/tests de equivalencia mientras
-    //    tanto. RIESGO CONOCIDO Y ACEPTADO: si alguien edita
-    //    clasificacion_categoria_matriz directamente (vía SQL) durante esta
-    //    etapa, el motor NO lo reflejará — seguirá usando el V1 hardcodeado
-    //    hasta la Etapa 3.
-    //    Se arma igual que siempre un mapa {codigo: {elegibles:Set, preferentes:Set}}.
-    const { data: clasifRows, error: errClasif } = await supabase
-        .from('clasificaciones_designacion').select('id, codigo');
-    queries++;
-    if (errClasif) throw new Error('No se pudo cargar clasificaciones: ' + errClasif.message);
-
-    const { data: matrizRows, error: errMatriz } = await supabase
-        .from('clasificacion_categoria_matriz').select('clasificacion_id, categoria, elegible, prioridad');
-    queries++;
-    if (errMatriz) throw new Error('No se pudo cargar la matriz de categorías: ' + errMatriz.message);
-
-    const codigoPorClasifId = {};
-    (clasifRows || []).forEach(c => { codigoPorClasifId[c.id] = c.codigo; });
-    const matrizPorCodigo = {};
-    (matrizRows || []).forEach(m => {
-        const codigo = codigoPorClasifId[m.clasificacion_id];
-        if (!codigo || !m.elegible) return;
-        if (!matrizPorCodigo[codigo]) matrizPorCodigo[codigo] = { elegibles: new Set(), prioridades: {} };
-        matrizPorCodigo[codigo].elegibles.add(m.categoria);
-        matrizPorCodigo[codigo].prioridades[m.categoria] = m.prioridad;
-    });
-    // Derivar "preferentes" = categorías con la prioridad mínima de cada clasificación
-    Object.values(matrizPorCodigo).forEach(m => {
-        const minPrio = Math.min(...Object.values(m.prioridades));
-        m.preferentes = new Set(Object.keys(m.prioridades).filter(cat => m.prioridades[cat] === minPrio));
-    });
+    // 3. clasificacion_codigo por rodeo (para saber a qué fila de
+    //    configuracion.matriz corresponde cada rodeo — la matriz LEGACY
+    //    clasificacion_categoria_matriz ya no se consulta acá: Etapa 3
+    //    confirmó por grep que contexto.matrizPorCodigo no tenía consumidores
+    //    reales fuera de este mismo archivo desde el refactor de Etapa 2, así
+    //    que la consulta "puente temporal" y su derivación se retiraron. La
+    //    tabla en sí NO se elimina — sigue existiendo para GET /clasificaciones
+    //    (feature de administración "Tipos de Rodeo", consumidor distinto) y
+    //    como fuente histórica de la migración 050.
 
     // Enriquecer rodeos con clasificacion_codigo y comuna resuelta + fechas
     const rodeosPorId = new Map();
@@ -522,7 +488,6 @@ async function cargarDatosMotor(rodeoIdsInput) {
         idsSolicitados: idsUnicos,
         temporada: temporadaRow,
         rodeosPorId,
-        matrizPorCodigo,
         jurados,
         catalogoComunas,
         disponibilidad,
@@ -553,15 +518,11 @@ async function cargarDatosMotor(rodeoIdsInput) {
 // ningún llamador existente (ruta ni tests previos) cambia de
 // comportamiento sin tocar ese archivo.
 //
-// PUENTE TEMPORAL (sección 29): esta función YA NO lee contexto.matrizPorCodigo
-// (la matriz legacy cargada desde clasificacion_categoria_matriz) para
-// decidir nada — usa exclusivamente configuracion.matriz. Con la Versión 1
-// (default de esta etapa), ambas matrices son equivalentes byte a byte
-// (verificado al aplicar la migración 050), así que el resultado hoy es
-// idéntico al de antes del refactor. contexto.matrizPorCodigo sigue viniendo
-// en el contexto sin tocar — no se usa acá, queda disponible para
-// inspección o asserts de equivalencia hasta que la Etapa 3 conecte la
-// configuración activa real desde BD.
+// PUENTE TEMPORAL CERRADO (Etapa 2 lo introdujo, Etapa 3 lo cerró): esta
+// función usa exclusivamente configuracion.matriz. contexto.matrizPorCodigo
+// (la matriz legacy cargada desde clasificacion_categoria_matriz) quedó sin
+// consumidores reales desde el refactor de Etapa 2 — confirmado por grep en
+// Etapa 3 — y la consulta que la armaba se retiró de cargarDatosMotor.
 // ─────────────────────────────────────────────────────────────────────────
 function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfiguracionDefaultV1()) {
     const val = validarConfiguracion(configuracion);
@@ -812,14 +773,12 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
 }
 
 // Etapa 2 — Configuración de Propuesta de Designación. `configuracion` es
-// un parámetro NUEVO y OPCIONAL (por defecto Versión 1) agregado al final
-// para no romper ningún llamador existente (la ruta sigue invocando
-// generarSimulacion(rodeoIdsInput, topN) exactamente igual que hoy). Esto
-// es el "puente temporal" de la sección 29 del pedido: el contexto se sigue
-// cargando de la BD normalmente (incluida la matriz legacy, sin tocar), y
-// justo antes de ejecutar se resuelve/usa la Versión 1 explícita desde
-// código — todavía NO se consulta configuracion_designacion_versiones
-// (eso es Etapa 3).
+// un parámetro OPCIONAL (por defecto Versión 1 hardcodeada) agregado al
+// final para no romper ningún llamador existente. Desde Etapa 3, la ruta de
+// producción siempre resuelve la configuración real desde
+// configuracion_designacion_versiones (vía configuracionDesignacionRepositorio)
+// y la pasa explícitamente aquí — el default solo se ejerce en tests/uso
+// directo de esta función, nunca en un endpoint real.
 async function generarSimulacion(rodeoIdsInput, topN = 5, configuracion = construirConfiguracionDefaultV1()) {
     const inicioMs = Date.now();
     const contexto = await cargarDatosMotor(rodeoIdsInput);

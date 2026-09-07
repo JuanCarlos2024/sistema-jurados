@@ -370,6 +370,53 @@ function compararConfiguraciones(a, b) {
     return { hayDiferencias: cambios.length > 0, cambios };
 }
 
+// ─── Reconstrucción PURA: filas de BD → objeto de configuración tipado ────
+// Etapa 3 — Conectar configuración versionada de BD. Transforma las filas
+// crudas de las 3 tablas de la migración 050 (configuracion_designacion_
+// versiones / _orden_criterios / _matriz) a EXACTAMENTE la misma forma que
+// construirConfiguracionDefaultV1() y que validarConfiguracion()/el motor ya
+// entienden — nunca una forma paralela. Sin acceso a BD (las filas ya
+// vienen cargadas por quien llama, ver configuracionDesignacionRepositorio.js)
+// para que sea testeable sin mocks de Supabase.
+//
+// distancia_maxima_km viene de una columna NUMERIC de Postgres — PostgREST
+// puede devolverla como string (verificado en vivo: "600") — se normaliza
+// explícitamente a Number para que coincida con el tipo que usan
+// validarDistancia()/el comparador del motor; NULL/undefined se preserva
+// como null (nunca se convierte a 0).
+//
+// @param versionRow fila de configuracion_designacion_versiones
+// @param criteriosRows [{criterio_codigo, orden}, ...] — SOLO los activos (ausente = inactivo)
+// @param matrizRows [{clasificacion_codigo, categoria, elegible, orden_preferencia}, ...] — 18 filas
+// @returns objeto configuracion (sin validar todavía — ver validarConfiguracion())
+function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRows) {
+    const matriz = {};
+    for (const fila of (matrizRows || [])) {
+        if (!matriz[fila.clasificacion_codigo]) matriz[fila.clasificacion_codigo] = [];
+        matriz[fila.clasificacion_codigo].push({
+            categoria: fila.categoria,
+            elegible: fila.elegible,
+            orden_preferencia: fila.orden_preferencia === null || fila.orden_preferencia === undefined
+                ? null : Number(fila.orden_preferencia)
+        });
+    }
+
+    const distanciaRaw = versionRow.distancia_maxima_km;
+    const distancia_maxima_km = (distanciaRaw === null || distanciaRaw === undefined) ? null : Number(distanciaRaw);
+
+    return {
+        schema_version: Number(versionRow.schema_version),
+        regla_distancia_maxima_activa: versionRow.regla_distancia_maxima_activa,
+        distancia_maxima_km,
+        regla_no_repetir_asociacion_activa: versionRow.regla_no_repetir_asociacion_activa,
+        regla_un_rodeo_por_finde_activa: versionRow.regla_un_rodeo_por_finde_activa,
+        regla_finde_consecutivo_activa: versionRow.regla_finde_consecutivo_activa,
+        regla_asociacion_organizadora_activa: versionRow.regla_asociacion_organizadora_activa,
+        ordenCriterios: (criteriosRows || []).map(c => ({ criterio_codigo: c.criterio_codigo, orden: Number(c.orden) })),
+        matriz
+    };
+}
+
 module.exports = {
     SCHEMA_VERSION_SOPORTADO,
     CRITERIOS_CONOCIDOS,
@@ -385,5 +432,6 @@ module.exports = {
     configuracionRequiereDistancia,
     construirConfiguracionDefaultV1,
     clonarConfiguracion,
-    compararConfiguraciones
+    compararConfiguraciones,
+    reconstruirConfiguracionDesdeFilas
 };
