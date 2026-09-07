@@ -12,16 +12,24 @@
 // supabase-js (.from().select().eq() → thenable) para que el código real
 // del repositorio se ejecute sin cambios.
 // ═════════════════════════════════════════════════════════════════════════
-jest.mock('../config/supabase', () => ({ from: jest.fn() }));
+jest.mock('../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
 const supabase = require('../config/supabase');
-const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId } = require('./configuracionDesignacionRepositorio');
+const {
+    cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId,
+    listarVersionesDesignacion, obtenerVersionDesignacionDetalle,
+    crearVersionDesignacion, activarVersionDesignacion
+} = require('./configuracionDesignacionRepositorio');
+const { construirConfiguracionDefaultV1 } = require('./configuracionDesignacion');
 
 // ─── Fixtures — mismas filas reales verificadas en BD para V1 ─────────────
+// Etapa 4: SELECT_VERSION ahora incluye también activa/descripcion/
+// creado_por/created_at (metadata de display, nunca leída por el motor).
 const VERSION_V1 = {
-    id: 'v1-uuid', numero_version: 1, schema_version: 1,
+    id: 'v1-uuid', numero_version: 1, schema_version: 1, activa: true,
     regla_distancia_maxima_activa: true, distancia_maxima_km: '600',
     regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
-    regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true
+    regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true,
+    descripcion: 'Versión 1 — equivalente exacto al motor.', creado_por: null, created_at: '2026-04-01T00:00:00Z'
 };
 const CRITERIOS_V1 = [
     { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
@@ -54,6 +62,8 @@ function mockSupabaseRespuestas(porTabla) {
         const chain = {
             select: () => chain,
             eq: () => chain,
+            order: () => chain,
+            maybeSingle: () => chain,
             then: (resolve, reject) => Promise.resolve(respuesta).then(resolve, reject)
         };
         return chain;
@@ -62,6 +72,7 @@ function mockSupabaseRespuestas(porTabla) {
 
 beforeEach(() => {
     supabase.from.mockReset();
+    supabase.rpc.mockReset();
 });
 
 // TEST A
@@ -76,7 +87,10 @@ describe('TEST A: cargarConfiguracionDesignacionActiva — carga activa válida'
         expect(resultado.error).toBeUndefined();
         expect(resultado.configuracion.regla_distancia_maxima_activa).toBe(true);
         expect(resultado.configuracion.distancia_maxima_km).toBe(600);
-        expect(resultado.meta).toEqual({ id: 'v1-uuid', numero_version: 1, schema_version: 1 });
+        expect(resultado.meta).toEqual({
+            id: 'v1-uuid', numero_version: 1, schema_version: 1, activa: true,
+            descripcion: 'Versión 1 — equivalente exacto al motor.', creado_por: null, created_at: '2026-04-01T00:00:00Z'
+        });
     });
 });
 
@@ -216,6 +230,170 @@ describe('TEST J: cantidad fija de consultas — sin N+1', () => {
         });
         await cargarConfiguracionDesignacionPorId('v1-uuid');
         expect(supabase.from).toHaveBeenCalledTimes(3);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// ETAPA 4 — listar, ver detalle, crear y activar versiones desde la UI
+// (sección 53 del pedido).
+// ═════════════════════════════════════════════════════════════════════════
+
+// TEST 53.A
+describe('TEST 53.A: listarVersionesDesignacion — historial completo', () => {
+    test('devuelve cabecera + nombre del creador, más reciente primero (según el orden que ya trae la fila del mock)', async () => {
+        const v2 = { ...VERSION_V1, id: 'v2-uuid', numero_version: 2, activa: false, creado_por: 'admin-1', administradores: { nombre_completo: 'Ana Admin' } };
+        const v1ConEmbed = { ...VERSION_V1, administradores: null };
+        mockSupabaseRespuestas({ configuracion_designacion_versiones: { data: [v2, v1ConEmbed], error: null } });
+
+        const lista = await listarVersionesDesignacion();
+        expect(lista).toHaveLength(2);
+        expect(lista[0]).toMatchObject({ id: 'v2-uuid', numero_version: 2, activa: false, creado_por_nombre: 'Ana Admin' });
+        expect(lista[1]).toMatchObject({ id: 'v1-uuid', numero_version: 1, activa: true, creado_por_nombre: null });
+    });
+});
+
+// TEST 53.C (histórica inactiva, con nombre de autor)
+describe('TEST 53.C: obtenerVersionDesignacionDetalle — versión histórica + nombre del creador', () => {
+    test('resuelve la versión aunque no sea la activa, y agrega creado_por_nombre', async () => {
+        const historica = { ...VERSION_V1, id: 'v-historica', numero_version: 3, activa: false, creado_por: 'admin-1' };
+        mockSupabaseRespuestas({
+            configuracion_designacion_versiones: { data: [historica], error: null },
+            configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
+            configuracion_designacion_matriz: { data: MATRIZ_V1, error: null },
+            administradores: { data: { nombre_completo: 'Ana Admin' }, error: null }
+        });
+        const resultado = await obtenerVersionDesignacionDetalle('v-historica');
+        expect(resultado.error).toBeUndefined();
+        expect(resultado.meta.numero_version).toBe(3);
+        expect(resultado.meta.creado_por_nombre).toBe('Ana Admin');
+    });
+    test('sin creado_por (ej. seed de V1) → creado_por_nombre null, sin consultar administradores', async () => {
+        mockSupabaseRespuestas({
+            configuracion_designacion_versiones: { data: [VERSION_V1], error: null },
+            configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
+            configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
+        });
+        const resultado = await obtenerVersionDesignacionDetalle('v1-uuid');
+        expect(resultado.meta.creado_por_nombre).toBeNull();
+        expect(supabase.from).not.toHaveBeenCalledWith('administradores');
+    });
+});
+
+// TEST 53.D/E/F
+describe('TEST 53.D/E/F: crearVersionDesignacion — configuración válida', () => {
+    test('llama a la RPC con los datos correctos y devuelve {id, numero_version}; nunca toca configuracion_designacion_versiones directamente (ni V1 ni ninguna otra fila)', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v2-uuid', numero_version: 2 }], error: null });
+        const configuracion = construirConfiguracionDefaultV1();
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: 'Prueba', creadoPor: 'admin-1' });
+
+        expect(resultado.error).toBeUndefined();
+        expect(resultado).toEqual({ id: 'v2-uuid', numero_version: 2 });
+        expect(supabase.rpc).toHaveBeenCalledWith('crear_configuracion_designacion_version', expect.objectContaining({
+            p_regla_distancia_maxima_activa: true, p_distancia_maxima_km: 600, p_descripcion: 'Prueba', p_creado_por: 'admin-1'
+        }));
+        // "V2 queda inactiva" y "V1 sigue activa" son responsabilidad EXCLUSIVA
+        // de la RPC (activa=false hardcodeado ahí, migración 051) — el JS no
+        // hace ningún INSERT/UPDATE propio que pudiera tocarlas.
+        expect(supabase.from).not.toHaveBeenCalled();
+    });
+});
+
+// TEST 53.G/H/I/K
+describe('TEST 53.G/H/I/K: crearVersionDesignacion — configuración inválida rechazada ANTES de llamar a la RPC', () => {
+    test('0 criterios de ranking → CONFIGURACION_DESIGNACION_INVALIDA, RPC nunca llamada', async () => {
+        const configuracion = { ...construirConfiguracionDefaultV1(), ordenCriterios: [] };
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(resultado.error).toBe('CONFIGURACION_DESIGNACION_INVALIDA');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+    test('matriz incompleta (falta una clasificación) → CONFIGURACION_DESIGNACION_INVALIDA, RPC nunca llamada', async () => {
+        const configuracion = construirConfiguracionDefaultV1();
+        delete configuracion.matriz.nacional;
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(resultado.error).toBe('CONFIGURACION_DESIGNACION_INVALIDA');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+    test('distancia_maxima_km = 5001 con la regla activa → CONFIGURACION_DESIGNACION_INVALIDA, RPC nunca llamada', async () => {
+        const configuracion = { ...construirConfiguracionDefaultV1(), distancia_maxima_km: 5001 };
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(resultado.error).toBe('CONFIGURACION_DESIGNACION_INVALIDA');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+});
+
+// TEST 53.L
+describe('TEST 53.L: crearVersionDesignacion — distancia máxima desactivada con NULL es válida', () => {
+    test('regla_distancia_maxima_activa=false, distancia_maxima_km=null → pasa la validación y llega a la RPC', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v2-uuid', numero_version: 2 }], error: null });
+        const configuracion = { ...construirConfiguracionDefaultV1(), regla_distancia_maxima_activa: false, distancia_maxima_km: null };
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(resultado.error).toBeUndefined();
+        expect(supabase.rpc).toHaveBeenCalledWith('crear_configuracion_designacion_version', expect.objectContaining({
+            p_regla_distancia_maxima_activa: false, p_distancia_maxima_km: null
+        }));
+    });
+});
+
+// TEST 53.J
+describe('TEST 53.J: crearVersionDesignacion — Provincial A/B/C con orden B→A→C', () => {
+    test('aplanarMatriz produce las 3 filas de Provincial con el orden esperado, y la RPC recibe esa matriz', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v2-uuid', numero_version: 2 }], error: null });
+        const configuracion = construirConfiguracionDefaultV1();
+        configuracion.matriz.provincial = [
+            { categoria: 'A', elegible: true, orden_preferencia: 2 },
+            { categoria: 'B', elegible: true, orden_preferencia: 1 },
+            { categoria: 'C', elegible: true, orden_preferencia: 3 }
+        ];
+        await crearVersionDesignacion({ configuracion, descripcion: 'Provincial A/B/C', creadoPor: null });
+
+        const llamada = supabase.rpc.mock.calls[0][1];
+        const filasProvincial = llamada.p_matriz
+            .filter(f => f.clasificacion_codigo === 'provincial')
+            .sort((a, b) => a.orden_preferencia - b.orden_preferencia);
+        expect(filasProvincial).toEqual([
+            { clasificacion_codigo: 'provincial', categoria: 'B', elegible: true, orden_preferencia: 1 },
+            { clasificacion_codigo: 'provincial', categoria: 'A', elegible: true, orden_preferencia: 2 },
+            { clasificacion_codigo: 'provincial', categoria: 'C', elegible: true, orden_preferencia: 3 }
+        ]);
+    });
+});
+
+// TEST 54 — creación atómica: si la RPC (Postgres) rechaza la inserción
+// (simula el caso real: un INSERT de criterios/matriz viola un CHECK, o la
+// validación estructural final de la función falla) — crearVersionDesignacion
+// JAMÁS reporta éxito ni devuelve un id parcial. La atomicidad real (que
+// PostgreSQL revierte TODOS los INSERT de la función si esta termina en una
+// excepción no capturada — no requiere BEGIN/COMMIT explícito porque una
+// función que no confirma hereda la transacción de quien la llama) es una
+// garantía del LENGUAJE, documentada en la migración 051 — no se simula acá
+// una base de datos real (bloqueado: no se aplica 051 sin autorización), se
+// prueba el contrato que le importa al resto del sistema: cuando la RPC
+// informa error, NUNCA hay un {id, numero_version} de por medio.
+describe('TEST 54: crearVersionDesignacion — si la RPC (Postgres) rechaza, nunca hay éxito parcial', () => {
+    test('la RPC devuelve error (ej. la validación estructural final falló en Postgres) → {error}, nunca {id,...}', async () => {
+        supabase.rpc.mockResolvedValue({ data: null, error: { message: 'Versión: la matriz debe tener exactamente 18 filas; tiene 17 filas en 6 clasificaciones — no se activa.' } });
+        const configuracion = construirConfiguracionDefaultV1();
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(resultado.id).toBeUndefined();
+        expect(resultado.numero_version).toBeUndefined();
+        expect(resultado.error).toBe('CONFIGURACION_DESIGNACION_INVALIDA');
+        expect(resultado.detalle).toMatch(/matriz debe tener exactamente 18 filas/);
+    });
+});
+
+// TEST 53.M
+describe('TEST 53.M: activarVersionDesignacion — usa EXCLUSIVAMENTE la RPC activar_configuracion_designacion', () => {
+    test('llama supabase.rpc con el id, nunca supabase.from (ningún UPDATE directo desde JS)', async () => {
+        supabase.rpc.mockResolvedValue({ error: null });
+        const resultado = await activarVersionDesignacion('v2-uuid');
+        expect(resultado).toEqual({ ok: true });
+        expect(supabase.rpc).toHaveBeenCalledWith('activar_configuracion_designacion', { p_version_id: 'v2-uuid' });
+        expect(supabase.from).not.toHaveBeenCalled();
+    });
+    test('la RPC rechaza (versión estructuralmente inválida) → error controlado, nunca una excepción sin capturar', async () => {
+        supabase.rpc.mockResolvedValue({ error: { message: 'Versión no tiene ningún criterio de ranking activo' } });
+        const resultado = await activarVersionDesignacion('v-corrupta');
+        expect(resultado.error).toBe('CONFIGURACION_DESIGNACION_INVALIDA');
     });
 });
 

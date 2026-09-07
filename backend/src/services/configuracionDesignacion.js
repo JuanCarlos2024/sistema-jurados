@@ -417,6 +417,60 @@ function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRow
     };
 }
 
+// ─── Aplanar matriz objeto → filas planas (inverso de reconstruirConfigu- ──
+// ─── racionDesdeFilas, para el otro sentido: JS → filas que la RPC de ─────
+// ─── creación (Etapa 4) inserta) ───────────────────────────────────────────
+// `matrizPorClasificacion`: { [clasificacion_codigo]: [{categoria, elegible, orden_preferencia}, ...] }
+// @returns [{clasificacion_codigo, categoria, elegible, orden_preferencia}, ...] — 18 filas si la matriz está completa
+function aplanarMatriz(matrizPorClasificacion) {
+    const m = matrizPorClasificacion || {};
+    const filas = [];
+    for (const clasificacionCodigo of Object.keys(m)) {
+        for (const fila of (m[clasificacionCodigo] || [])) {
+            filas.push({
+                clasificacion_codigo: clasificacionCodigo,
+                categoria: fila.categoria,
+                elegible: !!fila.elegible,
+                orden_preferencia: fila.elegible ? fila.orden_preferencia : null
+            });
+        }
+    }
+    return filas;
+}
+
+// ─── Resumen liviano para UI (Etapa 4) ────────────────────────────────────
+// Usado en las respuestas de dry-run/preview/candidatos — nunca el objeto de
+// configuración completo (evita filtrar más de lo que la pantalla necesita
+// mostrar en un check dinámico o un indicador de versión). Solo campos ya
+// visibles en la propia respuesta del motor — nada nuevo ni sensible.
+// @param configuracion objeto configuracion ya reconstruido/validado
+// @param meta { id, numero_version, ... } — de cargarConfiguracionDesignacion*()
+function construirResumenParaUI(configuracion, meta) {
+    const c = configuracion || {};
+    return {
+        id: meta?.id ?? null,
+        numero_version: meta?.numero_version ?? null,
+        regla_distancia_maxima_activa: c.regla_distancia_maxima_activa ?? null,
+        distancia_maxima_km: c.distancia_maxima_km ?? null,
+        // Revisión final Etapa 4, sección 18: las 4 reglas booleanas también
+        // se incluyen — sin esto, la UI no puede saber si "No repite
+        // asociación"/"Sin mismo finde"/"Sin finde consecutivo"/"Asociación
+        // diferente" (motorPropuestaDesignacion.js: checks.no_repite_asociacion/
+        // sin_rodeo_mismo_finde/sin_finde_consecutivo/asociacion_diferente)
+        // corresponden a una regla realmente ACTIVA en esta versión, y
+        // terminaría mostrando un check cumplido como si fuera obligatorio
+        // cuando en realidad esa regla está desactivada.
+        regla_no_repetir_asociacion_activa: c.regla_no_repetir_asociacion_activa ?? null,
+        regla_un_rodeo_por_finde_activa: c.regla_un_rodeo_por_finde_activa ?? null,
+        regla_finde_consecutivo_activa: c.regla_finde_consecutivo_activa ?? null,
+        regla_asociacion_organizadora_activa: c.regla_asociacion_organizadora_activa ?? null,
+        orden_criterios_codigos: (c.ordenCriterios || [])
+            .slice()
+            .sort((a, b) => a.orden - b.orden)
+            .map(o => o.criterio_codigo)
+    };
+}
+
 module.exports = {
     SCHEMA_VERSION_SOPORTADO,
     CRITERIOS_CONOCIDOS,
@@ -433,5 +487,7 @@ module.exports = {
     construirConfiguracionDefaultV1,
     clonarConfiguracion,
     compararConfiguraciones,
-    reconstruirConfiguracionDesdeFilas
+    reconstruirConfiguracionDesdeFilas,
+    aplanarMatriz,
+    construirResumenParaUI
 };

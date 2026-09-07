@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuración de Propuesta de Designación — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .config-seccion { margin-bottom: 22px; }
+        .config-seccion h4 { font-size: 14px; margin: 0 0 10px; color: var(--gris-oscuro, #333); }
+        .config-seccion .form-hint { margin-top: 4px; }
+        .fila-criterio, .fila-categoria {
+            display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+            border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 6px; background: #fafafa;
+        }
+        .fila-criterio.inactivo, .fila-categoria.inactivo { opacity: .6; background: #fff; }
+        .fila-criterio .nombre, .fila-categoria .nombre { flex: 1; font-size: 13px; }
+        .btn-flecha { width: 28px; height: 28px; padding: 0; line-height: 1; }
+        .tag-nueva { font-size: 11px; background: var(--amarillo-claro, #fff3cd); color: #a04000; padding: 2px 6px; border-radius: 4px; }
+        .regla-fila { display: flex; align-items: flex-start; gap: 10px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; }
+        .regla-fila label { font-weight: 600; font-size: 13px; cursor: pointer; }
+        .regla-fila .explicacion { font-size: 12px; color: var(--gris, #666); margin-top: 2px; }
+        .regla-estructural { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; color: var(--gris, #666); }
+        .matriz-clasif { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+        .matriz-clasif h5 { margin: 0 0 8px; font-size: 13px; text-transform: capitalize; }
+        .matriz-checks { display: flex; gap: 16px; margin-bottom: 10px; }
+        .matriz-checks label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+        .diff-tabla td { padding: 6px 8px; font-size: 13px; vertical-align: top; }
+        .diff-etiqueta { font-weight: 600; white-space: nowrap; }
+        .diff-antes { color: var(--rojo, #c0392b); }
+        .diff-despues { color: var(--verde, #1e8449); }
+        .modal-ancho .modal { max-width: 720px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Configuración de Propuesta de Designación</h1>
+            </div>
+            <a href="/admin/configuracion.html" class="btn btn-outline btn-pequeño">← Volver a Configuración</a>
+        </div>
+
+        <div class="page-body">
+            <!-- Cabecera: versión activa -->
+            <div class="card" id="card-cabecera">
+                <div class="spinner-wrap"><div class="spinner"></div></div>
+            </div>
+
+            <!-- Editor (crear nueva versión / restaurar predeterminada) -->
+            <div class="card oculto" id="card-editor">
+                <div class="card-titulo flex justify-between items-center">
+                    <span id="editor-titulo">Nueva versión</span>
+                    <button class="btn btn-secundario btn-pequeño" onclick="cancelarEdicion()">Cancelar</button>
+                </div>
+                <div id="editor-cuerpo"></div>
+            </div>
+
+            <!-- Historial -->
+            <div class="card">
+                <div class="card-titulo">🗂️ Historial de versiones</div>
+                <div id="tabla-historial"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal genérico (Ver versión histórica / comparación antes de guardar / éxito) -->
+<div class="modal-overlay oculto modal-ancho" id="modal-overlay">
+<div class="modal">
+    <div class="modal-header">
+        <h3 id="modal-titulo"></h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script src="/js/configuracionDesignacionHelpers.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+const NOMBRE_CRITERIO = {
+    PRIORIDAD_CATEGORIA: 'Prioridad de categoría',
+    MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones',
+    MENOR_DISTANCIA: 'Menor distancia'
+};
+const NOMBRE_CLASIFICACION = {
+    interclubes: 'Interclubes', provincial: 'Provincial', interasociaciones: 'Interasociaciones',
+    zonal: 'Zonal', clasificatorio: 'Clasificatorio', nacional: 'Nacional'
+};
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+
+let activaActual = null;   // { configuracion, meta }
+let historial = [];        // [{id, numero_version, activa, ...}]
+let draft = null;          // { configuracion, baseConfiguracion, baseMeta, esRestaurarDefaults, categoriasNuevas:Set }
+
+async function init() {
+    await Promise.all([cargarActiva(), cargarHistorial()]);
+}
+
+// ─── Cabecera ───────────────────────────────────────────────────────────
+async function cargarActiva() {
+    const div = document.getElementById('card-cabecera');
+    try {
+        activaActual = await api.get('/admin/configuracion-designacion/activa');
+        renderCabecera();
+    } catch (err) {
+        div.innerHTML = `<div class="alerta alerta-peligro">No se pudo cargar la configuración activa: ${sanitizar(err.message || '')}</div>`;
+    }
+}
+
+function renderCabecera() {
+    const div = document.getElementById('card-cabecera');
+    const { configuracion: c, meta } = activaActual;
+    const prioridades = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden)
+        .map(o => NOMBRE_CRITERIO[o.criterio_codigo] || o.criterio_codigo).join(' → ');
+    const distancia = c.regla_distancia_maxima_activa ? `${c.distancia_maxima_km} km` : 'Desactivada';
+    div.innerHTML = `
+        <div class="card-titulo flex justify-between items-center">
+            <span>⚙️ Configuración de Propuesta de Designación</span>
+            <span class="badge badge-activo">v${meta.numero_version} · ACTIVA</span>
+        </div>
+        <div style="font-size:13px; line-height:1.9;">
+            <div><strong>Creada:</strong> ${formatFechaHora(meta.created_at)}${meta.creado_por_nombre ? ' por ' + sanitizar(meta.creado_por_nombre) : ''}</div>
+            <div><strong>Distancia máxima:</strong> ${distancia}</div>
+            <div><strong>Prioridades:</strong> ${sanitizar(prioridades)}</div>
+            ${meta.descripcion ? `<div><strong>Descripción:</strong> ${sanitizar(meta.descripcion)}</div>` : ''}
+        </div>
+        <div class="form-acciones" style="margin-top:14px;">
+            <button class="btn btn-primario btn-pequeño" onclick="abrirCrearNuevaVersion()">Crear nueva versión</button>
+            <button class="btn btn-outline btn-pequeño" onclick="abrirRestaurarDefaults()">Restaurar predeterminada</button>
+        </div>
+    `;
+}
+
+function formatFechaHora(f) {
+    if (!f) return '—';
+    try { return new Date(f).toLocaleString('es-CL', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return f; }
+}
+
+// ─── Historial ──────────────────────────────────────────────────────────
+async function cargarHistorial() {
+    const div = document.getElementById('tabla-historial');
+    try {
+        const data = await api.get('/admin/configuracion-designacion/versiones');
+        historial = data.versiones || [];
+        renderHistorial();
+    } catch (err) {
+        div.innerHTML = `<div class="alerta alerta-peligro">No se pudo cargar el historial: ${sanitizar(err.message || '')}</div>`;
+    }
+}
+
+function renderHistorial() {
+    const div = document.getElementById('tabla-historial');
+    if (historial.length === 0) { div.innerHTML = '<p class="texto-gris">Sin versiones registradas</p>'; return; }
+    div.innerHTML = `<div class="tabla-wrap"><table>
+        <thead><tr><th>Versión</th><th>Estado</th><th>Creada</th><th>Autor</th><th>Descripción</th><th>Acciones</th></tr></thead>
+        <tbody>
+        ${historial.map(v => `<tr>
+            <td><strong>v${v.numero_version}</strong></td>
+            <td><span class="badge ${v.activa ? 'badge-activo' : 'badge-inactivo'}">${v.activa ? 'ACTIVA' : 'Inactiva'}</span></td>
+            <td>${formatFechaHora(v.created_at)}</td>
+            <td>${sanitizar(v.creado_por_nombre || '—')}</td>
+            <td>${sanitizar(v.descripcion || '—')}</td>
+            <td>
+                <div class="flex gap-8">
+                    <button class="btn btn-pequeño btn-outline" onclick="verVersion('${v.id}')">Ver</button>
+                    ${!v.activa ? `<button class="btn btn-pequeño btn-primario" onclick="pedirActivacion('${v.id}', ${v.numero_version})">Activar</button>` : ''}
+                </div>
+            </td>
+        </tr>`).join('')}
+        </tbody>
+    </table></div>`;
+}
+
+// ─── Ver una versión histórica (SOLO LECTURA) ──────────────────────────
+let versionEnVistaSoloLectura = null; // { configuracion, meta } de la versión que muestra el modal "Ver" ahora mismo
+
+async function verVersion(id) {
+    document.getElementById('modal-titulo').textContent = 'Cargando versión…';
+    document.getElementById('modal-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-overlay').classList.remove('oculto');
+    try {
+        const detalle = await api.get('/admin/configuracion-designacion/versiones/' + id);
+        versionEnVistaSoloLectura = detalle;
+        document.getElementById('modal-titulo').textContent = `Versión v${detalle.meta.numero_version} (solo lectura)`;
+        document.getElementById('modal-body').innerHTML = renderVistaSoloLectura(detalle.configuracion, detalle.meta);
+    } catch (err) {
+        document.getElementById('modal-body').innerHTML = `<div class="alerta alerta-peligro">${sanitizar(err.message || 'Error')}</div>`;
+    }
+}
+
+// Crear nueva versión copiando ESTA versión histórica como base — sección 21
+// de la revisión final: la UI debe permitir elegir versión base, no solo la
+// activa. Copia la cabecera+matriz de ESTA versión completa, nunca mezclada
+// con la activa actual.
+function crearDesdeVersionHistorica() {
+    if (!versionEnVistaSoloLectura) return;
+    const { configuracion, meta } = versionEnVistaSoloLectura;
+    draft = {
+        configuracion: clonar(configuracion),
+        baseConfiguracion: configuracion,
+        baseMeta: meta,
+        esRestaurarDefaults: false,
+        categoriasNuevas: new Set()
+    };
+    document.getElementById('editor-titulo').textContent = `Nueva versión (copiada de v${meta.numero_version})`;
+    cerrarModal();
+    mostrarEditor();
+}
+
+function renderVistaSoloLectura(c, meta) {
+    const prioridades = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden)
+        .map(o => `<li>${sanitizar(NOMBRE_CRITERIO[o.criterio_codigo] || o.criterio_codigo)}</li>`).join('');
+    const reglas = [
+        ['regla_no_repetir_asociacion_activa', 'No repetir asociación durante la temporada'],
+        ['regla_un_rodeo_por_finde_activa', 'Máximo un rodeo por fin de semana'],
+        ['regla_finde_consecutivo_activa', 'Evitar fin de semana consecutivo'],
+        ['regla_asociacion_organizadora_activa', 'No designar jurado de la asociación organizadora']
+    ].map(([campo, etiqueta]) => `<li>${c[campo] ? '☑' : '☐'} ${sanitizar(etiqueta)}</li>`).join('');
+    const matriz = Object.keys(NOMBRE_CLASIFICACION).map(codigo => {
+        const filas = (c.matriz || {})[codigo] || [];
+        const elegibles = filas.filter(f => f.elegible).sort((a, b) => a.orden_preferencia - b.orden_preferencia).map(f => f.categoria);
+        return `<div style="margin-bottom:6px;"><strong>${NOMBRE_CLASIFICACION[codigo]}:</strong> ${elegibles.length ? sanitizar(elegibles.join(' → ')) : '—'}</div>`;
+    }).join('');
+    return `
+        <div style="font-size:13px; line-height:1.7;">
+            ${meta.descripcion ? `<div class="alerta alerta-info" style="margin-bottom:14px;">${sanitizar(meta.descripcion)}</div>` : ''}
+            <div><strong>Creada:</strong> ${formatFechaHora(meta.created_at)}${meta.creado_por_nombre ? ' por ' + sanitizar(meta.creado_por_nombre) : ''}</div>
+            <div><strong>Estado:</strong> ${meta.activa ? 'ACTIVA' : 'Inactiva'}</div>
+            <div class="config-seccion" style="margin-top:14px;">
+                <h4>Prioridades</h4>
+                <ol>${prioridades}</ol>
+            </div>
+            <div class="config-seccion">
+                <h4>Distancia</h4>
+                <p>${c.regla_distancia_maxima_activa ? `Descartar candidatos a más de <strong>${c.distancia_maxima_km} km</strong>` : 'Regla de distancia máxima desactivada'}</p>
+            </div>
+            <div class="config-seccion">
+                <h4>Reglas de selección</h4>
+                <ul>${reglas}</ul>
+            </div>
+            <div class="config-seccion">
+                <h4>Categorías por clasificación</h4>
+                ${matriz}
+            </div>
+            <div class="form-acciones" style="margin-top:16px; border-top:1px solid var(--gris-borde); padding-top:14px;">
+                <button class="btn btn-outline btn-pequeño" onclick="crearDesdeVersionHistorica()">Crear nueva versión desde v${meta.numero_version}</button>
+            </div>
+        </div>
+    `;
+}
+
+// ─── Activar (confirmación fuerte, sección 5) ──────────────────────────
+function pedirActivacion(id, numeroVersion) {
+    const mensaje = `
+        <strong>Está a punto de activar la Configuración v${numeroVersion}.</strong><br><br>
+        Las <strong>NUEVAS</strong> propuestas utilizarán esta configuración.<br>
+        Los previews y borradores existentes conservarán la versión con la que fueron creados.
+    `;
+    confirmarPersonalizado(mensaje, 'Cancelar', `Activar v${numeroVersion}`).then(ok => {
+        if (ok) activarVersion(id);
+    });
+}
+
+async function activarVersion(id) {
+    try {
+        await api.post('/admin/configuracion-designacion/versiones/' + id + '/activar', {});
+        mostrarToast('Configuración activada', 'success');
+        await Promise.all([cargarActiva(), cargarHistorial()]);
+    } catch (err) { mostrarError(err); }
+}
+
+// ─── Confirmación con botones personalizados (mismo look que confirmar() ──
+// de utils.js, con etiquetas propias — utils.js no se modifica). ─────────
+function confirmarPersonalizado(mensajeHtml, textoCancelar, textoConfirmar) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-confirmar">
+                <p>${mensajeHtml}</p>
+                <div class="modal-acciones">
+                    <button class="btn btn-secundario" id="btn-cancelar-custom">${sanitizar(textoCancelar)}</button>
+                    <button class="btn btn-primario" id="btn-confirmar-custom">${sanitizar(textoConfirmar)}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#btn-confirmar-custom').onclick = () => { overlay.remove(); resolve(true); };
+        overlay.querySelector('#btn-cancelar-custom').onclick = () => { overlay.remove(); resolve(false); };
+    });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// EDITOR — crear nueva versión / restaurar predeterminada
+// ═════════════════════════════════════════════════════════════════════════
+function clonar(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+function abrirCrearNuevaVersion() {
+    if (!activaActual) return;
+    draft = {
+        configuracion: clonar(activaActual.configuracion),
+        baseConfiguracion: activaActual.configuracion,
+        baseMeta: activaActual.meta,
+        esRestaurarDefaults: false,
+        categoriasNuevas: new Set()
+    };
+    document.getElementById('editor-titulo').textContent = `Nueva versión (copiada de v${activaActual.meta.numero_version})`;
+    mostrarEditor();
+}
+
+async function abrirRestaurarDefaults() {
+    try {
+        const data = await api.get('/admin/configuracion-designacion/defaults');
+        draft = {
+            configuracion: clonar(data.configuracion),
+            baseConfiguracion: activaActual ? activaActual.configuracion : null,
+            baseMeta: activaActual ? activaActual.meta : null,
+            esRestaurarDefaults: true,
+            categoriasNuevas: new Set()
+        };
+        document.getElementById('editor-titulo').textContent = 'Restaurar configuración predeterminada (Versión 1)';
+        mostrarEditor();
+    } catch (err) { mostrarError(err); }
+}
+
+function mostrarEditor() {
+    document.getElementById('card-editor').classList.remove('oculto');
+    renderEditor();
+    document.getElementById('card-editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelarEdicion() {
+    draft = null;
+    document.getElementById('card-editor').classList.add('oculto');
+}
+
+function renderEditor() {
+    const c = draft.configuracion;
+    const cuerpo = document.getElementById('editor-cuerpo');
+
+    // ── Prioridades ──
+    const activos = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden);
+    const codigosActivos = new Set(activos.map(o => o.criterio_codigo));
+    const inactivos = CRITERIOS_CONOCIDOS_UI.filter(cod => !codigosActivos.has(cod));
+    const distanciaPrimero = activos[0]?.criterio_codigo === 'MENOR_DISTANCIA';
+
+    const filasActivos = activos.map((o, i) => `
+        <div class="fila-criterio">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;">
+                <input type="checkbox" checked onchange="uiDesactivarCriterio('${o.criterio_codigo}')">
+                <span class="nombre">${i + 1}. ${sanitizar(NOMBRE_CRITERIO[o.criterio_codigo])}</span>
+            </label>
+            <button type="button" class="btn btn-outline btn-flecha" ${i === 0 ? 'disabled' : ''} onclick="uiMoverCriterio('${o.criterio_codigo}','arriba')">↑</button>
+            <button type="button" class="btn btn-outline btn-flecha" ${i === activos.length - 1 ? 'disabled' : ''} onclick="uiMoverCriterio('${o.criterio_codigo}','abajo')">↓</button>
+        </div>
+    `).join('');
+    const filasInactivos = inactivos.map(cod => `
+        <div class="fila-criterio inactivo">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;">
+                <input type="checkbox" onchange="uiActivarCriterio('${cod}')">
+                <span class="nombre">${sanitizar(NOMBRE_CRITERIO[cod])} (inactivo)</span>
+            </label>
+        </div>
+    `).join('');
+
+    // ── Matriz ──
+    const matrizHtml = Object.keys(NOMBRE_CLASIFICACION).map(codigo => {
+        const filas = c.matriz[codigo] || [];
+        const elegibles = filas.filter(f => f.elegible).sort((a, b) => a.orden_preferencia - b.orden_preferencia);
+        const checks = CATEGORIAS_CONOCIDAS_UI.map(cat => {
+            const fila = filas.find(f => f.categoria === cat);
+            return `<label><input type="checkbox" ${fila?.elegible ? 'checked' : ''} onchange="uiToggleCategoria('${codigo}','${cat}',this.checked)"> ${cat}</label>`;
+        }).join('');
+        const ordenHtml = elegibles.map((f, i) => {
+            const esNueva = draft.categoriasNuevas.has(codigo + ':' + f.categoria);
+            return `<div class="fila-categoria">
+                <span class="nombre">${i + 1}. Categoría ${f.categoria}${esNueva ? ' <span class="tag-nueva">nueva — revise el orden</span>' : ''}</span>
+                <button type="button" class="btn btn-outline btn-flecha" ${i === 0 ? 'disabled' : ''} onclick="uiMoverCategoria('${codigo}','${f.categoria}','arriba')">↑</button>
+                <button type="button" class="btn btn-outline btn-flecha" ${i === elegibles.length - 1 ? 'disabled' : ''} onclick="uiMoverCategoria('${codigo}','${f.categoria}','abajo')">↓</button>
+            </div>`;
+        }).join('');
+        return `<div class="matriz-clasif">
+            <h5>${NOMBRE_CLASIFICACION[codigo]}</h5>
+            <div class="matriz-checks">${checks}</div>
+            ${ordenHtml || '<p class="texto-gris" style="font-size:12px;">Sin categorías elegibles</p>'}
+        </div>`;
+    }).join('');
+
+    cuerpo.innerHTML = `
+        <div class="config-seccion">
+            <h4>CRITERIOS DE PRIORIDAD</h4>
+            ${filasActivos}
+            ${filasInactivos}
+            ${distanciaPrimero ? '<div class="alerta alerta-info" style="margin-top:8px;font-size:12px;">Menor distancia se aplicará de forma estricta. Una distancia menor tendrá prioridad antes que los criterios siguientes.</div>' : ''}
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="config-seccion">
+            <h4>DISTANCIA</h4>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px;">
+                <input type="checkbox" ${c.regla_distancia_maxima_activa ? 'checked' : ''} onchange="uiToggleDistanciaActiva(this.checked)">
+                Aplicar distancia máxima <em style="font-weight:400;font-size:12px;">(regla de descarte)</em>
+            </label>
+            <div class="form-grupo" style="max-width:220px;">
+                <label class="form-label">Máximo (km)</label>
+                <input type="number" class="form-control" min="1" max="5000" value="${c.distancia_maxima_km ?? ''}" ${c.regla_distancia_maxima_activa ? '' : 'disabled'} onchange="uiCambiarDistanciaKm(this.value)">
+            </div>
+            <div class="form-hint">Distinto del criterio de prioridad "Menor distancia" (arriba) — este descarta candidatos fuera de rango; aquel solo ordena entre los que ya son válidos.</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="config-seccion">
+            <h4>REGLAS DE SELECCIÓN</h4>
+            ${filaRegla(c, 'regla_no_repetir_asociacion_activa', 'No repetir asociación durante la temporada', 'Evita repetir la misma asociación entre rodeos del mismo jurado en la temporada.')}
+            ${filaRegla(c, 'regla_un_rodeo_por_finde_activa', 'Máximo un rodeo por fin de semana', 'Un jurado no puede quedar propuesto en dos rodeos del mismo fin de semana.')}
+            ${filaRegla(c, 'regla_finde_consecutivo_activa', 'Evitar fin de semana consecutivo', 'Evita proponer al mismo jurado en fines de semana consecutivos.')}
+            ${filaRegla(c, 'regla_asociacion_organizadora_activa', 'No designar jurado de la asociación organizadora', 'Esto permitirá que un jurado pueda ser considerado para un rodeo organizado por su propia asociación si se desactiva.')}
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="config-seccion">
+            <h4>REGLAS ESTRUCTURALES <span style="font-weight:400;font-size:12px;">(no configurables)</span></h4>
+            <div class="regla-estructural">🔒 Jurado activo</div>
+            <div class="regla-estructural">🔒 Disponibilidad</div>
+            <div class="regla-estructural">🔒 Categoría compatible</div>
+            <div class="regla-estructural">🔒 Rodeo/temporada válidos</div>
+            <div class="regla-estructural">🔒 Desempate determinístico</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="config-seccion">
+            <h4>CATEGORÍAS POR TIPO DE RODEO</h4>
+            ${matrizHtml}
+        </div>
+
+        <div class="config-seccion">
+            <h4>DESCRIPCIÓN <span style="font-weight:400;font-size:12px;">(opcional)</span></h4>
+            <textarea class="form-control" rows="2" placeholder="Ej: Prioriza distancia y agrega categoría C a Provinciales." onchange="draft.configuracion._descripcion = this.value">${sanitizar(draft.configuracion._descripcion || '')}</textarea>
+        </div>
+
+        <div class="form-acciones">
+            <button class="btn btn-secundario" onclick="cancelarEdicion()">Cancelar</button>
+            <button class="btn btn-primario" onclick="intentarGuardar()">Guardar nueva versión</button>
+        </div>
+    `;
+}
+
+function filaRegla(c, campo, etiqueta, explicacion) {
+    return `<div class="regla-fila">
+        <input type="checkbox" id="chk-${campo}" ${c[campo] ? 'checked' : ''} onchange="uiToggleRegla('${campo}', this.checked)" style="margin-top:3px;">
+        <div>
+            <label for="chk-${campo}">${sanitizar(etiqueta)}</label>
+            <div class="explicacion">${sanitizar(explicacion)}</div>
+        </div>
+    </div>`;
+}
+
+// ── Handlers de edición (mutan draft.configuracion y re-renderizan) ──────
+function uiActivarCriterio(codigo) { draft.configuracion.ordenCriterios = activarCriterio(draft.configuracion.ordenCriterios, codigo); renderEditor(); }
+function uiDesactivarCriterio(codigo) {
+    const antes = draft.configuracion.ordenCriterios.length;
+    draft.configuracion.ordenCriterios = desactivarCriterio(draft.configuracion.ordenCriterios, codigo);
+    if (draft.configuracion.ordenCriterios.length === antes) mostrarToast('Debe quedar al menos 1 criterio de prioridad activo', 'error');
+    renderEditor();
+}
+function uiMoverCriterio(codigo, direccion) { draft.configuracion.ordenCriterios = moverCriterio(draft.configuracion.ordenCriterios, codigo, direccion); renderEditor(); }
+
+function uiToggleDistanciaActiva(activa) {
+    draft.configuracion.regla_distancia_maxima_activa = activa;
+    // El valor numérico se conserva tal cual mientras la regla está apagada
+    // (sección 15: "recordar" el km al reactivar) — solo se completa con un
+    // default razonable si nunca tuvo un valor.
+    if (activa && !draft.configuracion.distancia_maxima_km) draft.configuracion.distancia_maxima_km = 600;
+    renderEditor();
+}
+function uiCambiarDistanciaKm(valor) { draft.configuracion.distancia_maxima_km = valor === '' ? null : Number(valor); }
+function uiToggleRegla(campo, valor) {
+    const SENSIBLES = { regla_asociacion_organizadora_activa: true };
+    if (SENSIBLES[campo] && !valor) {
+        mostrarToast('Regla desactivada — revise antes de guardar', 'warning');
+    }
+    draft.configuracion[campo] = valor;
+}
+
+function uiToggleCategoria(clasificacion, categoria, marcar) {
+    const filas = draft.configuracion.matriz[clasificacion];
+    const elegiblesActuales = filas.filter(f => f.elegible).length;
+    if (!marcar && elegiblesActuales <= 1) {
+        mostrarToast(`${NOMBRE_CLASIFICACION[clasificacion]} debe tener al menos 1 categoría elegible`, 'error');
+        renderEditor();
+        return;
+    }
+    draft.configuracion.matriz[clasificacion] = marcar
+        ? activarCategoria(filas, categoria)
+        : desactivarCategoria(filas, categoria);
+    const clave = clasificacion + ':' + categoria;
+    if (marcar) draft.categoriasNuevas.add(clave); else draft.categoriasNuevas.delete(clave);
+    renderEditor();
+}
+function uiMoverCategoria(clasificacion, categoria, direccion) {
+    draft.configuracion.matriz[clasificacion] = moverCategoria(draft.configuracion.matriz[clasificacion], categoria, direccion);
+    draft.categoriasNuevas.delete(clasificacion + ':' + categoria); // ya fue revisada/movida
+    renderEditor();
+}
+
+// ── Guardar: validar → comparar → confirmar → persistir ─────────────────
+function intentarGuardar() {
+    const descripcion = draft.configuracion._descripcion || null;
+    const validacion = validarDraft(draft.configuracion);
+    if (!validacion.valido) { mostrarToast(validacion.error, 'error'); return; }
+
+    const diff = draft.baseConfiguracion ? construirDiffParaUI(draft.baseConfiguracion, draft.configuracion) : { hayDiferencias: true, cambios: [] };
+    document.getElementById('modal-titulo').textContent = 'Cambios respecto a la versión base';
+    document.getElementById('modal-body').innerHTML = `
+        ${diff.hayDiferencias ? `<div class="tabla-wrap"><table class="diff-tabla">
+            <thead><tr><th>Campo</th><th>Antes</th><th>Después</th></tr></thead>
+            <tbody>${diff.cambios.map(c => `<tr>
+                <td class="diff-etiqueta">${sanitizar(c.etiqueta)}</td>
+                <td class="diff-antes">${sanitizar(c.antes ?? '—')}</td>
+                <td class="diff-despues">${sanitizar(c.despues ?? '—')}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>` : '<p class="texto-gris">Sin diferencias respecto a la versión base.</p>'}
+        ${descripcion ? `<div class="alerta alerta-info" style="margin-top:12px;">${sanitizar(descripcion)}</div>` : ''}
+        <div class="form-acciones" style="margin-top:16px;">
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primario" onclick="confirmarGuardado()">Guardar como nueva versión</button>
+        </div>
+    `;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function confirmarGuardado() {
+    const descripcion = draft.configuracion._descripcion || null;
+    const payload = clonar(draft.configuracion);
+    delete payload._descripcion;
+    try {
+        const resultado = await api.post('/admin/configuracion-designacion/versiones', {
+            configuracion: payload, descripcion, es_restaurar_defaults: draft.esRestaurarDefaults
+        });
+        cerrarModal();
+        cancelarEdicion();
+        await cargarHistorial();
+        mostrarExito(resultado);
+    } catch (err) { mostrarError(err); }
+}
+
+function mostrarExito(resultado) {
+    document.getElementById('modal-titulo').textContent = 'Versión creada';
+    document.getElementById('modal-body').innerHTML = `
+        <p><strong>Configuración v${resultado.numero_version} creada correctamente.</strong></p>
+        <p>Estado: <span class="badge badge-inactivo">INACTIVA</span></p>
+        <p>Las propuestas nuevas continúan utilizando la configuración activa hasta que active v${resultado.numero_version}.</p>
+        <div class="form-acciones" style="margin-top:16px;">
+            <button class="btn btn-outline" onclick="cerrarModal(); verVersion('${resultado.id}')">Ver v${resultado.numero_version}</button>
+            <button class="btn btn-primario" onclick="cerrarModal(); pedirActivacion('${resultado.id}', ${resultado.numero_version})">Activar v${resultado.numero_version}</button>
+            <button class="btn btn-secundario" onclick="cerrarModal()">Volver</button>
+        </div>
+    `;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+init();
+</script>
+</body>
+</html>

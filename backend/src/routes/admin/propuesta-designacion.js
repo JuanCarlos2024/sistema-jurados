@@ -37,6 +37,10 @@ const {
 } = require('../../services/propuestaDesignacion');
 const { firmarPreview, verificarPreviewToken, mapaPorRodeo } = require('../../services/previewIntegridad');
 const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId } = require('../../services/configuracionDesignacionRepositorio');
+// Etapa 4, sección 41/43/44: resumen liviano (id/numero_version + reglas de
+// distancia + orden de criterios) para que la UI muestre un indicador de
+// versión y checks/explicaciones dinámicos — nunca hardcodeados a V1.
+const { construirResumenParaUI } = require('../../services/configuracionDesignacion');
 
 // ─── Respuesta uniforme cuando la configuración de designación no se pudo
 // resolver o resultó inválida — NUNCA se ejecuta el motor en ese caso
@@ -682,9 +686,12 @@ router.post('/dry-run', async (req, res) => {
                 jurado_id_propuesto: r.estado === 'PROPUESTO' ? r.jurado_propuesto.jurado_id : null
             }))
         });
-        // Metadata NO sensible de la configuración usada — el frontend puede
-        // ignorarla todavía (sección 14 del pedido; sin UI en esta etapa).
-        res.json({ ...resultado, preview_token, configuracion: configuracionMeta });
+        // Metadata NO sensible de la configuración usada — se conserva
+        // configuracionMeta tal cual (id/numero_version/schema_version/etc.)
+        // y se AGREGAN los campos del resumen (Etapa 4, sección 43/44: lo
+        // mínimo para que la UI arme checks/explicaciones dinámicos, nunca
+        // hardcodeados) — nunca se quita nada de lo que ya devolvía Etapa 3.
+        res.json({ ...resultado, preview_token, configuracion: { ...configuracionMeta, ...construirResumenParaUI(configuracion, configuracionMeta) } });
     } catch (err) {
         console.error('[DRY-RUN] Error generando simulación:', err.message);
         res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
@@ -961,12 +968,31 @@ router.get('/propuestas', async (req, res) => {
 
 // ─── GET /propuestas/:id — detalle completo de una propuesta ──────────────
 router.get('/propuestas/:id', async (req, res) => {
+    // Etapa 4, sección 41: embed liviano (misma FK que ya usa Etapa 3 en
+    // GET .../candidatos) — solo para mostrar el indicador "Configuración: vN"
+    // en la pantalla del borrador. Nunca se usa para decidir reglas acá —
+    // eso lo sigue haciendo exclusivamente el endpoint de candidatos/seleccionar.
     const { data: propuesta, error } = await supabase
         .from('propuestas_designacion')
-        .select('id, temporada_id, estado, creado_por, created_at, updated_at, confirmado_en, temporadas(nombre)')
+        .select('id, temporada_id, estado, creado_por, created_at, updated_at, confirmado_en, configuracion_version_id, temporadas(nombre), configuracion_designacion_versiones(numero_version)')
         .eq('id', req.params.id)
         .single();
     if (error || !propuesta) return res.status(404).json({ error: 'Propuesta no encontrada' });
+
+    // Etapa 4, sección 43/44: además del número de versión, un resumen
+    // liviano (distancia/reglas/orden de criterios) — solo para que la UI
+    // muestre checks/etiquetas dinámicos de ESTA propuesta (su propia
+    // versión histórica, nunca la activa). Si por algún motivo no se puede
+    // resolver, la vista sigue funcionando — solo se omiten esos textos
+    // dinámicos (fallback genérico en el frontend), nunca bloquea la lectura
+    // del borrador.
+    let configuracionResumen = null;
+    if (propuesta.configuracion_version_id) {
+        const cargaConfigVista = await cargarConfiguracionDesignacionPorId(propuesta.configuracion_version_id);
+        if (!cargaConfigVista.error) {
+            configuracionResumen = construirResumenParaUI(cargaConfigVista.configuracion, cargaConfigVista.meta);
+        }
+    }
 
     const { data: detalles, error: errD } = await supabase
         .from('propuestas_designacion_detalle')
@@ -1046,7 +1072,11 @@ router.get('/propuestas/:id', async (req, res) => {
     res.json({
         propuesta: {
             id: propuesta.id, temporada: propuesta.temporadas?.nombre || null, estado: propuesta.estado,
-            created_at: propuesta.created_at, updated_at: propuesta.updated_at, confirmado_en: propuesta.confirmado_en
+            created_at: propuesta.created_at, updated_at: propuesta.updated_at, confirmado_en: propuesta.confirmado_en,
+            // Etapa 4, sección 41/43/44: solo para el indicador "Configuración:
+            // vN" y checks/etiquetas dinámicos — nunca se usa acá para decidir reglas.
+            configuracion_numero_version: propuesta.configuracion_designacion_versiones?.numero_version ?? null,
+            configuracion: configuracionResumen
         },
         resumen: resumenPropuesta(detalles || []),
         detalle: detalleFinal
@@ -1222,7 +1252,7 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
     }
     const cargaConfig = await cargarConfiguracionDesignacionPorId(configuracionVersionId);
     if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
-    const { configuracion } = cargaConfig;
+    const { configuracion, meta } = cargaConfig;
 
     let resultado, rodeoEnriquecido;
     try {
@@ -1248,7 +1278,10 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
         estado: resultado.estado,
         candidatos_validos: (resultado.top_candidatos || []).map(conUso),
         descartados: (resultado.descartados || []).map(conUso),
-        candidatos_evaluados: resultado.candidatos_evaluados || 0
+        candidatos_evaluados: resultado.candidatos_evaluados || 0,
+        // Etapa 4, sección 43/44: checks/explicaciones dinámicos en vez de
+        // hardcodeados a V1 — la propia versión de ESTE borrador, nunca la activa.
+        configuracion: construirResumenParaUI(configuracion, meta)
     });
 });
 
@@ -1280,7 +1313,7 @@ router.post('/preview/candidatos', async (req, res) => {
     // la configuración firmada en el token, nunca con la activa "de paso".
     const cargaConfig = await cargarConfiguracionDesignacionPorId(snapshot.configuracion_version_id);
     if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
-    const { configuracion } = cargaConfig;
+    const { configuracion, meta } = cargaConfig;
 
     let resultado, rodeoEnriquecido;
     try {
@@ -1313,7 +1346,8 @@ router.post('/preview/candidatos', async (req, res) => {
         estado: resultado.estado,
         candidatos_validos: (resultado.top_candidatos || []).map(conUso),
         descartados: (resultado.descartados || []).map(conUso),
-        candidatos_evaluados: resultado.candidatos_evaluados || 0
+        candidatos_evaluados: resultado.candidatos_evaluados || 0,
+        configuracion: construirResumenParaUI(configuracion, meta)
     });
 });
 

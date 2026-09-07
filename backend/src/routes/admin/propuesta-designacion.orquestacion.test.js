@@ -68,11 +68,25 @@ const supabase = require('../../config/supabase');
 const { cargarDatosMotor, ejecutarSimulacion, generarSimulacion, evaluarCandidatoDirecto, TOP_N_TODOS_LOS_CANDIDATOS } = require('../../services/motorPropuestaDesignacion');
 const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId } = require('../../services/configuracionDesignacionRepositorio');
 const { firmarPreview, verificarPreviewToken } = require('../../services/previewIntegridad'); // REAL, sin mock
+const { construirConfiguracionDefaultV1 } = require('../../services/configuracionDesignacion'); // REAL, puro
 const router = require('./propuesta-designacion');
 
-// ─── Objetos-marca: identidad de referencia, no solo forma ────────────────
-const CONFIG_V1 = Object.freeze({ marca: 'CONFIG_V1' });
-const CONFIG_V2 = Object.freeze({ marca: 'CONFIG_V2' });
+// ─── Objetos-marca: identidad de referencia (===), CON forma real de V1 ───
+// (revisión final Etapa 4, sección 15/19: el resumen del dry-run debe traer
+// valores REALES de distancia/orden — no solo un objeto vacío que "pasaría"
+// aunque el backend no los propagara). `marca` se mantiene para que las
+// aserciones toBe(CONFIG_V1) sigan siendo por identidad de referencia.
+const CONFIG_V1 = Object.freeze({ ...construirConfiguracionDefaultV1(), marca: 'CONFIG_V1' });
+const CONFIG_V2 = Object.freeze({
+    ...construirConfiguracionDefaultV1(),
+    distancia_maxima_km: 450,
+    ordenCriterios: [
+        { criterio_codigo: 'MENOR_DISTANCIA', orden: 1 },
+        { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 2 },
+        { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 3 }
+    ],
+    marca: 'CONFIG_V2'
+});
 const META_V1 = { id: 'v1-uuid', numero_version: 1, schema_version: 1 };
 const META_V2 = { id: 'v2-uuid', numero_version: 2, schema_version: 1 };
 
@@ -158,7 +172,31 @@ describe('POST /dry-run', () => {
         const snapshot = verificarPreviewToken(body.preview_token);
         expect(snapshot).not.toBeNull();
         expect(snapshot.configuracion_version_id).toBe('v1-uuid');
-        expect(body.configuracion).toEqual(META_V1);
+        // Etapa 4: la respuesta ahora también trae el resumen (regla/
+        // distancia/orden de criterios) ADEMÁS de META_V1 — toMatchObject en
+        // vez de toEqual porque el resumen es un superconjunto, nunca quita nada.
+        expect(body.configuracion).toMatchObject(META_V1);
+        // Revisión final Etapa 4, sección 15: el PREVIEW INICIAL (la propia
+        // respuesta de /dry-run, ANTES de llamar a /preview/candidatos) ya
+        // debe traer valores REALES — nunca solo id/numero_version/schema_version.
+        // Si el backend dejara de propagar esto, este assert (no solo el
+        // toHaveProperty anterior) rompería.
+        expect(body.configuracion.regla_distancia_maxima_activa).toBe(true);
+        expect(body.configuracion.distancia_maxima_km).toBe(600);
+        expect(body.configuracion.orden_criterios_codigos).toEqual(
+            ['PRIORIDAD_CATEGORIA', 'MENOS_DESIGNACIONES_TEMPORADA', 'MENOR_DISTANCIA']
+        );
+    });
+
+    test('con una config activa hipotética distinta (V2: 450km, distancia primero) — el resumen del dry-run refleja ESOS valores reales, nunca los de V1', async () => {
+        cargarConfiguracionDesignacionActiva.mockResolvedValue({ configuracion: CONFIG_V2, meta: META_V2 });
+        generarSimulacion.mockResolvedValue({ resultados: [], resumen: {}, modo: 'DRY_RUN' });
+        crearSupabaseMock({ temporadas: { data: { id: 'temp-1' }, error: null } });
+
+        const { body } = await llamarRuta({ method: 'POST', url: '/dry-run', body: { rodeo_ids: ['r1'] } });
+
+        expect(body.configuracion.distancia_maxima_km).toBe(450);
+        expect(body.configuracion.orden_criterios_codigos[0]).toBe('MENOR_DISTANCIA');
     });
 });
 
@@ -353,6 +391,65 @@ describe('GET /propuestas/:id/detalle/:id/candidatos — borrador usa su propia 
         expect(cargarConfiguracionDesignacionPorId).toHaveBeenCalledWith('v1-uuid');
         expect(cargarConfiguracionDesignacionActiva).not.toHaveBeenCalled();
         expect(ejecutarSimulacion.mock.calls[0][2]).toBe(CONFIG_V1);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// 16 (revisión final Etapa 4) — GET /propuestas/:id (vista general del
+// borrador, NO la lista de candidatos): el resumen que se muestra en la
+// cabecera de la pantalla debe ser el de LA PROPIA versión de la propuesta,
+// nunca la activa actual. Cubre el escenario "Borrador V1, activa actual V2"
+// pedido explícitamente en la revisión final.
+// ═════════════════════════════════════════════════════════════════════════
+describe('GET /propuestas/:id — resumen de configuración de la vista general del borrador', () => {
+    test('propuesta con configuracion_version_id=V1; activa actual (hipotética) es V2 — la cabecera muestra V1 (600km), nunca V2 (450km)', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: {
+                data: {
+                    id: 'prop-1', temporada_id: 't1', estado: 'BORRADOR', creado_por: 'admin-1',
+                    created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z', confirmado_en: null,
+                    configuracion_version_id: 'v1-uuid',
+                    temporadas: { nombre: '2026-2027' },
+                    configuracion_designacion_versiones: { numero_version: 1 }
+                },
+                error: null
+            },
+            propuestas_designacion_detalle: { data: [], error: null }
+        });
+        cargarConfiguracionDesignacionPorId.mockImplementation(async (id) => {
+            if (id === 'v1-uuid') return { configuracion: CONFIG_V1, meta: META_V1 };
+            return { error: 'CONFIGURACION_DESIGNACION_NO_RESUELTA', detalle: `id inesperado: ${id}` };
+        });
+        cargarConfiguracionDesignacionActiva.mockResolvedValue({ configuracion: CONFIG_V2, meta: META_V2 });
+
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/propuestas/prop-1' });
+
+        expect(status).toBe(200);
+        expect(body.propuesta.configuracion_numero_version).toBe(1);
+        expect(body.propuesta.configuracion.distancia_maxima_km).toBe(600); // V1, nunca 450 (V2)
+        expect(cargarConfiguracionDesignacionPorId).toHaveBeenCalledWith('v1-uuid');
+        expect(cargarConfiguracionDesignacionActiva).not.toHaveBeenCalled();
+    });
+
+    test('propuesta sin configuracion_version_id (histórica, sin backfill) — configuracion=null, sin romper la vista', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: {
+                data: {
+                    id: 'prop-vieja', temporada_id: null, estado: 'BORRADOR', creado_por: 'admin-1',
+                    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', confirmado_en: null,
+                    configuracion_version_id: null, temporadas: null, configuracion_designacion_versiones: null
+                },
+                error: null
+            },
+            propuestas_designacion_detalle: { data: [], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/propuestas/prop-vieja' });
+
+        expect(status).toBe(200);
+        expect(body.propuesta.configuracion_numero_version).toBeNull();
+        expect(body.propuesta.configuracion).toBeNull();
+        expect(cargarConfiguracionDesignacionPorId).not.toHaveBeenCalled();
     });
 });
 

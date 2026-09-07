@@ -5,7 +5,7 @@ const {
     validarDistancia, validarOrdenCriterios, validarMatrizClasificacion, validarMatrizCompleta,
     validarConfiguracion, configuracionRequiereDistancia,
     construirConfiguracionDefaultV1, clonarConfiguracion, compararConfiguraciones,
-    reconstruirConfiguracionDesdeFilas
+    reconstruirConfiguracionDesdeFilas, aplanarMatriz, construirResumenParaUI
 } = require('./configuracionDesignacion');
 
 const defaultV1 = construirConfiguracionDefaultV1();
@@ -557,5 +557,92 @@ describe('Etapa 3 — reconstruirConfiguracionDesdeFilas: equivalencia V1 BD vs 
     test('la reconstrucción pasa validarConfiguracion()', () => {
         const reconstruida = reconstruirConfiguracionDesdeFilas(versionRowV1, criteriosRowsV1, matrizRowsV1);
         expect(validarConfiguracion(reconstruida)).toEqual({ valido: true });
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// ETAPA 4 — aplanarMatriz (inverso de reconstruirConfiguracionDesdeFilas) y
+// construirResumenParaUI.
+// ═════════════════════════════════════════════════════════════════════════
+describe('Etapa 4 — aplanarMatriz', () => {
+    test('produce 18 filas a partir de la matriz de Default V1, ida y vuelta idéntica a reconstruirConfiguracionDesdeFilas', () => {
+        const filas = aplanarMatriz(defaultV1.matriz);
+        expect(filas).toHaveLength(18);
+        const porClasifCategoria = {};
+        filas.forEach(f => { porClasifCategoria[`${f.clasificacion_codigo}:${f.categoria}`] = f; });
+        expect(porClasifCategoria['provincial:A']).toEqual({ clasificacion_codigo: 'provincial', categoria: 'A', elegible: true, orden_preferencia: 2 });
+        expect(porClasifCategoria['provincial:B']).toEqual({ clasificacion_codigo: 'provincial', categoria: 'B', elegible: true, orden_preferencia: 1 });
+        expect(porClasifCategoria['provincial:C']).toEqual({ clasificacion_codigo: 'provincial', categoria: 'C', elegible: false, orden_preferencia: null });
+    });
+    test('una categoría no elegible siempre aplana con orden_preferencia null, aunque el objeto de entrada traiga otra cosa por error', () => {
+        const matriz = { ...defaultV1.matriz, nacional: [
+            { categoria: 'A', elegible: true, orden_preferencia: 1 },
+            { categoria: 'B', elegible: false, orden_preferencia: 99 }, // valor espurio — debe ignorarse
+            { categoria: 'C', elegible: false, orden_preferencia: null }
+        ] };
+        const filas = aplanarMatriz(matriz);
+        const filaB = filas.find(f => f.clasificacion_codigo === 'nacional' && f.categoria === 'B');
+        expect(filaB.orden_preferencia).toBeNull();
+    });
+    test('objeto vacío/null → array vacío, sin lanzar error', () => {
+        expect(aplanarMatriz(null)).toEqual([]);
+        expect(aplanarMatriz({})).toEqual([]);
+    });
+    test('Provincial A/B/C con orden B→A→C se aplana preservando exactamente ese orden', () => {
+        const matriz = { ...defaultV1.matriz, provincial: [
+            { categoria: 'A', elegible: true, orden_preferencia: 2 },
+            { categoria: 'B', elegible: true, orden_preferencia: 1 },
+            { categoria: 'C', elegible: true, orden_preferencia: 3 }
+        ] };
+        const filas = aplanarMatriz(matriz).filter(f => f.clasificacion_codigo === 'provincial');
+        expect(filas.sort((a, b) => a.orden_preferencia - b.orden_preferencia).map(f => f.categoria)).toEqual(['B', 'A', 'C']);
+    });
+});
+
+describe('Etapa 4 — construirResumenParaUI', () => {
+    test('extrae id/numero_version de meta y las 5 reglas booleanas + códigos de criterio en orden, de la configuración', () => {
+        const resumen = construirResumenParaUI(defaultV1, { id: 'v1-uuid', numero_version: 1 });
+        expect(resumen).toEqual({
+            id: 'v1-uuid', numero_version: 1,
+            regla_distancia_maxima_activa: true, distancia_maxima_km: 600,
+            regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
+            regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true,
+            orden_criterios_codigos: ['PRIORIDAD_CATEGORIA', 'MENOS_DESIGNACIONES_TEMPORADA', 'MENOR_DISTANCIA']
+        });
+    });
+    // Revisión final Etapa 4, sección 18: estas 4 reglas booleanas están acá
+    // exactamente para que la UI sepa si checks.no_repite_asociacion/
+    // sin_rodeo_mismo_finde/sin_finde_consecutivo/asociacion_diferente
+    // (motorPropuestaDesignacion.js) corresponden a una regla realmente
+    // activa — sin esto no hay forma de distinguir "cumplida" de "regla
+    // desactivada, el dato no aplica".
+    test('con las 4 reglas booleanas desactivadas, el resumen las refleja en false (nunca las omite ni las fuerza a true)', () => {
+        const config = clonarConfiguracion(defaultV1, {
+            regla_no_repetir_asociacion_activa: false, regla_un_rodeo_por_finde_activa: false,
+            regla_finde_consecutivo_activa: false, regla_asociacion_organizadora_activa: false
+        });
+        const resumen = construirResumenParaUI(config, { id: 'v2-uuid', numero_version: 2 });
+        expect(resumen.regla_no_repetir_asociacion_activa).toBe(false);
+        expect(resumen.regla_un_rodeo_por_finde_activa).toBe(false);
+        expect(resumen.regla_finde_consecutivo_activa).toBe(false);
+        expect(resumen.regla_asociacion_organizadora_activa).toBe(false);
+    });
+    test('respeta el orden real aunque ordenCriterios venga desordenado en el objeto', () => {
+        const config = clonarConfiguracion(defaultV1, {
+            ordenCriterios: [
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 }
+            ]
+        });
+        const resumen = construirResumenParaUI(config, { id: 'x', numero_version: 9 });
+        expect(resumen.orden_criterios_codigos).toEqual(['MENOR_DISTANCIA', 'PRIORIDAD_CATEGORIA']);
+    });
+    test('configuracion/meta ausentes → no lanza, campos en null/vacío', () => {
+        expect(construirResumenParaUI(null, null)).toEqual({
+            id: null, numero_version: null, regla_distancia_maxima_activa: null, distancia_maxima_km: null,
+            regla_no_repetir_asociacion_activa: null, regla_un_rodeo_por_finde_activa: null,
+            regla_finde_consecutivo_activa: null, regla_asociacion_organizadora_activa: null,
+            orden_criterios_codigos: []
+        });
     });
 });

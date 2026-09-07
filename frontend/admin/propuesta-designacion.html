@@ -226,6 +226,19 @@
     </div>
 </div>
 
+
+<!-- Ver reglas de una versión de configuración (Etapa 4, sección 42) —
+     SOLO LECTURA; el editor completo vive en configuracion-designacion.html. -->
+<div class="modal-overlay oculto" id="modal-reglas-overlay">
+    <div class="modal" style="max-width:640px;">
+        <div class="modal-header">
+            <h3 id="mr-titulo">Reglas de la configuración</h3>
+            <button class="modal-cerrar" onclick="cerrarModalReglas()">×</button>
+        </div>
+        <div class="modal-body" id="mr-body"></div>
+    </div>
+</div>
+
 <!-- Modal Designar/Modificar Jurado — UN SOLO componente reutilizado para
      Designar, Modificar, seleccionar con excepción y mover jurado, tanto en
      PREVIEW (sin guardar) como en BORRADOR ya persistido. -->
@@ -795,8 +808,74 @@ const ETIQUETAS_CAUSA = {
     DISPONIBILIDAD: 'Sin disponibilidad declarada', MISMA_ASOCIACION: 'Es de la misma asociación del rodeo',
     ASOCIACION_REPETIDA_TEMPORADA: 'Ya fue designado en esa asociación esta temporada', MISMO_FINDE: 'Ya tiene otro rodeo ese mismo fin de semana',
     FINDE_CONSECUTIVO: 'Trabajó el fin de semana inmediatamente anterior', CATEGORIA_INCOMPATIBLE: 'Categoría no compatible con la clasificación del rodeo',
-    JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia mayor a 600 km'
+    JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia excedida'
 };
+
+// ─── Configuración de designación VISIBLE en este momento — Etapa 4, ─────
+// sección 43/44: nunca hardcodear "600 km"/reglas — usar la versión REAL de
+// lo que se está mirando (preview en memoria o borrador ya guardado), cada
+// una con la suya propia (Etapa 3: nunca la activa "de paso").
+function obtenerConfiguracionVisible(modo) {
+    if (modo === 'preview') return previewTemporal?.configuracion || null;
+    return propuestaAbierta?.propuesta?.configuracion || null;
+}
+// Etiqueta de "distancia excedida" dinámica — usa el mismo texto genérico si
+// todavía no se pudo resolver la configuración de esa fila (nunca inventa un km).
+function etiquetaDistanciaExcedida(modo) {
+    const c = obtenerConfiguracionVisible(modo);
+    return (c && c.distancia_maxima_km) ? `Distancia mayor a ${c.distancia_maxima_km} km` : 'Distancia excedida';
+}
+function etiquetaDentroDeDistancia(modo) {
+    const c = obtenerConfiguracionVisible(modo);
+    return (c && c.regla_distancia_maxima_activa && c.distancia_maxima_km) ? `Dentro de ${c.distancia_maxima_km} km` : 'Dentro del límite de distancia';
+}
+
+const NOMBRE_CRITERIO_INDICADOR = {
+    PRIORIDAD_CATEGORIA: 'Prioridad de categoría', MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones', MENOR_DISTANCIA: 'Menor distancia'
+};
+
+// Indicador "Configuración: vN [Ver reglas]" — sección 41/42. `numeroVersionFallback`
+// cubre el caso borrador donde el resumen completo no se pudo resolver pero
+// al menos se conoce el número de versión (embed liviano, siempre disponible).
+function indicadorConfiguracion(configuracionResumen, numeroVersionFallback) {
+    const id = configuracionResumen?.id;
+    const numero = configuracionResumen?.numero_version ?? numeroVersionFallback;
+    if (!numero) return '';
+    return ` · Configuración: v${numero}${id ? ` <a href="#" onclick="verReglasVersion('${id}'); return false;" style="font-size:12px;">Ver reglas</a>` : ''}`;
+}
+
+function cerrarModalReglas() { document.getElementById('modal-reglas-overlay').classList.add('oculto'); }
+
+async function verReglasVersion(id) {
+    document.getElementById('mr-titulo').textContent = 'Cargando…';
+    document.getElementById('mr-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-reglas-overlay').classList.remove('oculto');
+    try {
+        const { configuracion: c, meta } = await api.get('/admin/configuracion-designacion/versiones/' + id);
+        document.getElementById('mr-titulo').textContent = `Configuración v${meta.numero_version} (solo lectura)`;
+        const prioridades = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden)
+            .map(o => NOMBRE_CRITERIO_INDICADOR[o.criterio_codigo] || o.criterio_codigo).join(' → ');
+        const matriz = ['interclubes', 'provincial', 'interasociaciones', 'zonal', 'clasificatorio', 'nacional'].map(codigo => {
+            const elegibles = (c.matriz?.[codigo] || []).filter(f => f.elegible).sort((a, b) => a.orden_preferencia - b.orden_preferencia).map(f => f.categoria);
+            return `<div>${codigo}: ${elegibles.length ? sanitizar(elegibles.join(' → ')) : '—'}</div>`;
+        }).join('');
+        document.getElementById('mr-body').innerHTML = `
+            <div style="font-size:13px; line-height:1.8;">
+                ${!meta.activa ? '<div class="alerta alerta-info" style="margin-bottom:12px;">Esta versión ya no está activa — sigue vigente para este preview/borrador (sección 39 de Etapa 4).</div>' : ''}
+                <div><strong>Prioridades:</strong> ${sanitizar(prioridades)}</div>
+                <div><strong>Distancia máxima:</strong> ${c.regla_distancia_maxima_activa ? c.distancia_maxima_km + ' km' : 'Desactivada'}</div>
+                <div><strong>No repetir asociación:</strong> ${c.regla_no_repetir_asociacion_activa ? 'Activada' : 'Desactivada'}</div>
+                <div><strong>Máximo un rodeo por fin de semana:</strong> ${c.regla_un_rodeo_por_finde_activa ? 'Activada' : 'Desactivada'}</div>
+                <div><strong>Evitar fin de semana consecutivo:</strong> ${c.regla_finde_consecutivo_activa ? 'Activada' : 'Desactivada'}</div>
+                <div><strong>No asociación organizadora:</strong> ${c.regla_asociacion_organizadora_activa ? 'Activada' : 'Desactivada'}</div>
+                <div style="margin-top:10px;"><strong>Categorías por clasificación:</strong></div>
+                ${matriz}
+            </div>
+        `;
+    } catch (err) {
+        document.getElementById('mr-body').innerHTML = `<div class="alerta alerta-peligro">${sanitizar(err.message || 'Error')}</div>`;
+    }
+}
 
 // ═════════════════════════════════════════════════════════════════════════
 // PREVIEW — edición de la propuesta ANTES de guardar el borrador.
@@ -870,6 +949,9 @@ function iniciarPreviewTemporal(resp) {
         originalPorRodeo: new Map(detalle.map(d => [d.rodeo_id, JSON.parse(JSON.stringify(d))])),
         jurados_utilizados: resp.jurados_utilizados || [],
         metricas: resp.metricas,
+        // Etapa 4, sección 41/43/44: resumen liviano de ESTA versión (la que
+        // firmó el token) — para el indicador de versión y checks dinámicos.
+        configuracion: resp.configuracion || null,
         cambiosPendientes: []
     };
 }
@@ -904,6 +986,7 @@ function renderPreviewTemporal() {
     let html = `
         <div class="aviso-simulacion">
             🧪 PROPUESTA SIN GUARDAR (DRY-RUN) — Temporada: ${sanitizar(previewTemporal.temporada || '—')} — Nada de esto está guardado todavía. Puede editarla libremente antes de guardar.
+            ${indicadorConfiguracion(previewTemporal.configuracion)}
         </div>
         ${avisoCambios}
         <div class="kpi-grid" style="margin-bottom:16px;">
@@ -1098,6 +1181,7 @@ function renderVistaPropuesta() {
             <div>
                 <div style="font-weight:700; font-size:15px;">Propuesta del ${new Date(propuesta.created_at).toLocaleString('es-CL')}</div>
                 <div style="font-size:12px; color:var(--gris);">Temporada: ${sanitizar(propuesta.temporada || '—')} · Estado: ${sanitizar(propuesta.estado)}</div>
+                <div style="font-size:12px; color:var(--gris); margin-top:2px;">${indicadorConfiguracion(propuesta.configuracion, propuesta.configuracion_numero_version)}</div>
             </div>
             <button class="btn btn-secundario btn-pequeño" onclick="cerrarVistaPropuesta()">Cerrar</button>
         </div>
@@ -1152,14 +1236,25 @@ function renderFilaDetallePropuesta(d, modo) {
     let detallesExtra = '';
     if (esElPropuestoDelMotor && d.explicacion_json?.jurado_propuesto?.checks) {
         const checks = d.explicacion_json.jurado_propuesto.checks;
+        const configVisible = obtenerConfiguracionVisible(modo);
         const lineaCheck = (ok, label) => `<div class="check-linea ${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'} ${label}</div>`;
+        // Revisión final Etapa 4, sección 18: si la regla correspondiente
+        // está DESACTIVADA en esta versión, el check NO se muestra como una
+        // regla obligatoria cumplida (✓/✗) — el motor sigue calculando el
+        // dato crudo (checks.*), pero mostrarlo como ✓ implicaría que se
+        // está exigiendo, y no es el caso. `reglaActiva === null` (resumen
+        // no resuelto todavía) mantiene el comportamiento anterior (✓/✗)
+        // para no romper la vista mientras se resuelve.
+        const lineaConfigurable = (reglaActiva, ok, label) => (reglaActiva === false)
+            ? `<div class="check-linea" style="color:var(--gris);">— ${label} (regla desactivada)</div>`
+            : lineaCheck(ok, label);
         detallesExtra += `<div style="margin-top:8px;">
             ${lineaCheck(checks.disponible, 'Disponible')}
-            ${lineaCheck(checks.asociacion_diferente, 'Asociación diferente')}
-            ${lineaCheck(checks.no_repite_asociacion, 'No repite asociación en la temporada')}
-            ${lineaCheck(checks.sin_rodeo_mismo_finde, 'Sin otro rodeo ese fin de semana')}
-            ${lineaCheck(checks.sin_finde_consecutivo, 'No salió el fin de semana anterior')}
-            ${lineaCheck(checks.dentro_600km, 'Dentro de 600 km')}
+            ${lineaConfigurable(configVisible?.regla_asociacion_organizadora_activa, checks.asociacion_diferente, 'Asociación diferente')}
+            ${lineaConfigurable(configVisible?.regla_no_repetir_asociacion_activa, checks.no_repite_asociacion, 'No repite asociación en la temporada')}
+            ${lineaConfigurable(configVisible?.regla_un_rodeo_por_finde_activa, checks.sin_rodeo_mismo_finde, 'Sin otro rodeo ese fin de semana')}
+            ${lineaConfigurable(configVisible?.regla_finde_consecutivo_activa, checks.sin_finde_consecutivo, 'No salió el fin de semana anterior')}
+            ${lineaConfigurable(configVisible?.regla_distancia_maxima_activa, checks.dentro_600km, etiquetaDentroDeDistancia(modo))}
             ${lineaCheck(checks.categoria_compatible, 'Categoría compatible')}
         </div>`;
     }
@@ -1418,7 +1513,14 @@ function renderMotivosCandidato(c) {
     if (!c.causas || c.causas.length === 0) {
         return `<div class="mc-reglas"><span class="check-linea ok">✓ Cumple todas las reglas duras</span></div>`;
     }
-    return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${ETIQUETAS_CAUSA[cod] || cod}</div>`).join('')}</div>`;
+    return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${etiquetaCausaModal(cod)}</div>`).join('')}</div>`;
+}
+
+// DISTANCIA_EXCEDIDA usa el km real de la configuración de ESTE modal (su
+// propio preview/borrador, Etapa 4 sección 43) — el resto reutiliza ETIQUETAS_CAUSA tal cual.
+function etiquetaCausaModal(codigo, modo) {
+    if (codigo === 'DISTANCIA_EXCEDIDA') return etiquetaDistanciaExcedida(modo || modalCandidatos?.modo);
+    return ETIQUETAS_CAUSA[codigo] || codigo;
 }
 
 // "Propuesto en otro rodeo" (sección 6/13) — reutiliza los mismos 4 tipos
@@ -1543,11 +1645,11 @@ async function manejarRespuestaSeleccion(modo, id, juradoId, err, juradoNombre) 
     mostrarError(err);
 }
 
-function etiquetaAdvertencia(a) {
+function etiquetaAdvertencia(a, modo) {
     if (ETIQUETAS_CONFLICTO_INTERNO[a.tipo] && a.origen === 'CONFLICTO_INTERNO_PROPUESTA') {
         return `${ETIQUETAS_CONFLICTO_INTERNO[a.tipo]}${a.club ? ' — ' + sanitizar(a.club) + (a.fecha ? ' (' + formatFecha(a.fecha) + ')' : '') : ''}`;
     }
-    return ETIQUETAS_CAUSA[a.tipo] || a.tipo;
+    return etiquetaCausaModal(a.tipo, modo);
 }
 
 // Sección 8/9 — si alguna advertencia viene de CONFLICTO_INTERNO_PROPUESTA
@@ -1562,7 +1664,7 @@ async function mostrarConfirmacionAdvertencias(modo, id, juradoId, info, juradoN
 
     let mensaje = `⚠ <strong style="font-size:16px;">Advertencias para ${nombreJurado}:</strong>`;
     if (reglas.length > 0) {
-        mensaje += `<ul style="text-align:left; margin:8px 0; padding-left:20px; font-size:14px; line-height:1.6;">${reglas.map(a => `<li>${etiquetaAdvertencia(a)}</li>`).join('')}</ul>`;
+        mensaje += `<ul style="text-align:left; margin:8px 0; padding-left:20px; font-size:14px; line-height:1.6;">${reglas.map(a => `<li>${etiquetaAdvertencia(a, modo)}</li>`).join('')}</ul>`;
     }
     if (usosPropuesta.length > 0) {
         const destinoTxt = `<strong>${sanitizar(filaDestino?.rodeo?.club || '')}</strong>${filaDestino?.rodeo?.tipo_rodeo_nombre ? ' (' + sanitizar(filaDestino.rodeo.tipo_rodeo_nombre) + ')' : ''}, ${filaDestino?.rodeo?.fecha ? formatFecha(filaDestino.rodeo.fecha) : ''}`;

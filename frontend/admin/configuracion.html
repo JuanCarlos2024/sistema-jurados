@@ -83,6 +83,18 @@
                 </div>
             </div>
 
+            <!-- Propuesta de Designación -->
+            <div class="card">
+                <div class="card-titulo">⚙️ Propuesta de Designación</div>
+                <div id="resumen-config-designacion">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <div class="form-acciones" style="margin-top:14px;">
+                    <button class="btn btn-primario btn-pequeño" onclick="window.location.href='/admin/configuracion-designacion.html'">Administrar configuración</button>
+                    <button class="btn btn-outline btn-pequeño" onclick="window.location.href='/admin/configuracion-designacion.html'">Ver historial</button>
+                </div>
+            </div>
+
             <!-- Evaluación técnica — abarca full width -->
             <div class="card" style="grid-column:1/-1;">
                 <div class="card-titulo">📝 Evaluación técnica — Configuración completa</div>
@@ -141,7 +153,33 @@ protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
 
 async function init() {
-    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins(), cargarEvalConfig(), cargarTemporadas()]);
+    await Promise.all([cargarTarifas(), cargarRetencion(), cargarBonos(), cargarAdmins(), cargarEvalConfig(), cargarTemporadas(), cargarResumenConfigDesignacion()]);
+}
+
+// ── Propuesta de Designación (Etapa 4) — solo resumen; administración completa en configuracion-designacion.html ──
+const NOMBRE_CRITERIO_RESUMEN = {
+    PRIORIDAD_CATEGORIA: 'Prioridad de categoría',
+    MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones',
+    MENOR_DISTANCIA: 'Menor distancia'
+};
+async function cargarResumenConfigDesignacion() {
+    const div = document.getElementById('resumen-config-designacion');
+    try {
+        const { configuracion: c, meta } = await api.get('/admin/configuracion-designacion/activa');
+        const prioridades = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden)
+            .map(o => NOMBRE_CRITERIO_RESUMEN[o.criterio_codigo] || o.criterio_codigo).join(' → ');
+        const distancia = c.regla_distancia_maxima_activa ? `${c.distancia_maxima_km} km` : 'Desactivada';
+        div.innerHTML = `
+            <div style="font-size:13px; line-height:1.9;">
+                <div><strong>Configuración activa:</strong> Versión ${meta.numero_version}</div>
+                <div><strong>Creada:</strong> ${meta.created_at ? new Date(meta.created_at).toLocaleDateString('es-CL') : '—'}</div>
+                <div><strong>Distancia máxima:</strong> ${distancia}</div>
+                <div><strong>Prioridades:</strong> ${sanitizar(prioridades)}</div>
+            </div>
+        `;
+    } catch (err) {
+        div.innerHTML = `<div class="alerta alerta-peligro" style="font-size:12px;">No se pudo cargar: ${sanitizar(err.message || '')}</div>`;
+    }
 }
 
 // ── Temporadas ──────────────────────────────────────────────────────────
