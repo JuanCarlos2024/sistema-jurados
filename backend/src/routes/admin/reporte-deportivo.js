@@ -261,6 +261,24 @@ async function obtenerDatos(q, paginar = true) {
             obsJuradoDA = partes.join(' | ');
         }
 
+        // Corrección — SOLO para "Observación Jurado de Análisis de Jura" del
+        // Excel general (/export): comentarios REALES del jurado dentro del
+        // ciclo de evaluación (evaluacion_comentarios_jurado_ciclo, misma
+        // fuente que obsJuradoDA), pero SIN el gate por modo_flujo y SIN el
+        // texto informativo sintético ("Sin comentario del jurado"/"No
+        // requiere comentario") ni el respaldo a observaciones_finales
+        // (Bloque 7 de la cartilla) que sí usa obs_jurado/obsJuradoLegacy
+        // para pantalla y Excel Detallado — esos NO se tocan. Si no hay
+        // ningún comentario real, queda vacío (nunca se copia texto de otra
+        // fuente para "rellenar" la celda).
+        const comentariosAnalisisJura = [];
+        for (const [num, cicloObj] of [[1, c1Obj], [2, c2Obj]]) {
+            if (!cicloObj) continue;
+            const coms = comentDAMap[cicloObj.id] || [];
+            comentariosAnalisisJura.push(...coms.map(c => `C${num} - ${c.nombre}: ${c.comentario}`));
+        }
+        const obsAnalisisJuraSoloExcelGeneral = comentariosAnalisisJura.join(' | ');
+
         const estadoCartilla = carts.length > 0
             ? (carts.some(c => c.estado === 'enviada') ? 'enviada'
                 : carts.some(c => c.estado === 'reabierta') ? 'reabierta' : 'borrador')
@@ -346,6 +364,9 @@ async function obtenerDatos(q, paginar = true) {
             derivadas_comision:     stats?.derivadas_comision     || 0,
             // Observaciones
             obs_jurado:   modoFlujo === 'descuento_automatico' ? obsJuradoDA : obsJuradoLegacy,
+            // Corrección — SOLO usado por /export ("Observación Jurado de
+            // Análisis de Jura"); ver nota junto a su cálculo arriba.
+            obs_jurado_analisis_jura: obsAnalisisJuraSoloExcelGeneral || null,
             obs_admin:    rodeo.observacion || '',
             obs_monitor:  dm?.comentario_monitor || '',
             obs_analista: ev?.observacion_general || '',
@@ -365,6 +386,12 @@ async function obtenerDatos(q, paginar = true) {
             cartilla_hubo_faltas:               _siNo(datosCartilla.hubo_faltas),
             cartilla_hubo_ganado_fuera_peso:    _siNo(datosCartilla.hubo_ganado_fuera_peso),
             cartilla_hubo_movimiento_rienda:    _siNo(datosCartilla.hubo_movimiento_rienda),
+            // Bloque 7 de la cartilla ("Otros antecedentes / varios") — fuente
+            // para la nueva columna "Observaciones de Jurado en Rodeo" del
+            // Excel general. Distinta de obs_jurado (que en modo apelacion_
+            // jurado también lee este mismo campo, pero unido de TODAS las
+            // cartillas enviadas del rodeo — ver nota en el diff de esta ronda).
+            cartilla_observaciones_finales: datosCartilla.observaciones_finales?.trim() || null,
             // Detalle asociado (Excel Detallado) — mismos campos reales,
             // sin transformar todavía; el formateo a texto ocurre en
             // /export-detalle, que es quien decide cómo mostrarlos.
@@ -398,10 +425,15 @@ router.get('/export', async (req, res) => {
         wb.created = new Date();
         const ws = wb.addWorksheet('Reporte Deportivo');
 
-        const MODO_LABEL = { descuento_automatico: 'Descuento automático', apelacion_jurado: 'Apelación jurado' };
-
+        // Revisión (ocultar/renombrar/agregar UNA columna): las columnas
+        // marcadas para "ocultar" solo se quitan de ESTE arreglo (lo único
+        // que decide qué aparece en el Excel) — sus cálculos siguen intactos
+        // en obtenerDatos()/filas, disponibles para quien los necesite (ej.
+        // la vista en pantalla vía GET /, que no se tocó). "Obs. Jurado"
+        // conserva su key (obs_jurado) y su dato — solo cambia el texto del
+        // encabezado. "Observaciones de Jurado en Rodeo" es la única
+        // columna nueva, insertada justo después de "Conceptual".
         ws.columns = [
-            // ── Columnas existentes (orden conservado) ──
             { header: 'Fecha',                      key: 'fecha',            width: 14 },
             { header: 'Club',                       key: 'club',             width: 28 },
             { header: 'Asociación',                 key: 'asociacion',       width: 22 },
@@ -409,7 +441,6 @@ router.get('/export', async (req, res) => {
             { header: 'Categoría',                  key: 'categoria_rodeo',  width: 16 },
             { header: 'Jurado(s)',                  key: 'jurados',          width: 30 },
             { header: 'Delegado Rentado',           key: 'delegados',        width: 25 },
-            { header: 'Estado Evaluación',          key: 'estado_evaluacion',width: 18 },
             { header: 'Nota Final',                 key: 'nota_final',       width: 10 },
             { header: 'Oficial 1er Lugar',          key: 'puntaje_oficial_1er',  width: 14, style: { numFmt: '@' } },
             { header: 'Oficial 2do Lugar',          key: 'puntaje_oficial_2do',  width: 14, style: { numFmt: '@' } },
@@ -425,31 +456,14 @@ router.get('/export', async (req, res) => {
             { header: 'Apreciación',                key: 'interpretativas',  width: 14 },
             { header: 'Reglamentaria',              key: 'reglamentarias',   width: 14 },
             { header: 'Conceptual',                 key: 'informativos',     width: 14 },
-            { header: 'Estado Cartilla',            key: 'estado_cartilla',  width: 16 },
-            { header: 'Cartilla Recibida',          key: 'cartilla_recibida', width: 16 },
-            { header: 'Obs. Jurado',                key: 'obs_jurado',       width: 50 },
+            // ── Nueva columna — Bloque 7 de la cartilla del jurado ──
+            { header: 'Observaciones de Jurado en Rodeo', key: 'cartilla_observaciones_finales', width: 50 },
+            // ── "Obs. Jurado" renombrada (misma key/dato, otro encabezado) ──
+            { header: 'Observación Jurado de Análisis de Jura', key: 'obs_jurado', width: 50 },
             { header: 'Obs. Jefe Deportivo',        key: 'obs_admin',        width: 40 },
             { header: 'Obs. Monitor',               key: 'obs_monitor',      width: 40 },
             { header: 'Obs. Análisis Técnico',      key: 'obs_analista',     width: 40 },
-            // ── Nuevas columnas (agregadas al final) ──
-            { header: 'Modo Evaluación',            key: 'modo_evaluacion',  width: 22 },
-            { header: 'C1 Desc. Efectivo',          key: 'c1_desc',          width: 16 },
-            { header: 'C1 Revertidos',              key: 'c1_revertidos',    width: 14 },
-            { header: 'C1 Pend. Comisión',          key: 'c1_pendiente_comision', width: 16 },
-            { header: 'C1 Sin Casos',               key: 'c1_sin_casos_txt', width: 12 },
-            { header: 'C1 Comentario Sin Casos',    key: 'c1_comentario_sin_casos', width: 40 },
-            { header: 'C2 Desc. Efectivo',          key: 'c2_desc',          width: 16 },
-            { header: 'C2 Revertidos',              key: 'c2_revertidos',    width: 14 },
-            { header: 'C2 Pend. Comisión',          key: 'c2_pendiente_comision', width: 16 },
-            { header: 'C2 Sin Casos',               key: 'c2_sin_casos_txt', width: 12 },
-            { header: 'C2 Comentario Sin Casos',    key: 'c2_comentario_sin_casos', width: 40 },
-            { header: 'Total Desc. Efectivo',       key: 'total_desc',       width: 18 },
-            { header: 'Pend. Comisión Total',       key: 'pendiente_comision_total', width: 18 },
-            { header: 'Casos Derivados Comisión',   key: 'derivadas_comision', width: 20 },
-            { header: 'Apelaciones Acogidas',       key: 'apelaciones_acogidas',   width: 20 },
-            { header: 'Apelaciones Rechazadas',     key: 'apelaciones_rechazadas', width: 20 },
-            // ── Campos operativos de la cartilla del jurado (mejora) ──
-            { header: 'Hora de Inicio',                       key: 'cartilla_hora_inicio',               width: 14 },
+            // ── Campos operativos de la cartilla del jurado ──
             { header: 'Serie Campeones - 2 Vueltas',          key: 'cartilla_serie_campeones_2_vueltas',  width: 20 },
             { header: 'Caseta Adecuada',                      key: 'cartilla_caseta_adecuada',            width: 16 },
             { header: 'Faltas Disciplinarias/Reglamentarias', key: 'cartilla_hubo_faltas',                width: 24 },
@@ -478,7 +492,6 @@ router.get('/export', async (req, res) => {
                 categoria_rodeo:  f.categoria_rodeo,
                 jurados:          f.jurados,
                 delegados:        f.delegados,
-                estado_evaluacion: f.estado_evaluacion || 'Sin evaluación',
                 nota_final:       f.nota_final != null ? Number(f.nota_final) : '',
                 puntaje_oficial_1er:  f.puntaje_oficial_1er  ?? '',
                 puntaje_oficial_2do:  f.puntaje_oficial_2do  ?? '',
@@ -494,34 +507,23 @@ router.get('/export', async (req, res) => {
                 interpretativas:  f.interpretativas,
                 reglamentarias:   f.reglamentarias,
                 informativos:     f.informativos,
-                estado_cartilla:  f.estado_cartilla,
-                cartilla_recibida: f.cartilla_recibida ? 'Sí' : 'No',
-                obs_jurado:       f.obs_jurado,
+                // Bloque 7 de la cartilla ("Otros antecedentes / varios") —
+                // columna nueva, fuente distinta de obs_jurado (ver nota arriba).
+                cartilla_observaciones_finales: f.cartilla_observaciones_finales || '',
+                // Corrección: "Observación Jurado de Análisis de Jura" usa
+                // EXCLUSIVAMENTE obs_jurado_analisis_jura (comentarios reales
+                // del ciclo de evaluación) — nunca f.obs_jurado (que para el
+                // flujo apelación_jurado cae de vuelta al Bloque 7 de la
+                // cartilla, la misma fuente que ya se muestra en la columna
+                // "Observaciones de Jurado en Rodeo" de al lado).
+                obs_jurado:       f.obs_jurado_analisis_jura || '',
                 obs_admin:        f.obs_admin,
                 obs_monitor:      f.obs_monitor,
                 obs_analista:     f.obs_analista,
-                // nuevos
-                modo_evaluacion:  MODO_LABEL[f.modo_flujo] || f.modo_flujo,
-                c1_desc:          f.c1_desc,
-                c1_revertidos:    f.c1_revertidos,
-                c1_pendiente_comision: f.c1_pendiente_comision,
-                c1_sin_casos_txt: f.c1_sin_casos ? 'Sí' : 'No',
-                c1_comentario_sin_casos: f.c1_comentario_sin_casos,
-                c2_desc:          f.c2_desc,
-                c2_revertidos:    f.c2_revertidos,
-                c2_pendiente_comision: f.c2_pendiente_comision,
-                c2_sin_casos_txt: f.c2_sin_casos ? 'Sí' : 'No',
-                c2_comentario_sin_casos: f.c2_comentario_sin_casos,
-                total_desc:       f.total_desc,
-                pendiente_comision_total: f.pendiente_comision_total,
-                derivadas_comision:     f.derivadas_comision,
-                apelaciones_acogidas:   f.apelaciones_acogidas,
-                apelaciones_rechazadas: f.apelaciones_rechazadas,
                 // Cartilla — campos operativos (mejora). '' cuando no hay
                 // cartilla enviada o el campo no fue respondido — mismo
                 // criterio que el resto de las columnas de este Excel
                 // (ej. puntaje_oficial_1er) para valores ausentes.
-                cartilla_hora_inicio:               f.cartilla_hora_inicio || '',
                 cartilla_serie_campeones_2_vueltas: f.cartilla_serie_campeones_2_vueltas || '',
                 cartilla_caseta_adecuada:           f.cartilla_caseta_adecuada || '',
                 cartilla_hubo_faltas:               f.cartilla_hubo_faltas || '',
