@@ -496,6 +496,90 @@ function construirTrasladosPorJuradoBD(asignacionesTemporada, comunaJuradoPorId)
     return porJurado;
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Equidad Visible de Designaciones" — SOLO INFORMATIVO, NUNCA
+// participa del ranking (misma separación que Métricas de Rendimiento, más
+// abajo): no se lee dentro de evaluarCandidato() ni del comparador
+// jerárquico. NO es un criterio nuevo (no existe PROMEDIO_CATEGORIA ni
+// PROMEDIO_GENERAL en configuracionDesignacion.js) — MENOS_DESIGNACIONES_
+// TEMPORADA sigue exactamente igual.
+//
+// "Designaciones jurado" reutiliza SIEMPRE designacionesAntes ya calculado
+// por evaluarCandidato() (esAsignacionEfectiva + temporada activa, con las
+// mutaciones temporales de la corrida ya aplicadas cuando corresponde) —
+// nunca se recalcula por separado, así nunca puede haber una diferencia
+// entre "lo que decidió el ranking" y "lo que muestra la pantalla".
+//
+// Los promedios (categoría/general) son una estadística de POBLACIÓN
+// distinta: se calculan UNA sola vez por corrida, en memoria, a partir de
+// contexto.jurados (todos los jurados activos, tipo_persona='jurado' — ya
+// filtrado por cargarDatosMotor) y designacionesAntesOriginal (snapshot
+// SOLO-BD, previo a cualquier propuesta de esta corrida) — cero queries
+// nuevas. Incluyen a los jurados con 0 designaciones (ese es justamente el
+// punto: detectar a quién no ha salido) y usan la categoría ACTUAL de cada
+// jurado (nunca una categoría histórica reconstruida).
+// ═════════════════════════════════════════════════════════════════════════
+function _promedioRedondeado(numeros) {
+    if (!numeros || numeros.length === 0) return null;
+    const suma = numeros.reduce((s, n) => s + n, 0);
+    return Math.round((suma / numeros.length) * 10) / 10; // 1 decimal (sección 9)
+}
+
+// @param jurados                     contexto.jurados — todos los jurados activos
+// @param designacionesPorJuradoOriginal  Map(jurado_id -> cantidad) — snapshot SOLO-BD
+// @returns { promedioGeneral, totalJuradosGeneral, promedioPorCategoria: Map, totalPorCategoria: Map }
+function construirEquidadDesignacionesAgregada(jurados, designacionesPorJuradoOriginal) {
+    const conteosPorCategoria = new Map();
+    const todosLosConteos = [];
+    for (const j of (jurados || [])) {
+        const n = designacionesPorJuradoOriginal.get(j.id) || 0;
+        todosLosConteos.push(n);
+        const cat = j.categoria || null;
+        if (!conteosPorCategoria.has(cat)) conteosPorCategoria.set(cat, []);
+        conteosPorCategoria.get(cat).push(n);
+    }
+    const promedioPorCategoria = new Map();
+    const totalPorCategoria = new Map();
+    for (const [cat, conteos] of conteosPorCategoria.entries()) {
+        promedioPorCategoria.set(cat, _promedioRedondeado(conteos));
+        totalPorCategoria.set(cat, conteos.length);
+    }
+    return {
+        promedioGeneral: _promedioRedondeado(todosLosConteos),
+        totalJuradosGeneral: (jurados || []).length,
+        promedioPorCategoria, totalPorCategoria
+    };
+}
+
+// Convierte el Map<jurado_id, Set(rodeo_id)> vigente (BD + lo que lleva
+// mutado esta misma corrida hasta este punto) al Map<jurado_id, cantidad>
+// que espera construirEquidadDesignacionesAgregada() — SIN congelar nada:
+// se invoca de nuevo por cada rodeo del lote (corrección: antes se llamaba
+// UNA sola vez con un snapshot congelado antes de empezar el lote, mezclando
+// dos estados temporales distintos — ver comentario en ejecutarSimulacion()).
+function _designacionesActualesComoMapa(designacionesPorJurado) {
+    const conteos = new Map();
+    for (const [juradoId, set] of designacionesPorJurado.entries()) conteos.set(juradoId, set.size);
+    return conteos;
+}
+
+// Vista por candidato — combina la agregada (población) con el dato
+// temporal-exacto de ESTE candidato (designacionesAntes, ya calculado por
+// evaluarCandidato() — sección 3/8/36: nunca una segunda fuente).
+// Nombres de campo explícitos (sección 29) — sin ambigüedad con el
+// "Promedio categoría" de Rendimiento (que promedia NOTAS, no designaciones).
+function construirEquidadDesignacionesCandidato(agregada, categoriaJurado, designacionesAntes) {
+    const cat = categoriaJurado || null;
+    return {
+        designaciones_jurado: designacionesAntes,
+        categoria: cat,
+        promedio_categoria: cat != null ? (agregada.promedioPorCategoria.get(cat) ?? null) : null,
+        total_jurados_categoria: cat != null ? (agregada.totalPorCategoria.get(cat) ?? 0) : 0,
+        promedio_general: agregada.promedioGeneral,
+        total_jurados_general: agregada.totalJuradosGeneral
+    };
+}
+
 // ─── Estado SOLO-BD (asociaciones/bloques/designaciones) por jurado ──────
 // Reduce `asignacionesTemporada` (ya cargada por cargarDatosMotor) a los 3
 // mapas que evaluarCandidato() necesita como `estado`. Extraído para que
@@ -784,6 +868,15 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     const designacionesAntesOriginal = new Map();
     for (const [juradoId, set] of designacionesPorJurado.entries()) designacionesAntesOriginal.set(juradoId, set.size);
 
+    // Mejora "Equidad Visible de Designaciones" — la agregada de POBLACIÓN
+    // (promedio_categoria/promedio_general) NO se calcula una sola vez para
+    // toda la corrida: en un lote multi-rodeo, cada FILA debe ver el estado
+    // vigente justo ANTES de proponerse a sí misma (BD + propuestas
+    // temporales de las filas anteriores del MISMO lote, nunca el snapshot
+    // congelado del inicio) — corrección explícita del round anterior, ver
+    // helper _designacionesActualesComoMapa() más abajo, invocado dentro del
+    // loop principal, no acá afuera.
+
     const asignacionesTemporalesLog = [];
     // `distanciaKm` — la del GANADOR contra ESTE rodeo (puede ser null si no
     // se pudo resolver comuna) — se agrega al acumulador temporal para que
@@ -875,6 +968,17 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
         const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
         const evaluaciones = jurados.map(j => evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoActual, configuracion));
 
+        // Mejora "Equidad Visible de Designaciones" — agregada de POBLACIÓN
+        // recalculada FRESCA para ESTA fila (corrección del round anterior,
+        // sección 1-9): `designacionesPorJurado` en este punto exacto ya
+        // tiene BD + las propuestas temporales de las filas anteriores del
+        // mismo lote (registrarAsignacionTemporal ya corrió para ellas),
+        // pero TODAVÍA NO la de esta fila (registrarAsignacionTemporal(
+        // ganador) para ESTE rodeo corre más abajo) — misma semántica
+        // temporal exacta que designacionesAntes de cada evaluación de
+        // arriba. Puramente en memoria, sin ninguna consulta nueva.
+        const equidadDesignacionesAgregadaFila = construirEquidadDesignacionesAgregada(jurados, _designacionesActualesComoMapa(designacionesPorJurado));
+
         // ── Resumen de descartes (se cuentan TODAS las causas detectadas —
         //    un candidato puede aportar a más de un contador a la vez) ──
         const descartes = {};
@@ -889,7 +993,10 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null,
             designaciones_antes: e.designacionesAntes,
             causas: e.causas,
-            causa_principal: ORDEN_CAUSA_PRINCIPAL.find(c => e.causas.includes(c)) || e.causas[0]
+            causa_principal: ORDEN_CAUSA_PRINCIPAL.find(c => e.causas.includes(c)) || e.causas[0],
+            // Mejora "Equidad Visible de Designaciones" — sección 37: también
+            // para descartados/con-advertencias, no solo para los válidos.
+            equidad_designaciones: construirEquidadDesignacionesCandidato(equidadDesignacionesAgregadaFila, e.jurado.categoria, e.designacionesAntes)
         }));
 
         const candidatosValidos = evaluaciones.filter(e => e.elegible);
@@ -941,7 +1048,9 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             categoria_preferente: e.categoriaOrdenPreferencia === 1,
             comuna_nombre: e.comunaJurado?.nombre || null,
             designaciones_antes: e.designacionesAntes,
-            distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null
+            distancia_km: e.distanciaKm !== null ? Math.round(e.distanciaKm * 10) / 10 : null,
+            // Mejora "Equidad Visible de Designaciones" — sección 37.
+            equidad_designaciones: construirEquidadDesignacionesCandidato(equidadDesignacionesAgregadaFila, e.jurado.categoria, e.designacionesAntes)
         }));
 
         const ganador = grupo[0];
@@ -999,6 +1108,12 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
                     : null,
                 designaciones_temporada_antes: ganador.designacionesAntes,
                 designaciones_temporada_despues: ganador.designacionesAntes + 1,
+                // Mejora "Equidad Visible de Designaciones" — SOLO INFORMATIVO
+                // (sección 27/28: nunca decide ni cambia al ganador, ya
+                // decidido arriba por el comparador jerárquico). historial_
+                // reciente NO va acá — requiere una consulta (batch) y se
+                // agrega después, solo para ganadores, en generarSimulacion().
+                equidad_designaciones: construirEquidadDesignacionesCandidato(equidadDesignacionesAgregadaFila, ganador.jurado.categoria, ganador.designacionesAntes),
                 checks: {
                     disponible: ganador.disponible,
                     asociacion_diferente: !ganador.mismaAsoc,
@@ -1208,6 +1323,73 @@ function construirRendimientoPorJurado(datos, jurados, juradoIdsAMostrar, hoyChi
     return resultado;
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Equidad Visible de Designaciones" — Historial reciente. BATCH
+// equivalente exacto de GET /admin/usuarios/:id/historial (usuarios.js) —
+// MISMA semántica (estado != 'anulado', ORDER BY created_at DESC, notas
+// vía notas_rodeo.asignacion_id), reutilizada tal cual y nunca redefinida
+// (sección 11/13/33/36 de la mejora): es la misma fuente OFICIAL que ya
+// alimenta el popover de jurado de la pantalla Rodeos — deliberadamente
+// career-wide (NO acotado a la temporada activa), a diferencia de
+// "Designaciones jurado"/equidad de designaciones (motor-exacto, temporada-
+// scoped) — dos conceptos distintos, nunca mezclados.
+//
+// UNA sola consulta batch (paginada, mismo patrón PAGINA=900 del resto del
+// proyecto) para TODOS los jurado_ids pedidos — nunca una consulta por
+// jurado (anti-N+1, sección 31/33/37: hasta 59+ candidatos en "Modificar
+// jurado" sin que el conteo de queries dependa de N).
+// @returns Map(jurado_id -> [{ rodeo_id, club, asociacion, fecha, nota }, ...]) máx 4, más reciente primero
+async function cargarHistorialRecienteBatch(juradoIds) {
+    const idsUnicos = [...new Set((juradoIds || []).filter(Boolean))];
+    if (idsUnicos.length === 0) return new Map();
+
+    let todasAsigs = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data, error } = await supabase
+                .from('asignaciones')
+                .select('id, usuario_pagado_id, rodeo_id, created_at, rodeos(club, asociacion, fecha)')
+                .in('usuario_pagado_id', idsUnicos)
+                .neq('estado', 'anulado')
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA - 1);
+            if (error) throw new Error('No se pudo cargar historial reciente: ' + error.message);
+            const filas = data || [];
+            todasAsigs = todasAsigs.concat(filas);
+            if (filas.length < PAGINA) break;
+            offset += PAGINA;
+        }
+    }
+
+    const notasPorAsignacion = new Map();
+    if (todasAsigs.length > 0) {
+        const idsAsig = todasAsigs.map(a => a.id);
+        const { data: notasRaw, error: errNotas } = await supabase
+            .from('notas_rodeo').select('asignacion_id, nota').in('asignacion_id', idsAsig);
+        if (errNotas) throw new Error('No se pudo cargar notas para historial reciente: ' + errNotas.message);
+        for (const n of (notasRaw || [])) notasPorAsignacion.set(n.asignacion_id, n.nota);
+    }
+
+    // todasAsigs ya viene ORDER BY created_at DESC (global) — filtrar por
+    // jurado preserva ese orden relativo, así que las primeras 4 que se
+    // encuentren para cada jurado_id YA son sus 4 más recientes.
+    const historialPorJurado = new Map();
+    for (const a of todasAsigs) {
+        if (!historialPorJurado.has(a.usuario_pagado_id)) historialPorJurado.set(a.usuario_pagado_id, []);
+        const lista = historialPorJurado.get(a.usuario_pagado_id);
+        if (lista.length >= 4) continue; // sección 12: máximo 4, más reciente primero
+        lista.push({
+            rodeo_id: a.rodeo_id,
+            club: a.rodeos?.club || null,
+            asociacion: a.rodeos?.asociacion || null,
+            fecha: a.rodeos?.fecha || null,
+            nota: notasPorAsignacion.get(a.id) ?? null
+        });
+    }
+    return historialPorJurado;
+}
+
 // Etapa 2 — Configuración de Propuesta de Designación. `configuracion` es
 // un parámetro OPCIONAL (por defecto Versión 1 hardcodeada) agregado al
 // final para no romper ningún llamador existente. Desde Etapa 3, la ruta de
@@ -1231,11 +1413,22 @@ async function generarSimulacion(rodeoIdsInput, topN = 5, configuracion = constr
     )];
     if (juradoIdsGanadores.length > 0) {
         const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
-        const datosRendimiento = await cargarRendimientoTemporada(contexto);
+        // Rendimiento (notas/alteración) e Historial reciente (mejora "Equidad
+        // Visible de Designaciones") son consultas independientes — en
+        // paralelo, mismo espíritu de "fijo, no crece con N" (acá N = jurados
+        // GANADORES, ya deduplicado arriba).
+        const [datosRendimiento, historialPorJurado] = await Promise.all([
+            cargarRendimientoTemporada(contexto),
+            cargarHistorialRecienteBatch(juradoIdsGanadores)
+        ]);
         const rendimientoPorJurado = construirRendimientoPorJurado(datosRendimiento, contexto.jurados, juradoIdsGanadores, hoyChile);
         for (const r of resultado.resultados) {
             if (r.estado === 'PROPUESTO') {
                 r.jurado_propuesto.rendimiento_temporada = rendimientoPorJurado.get(r.jurado_propuesto.jurado_id) || null;
+                // Historial reciente — career-wide, misma fuente que el
+                // popover de Rodeos (nunca las propuestas temporales de este
+                // mismo dry-run — sección 13). [] si nunca tuvo designaciones.
+                r.jurado_propuesto.historial_reciente = historialPorJurado.get(r.jurado_propuesto.jurado_id) || [];
             }
         }
         resultado.metricas.queries_rendimiento_aproximadas = datosRendimiento.queriesAproximadas;
@@ -1267,5 +1460,9 @@ module.exports = {
     compararEquidadTraslados, calcularCargaTraslados, construirTrasladosPorJuradoBD,
     construirExplicacionEquidadTraslados,
     // Mejora "Métricas de Rendimiento" — ver más abajo (cargarRendimientoTemporada/construirRendimientoPorJurado).
-    cargarRendimientoTemporada, construirRendimientoPorJurado
+    cargarRendimientoTemporada, construirRendimientoPorJurado,
+    // Mejora "Equidad Visible de Designaciones" — funciones puras + batch nuevas.
+    construirEquidadDesignacionesAgregada, construirEquidadDesignacionesCandidato,
+    cargarHistorialRecienteBatch,
+    designacionesPorJuradoAConteos: _designacionesActualesComoMapa
 };

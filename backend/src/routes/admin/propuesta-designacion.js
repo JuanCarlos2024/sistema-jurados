@@ -26,7 +26,11 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { resolverComuna, cargarCatalogoResolucionComunas } = require('../../services/geografia');
 const { soloRolEvaluacion } = require('../../middleware/auth');
-const { generarSimulacion, cargarDatosMotor, ejecutarSimulacion, filtrarRodeosSinJuradoEfectivo, evaluarCandidatoDirecto, TOP_N_TODOS_LOS_CANDIDATOS } = require('../../services/motorPropuestaDesignacion');
+const {
+    generarSimulacion, cargarDatosMotor, ejecutarSimulacion, filtrarRodeosSinJuradoEfectivo, evaluarCandidatoDirecto, TOP_N_TODOS_LOS_CANDIDATOS,
+    cargarHistorialRecienteBatch, construirEstadoDesdeBD, construirEquidadDesignacionesAgregada, construirEquidadDesignacionesCandidato,
+    designacionesPorJuradoAConteos
+} = require('../../services/motorPropuestaDesignacion');
 const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
 const { clasificarJurado } = require('../../services/diagnosticoJurados');
 const { calcularBloqueRodeo } = require('../../services/feriados');
@@ -1074,7 +1078,13 @@ router.get('/propuestas/:id', async (req, res) => {
                 // snapshot; null si la corrida no llegó a calcularlo (ej.
                 // ningún rodeo resultó PROPUESTO) o para filas muy antiguas
                 // guardadas antes de esta mejora.
-                rendimiento_temporada: metricasMotor?.rendimiento_temporada ?? null
+                rendimiento_temporada: metricasMotor?.rendimiento_temporada ?? null,
+                // Mejora "Equidad Visible de Designaciones" — mismo snapshot
+                // guardado en explicacion_json.jurado_propuesto al aceptar/
+                // guardar esta fila; null para filas guardadas antes de esta
+                // mejora (nunca se recalcula ni se inventa acá).
+                equidad_designaciones: metricasMotor?.equidad_designaciones ?? null,
+                historial_reciente: metricasMotor?.historial_reciente ?? null
             } : null,
             estado_revision: d.estado_revision,
             origen_seleccion: d.origen_seleccion,
@@ -1202,7 +1212,13 @@ function construirExplicacionHistorica(fresco, juradoIdOriginal) {
         jurado_propuesto: {
             jurado_id: c.jurado_id, nombre: c.nombre, categoria: c.categoria, categoria_preferente: c.categoria_preferente,
             comuna_canonica: c.comuna_nombre, distancia_km: c.distancia_km,
-            designaciones_temporada_antes: c.designaciones_antes, designaciones_temporada_despues: c.designaciones_antes + 1
+            designaciones_temporada_antes: c.designaciones_antes, designaciones_temporada_despues: c.designaciones_antes + 1,
+            // Mejora "Equidad Visible de Designaciones" — c.equidad_designaciones
+            // ya viene calculado (puro, sin consulta) por ejecutarSimulacion()
+            // para TODO top_candidatos, incluyendo a alguien que ya no es el
+            // ganador actual. historial_reciente NO aplica acá (solo se
+            // calcula para ganadores reales, nunca para un ex-candidato).
+            equidad_designaciones: c.equidad_designaciones ?? null
         },
         top_candidatos: fresco.top_candidatos || []
     };
@@ -1229,6 +1245,68 @@ async function cargarOtrasFilasEfectivas(propuestaId, detalleIdExcluir) {
         jurado_id_seleccionado: f.jurado_id_seleccionado, jurado_id_propuesto: f.jurado_id_propuesto, rodeo_id: f.rodeo_id
     }));
     return enriquecerFilasParaConflicto(filasRaw, rodeosPorId);
+}
+
+// ─── Ajusta equidad_designaciones con las designaciones TEMPORALES ya ─────
+// existentes en OTRAS filas de este mismo preview/propuesta (corrección de
+// la mejora "Equidad Visible de Designaciones", secciones 10/11 del pedido
+// de corrección: el modal de un rodeo NO puede mostrar promedios que
+// ignoren lo que el administrador ya seleccionó/aceptó en las demás filas
+// de la MISMA edición — "BD, no solo BD").
+//
+// `equidad_designaciones` que trae cada candidato desde ejecutarSimulacion()
+// es correcto pero SOLO-BD (single-rodeo: no hay "filas anteriores" dentro
+// de una llamada de un solo rodeo). Acá se recalcula, EN MEMORIA, con la
+// MISMA función pura del motor (construirEquidadDesignacionesAgregada) y el
+// MISMO builder de estado (construirEstadoDesdeBD) que ya usa el motor —
+// "no crear un contador paralelo" (sección 11): se reconstruye el mapa
+// BD desde `contexto.asignacionesTemporada` (ya cargado, sin query nueva) y
+// se le suma 1 por cada fila de `otrasFilas` con jurado efectivo (ya
+// calculado por cada endpoint para detectarConflictoInterno, tampoco es
+// una consulta nueva — sección 12: 0 queries adicionales).
+function ajustarEquidadConTemporales(candidatos, contexto, otrasFilas) {
+    const virtualPorJurado = new Map();
+    for (const f of (otrasFilas || [])) {
+        const jid = obtenerJuradoEfectivo(f);
+        if (jid) virtualPorJurado.set(jid, (virtualPorJurado.get(jid) || 0) + 1);
+    }
+    if (virtualPorJurado.size === 0) return candidatos; // nada que ajustar — evita trabajo/objetos nuevos innecesarios
+
+    const { designacionesPorJurado } = construirEstadoDesdeBD(contexto.asignacionesTemporada);
+    for (const [juradoId, incremento] of virtualPorJurado.entries()) {
+        if (!designacionesPorJurado.has(juradoId)) designacionesPorJurado.set(juradoId, new Set());
+        const set = designacionesPorJurado.get(juradoId);
+        // Los ids sintéticos solo importan para el TAMAÑO del Set — nunca se
+        // comparan con un rodeo_id real en ningún otro lugar.
+        for (let i = 0; i < incremento; i++) set.add(`__virtual_${juradoId}_${i}`);
+    }
+    const agregadaAjustada = construirEquidadDesignacionesAgregada(contexto.jurados, designacionesPorJuradoAConteos(designacionesPorJurado));
+
+    return candidatos.map(c => {
+        if (!c.equidad_designaciones) return c;
+        const virtual = virtualPorJurado.get(c.jurado_id) || 0;
+        return {
+            ...c,
+            equidad_designaciones: construirEquidadDesignacionesCandidato(
+                agregadaAjustada, c.equidad_designaciones.categoria, c.equidad_designaciones.designaciones_jurado + virtual
+            )
+        };
+    });
+}
+
+// ─── Enriquece candidatos_validos/descartados con historial_reciente ──────
+// (mejora "Equidad Visible de Designaciones", sección 37). `equidad_
+// designaciones` YA viene calculado dentro de ejecutarSimulacion() (puro,
+// sin consulta) en cada candidato — esto SOLO agrega historial_reciente,
+// la única pieza que necesita ir a la BD, con UNA sola consulta batch para
+// TODOS los candidatos mostrados (sección 31/33: nunca una consulta por
+// candidato, sean válidos o con advertencias). Compartida por ambos
+// endpoints de candidatos (persistido y preview) para no duplicar la lógica.
+async function enriquecerConHistorialReciente(validos, descartados) {
+    const juradoIds = [...validos, ...descartados].map(c => c.jurado_id);
+    const historialPorJurado = await cargarHistorialRecienteBatch(juradoIds);
+    const conHistorial = (c) => ({ ...c, historial_reciente: historialPorJurado.get(c.jurado_id) || [] });
+    return { validos: validos.map(conHistorial), descartados: descartados.map(conHistorial) };
 }
 
 // ─── GET /propuestas/:propuestaId/detalle/:detalleId/candidatos ───────────
@@ -1269,12 +1347,12 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
     if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
     const { configuracion, meta } = cargaConfig;
 
-    let resultado, rodeoEnriquecido;
+    let resultado, rodeoEnriquecido, contextoMotor;
     try {
-        const contexto = await cargarDatosMotor([detalle.rodeo_id]);
-        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS, configuracion);
+        contextoMotor = await cargarDatosMotor([detalle.rodeo_id]);
+        const simulacion = ejecutarSimulacion(contextoMotor, TOP_N_TODOS_LOS_CANDIDATOS, configuracion);
         resultado = simulacion.resultados[0];
-        rodeoEnriquecido = contexto.rodeosPorId.get(detalle.rodeo_id) || null;
+        rodeoEnriquecido = contextoMotor.rodeosPorId.get(detalle.rodeo_id) || null;
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -1289,10 +1367,24 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
     const rodeoDestino = rodeoEnriquecido ? { id: detalle.rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque } : null;
     const conUso = (c) => ({ ...c, uso_en_otra_fila: rodeoDestino ? detectarConflictoInterno(rodeoDestino, c.jurado_id, otrasFilas) : [] });
 
+    // Corrección secciones 10/11: equidad_designaciones de cada candidato se
+    // ajusta con las designaciones ya efectivas en las DEMÁS filas de esta
+    // MISMA propuesta (mismo contexto que el motor ya reconstruyó — "no
+    // crear un contador paralelo").
+    const validosAjustados = ajustarEquidadConTemporales((resultado.top_candidatos || []).map(conUso), contextoMotor, otrasFilas);
+    const descartadosAjustados = ajustarEquidadConTemporales((resultado.descartados || []).map(conUso), contextoMotor, otrasFilas);
+
+    let candidatosConUso;
+    try {
+        candidatosConUso = await enriquecerConHistorialReciente(validosAjustados, descartadosAjustados);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+
     res.json({
         estado: resultado.estado,
-        candidatos_validos: (resultado.top_candidatos || []).map(conUso),
-        descartados: (resultado.descartados || []).map(conUso),
+        candidatos_validos: candidatosConUso.validos,
+        descartados: candidatosConUso.descartados,
         candidatos_evaluados: resultado.candidatos_evaluados || 0,
         // Etapa 4, sección 43/44: checks/explicaciones dinámicos en vez de
         // hardcodeados a V1 — la propia versión de ESTE borrador, nunca la activa.
@@ -1330,12 +1422,12 @@ router.post('/preview/candidatos', async (req, res) => {
     if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
     const { configuracion, meta } = cargaConfig;
 
-    let resultado, rodeoEnriquecido;
+    let resultado, rodeoEnriquecido, contextoMotor;
     try {
-        const contexto = await cargarDatosMotor([rodeo_id]);
-        const simulacion = ejecutarSimulacion(contexto, TOP_N_TODOS_LOS_CANDIDATOS, configuracion);
+        contextoMotor = await cargarDatosMotor([rodeo_id]);
+        const simulacion = ejecutarSimulacion(contextoMotor, TOP_N_TODOS_LOS_CANDIDATOS, configuracion);
         resultado = simulacion.resultados[0];
-        rodeoEnriquecido = contexto.rodeosPorId.get(rodeo_id) || null;
+        rodeoEnriquecido = contextoMotor.rodeosPorId.get(rodeo_id) || null;
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -1357,10 +1449,24 @@ router.post('/preview/candidatos', async (req, res) => {
     const rodeoDestino = rodeoEnriquecido ? { id: rodeo_id, club: rodeoEnriquecido.club, fecha: rodeoEnriquecido.fecha, asociacion: rodeoEnriquecido.asociacion, bloque: rodeoEnriquecido.bloque } : null;
     const conUso = (c) => ({ ...c, uso_en_otra_fila: rodeoDestino ? detectarConflictoInterno(rodeoDestino, c.jurado_id, otrasFilas) : [] });
 
+    // Corrección secciones 10/11: candidatos de un preview reflejan BD +
+    // designaciones temporales YA existentes en OTRAS filas de este mismo
+    // preview (estado_temporal) — no solo BD. Mismo helper que la ruta
+    // persistida, mismo `otrasFilas` ya construido arriba (sin query nueva).
+    const validosAjustados = ajustarEquidadConTemporales((resultado.top_candidatos || []).map(conUso), contextoMotor, otrasFilas);
+    const descartadosAjustados = ajustarEquidadConTemporales((resultado.descartados || []).map(conUso), contextoMotor, otrasFilas);
+
+    let candidatosConUso;
+    try {
+        candidatosConUso = await enriquecerConHistorialReciente(validosAjustados, descartadosAjustados);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+
     res.json({
         estado: resultado.estado,
-        candidatos_validos: (resultado.top_candidatos || []).map(conUso),
-        descartados: (resultado.descartados || []).map(conUso),
+        candidatos_validos: candidatosConUso.validos,
+        descartados: candidatosConUso.descartados,
         candidatos_evaluados: resultado.candidatos_evaluados || 0,
         configuracion: construirResumenParaUI(configuracion, meta)
     });

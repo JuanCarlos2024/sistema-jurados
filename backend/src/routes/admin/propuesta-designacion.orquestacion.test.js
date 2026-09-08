@@ -47,6 +47,7 @@
 // motor — más fuerte que comparar solo el id de metadata.
 // ═════════════════════════════════════════════════════════════════════════
 const express = require('express');
+const { calcularBloqueRodeo } = require('../../services/feriados'); // REAL, puro — solo para armar fixtures con forma real
 
 jest.mock('../../config/supabase', () => ({ from: jest.fn() }));
 jest.mock('../../services/motorPropuestaDesignacion', () => {
@@ -391,6 +392,188 @@ describe('GET /propuestas/:id/detalle/:id/candidatos — borrador usa su propia 
         expect(cargarConfiguracionDesignacionPorId).toHaveBeenCalledWith('v1-uuid');
         expect(cargarConfiguracionDesignacionActiva).not.toHaveBeenCalled();
         expect(ejecutarSimulacion.mock.calls[0][2]).toBe(CONFIG_V1);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Equidad Visible de Designaciones" — historial_reciente en los
+// endpoints de candidatos (GET .../candidatos y POST /preview/candidatos):
+// anti-N+1 (sección 31/33/35: cantidad de queries FIJA, sin importar N
+// candidatos) + autosuficiencia del payload (sección 42/48: cada candidato
+// ya trae equidad_designaciones + historial_reciente, sin llamadas de
+// seguimiento por candidato). ejecutarSimulacion() está mockeado en este
+// archivo — equidad_designaciones se simula tal cual la calcularía el motor
+// real; historial_reciente se agrega por la RUTA vía cargarHistorialRecienteBatch
+// (real, no mockeado), contra Supabase mockeado por tabla.
+// ═════════════════════════════════════════════════════════════════════════
+describe('Candidatos — historial_reciente en batch (anti N+1) y payload autosuficiente', () => {
+    function candidatoFalso(n, extra = {}) {
+        return {
+            jurado_id: `j${n}`, nombre: `Jurado ${n}`, categoria: 'A', asociacion: 'Asoc',
+            comuna_nombre: 'Comuna', distancia_km: 10, designaciones_antes: n % 3,
+            equidad_designaciones: { designaciones_jurado: n % 3, categoria: 'A', promedio_categoria: 2.1, total_jurados_categoria: 40, promedio_general: 2.0, total_jurados_general: 61 },
+            ...extra
+        };
+    }
+
+    test('POST /preview/candidatos — 1 sola consulta a "asignaciones" y a "notas_rodeo" con 59 candidatos (fijo, no por candidato)', async () => {
+        const tokenV1 = firmarPreview({
+            temporada_id: 't1', configuracion_version_id: 'v1-uuid',
+            rodeos: [{ rodeo_id: 'r1', estado: 'PROPUESTO', jurado_id_propuesto: 'j0' }]
+        });
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({ rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-05-01', asociacion: 'Asoc', duracion_dias: 1 }]]) });
+        const validos = Array.from({ length: 40 }, (_, i) => candidatoFalso(i));
+        const descartados = Array.from({ length: 19 }, (_, i) => candidatoFalso(40 + i, { causas: ['DISTANCIA_EXCEDIDA'] }));
+        ejecutarSimulacion.mockReturnValue({ resultados: [{ estado: 'PROPUESTO', top_candidatos: validos, descartados, candidatos_evaluados: 59 }] });
+
+        const llamadas = crearSupabaseMock({}); // todas las tablas -> { data: [], error: null } por defecto
+
+        const { status, body } = await llamarRuta({
+            method: 'POST', url: '/preview/candidatos',
+            body: {
+                rodeo_id: 'r1', preview_token: tokenV1,
+                estado_temporal: [{ rodeo_id: 'r1', estado_revision: 'PENDIENTE', jurado_id_seleccionado: null }]
+            }
+        });
+
+        expect(status).toBe(200);
+        expect(body.candidatos_validos).toHaveLength(40);
+        expect(body.descartados).toHaveLength(19);
+        // Fijo — nunca 59 llamadas, ni 2 por candidato: crearSupabaseMock
+        // registra cada tabla una sola vez aunque se consulte varias veces
+        // (llamadas[tabla] se crea al primer from()); para contar
+        // invocaciones reales usamos supabase.from.mock.calls directamente.
+        const nombreTablas = supabase.from.mock.calls.map(c => c[0]);
+        expect(nombreTablas.filter(t => t === 'asignaciones')).toHaveLength(1);
+        // 'asignaciones' mockeada devuelve [] (sin historial real para estos
+        // 59 jurado_id falsos) -> cargarHistorialRecienteBatch se salta la
+        // consulta de notas (nada que enriquecer, sección "0 queries si no
+        // hay nada" del mismo patrón que cargarRendimientoTemporada).
+        expect(nombreTablas.filter(t => t === 'notas_rodeo')).toHaveLength(0);
+
+        // Payload autosuficiente (sección 42/48): CADA candidato ya trae
+        // equidad_designaciones (del motor) e historial_reciente (agregado
+        // por la ruta, batch) — sin necesitar una llamada de seguimiento.
+        for (const c of [...body.candidatos_validos, ...body.descartados]) {
+            expect(c.equidad_designaciones).toBeTruthy();
+            expect(Array.isArray(c.historial_reciente)).toBe(true);
+        }
+    });
+
+    test('GET .../candidatos (borrador persistido) — misma garantía: historial_reciente presente, 1 sola consulta batch', async () => {
+        crearSupabaseMock({
+            propuestas_designacion_detalle: [
+                { data: { id: 'det-1', rodeo_id: 'r1', estado_revision: 'PENDIENTE', propuestas_designacion: { configuracion_version_id: 'v1-uuid' } }, error: null },
+                { data: [], error: null } // otras filas
+            ]
+        });
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({ rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-05-01', asociacion: 'Asoc', duracion_dias: 1 }]]) });
+        const validos = [candidatoFalso(1), candidatoFalso(2)];
+        ejecutarSimulacion.mockReturnValue({ resultados: [{ estado: 'PROPUESTO', top_candidatos: validos, descartados: [], candidatos_evaluados: 2 }] });
+
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/propuestas/prop-1/detalle/det-1/candidatos' });
+
+        expect(status).toBe(200);
+        expect(body.candidatos_validos).toHaveLength(2);
+        for (const c of body.candidatos_validos) {
+            expect(c.equidad_designaciones.designaciones_jurado).toEqual(c.designaciones_antes);
+            expect(Array.isArray(c.historial_reciente)).toBe(true);
+        }
+        const nombreTablas = supabase.from.mock.calls.map(c => c[0]);
+        expect(nombreTablas.filter(t => t === 'asignaciones')).toHaveLength(1);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Corrección — equidad_designaciones debe reflejar BD + designaciones
+// TEMPORALES ya existentes en OTRAS filas del mismo preview (secciones
+// 10/11 del pedido de corrección: "no solo BD"). ejecutarSimulacion() está
+// mockeado devolviendo el estado SOLO-BD (como lo haría de verdad para un
+// único rodeo) — la ruta debe ajustarlo con `otrasFilas`, ya construido para
+// detectarConflictoInterno, sin ninguna consulta nueva.
+// ═════════════════════════════════════════════════════════════════════════
+describe('POST /preview/candidatos — equidad_designaciones ajustado con temporales de OTRAS filas del preview', () => {
+    test('j1 ya está propuesto (PENDIENTE) en otra fila del mismo preview -> su designaciones_jurado sube en 1 y el promedio de categoría sube para TODOS los candidatos de esa categoría', async () => {
+        const tokenV1 = firmarPreview({
+            temporada_id: 't1', configuracion_version_id: 'v1-uuid',
+            rodeos: [
+                { rodeo_id: 'r1', estado: 'PROPUESTO', jurado_id_propuesto: 'j2' },
+                { rodeo_id: 'r-otro', estado: 'PROPUESTO', jurado_id_propuesto: 'j1' }
+            ]
+        });
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        // contexto SOLO-BD: sin asignaciones reales todavía, población {j1,j2} categoría A.
+        // .bloque con forma REAL (calcularBloqueRodeo) — detectarConflictoInterno
+        // (real, no mockeado) lo necesita al comparar contra `otrasFilas`.
+        cargarDatosMotor.mockResolvedValue({
+            rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-09-05', asociacion: 'Asoc', duracion_dias: 1, bloque: calcularBloqueRodeo('2026-09-05', 1) }]]),
+            jurados: [{ id: 'j1', categoria: 'A' }, { id: 'j2', categoria: 'A' }],
+            asignacionesTemporada: []
+        });
+        // equidad_designaciones tal como la calcularía ejecutarSimulacion() para un ÚNICO
+        // rodeo (SOLO-BD, sin ver la otra fila): ambos en 0, promedio 0.
+        const equidadBase = (designJurado) => ({ designaciones_jurado: designJurado, categoria: 'A', promedio_categoria: 0, total_jurados_categoria: 2, promedio_general: 0, total_jurados_general: 2 });
+        ejecutarSimulacion.mockReturnValue({
+            resultados: [{
+                estado: 'PROPUESTO',
+                top_candidatos: [
+                    { jurado_id: 'j1', nombre: 'J1', categoria: 'A', designaciones_antes: 0, equidad_designaciones: equidadBase(0) },
+                    { jurado_id: 'j2', nombre: 'J2', categoria: 'A', designaciones_antes: 0, equidad_designaciones: equidadBase(0) }
+                ],
+                descartados: [], candidatos_evaluados: 2
+            }]
+        });
+        crearSupabaseMock({
+            rodeos: { data: [{ id: 'r-otro', club: 'Club Otro', fecha: '2026-09-06', asociacion: 'Asoc2', tipo_rodeo_nombre: 'Provincial', duracion_dias: 1 }], error: null }
+        });
+
+        const { status, body } = await llamarRuta({
+            method: 'POST', url: '/preview/candidatos',
+            body: {
+                rodeo_id: 'r1', preview_token: tokenV1,
+                estado_temporal: [
+                    { rodeo_id: 'r1', estado_revision: 'PENDIENTE', jurado_id_seleccionado: null },
+                    { rodeo_id: 'r-otro', estado_revision: 'PENDIENTE', jurado_id_seleccionado: null }
+                ]
+            }
+        });
+
+        expect(status).toBe(200);
+        const j1 = body.candidatos_validos.find(c => c.jurado_id === 'j1');
+        const j2 = body.candidatos_validos.find(c => c.jurado_id === 'j2');
+        // j1 ya está "usado" en r-otro (temporal, sin guardar) -> su propio contador sube.
+        expect(j1.equidad_designaciones.designaciones_jurado).toBe(1);
+        // j2 no cambió su propio contador...
+        expect(j2.equidad_designaciones.designaciones_jurado).toBe(0);
+        // ...pero el promedio de categoría (población {j1,j2}) SÍ ve la temporal de j1: (1+0)/2 = 0,5.
+        expect(j1.equidad_designaciones.promedio_categoria).toBe(0.5);
+        expect(j2.equidad_designaciones.promedio_categoria).toBe(0.5);
+        expect(j1.equidad_designaciones.promedio_general).toBe(0.5);
+    });
+
+    test('sin ninguna otra fila con jurado efectivo -> equidad_designaciones queda EXACTAMENTE como la devolvió el motor (sin ajuste, sin objetos nuevos innecesarios)', async () => {
+        const tokenV1 = firmarPreview({
+            temporada_id: 't1', configuracion_version_id: 'v1-uuid',
+            rodeos: [{ rodeo_id: 'r1', estado: 'PROPUESTO', jurado_id_propuesto: 'j1' }]
+        });
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({
+            rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-09-05', asociacion: 'Asoc', duracion_dias: 1 }]])
+        });
+        const equidadOriginal = { designaciones_jurado: 3, categoria: 'A', promedio_categoria: 2.1, total_jurados_categoria: 5, promedio_general: 2.0, total_jurados_general: 20 };
+        ejecutarSimulacion.mockReturnValue({
+            resultados: [{ estado: 'PROPUESTO', top_candidatos: [{ jurado_id: 'j1', nombre: 'J1', categoria: 'A', designaciones_antes: 3, equidad_designaciones: equidadOriginal }], descartados: [], candidatos_evaluados: 1 }]
+        });
+        crearSupabaseMock({});
+
+        const { body } = await llamarRuta({
+            method: 'POST', url: '/preview/candidatos',
+            body: { rodeo_id: 'r1', preview_token: tokenV1, estado_temporal: [{ rodeo_id: 'r1', estado_revision: 'PENDIENTE', jurado_id_seleccionado: null }] }
+        });
+
+        expect(body.candidatos_validos[0].equidad_designaciones).toEqual(equidadOriginal);
     });
 });
 

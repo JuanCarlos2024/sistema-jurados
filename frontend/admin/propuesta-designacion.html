@@ -63,47 +63,61 @@
         .badge-revision.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
         .badge-revision.SIN_JURADO_ACTUAL { background: #fdeee0; color: #b9560a; }
 
-        /* ── Modal Designar/Modificar jurado — mejora de legibilidad + UX ── */
+        /* ── Modal Designar/Modificar jurado — mejora de legibilidad + UX ──
+           Rediseño compacto (sección 16-21 de la mejora "Equidad Visible de
+           Designaciones + Historial + Modal Compacto"): modal ancho/alto,
+           header+filtros reducidos a lo esencial en pocas líneas — TODA la
+           altura ganada se dedica a la lista de candidatos (único
+           `overflow-y:auto`, header+filtros quedan fuera de esa zona y por
+           lo tanto siempre visibles sin necesitar `position: sticky`). */
         .modal-candidatos {
-            max-width: 1180px; width: 88vw; max-height: 85vh;
+            max-width: 1500px; width: 95vw; max-height: 94vh;
             display: flex; flex-direction: column; overflow: hidden; /* el scroll vive SOLO en .mc-lista */
         }
         .mc-contexto {
-            padding: 16px 22px; border-bottom: 1px solid var(--gris-borde); flex-shrink: 0;
-            font-size: 15px; line-height: 1.7;
+            padding: 10px 20px; border-bottom: 1px solid var(--gris-borde); flex-shrink: 0;
+            font-size: 13px; line-height: 1.5; color: var(--gris);
         }
-        .mc-contexto .mc-rodeo-nombre { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
-        .mc-contexto .mc-actual { font-size: 14px; color: var(--gris); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--gris-borde); }
+        .mc-contexto .mc-rodeo-nombre { font-size: 15px; font-weight: 700; color: var(--texto); }
+        .mc-contexto .mc-actual { margin-top: 2px; }
+        .mc-contexto .mc-actual strong { color: var(--texto); }
         .mc-filtros {
-            padding: 14px 22px; border-bottom: 1px solid var(--gris-borde); flex-shrink: 0;
-            display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
-            position: sticky; top: 0; background: white; z-index: 3;
+            padding: 8px 20px; border-bottom: 1px solid var(--gris-borde); flex-shrink: 0;
+            display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
         }
-        .mc-filtros label { font-size: 13px; color: var(--gris); display: block; margin-bottom: 3px; }
-        .mc-filtros .form-control { font-size: 14px; }
-        .mc-checks { padding: 8px 22px 0; display: flex; gap: 16px; flex-wrap: wrap; flex-shrink: 0; }
-        .mc-checks label { font-size: 14px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+        .mc-filtros > div { flex: 1 1 140px; min-width: 110px; }
+        .mc-filtros label { font-size: 11px; color: var(--gris); display: block; margin-bottom: 2px; }
+        .mc-filtros .form-control { font-size: 13px; padding: 5px 8px; }
+        .mc-checks { padding: 4px 20px; display: flex; gap: 14px; flex-wrap: wrap; flex-shrink: 0; border-bottom: 1px solid var(--gris-borde); }
+        .mc-checks label { font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
         .mc-contadores {
-            padding: 10px 22px; font-size: 14px; color: var(--gris); border-bottom: 1px solid var(--gris-borde);
-            flex-shrink: 0; display: flex; gap: 18px; flex-wrap: wrap;
+            padding: 6px 20px; font-size: 12px; color: var(--gris); border-bottom: 1px solid var(--gris-borde);
+            flex-shrink: 0; display: flex; gap: 14px; flex-wrap: wrap;
         }
         .mc-contadores strong { color: var(--texto); }
-        .mc-lista { flex: 1; overflow-y: auto; padding: 14px 22px 22px; }
+        .mc-lista { flex: 1; overflow-y: auto; padding: 10px 20px 20px; }
         .mc-grupo-titulo {
-            font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
-            color: var(--gris); margin: 14px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--gris-borde);
+            font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+            color: var(--gris); margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--gris-borde);
         }
         .mc-grupo-titulo:first-child { margin-top: 0; }
         .mc-fila {
-            display: flex; justify-content: space-between; align-items: flex-start; gap: 14px;
-            padding: 12px 14px; border: 1px solid var(--gris-borde); border-radius: 10px; margin-bottom: 8px; background: white;
+            display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+            padding: 9px 12px; border: 1px solid var(--gris-borde); border-radius: 8px; margin-bottom: 6px; background: white;
         }
         .mc-fila.con-advertencia { border-color: #ffe08a; background: #fffdf7; }
-        .mc-fila .mc-nombre { font-size: 16px; font-weight: 700; }
-        .mc-fila .mc-detalle { font-size: 14px; color: var(--gris); margin-top: 3px; line-height: 1.6; }
-        .mc-fila .mc-reglas { margin-top: 6px; }
-        .mc-fila .mc-uso-otra-fila { font-size: 13px; color: #8a5a00; margin-top: 6px; line-height: 1.6; }
-        .mc-fila .btn { flex-shrink: 0; white-space: nowrap; font-size: 14px; padding: 8px 14px; }
+        .mc-fila .mc-nombre { font-size: 14px; font-weight: 700; }
+        .mc-fila .mc-detalle { font-size: 13px; color: var(--gris); margin-top: 2px; line-height: 1.5; }
+        .mc-fila .mc-equidad { font-size: 12px; color: var(--gris); margin-top: 2px; line-height: 1.5; }
+        .mc-fila .mc-reglas { margin-top: 4px; }
+        .mc-fila .mc-reglas .check-linea { font-size: 12px; margin: 1px 0; }
+        .mc-fila .mc-uso-otra-fila { font-size: 12px; color: #8a5a00; margin-top: 4px; line-height: 1.5; }
+        .mc-fila .btn { flex-shrink: 0; white-space: nowrap; font-size: 13px; padding: 6px 12px; }
+        .mc-fila .mc-hist-toggle {
+            font-size: 12px; color: var(--primario); cursor: pointer; background: none; border: none;
+            padding: 2px 0; margin-top: 3px; font: inherit; font-weight: 600;
+        }
+        .mc-fila .mc-hist-cont { font-size: 12px; color: var(--gris); margin-top: 3px; line-height: 1.6; }
         .mc-vacio { text-align: center; padding: 40px 20px; color: var(--gris); font-size: 15px; }
     </style>
 </head>
@@ -931,7 +945,11 @@ function construirFilaPreviewDesdeResultado(r) {
                 distancia_clasificacion: jp.distancia_clasificacion ?? null,
                 traslados_temporada: jp.traslados_temporada ?? null,
                 equidad_traslados_explicacion: jp.equidad_traslados_explicacion ?? null,
-                rendimiento_temporada: jp.rendimiento_temporada ?? null
+                rendimiento_temporada: jp.rendimiento_temporada ?? null,
+                // Mejora "Equidad Visible de Designaciones" — mismos campos
+                // que ya trae jp (jurado_propuesto del motor), solo reestructurados.
+                equidad_designaciones: jp.equidad_designaciones ?? null,
+                historial_reciente: jp.historial_reciente ?? null
             }
         };
     }
@@ -1256,6 +1274,46 @@ function renderTrasladosTemporada(j) {
     </div>`;
 }
 
+// Mejora "Equidad Visible de Designaciones" — bloque SOLO INFORMATIVO de la
+// tarjeta PROPUESTA (sección 1/10/27/28): NUNCA decide ni cambia al ganador
+// (eso ya lo decidió el motor arriba, vía MENOS_DESIGNACIONES_TEMPORADA
+// exactamente igual que siempre) — título explícitamente distinto de
+// "Rendimiento temporada" → "Promedio categoría" (que promedia NOTAS, no
+// designaciones) para no generar ambigüedad entre los dos "Promedio
+// categoría" de la tarjeta (sección 28).
+function _fmtDesigCL(n) {
+    return (n === null || n === undefined) ? 'N/D' : String(n).replace('.', ',');
+}
+function renderEquidadDesignaciones(j) {
+    const eq = j?.equidad_designaciones;
+    if (!eq) return ''; // no calculado para esta fila (ej. propuesta antigua, o corrida sin ganadores)
+    const cat = eq.categoria || j.categoria || '—';
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Equidad de designaciones</div>
+        <div style="font-size:14px; color:var(--gris); line-height:1.75;">
+            Designaciones jurado: ${eq.designaciones_jurado}<br>
+            Promedio designaciones categoría ${sanitizar(cat)}: ${_fmtDesigCL(eq.promedio_categoria)}<br>
+            Promedio designaciones general: ${_fmtDesigCL(eq.promedio_general)}
+        </div>
+    </div>`;
+}
+
+// Mejora "Equidad Visible de Designaciones" — historial reciente (sección
+// 10/12/13/14/15). Máximo 4, más reciente primero — MISMA fuente/formato
+// que el popover de jurado de Rodeos (renderContenidoPopoverJurado en
+// rodeos.html), nunca una segunda definición de historial.
+function renderHistorialReciente(j) {
+    const hist = j?.historial_reciente;
+    if (!hist) return ''; // no calculado para esta fila (ej. propuesta antigua, o corrida sin ganadores)
+    const filas = hist.length > 0
+        ? hist.map(h => `${sanitizar(h.club || '—')} · ${sanitizar(h.asociacion || '—')} · ${h.fecha ? formatFecha(h.fecha) : '—'} · Nota: ${_fmtNotaCL(h.nota)}`).join('<br>')
+        : 'Sin designaciones previas';
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Historial reciente</div>
+        <div style="font-size:14px; color:var(--gris); line-height:1.75;">${filas}</div>
+    </div>`;
+}
+
 // Tarjeta de una fila de propuesta — REUTILIZADA para PREVIEW (sin guardar,
 // modo='preview') y BORRADOR (ya persistido, modo='borrador'). El tipo de
 // rodeo y la clasificación quedan SIEMPRE visibles (nunca dentro de un "ver
@@ -1368,8 +1426,10 @@ function renderFilaDetallePropuesta(d, modo) {
                         ${j.distancia_km !== null ? 'Distancia: ' + j.distancia_km + ' km' + (j.distancia_clasificacion ? ' · ' + j.distancia_clasificacion : '') + '<br>' : ''}
                         ${j.designaciones_temporada_antes !== null ? 'Designaciones temporada: ' + j.designaciones_temporada_antes : ''}
                     </div>
+                    ${renderEquidadDesignaciones(j)}
                     ${renderRendimientoTemporada(j)}
-                    ${renderTrasladosTemporada(j)}` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
+                    ${renderTrasladosTemporada(j)}
+                    ${renderHistorialReciente(j)}` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
                         ? `<div style="font-size:14px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong><br>
                            <span style="color:#b9560a;">Ese jurado fue movido a otro rodeo de esta propuesta — requiere una nueva decisión.</span></div>`
                         : '<span style="color:#aaa; font-size:15px;">Sin jurado designado</span>')}
@@ -1464,25 +1524,29 @@ function cerrarModalCandidatos() {
     modalCandidatos = null;
 }
 
-// Sección 4/19 — contexto del rodeo + "jurado actual de la propuesta"
-// (qué propuso el motor vs qué eligió el administrador), siempre visible.
+// Sección 4/19 (y rediseño compacto, sección 16-21) — contexto del rodeo +
+// "jurado actual de la propuesta" en el mínimo de líneas posible, sin quitar
+// ningún dato (solo redistribuido): nombre del rodeo, una línea con
+// fecha/tipo/clasificación/asociación/comuna, y una línea de jurado actual
+// — que solo muestra "motor propuso" por separado cuando de verdad difiere
+// de lo que el administrador seleccionó (si son iguales, mostrarlo dos veces
+// no aporta nada y ocupa espacio).
 function renderModalContexto() {
     const { modo, id } = modalCandidatos;
     const fila = filaPorModoId(modo, id);
     const r = fila?.rodeo || {};
     document.getElementById('mc-titulo').textContent = fila?.jurado_efectivo ? 'Modificar jurado' : 'Designar jurado';
+
+    const nombreActual = fila?.nombre_seleccionado || fila?.nombre_propuesto;
+    const huboCambio = fila?.nombre_seleccionado && fila?.nombre_propuesto && fila.nombre_seleccionado !== fila.nombre_propuesto;
+    const lineaActual = nombreActual
+        ? `Jurado actual: <strong>${sanitizar(nombreActual)}</strong>${huboCambio ? ' <span style="color:var(--gris);">(motor propuso: ' + sanitizar(fila.nombre_propuesto) + ')</span>' : ''}`
+        : `<span style="color:#aaa;">Sin jurado designado todavía</span>`;
+
     document.getElementById('mc-contexto').innerHTML = `
         <div class="mc-rodeo-nombre">${sanitizar(r.club || '—')}</div>
-        Tipo: <strong>${sanitizar(r.tipo_rodeo_nombre || '—')}</strong> ·
-        Clasificación: <strong>${sanitizar(r.clasificacion_nombre || '—')}</strong><br>
-        Fecha: <strong>${r.fecha ? formatFecha(r.fecha) : '—'}</strong> ·
-        Asociación: <strong>${sanitizar(r.asociacion || '—')}</strong>
-        ${r.comuna_nombre ? ' · Comuna: <strong>' + sanitizar(r.comuna_nombre) + '</strong>' : ''}
-        <div class="mc-actual">
-            <strong>Jurado actual de la propuesta</strong><br>
-            Motor propuso: <strong>${fila?.nombre_propuesto ? sanitizar(fila.nombre_propuesto) : '—'}</strong><br>
-            Administrador seleccionó: <strong>${fila?.nombre_seleccionado ? sanitizar(fila.nombre_seleccionado) : '—'}</strong>
-        </div>`;
+        ${r.fecha ? formatFecha(r.fecha) : '—'} · ${sanitizar(r.tipo_rodeo_nombre || '—')} · ${sanitizar(r.clasificacion_nombre || '—')} · ${sanitizar(r.asociacion || '—')}${r.comuna_nombre ? ' · ' + sanitizar(r.comuna_nombre) : ''}
+        <div class="mc-actual">${lineaActual}</div>`;
 }
 
 async function cargarModalCandidatos() {
@@ -1597,6 +1661,14 @@ function renderUsoEnOtraFilaModal(usos) {
     `).join('<br>')}</div>`;
 }
 
+// Mejora "Equidad Visible de Designaciones" — mismo formato compacto que el
+// popover de jurado de Rodeos (sección 25), reutilizando c.historial_reciente
+// ya cargado en batch (nunca una consulta al abrir el toggle).
+function renderHistorialCompactoCandidato(hist) {
+    if (!hist || hist.length === 0) return 'Sin designaciones previas';
+    return hist.map(h => `${sanitizar(h.club || '—')} · ${sanitizar(h.asociacion || '—')} · ${h.fecha ? formatFecha(h.fecha) : '—'} · Nota: ${_fmtNotaCL(h.nota)}`).join('<br>');
+}
+
 function renderFilaCandidatoModal(c, esValido) {
     const { modo, id } = modalCandidatos;
     const detalle = `${sanitizar(c.comuna_nombre || '—')} · ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} · ${c.designaciones_antes} designación(es) esta temporada`;
@@ -1604,12 +1676,35 @@ function renderFilaCandidatoModal(c, esValido) {
     const boton = esValido
         ? `<button class="btn btn-primario" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar</button>`
         : `<button class="btn btn-outline" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar igualmente</button>`;
+
+    // Mejora "Equidad Visible de Designaciones" — línea compacta adicional
+    // (sección 22-25), SOLO informativa (nunca decide el orden de la lista
+    // — sección 27/38): promedios de POBLACIÓN (categoría/general, sección
+    // 6/7 — ya vienen calculados por el motor sin consulta extra) + última
+    // nota, tomada del historial ya cargado en batch (c.historial_reciente[0]
+    // — el más reciente, mismo criterio que "Últimos" de Rodeos).
+    const eq = c.equidad_designaciones;
+    const ultimaNota = (c.historial_reciente && c.historial_reciente.length > 0) ? c.historial_reciente[0].nota : null;
+    const lineaEquidad = eq
+        ? `<div class="mc-equidad">Designaciones: ${eq.designaciones_jurado} · Prom. cat. ${sanitizar(eq.categoria || '—')}: ${_fmtNotaCL(eq.promedio_categoria)} · Prom. general: ${_fmtNotaCL(eq.promedio_general)} · Últ. nota: ${_fmtNotaCL(ultimaNota)}</div>`
+        : '';
+
+    // "[Ver historial]" — DEFAULT CERRADO (sección 25: no dejar 4 líneas de
+    // historial abiertas para hasta 59 candidatos a la vez). El contenido ya
+    // está en memoria (batch), el toggle solo muestra/oculta en el DOM —
+    // cero consultas nuevas al abrirlo.
+    const historialToggle = `
+        <button type="button" class="mc-hist-toggle" onclick="const h=this.nextElementSibling; h.hidden=!h.hidden; this.textContent=h.hidden?'[Ver historial]':'[Ocultar historial]';">[Ver historial]</button>
+        <div class="mc-hist-cont" hidden>${renderHistorialCompactoCandidato(c.historial_reciente)}</div>`;
+
     return `<div class="mc-fila ${esValido ? '' : 'con-advertencia'}">
         <div style="min-width:0;">
-            <div class="mc-nombre">${sanitizar(c.nombre)} <span style="font-weight:400; font-size:14px; color:var(--gris);">Categoría ${sanitizar(c.categoria || '—')}${c.categoria_preferente ? ' ★ Preferente' : ''}</span></div>
+            <div class="mc-nombre">${sanitizar(c.nombre)} <span style="font-weight:400; font-size:13px; color:var(--gris);">Categoría ${sanitizar(c.categoria || '—')}${c.categoria_preferente ? ' ★ Preferente' : ''}</span></div>
             <div class="mc-detalle">${sanitizar(c.asociacion || '—')} · ${detalle}</div>
+            ${lineaEquidad}
             ${renderMotivosCandidato(c)}
             ${renderUsoEnOtraFilaModal(c.uso_en_otra_fila)}
+            ${historialToggle}
         </div>
         ${boton}
     </div>`;
