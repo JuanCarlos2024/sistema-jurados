@@ -75,7 +75,11 @@ function construirDetalleDesdeResultado(resultado) {
             origen_seleccion: null,
             explicacion_json: {
                 jurado_propuesto: resultado.jurado_propuesto,
-                top_candidatos: resultado.top_candidatos || []
+                top_candidatos: resultado.top_candidatos || [],
+                // Mejora "Zonas Extremas" — a nivel de FILA (no de jurado):
+                // aplica igual sin importar quién termine seleccionado. null
+                // para rodeos normales o versiones sin la regla.
+                zona_extrema: resultado.zona_extrema || null
             },
             metricas_json: {
                 candidatos_evaluados: resultado.candidatos_evaluados,
@@ -92,7 +96,7 @@ function construirDetalleDesdeResultado(resultado) {
             jurado_id_seleccionado: null,
             estado_revision: 'SIN_PROPUESTA',
             origen_seleccion: null,
-            explicacion_json: { descartados: resultado.descartados || [] },
+            explicacion_json: { descartados: resultado.descartados || [], zona_extrema: resultado.zona_extrema || null },
             metricas_json: {
                 candidatos_evaluados: resultado.candidatos_evaluados,
                 candidatos_potenciales_bd: resultado.candidatos_potenciales_bd,

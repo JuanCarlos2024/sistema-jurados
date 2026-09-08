@@ -1084,7 +1084,14 @@ router.get('/propuestas/:id', async (req, res) => {
                 // guardar esta fila; null para filas guardadas antes de esta
                 // mejora (nunca se recalcula ni se inventa acá).
                 equidad_designaciones: metricasMotor?.equidad_designaciones ?? null,
-                historial_reciente: metricasMotor?.historial_reciente ?? null
+                historial_reciente: metricasMotor?.historial_reciente ?? null,
+                // Mejora "Zonas Extremas" — narrativa "¿por qué ganó?" cuando
+                // aplicó (mismo snapshot guardado en explicacion_json.
+                // jurado_propuesto). El indicador de FILA ("¿este rodeo es
+                // zona extrema?") vive aparte, en explicacion_json.zona_
+                // extrema (ya expuesto tal cual más abajo, sección "zona
+                // extrema NO depende de quién termine seleccionado").
+                zona_extrema_explicacion: metricasMotor?.zona_extrema_explicacion ?? null
             } : null,
             estado_revision: d.estado_revision,
             origen_seleccion: d.origen_seleccion,
@@ -1386,6 +1393,10 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req,
         candidatos_validos: candidatosConUso.validos,
         descartados: candidatosConUso.descartados,
         candidatos_evaluados: resultado.candidatos_evaluados || 0,
+        // Mejora "Zonas Extremas" — sección 27/28 del pedido de UI: el modal
+        // "Modificar jurado" necesita saber si ESTE rodeo es zona extrema
+        // para mostrar la cabecera especial y el copy específico de A.
+        zona_extrema: resultado.zona_extrema || null,
         // Etapa 4, sección 43/44: checks/explicaciones dinámicos en vez de
         // hardcodeados a V1 — la propia versión de ESTE borrador, nunca la activa.
         configuracion: construirResumenParaUI(configuracion, meta)
@@ -1468,6 +1479,10 @@ router.post('/preview/candidatos', async (req, res) => {
         candidatos_validos: candidatosConUso.validos,
         descartados: candidatosConUso.descartados,
         candidatos_evaluados: resultado.candidatos_evaluados || 0,
+        // Mejora "Zonas Extremas" — sección 27/28 del pedido de UI: el modal
+        // "Modificar jurado" necesita saber si ESTE rodeo es zona extrema
+        // para mostrar la cabecera especial y el copy específico de A.
+        zona_extrema: resultado.zona_extrema || null,
         configuracion: construirResumenParaUI(configuracion, meta)
     });
 });

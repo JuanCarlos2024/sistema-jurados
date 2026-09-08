@@ -17,7 +17,7 @@
 // ejecuta el motor con eso).
 // ═════════════════════════════════════════════════════════════════════════
 const supabase = require('../config/supabase');
-const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz } = require('./configuracionDesignacion');
+const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz, aplanarZonaExtremaCategorias } = require('./configuracionDesignacion');
 
 // Campos de REGLAS (los que entiende reconstruirConfiguracionDesdeFilas/el
 // motor) + campos de METADATA/DISPLAY (Etapa 4: activa, descripcion,
@@ -25,30 +25,51 @@ const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz 
 // solo se propagan a `meta` para la UI (historial, cabecera, "Ver reglas").
 //
 // regla_equidad_traslados_activa/umbral_lejania_km — mejora "Equidad de
-// Traslados" (migración 052, pendiente de aplicar). IMPORTANTE: estas 2
-// columnas NO EXISTEN en la base de datos hasta que se aplique esa
-// migración — este archivo queda PREPARADO para leerlas, pero desplegarlo
-// ANTES de aplicar 052 hace que CUALQUIER consulta con SELECT_VERSION
-// falle con un error claro de Postgres ("column does not exist"), nunca un
-// fallback silencioso ni una configuración a medias. Orden correcto:
-// 1) aplicar 052, 2) recién entonces desplegar este archivo.
+// Traslados" (migración 052, YA APLICADA en producción). regla_zonas_
+// extremas_activa — mejora "Zonas Extremas" (migración 053, PREPARADA, NO
+// aplicada todavía). IMPORTANTE: esta última columna NO EXISTE en la base
+// de datos hasta que se aplique esa migración — este archivo queda
+// PREPARADO para leerla, pero desplegarlo ANTES de aplicar 053 hace que
+// CUALQUIER consulta con SELECT_VERSION falle con un error claro de
+// Postgres ("column does not exist"), nunca un fallback silencioso ni una
+// configuración a medias. Orden correcto: 1) aplicar 053, 2) recién
+// entonces desplegar este archivo.
 const SELECT_VERSION =
     'id, numero_version, schema_version, activa, regla_distancia_maxima_activa, distancia_maxima_km, ' +
     'regla_no_repetir_asociacion_activa, regla_un_rodeo_por_finde_activa, regla_finde_consecutivo_activa, ' +
     'regla_asociacion_organizadora_activa, regla_equidad_traslados_activa, umbral_lejania_km, ' +
+    'regla_zonas_extremas_activa, ' +
     'descripcion, creado_por, created_at';
 
-// ─── Dado un versionRow ya resuelto, carga sus componentes (2 queries fijas
-// en paralelo, nunca una por criterio/categoría) y reconstruye+valida. ─────
+// ─── Dado un versionRow ya resuelto, carga sus componentes (4 queries fijas
+// en paralelo, nunca una por criterio/categoría/asociación) y reconstruye+
+// valida. Mejora "Zonas Extremas": 2 queries nuevas para sus tablas — se
+// piden SIEMPRE (mismo motivo que matriz/orden_criterios siempre se piden):
+// reconstruirConfiguracionDesdeFilas() necesita ver el estado real
+// persistido tal cual esté, incluso si la regla está apagada pero conserva
+// una lista guardada. ───────────────────────────────────────────────────
 async function cargarComponentesYValidar(versionRow) {
-    const [{ data: criterios, error: errC }, { data: matrizRows, error: errM }] = await Promise.all([
+    const [
+        { data: criterios, error: errC },
+        { data: matrizRows, error: errM },
+        { data: zonasExtremasAsocRows, error: errZA },
+        { data: zonasExtremasCatRows, error: errZC }
+    ] = await Promise.all([
         supabase.from('configuracion_designacion_orden_criterios').select('criterio_codigo, orden').eq('version_id', versionRow.id),
-        supabase.from('configuracion_designacion_matriz').select('clasificacion_codigo, categoria, elegible, orden_preferencia').eq('version_id', versionRow.id)
+        supabase.from('configuracion_designacion_matriz').select('clasificacion_codigo, categoria, elegible, orden_preferencia').eq('version_id', versionRow.id),
+        supabase.from('configuracion_designacion_zonas_extremas').select('asociacion').eq('version_id', versionRow.id),
+        supabase.from('configuracion_designacion_zona_extrema_categorias').select('categoria, elegible, orden_preferencia').eq('version_id', versionRow.id)
     ]);
     if (errC) throw new Error('No se pudo cargar el orden de criterios de la configuración de designación: ' + errC.message);
     if (errM) throw new Error('No se pudo cargar la matriz de la configuración de designación: ' + errM.message);
+    // Zonas Extremas — mismo criterio que las columnas nuevas de SELECT_
+    // VERSION: si la migración 053 todavía no está aplicada, estas 2 tablas
+    // no existen y Postgres devuelve un error claro ("relation does not
+    // exist") — nunca se ignora silenciosamente.
+    if (errZA) throw new Error('No se pudo cargar las asociaciones de Zonas Extremas: ' + errZA.message);
+    if (errZC) throw new Error('No se pudo cargar las categorías de Zonas Extremas: ' + errZC.message);
 
-    const configuracion = reconstruirConfiguracionDesdeFilas(versionRow, criterios || [], matrizRows || []);
+    const configuracion = reconstruirConfiguracionDesdeFilas(versionRow, criterios || [], matrizRows || [], zonasExtremasAsocRows || [], zonasExtremasCatRows || []);
     const val = validarConfiguracion(configuracion);
     if (!val.valido) {
         return { error: 'CONFIGURACION_DESIGNACION_INVALIDA', detalle: val.error };
@@ -159,17 +180,19 @@ async function obtenerVersionDesignacionDetalle(versionId) {
 // "no confiar solo en frontend") — la RPC vuelve a proteger la integridad
 // en Postgres como defensa en profundidad, nunca reemplaza esta validación.
 //
-// Mejora "Equidad de Traslados" (migración 052, pendiente de aplicar — ver
-// nota en SELECT_VERSION arriba): se ELIGE EXPLÍCITAMENTE la RPC según
-// configuracion.schema_version — nunca una sobrecarga ambigua resuelta
-// implícitamente por PostgREST (revisión de cierre, sección 3: "no confiar
-// en sobrecargas ambiguas si pueden evitarse"). schema_version=1 sigue
-// llamando EXACTAMENTE a la misma RPC legacy con los mismos 10 parámetros
-// de siempre — cero cambio de comportamiento para el caso ya usado en
-// producción. schema_version=2 llama a la RPC nueva
-// crear_configuracion_designacion_version_v2 (que no existe hasta aplicar
-// la migración 052 — si se invoca antes, Postgres devuelve un error claro
-// de función inexistente, nunca un fallback silencioso).
+// Mejora "Equidad de Traslados" (migración 052, YA APLICADA en producción):
+// se ELIGE EXPLÍCITAMENTE la RPC según configuracion.schema_version —
+// nunca una sobrecarga ambigua resuelta implícitamente por PostgREST
+// (revisión de cierre, sección 3: "no confiar en sobrecargas ambiguas si
+// pueden evitarse"). schema_version=1 sigue llamando EXACTAMENTE a la
+// misma RPC legacy con los mismos 10 parámetros de siempre — cero cambio
+// de comportamiento para el caso ya usado en producción. schema_version=2
+// llama a crear_configuracion_designacion_version_v2. Mejora "Zonas
+// Extremas" (migración 053, PREPARADA — ver nota en SELECT_VERSION
+// arriba): schema_version=3 llama a la RPC nueva crear_configuracion_
+// designacion_version_v3 (que no existe hasta aplicar la migración 053 —
+// si se invoca antes, Postgres devuelve un error claro de función
+// inexistente, nunca un fallback silencioso).
 // @param configuracion objeto configuracion completo (misma forma que construirConfiguracionDefaultV1())
 // @param descripcion texto opcional
 // @param creadoPor uuid del administrador (req.usuario.id) | null
@@ -181,12 +204,12 @@ async function crearVersionDesignacion({ configuracion, descripcion, creadoPor }
     }
 
     // Despacho EXPLÍCITO por schema_version (revisión de cierre, sección 15:
-    // "if schema1 → legacy, if schema2 → v2, otro schema → error controlado,
-    // no fallback"). validarConfiguracion() ya rechazó cualquier valor fuera
-    // de [1, 2] arriba, así que la rama `else` de abajo no debería alcanzarse
-    // en la práctica — se deja como defensa en profundidad explícita ante una
-    // discrepancia inesperada entre capas, nunca cayendo silenciosamente en
-    // la RPC legacy para un schema que no es 1.
+    // "if schema1 → legacy, if schema2 → v2, if schema3 → v3, otro schema →
+    // error controlado, no fallback"). validarConfiguracion() ya rechazó
+    // cualquier valor fuera de [1, 2, 3] arriba, así que la rama `else` de
+    // abajo no debería alcanzarse en la práctica — se deja como defensa en
+    // profundidad explícita ante una discrepancia inesperada entre capas,
+    // nunca cayendo silenciosamente en la RPC legacy para un schema que no es 1.
     let data, error;
     if (configuracion.schema_version === 1) {
         ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version', {
@@ -215,6 +238,27 @@ async function crearVersionDesignacion({ configuracion, descripcion, creadoPor }
             p_creado_por: creadoPor || null,
             p_orden_criterios: configuracion.ordenCriterios || [],
             p_matriz: aplanarMatriz(configuracion.matriz)
+        }));
+    } else if (configuracion.schema_version === 3) {
+        // Mejora "Zonas Extremas" — RPC v3 (migración 053, PREPARADA, NO
+        // aplicada). Invocarla antes de aplicar 053 falla con un error claro
+        // de función inexistente — nunca un fallback silencioso a v2/legacy.
+        ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version_v3', {
+            p_regla_distancia_maxima_activa: configuracion.regla_distancia_maxima_activa,
+            p_distancia_maxima_km: configuracion.distancia_maxima_km,
+            p_regla_no_repetir_asociacion_activa: configuracion.regla_no_repetir_asociacion_activa,
+            p_regla_un_rodeo_por_finde_activa: configuracion.regla_un_rodeo_por_finde_activa,
+            p_regla_finde_consecutivo_activa: configuracion.regla_finde_consecutivo_activa,
+            p_regla_asociacion_organizadora_activa: configuracion.regla_asociacion_organizadora_activa,
+            p_regla_equidad_traslados_activa: !!configuracion.regla_equidad_traslados_activa,
+            p_umbral_lejania_km: configuracion.umbral_lejania_km ?? null,
+            p_regla_zonas_extremas_activa: !!configuracion.regla_zonas_extremas_activa,
+            p_descripcion: descripcion || null,
+            p_creado_por: creadoPor || null,
+            p_orden_criterios: configuracion.ordenCriterios || [],
+            p_matriz: aplanarMatriz(configuracion.matriz),
+            p_zonas_extremas_asociaciones: configuracion.zonas_extremas?.asociaciones || [],
+            p_zonas_extremas_categorias: aplanarZonaExtremaCategorias(configuracion.zonas_extremas?.categorias)
         }));
     } else {
         return { error: 'CONFIGURACION_DESIGNACION_INVALIDA', detalle: `schema_version no soportado para crear versión: ${configuracion.schema_version}` };

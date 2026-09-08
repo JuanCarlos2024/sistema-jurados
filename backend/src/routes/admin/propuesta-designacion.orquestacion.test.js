@@ -577,6 +577,52 @@ describe('POST /preview/candidatos — equidad_designaciones ajustado con tempor
     });
 });
 
+// TEST 27/28/43 (pedido de UI "Zonas Extremas"): el modal "Modificar
+// jurado" necesita saber si ESTE rodeo es zona extrema — resultado.
+// zona_extrema (ya calculado por ejecutarSimulacion(), sin query nueva) se
+// expone tal cual en la respuesta de ambos endpoints de candidatos.
+describe('Candidatos — zona_extrema expuesto en la respuesta (sección 27/28/43/44)', () => {
+    test('POST /preview/candidatos con rodeo de Zona Extrema -> body.zona_extrema presente, sin queries nuevas', async () => {
+        const tokenV1 = firmarPreview({
+            temporada_id: 't1', configuracion_version_id: 'v1-uuid',
+            rodeos: [{ rodeo_id: 'r1', estado: 'PROPUESTO', jurado_id_propuesto: 'j1' }]
+        });
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({ rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-09-05', asociacion: 'MAGALLANES', duracion_dias: 1 }]]) });
+        ejecutarSimulacion.mockReturnValue({
+            resultados: [{
+                estado: 'PROPUESTO',
+                zona_extrema: { activa: true, asociacion: 'MAGALLANES', prioridad_categorias: ['C', 'B'] },
+                top_candidatos: [], descartados: [], candidatos_evaluados: 0
+            }]
+        });
+        crearSupabaseMock({});
+
+        const { status, body } = await llamarRuta({
+            method: 'POST', url: '/preview/candidatos',
+            body: { rodeo_id: 'r1', preview_token: tokenV1, estado_temporal: [{ rodeo_id: 'r1', estado_revision: 'PENDIENTE', jurado_id_seleccionado: null }] }
+        });
+
+        expect(status).toBe(200);
+        expect(body.zona_extrema).toEqual({ activa: true, asociacion: 'MAGALLANES', prioridad_categorias: ['C', 'B'] });
+    });
+
+    test('GET .../candidatos con rodeo normal -> body.zona_extrema es null', async () => {
+        crearSupabaseMock({
+            propuestas_designacion_detalle: [
+                { data: { id: 'det-1', rodeo_id: 'r1', estado_revision: 'PENDIENTE', propuestas_designacion: { configuracion_version_id: 'v1-uuid' } }, error: null },
+                { data: [], error: null }
+            ]
+        });
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({ rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-05-01', asociacion: 'Santiago', duracion_dias: 1 }]]) });
+        ejecutarSimulacion.mockReturnValue({ resultados: [{ estado: 'PROPUESTO', zona_extrema: null, top_candidatos: [], descartados: [], candidatos_evaluados: 0 }] });
+
+        const { body } = await llamarRuta({ method: 'GET', url: '/propuestas/prop-1/detalle/det-1/candidatos' });
+        expect(body.zona_extrema).toBeNull();
+    });
+});
+
 // ═════════════════════════════════════════════════════════════════════════
 // 16 (revisión final Etapa 4) — GET /propuestas/:id (vista general del
 // borrador, NO la lista de candidatos): el resumen que se muestra en la

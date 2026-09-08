@@ -97,13 +97,22 @@ describe('GET /activa', () => {
     // Mejora "Equidad de Traslados" (revisión de cierre, sección 3) — el
     // frontend debe poder leer explícitamente qué schema_version soporta
     // este backend, sin inferirlo de errores.
-    test('incluye capacidades.schema_versions_soportadas = [1, 2]', async () => {
+    // 3 se agregó por la mejora "Zonas Extremas" (mismo tipo de
+    // actualización que ya ocurrió acá cuando 2 se agregó con "Equidad de
+    // Traslados") — el backend YA declara soporte de código para schema_
+    // version=3 aunque la migración 053 todavía no esté aplicada.
+    test('incluye capacidades.schema_versions_soportadas = [1, 2, 3]', async () => {
         cargarConfiguracionDesignacionActiva.mockResolvedValue({ configuracion: {}, meta: { id: 'v1-uuid', numero_version: 1 } });
         obtenerVersionDesignacionDetalle.mockResolvedValue({ configuracion: { schema_version: 1 }, meta: { id: 'v1-uuid', numero_version: 1, creado_por_nombre: null } });
         const { body } = await llamarRuta({ method: 'GET', url: '/activa' });
-        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2]);
+        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2, 3]);
         expect(body.capacidades.criterios_soportados_por_schema[2]).toContain('EQUIDAD_TRASLADOS');
         expect(body.capacidades.criterios_soportados_por_schema[1]).not.toContain('EQUIDAD_TRASLADOS');
+        expect(body.capacidades.criterios_soportados_por_schema[3]).toContain('EQUIDAD_TRASLADOS');
+        // Zonas Extremas — el frontend necesita el payload por defecto para
+        // ofrecer la activación en un draft nuevo (sección 6/23 del pedido).
+        expect(Array.isArray(body.capacidades.zonas_extremas_default.asociaciones)).toBe(true);
+        expect(body.capacidades.zonas_extremas_default.asociaciones.length).toBeGreaterThan(0);
     });
     test('0 activas → 500 controlado, nunca asume ninguna', async () => {
         cargarConfiguracionDesignacionActiva.mockResolvedValue({ error: 'CONFIGURACION_DESIGNACION_NO_RESUELTA', detalle: '0 activas' });
@@ -129,9 +138,9 @@ describe('GET /defaults', () => {
         const { body } = await llamarRuta({ method: 'GET', url: '/defaults' });
         expect(body.configuracion.schema_version).toBe(1);
     });
-    test('incluye capacidades.schema_versions_soportadas = [1, 2] (mismo endpoint liviano, sin BD)', async () => {
+    test('incluye capacidades.schema_versions_soportadas = [1, 2, 3] (mismo endpoint liviano, sin BD)', async () => {
         const { body } = await llamarRuta({ method: 'GET', url: '/defaults' });
-        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2]);
+        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2, 3]);
         expect(body.capacidades.criterios_soportados_por_schema[2]).toContain('EQUIDAD_TRASLADOS');
     });
 });
@@ -195,6 +204,43 @@ describe('POST /versiones — crear (sección 4/38 del pedido de Etapa 4)', () =
         expect(configuracionRecibida.schema_version).toBe(2);
         expect(configuracionRecibida.regla_equidad_traslados_activa).toBe(true);
         expect(configuracionRecibida.umbral_lejania_km).toBe(350);
+    });
+
+    // TEST 43 (pedido de UI "Zonas Extremas") — mismo tipo de test que
+    // schema_version=2 arriba, ahora para schema_version=3: la ruta pasa el
+    // objeto COMPLETO (incluida zonas_extremas) sin filtrar nada.
+    test('POST /versiones con configuración schema_version=3 (Zonas Extremas) completa → se pasa TAL CUAL al repositorio, sin filtrar zonas_extremas', async () => {
+        crearVersionDesignacion.mockResolvedValue({ id: 'v-schema3-uuid', numero_version: 9 });
+        const configuracionSchema3 = {
+            ...construirConfiguracionDefaultV1(),
+            schema_version: 3,
+            regla_zonas_extremas_activa: true,
+            zonas_extremas: {
+                asociaciones: ['ARICA Y TARAPACA', 'NORTE GRANDE', 'MAGALLANES', 'AYSEN', 'CUYO'],
+                categorias: [
+                    { categoria: 'A', elegible: false, orden_preferencia: null },
+                    { categoria: 'B', elegible: true, orden_preferencia: 2 },
+                    { categoria: 'C', elegible: true, orden_preferencia: 1 }
+                ]
+            }
+        };
+
+        const { status, body } = await llamarRuta({
+            method: 'POST', url: '/versiones',
+            body: { configuracion: configuracionSchema3, descripcion: 'Zonas Extremas C->B' },
+            usuario: { id: 'admin-10', tipo: 'administrador', rol_evaluacion: null }
+        });
+
+        expect(status).toBe(201);
+        expect(body).toEqual({ id: 'v-schema3-uuid', numero_version: 9, activa: false });
+        expect(crearVersionDesignacion).toHaveBeenCalledWith({
+            configuracion: configuracionSchema3, descripcion: 'Zonas Extremas C->B', creadoPor: 'admin-10'
+        });
+        const configuracionRecibida = crearVersionDesignacion.mock.calls[0][0].configuracion;
+        expect(configuracionRecibida.schema_version).toBe(3);
+        expect(configuracionRecibida.regla_zonas_extremas_activa).toBe(true);
+        expect(configuracionRecibida.zonas_extremas.asociaciones).toHaveLength(5);
+        expect(configuracionRecibida.zonas_extremas.categorias).toHaveLength(3);
     });
 
     // Revisión final Etapa 4, sección 5: la UI NO puede decidir creado_por —

@@ -6,7 +6,8 @@ const {
     validarDistancia, validarUmbralLejania, validarOrdenCriterios, validarMatrizClasificacion, validarMatrizCompleta,
     validarConfiguracion, configuracionRequiereDistancia, clasificarTraslado,
     construirConfiguracionDefaultV1, clonarConfiguracion, compararConfiguraciones,
-    reconstruirConfiguracionDesdeFilas, aplanarMatriz, construirResumenParaUI
+    reconstruirConfiguracionDesdeFilas, aplanarMatriz, construirResumenParaUI,
+    validarZonasExtremas
 } = require('./configuracionDesignacion');
 
 const defaultV1 = construirConfiguracionDefaultV1();
@@ -350,29 +351,44 @@ describe('TEST R/S/T: configuracionRequiereDistancia', () => {
     });
 });
 
-// TEST U — actualizado por la mejora "Equidad de Traslados": schema_version=2
-// ahora es un valor SOPORTADO (no "distinto de 1" = inválido) — ver
-// SCHEMA_VERSIONES_SOPORTADAS y CRITERIOS_CONOCIDOS_POR_SCHEMA. Lo que sigue
-// siendo inválido es cualquier schema_version FUERA de [1, 2].
-describe('TEST U: schema_version desconocido (fuera de [1, 2]) es inválido', () => {
-    test('validarOrdenCriterios rechaza schema_version 3 (no soportado)', () => {
-        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 3);
+// TEST U — actualizado por la mejora "Zonas Extremas": schema_version=3
+// ahora también es un valor SOPORTADO (mismo patrón que schema_version=2 lo
+// fue con "Equidad de Traslados") — ver SCHEMA_VERSIONES_SOPORTADAS y
+// CRITERIOS_CONOCIDOS_POR_SCHEMA. Lo que sigue siendo inválido es cualquier
+// schema_version FUERA de [1, 2, 3] (se usa 4 como ejemplo de "desconocido"
+// — 3 dejó de serlo con esta mejora, exactamente el mismo tipo de
+// actualización de expectativa que ya ocurrió acá cuando 2 se volvió válido).
+describe('TEST U: schema_version desconocido (fuera de [1, 2, 3]) es inválido', () => {
+    test('validarOrdenCriterios rechaza schema_version 4 (no soportado)', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 4);
         expect(r.valido).toBe(false);
     });
-    test('validarConfiguracion rechaza schema_version 3 (no soportado)', () => {
-        const config = { ...defaultV1, schema_version: 3 };
+    test('validarConfiguracion rechaza schema_version 4 (no soportado)', () => {
+        const config = { ...defaultV1, schema_version: 4 };
         expect(validarConfiguracion(config).valido).toBe(false);
     });
-    // Nuevo — confirma explícitamente que schema_version=2 SÍ es válido desde
-    // esta mejora, incluso usando solo los 3 criterios de siempre (sin
-    // activar equidad de traslados): schema_version=2 es un SUPERCONJUNTO
-    // compatible de schema_version=1, nunca una ruptura.
+    // Confirma explícitamente que schema_version=2 SÍ es válido desde la
+    // mejora "Equidad de Traslados", incluso usando solo los 3 criterios de
+    // siempre (sin activar equidad de traslados): schema_version=2 es un
+    // SUPERCONJUNTO compatible de schema_version=1, nunca una ruptura.
     test('validarOrdenCriterios acepta schema_version=2 con los 3 criterios de siempre', () => {
         const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 2);
         expect(r.valido).toBe(true);
     });
     test('validarConfiguracion acepta schema_version=2 sin equidad de traslados activa', () => {
         const config = { ...defaultV1, schema_version: 2 };
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+    // Nuevo — confirma explícitamente que schema_version=3 SÍ es válido desde
+    // la mejora "Zonas Extremas", incluso sin activar la regla especial:
+    // schema_version=3 es un SUPERCONJUNTO compatible de schema_version=2
+    // (incluye EQUIDAD_TRASLADOS), nunca una ruptura.
+    test('validarOrdenCriterios acepta schema_version=3 con los 3 criterios de siempre', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 3);
+        expect(r.valido).toBe(true);
+    });
+    test('validarConfiguracion acepta schema_version=3 sin zonas extremas ni equidad de traslados activas', () => {
+        const config = { ...defaultV1, schema_version: 3 };
         expect(validarConfiguracion(config)).toEqual({ valido: true });
     });
 });
@@ -728,8 +744,11 @@ describe('Equidad de Traslados — criteriosConocidosParaSchema / CRITERIOS_CONO
         expect(c2).toContain('EQUIDAD_TRASLADOS');
         expect(c2).toHaveLength(CRITERIOS_CONOCIDOS.length + 1);
     });
-    test('SCHEMA_VERSIONES_SOPORTADAS = [1, 2]', () => {
-        expect(SCHEMA_VERSIONES_SOPORTADAS).toEqual([1, 2]);
+    test('SCHEMA_VERSIONES_SOPORTADAS = [1, 2, 3] (3 agregado por la mejora "Zonas Extremas")', () => {
+        expect(SCHEMA_VERSIONES_SOPORTADAS).toEqual([1, 2, 3]);
+    });
+    test('schema_version=3 incluye los mismos criterios que schema_version=2 (Zonas Extremas no agrega ningun criterio de ranking)', () => {
+        expect(criteriosConocidosParaSchema(3)).toEqual(criteriosConocidosParaSchema(2));
     });
 });
 
@@ -862,5 +881,157 @@ describe('Equidad de Traslados — reconstruirConfiguracionDesdeFilas / construi
         const resumen = construirResumenParaUI(config, { id: 'v2-uuid', numero_version: 2 });
         expect(resumen.regla_equidad_traslados_activa).toBe(true);
         expect(resumen.umbral_lejania_km).toBe(350);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// GATE final previa a 053: validarZonasExtremas() — separa ESTRUCTURAL
+// (siempre, activa o no) de MÍNIMOS (solo si activa). Casos numerados según
+// el pedido de este gate (secciones 7-24).
+// ═════════════════════════════════════════════════════════════════════════
+describe('validarZonasExtremas — datos latentes con regla OFF (ESTRUCTURAL siempre, MÍNIMOS solo si activa)', () => {
+    const categoriasValidas = [
+        { categoria: 'A', elegible: false, orden_preferencia: null },
+        { categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { categoria: 'C', elegible: true, orden_preferencia: 1 }
+    ];
+
+    // TEST 17/7 — OFF con datos latentes ESTRUCTURALMENTE válidos -> válido.
+    test('OFF + asociaciones/categorías latentes válidas (MAGALLANES, AYSÉN · C1 B2 Aoff) -> válido', () => {
+        const r = validarZonasExtremas(false, { asociaciones: ['MAGALLANES', 'AYSÉN'], categorias: categoriasValidas });
+        expect(r).toEqual({ valido: true });
+    });
+
+    // TEST 18/8 — OFF vacío -> válido (no exige contenido cuando está apagada).
+    test('OFF + 0 asociaciones + 0 categorías -> válido', () => {
+        expect(validarZonasExtremas(false, { asociaciones: [], categorias: [] })).toEqual({ valido: true });
+        expect(validarZonasExtremas(false, {})).toEqual({ valido: true });
+        expect(validarZonasExtremas(false, null)).toEqual({ valido: true });
+    });
+
+    // TEST 19/9 — OFF con orden duplicado -> rechazado (ESTRUCTURAL, no depende de la regla).
+    test('OFF + categorías con orden_preferencia duplicado (C=1, B=1) -> rechazado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: [], categorias: [
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: true, orden_preferencia: 1 },
+            { categoria: 'C', elegible: true, orden_preferencia: 1 }
+        ] });
+        expect(r.valido).toBe(false);
+    });
+
+    // TEST 20/10 — OFF con hueco en el orden (1, 3 en vez de 1, 2) -> rechazado.
+    // Este es el GAP REAL que existía: antes, con reglaActiva=false, la
+    // función devolvía { valido: true } de inmediato sin llegar nunca a
+    // revisar esto.
+    test('OFF + categorías con hueco en el orden (C=1, B=3) -> rechazado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: [], categorias: [
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: true, orden_preferencia: 3 },
+            { categoria: 'C', elegible: true, orden_preferencia: 1 }
+        ] });
+        expect(r.valido).toBe(false);
+    });
+
+    // TEST 21/11 — OFF con categoría desconocida ('D') -> rechazado (ya lo
+    // garantizaba validarMatrizClasificacion(), ahora también corre con OFF).
+    test('OFF + categoría desconocida (D) -> rechazado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: [], categorias: [
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: true, orden_preferencia: 2 },
+            { categoria: 'D', elegible: true, orden_preferencia: 1 }
+        ] });
+        expect(r.valido).toBe(false);
+    });
+
+    // TEST 22/12 — OFF con categoría NO elegible pero con orden_preferencia
+    // seteado -> rechazado.
+    test('OFF + categoría no elegible con orden_preferencia distinto de null (A: elegible=false, orden=3) -> rechazado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: [], categorias: [
+            { categoria: 'A', elegible: false, orden_preferencia: 3 },
+            { categoria: 'B', elegible: true, orden_preferencia: 2 },
+            { categoria: 'C', elegible: true, orden_preferencia: 1 }
+        ] });
+        expect(r.valido).toBe(false);
+    });
+
+    // TEST 23/13 — ON sin asociaciones -> rechazado (MÍNIMO, solo si activa).
+    test('ON + 0 asociaciones -> rechazado', () => {
+        const r = validarZonasExtremas(true, { asociaciones: [], categorias: categoriasValidas });
+        expect(r.valido).toBe(false);
+    });
+
+    // TEST 24/14 — ON con asociaciones válidas pero 0 categorías elegibles -> rechazado.
+    test('ON + asociaciones válidas + 0 categorías elegibles -> rechazado', () => {
+        const r = validarZonasExtremas(true, { asociaciones: ['MAGALLANES'], categorias: [
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: false, orden_preferencia: null },
+            { categoria: 'C', elegible: false, orden_preferencia: null }
+        ] });
+        expect(r.valido).toBe(false);
+    });
+
+    // ON con datos completos y válidos -> válido (caso base, sección 6).
+    test('ON + asociaciones válidas + categorías válidas -> válido', () => {
+        const r = validarZonasExtremas(true, { asociaciones: ['MAGALLANES', 'AYSÉN'], categorias: categoriasValidas });
+        expect(r).toEqual({ valido: true });
+    });
+
+    // Asociación duplicada NORMALIZADA con regla OFF -> rechazado (estructural,
+    // sin depender de la regla — "AYSÉN"/"AYSEN" son la misma asociación).
+    test('OFF + asociaciones duplicadas normalizadas (AYSÉN / AYSEN) -> rechazado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: ['AYSÉN', 'AYSEN'], categorias: [] });
+        expect(r.valido).toBe(false);
+    });
+
+    // Gate final "normalización de asociaciones" — casos explícitos pedidos:
+    // espacios, mayúsculas/minúsculas mezcladas, y con la regla ON (no solo OFF).
+    test('"AYSÉN" vs " Aysén " (espacios alrededor) -> rechazado por duplicado normalizado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: ['AYSÉN', '  Aysén  '], categorias: [] });
+        expect(r.valido).toBe(false);
+    });
+    test('mayúsculas/minúsculas mezcladas ("Magallanes" vs "MAGALLANES" vs "magallanes") -> rechazado', () => {
+        const r = validarZonasExtremas(false, { asociaciones: ['Magallanes', 'MAGALLANES'], categorias: [] });
+        expect(r.valido).toBe(false);
+        const r2 = validarZonasExtremas(false, { asociaciones: ['Magallanes', 'magallanes'], categorias: [] });
+        expect(r2.valido).toBe(false);
+    });
+    test('duplicado normalizado también se rechaza con la regla ON (no solo OFF)', () => {
+        const r = validarZonasExtremas(true, { asociaciones: ['AYSÉN', 'AYSEN'], categorias: categoriasValidas });
+        expect(r.valido).toBe(false);
+    });
+    test('asociación vacía o solo espacios -> rechazada (estructural, sin depender de la regla)', () => {
+        expect(validarZonasExtremas(false, { asociaciones: [''], categorias: [] }).valido).toBe(false);
+        expect(validarZonasExtremas(false, { asociaciones: ['   '], categorias: [] }).valido).toBe(false);
+        expect(validarZonasExtremas(true, { asociaciones: ['   '], categorias: categoriasValidas }).valido).toBe(false);
+    });
+    // No-duplicado: asociaciones distintas de verdad (no solo variantes de
+    // formato) nunca deben rechazarse por esto.
+    test('asociaciones genuinamente distintas -> válido (no un falso positivo de duplicado)', () => {
+        const r = validarZonasExtremas(false, { asociaciones: ['MAGALLANES', 'AYSÉN', 'CUYO'], categorias: [] });
+        expect(r).toEqual({ valido: true });
+    });
+});
+
+// TEST 25 — regresión explícita con snapshot de la V2 REAL de producción
+// (id 0ac4f340-968b-4076-9687-1b13cd358d6b, numero_version=2): schema2,
+// 1000km, EQUIDAD_TRASLADOS ON, 350km — sigue siendo válida sin exigir
+// absolutamente ninguna fila de Zonas Extremas (el campo ni siquiera existe
+// para schema2 en la forma reconstruida hoy, antes de aplicar 053).
+describe('validarConfiguracion — regresión explícita con la V2 REAL de producción', () => {
+    test('snapshot V2 real (schema2, 1000km, equidad 350km) sigue siendo válida, sin exigir Zonas Extremas', () => {
+        const v2Real = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 2,
+            distancia_maxima_km: 1000,
+            regla_equidad_traslados_activa: true,
+            umbral_lejania_km: 350,
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+            // Sin regla_zonas_extremas_activa ni zonas_extremas — schema2 nunca los tiene.
+        });
+        expect(validarConfiguracion(v2Real)).toEqual({ valido: true });
     });
 });

@@ -134,6 +134,70 @@ function construirMatrizPorClasificacionDesdeConfiguracion(configuracionMatriz) 
     return resultado;
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Zonas Extremas" (schema_version=3) — para ciertas asociaciones
+// organizadoras (configurables, ver configuracion.zonas_extremas — NUNCA
+// hardcodeadas acá), la prioridad de categoría del jurado la decide una
+// matriz especial versionada, con PRECEDENCIA total sobre la matriz normal
+// por clasificación (sección 2/3/9/10 del pedido) — no importa si el rodeo
+// es interclubes/provincial/interasociaciones/zonal/clasificatorio/
+// nacional. Ninguna otra regla del motor se ve afectada (sección 12): solo
+// sustituye la FUENTE de elegibilidad/prioridad de categoría que ya
+// consume evaluarCandidato() a través de `matriz` — la función en sí no se
+// toca ni se duplica.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Deriva la matriz especial de Zonas Extremas, si la regla está activa
+// y configurada — MISMA función de derivación que la matriz normal
+// (construirMatrizPorClasificacionDesdeConfiguracion), aplicada a una única
+// "pseudo-clasificación" interna ZONA_EXTREMA — nunca una segunda
+// implementación de "¿qué categorías son elegibles y en qué orden?".
+// @returns {elegibles, ordenPorCategoria} | null (regla inactiva, o sin categorías configuradas)
+function construirMatrizZonaExtremaDesdeConfiguracion(configuracion) {
+    const c = configuracion || {};
+    if (!c.regla_zonas_extremas_activa || !c.zonas_extremas?.categorias) return null;
+    const derivada = construirMatrizPorClasificacionDesdeConfiguracion({ ZONA_EXTREMA: c.zonas_extremas.categorias });
+    return derivada.ZONA_EXTREMA || null;
+}
+
+// ─── Resuelve la matriz de categorías EFECTIVA para UN rodeo — punto ÚNICO
+// de la precedencia Zona Extrema vs. matriz normal (sección 15 del pedido:
+// "resolverMatrizCategoriaParaRodeo"). Reutilizado por los 3 lugares que
+// antes leían matrizPorClasificacion[rodeo.clasificacion_codigo]
+// directamente (dificultad de procesamiento, evaluación real del lote,
+// evaluarCandidatoDirecto) — así NUNCA puede haber inconsistencia entre
+// ellos (sección 14: "simulación usa Zona Extrema pero dificultad usa
+// Provincial" queda estructuralmente imposible, un solo resolver para los 3).
+//
+// La comparación de asociación reutiliza normalizarAsociacion() — MISMA
+// función que ya usa el motor para "¿misma asociación?"/"¿asociación
+// repetida en la temporada?" — nunca una comparación literal distinta.
+//
+// @param rodeo                  { asociacion, clasificacion_codigo, ... }
+// @param matrizPorClasificacion resultado de construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz)
+// @param matrizZonaExtrema      resultado de construirMatrizZonaExtremaDesdeConfiguracion(configuracion) (o null)
+// @param asociacionesZonaExtrema configuracion.zonas_extremas?.asociaciones || []
+// @returns { matriz: {elegibles,ordenPorCategoria}|null, fuente:'NORMAL'|'ZONA_EXTREMA', asociacion: string|null }
+function resolverMatrizParaRodeo(rodeo, matrizPorClasificacion, matrizZonaExtrema, asociacionesZonaExtrema) {
+    if (matrizZonaExtrema && rodeo.asociacion) {
+        const asocNorm = normalizarAsociacion(rodeo.asociacion);
+        const coincide = (asociacionesZonaExtrema || []).some(a => normalizarAsociacion(a) === asocNorm);
+        if (coincide) {
+            return { matriz: matrizZonaExtrema, fuente: 'ZONA_EXTREMA', asociacion: rodeo.asociacion };
+        }
+    }
+    const matriz = rodeo.clasificacion_codigo ? (matrizPorClasificacion[rodeo.clasificacion_codigo] || null) : null;
+    return { matriz, fuente: 'NORMAL', asociacion: null };
+}
+
+// ─── Narrativa "¿Por qué ganó?" cuando Zona Extrema decidió la prioridad de
+// categoría (sección 16 del pedido) — nunca se narra "Interasociaciones
+// prioriza A" si Zona Extrema sustituyó esa regla. `categoriasOrdenadas`:
+// ['C','B'] (orden ascendente de orden_preferencia, solo elegibles).
+function construirExplicacionZonaExtrema(asociacion, categoriasOrdenadas) {
+    return `Rodeo perteneciente a Zona Extrema (${asociacion}); se aplicó prioridad especial ${categoriasOrdenadas.join(' → ')}.`;
+}
+
 // ─── EQUIDAD_TRASLADOS — comparador dedicado (mejora "Equidad de Traslados") ─
 // Recibe los resultados YA calculados de evaluarCandidato() (a.distanciaKm,
 // a.trasladosTemporada — ver más abajo) — nunca vuelve a tocar la BD ni
@@ -640,9 +704,15 @@ function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = co
 
     // Misma matriz derivada de la configuración que usa ejecutarSimulacion()
     // — la legacy clasificacion_categoria_matriz/contexto.matrizPorCodigo ya
-    // no se consulta desde cargarDatosMotor (retirada en Etapa 3).
+    // no se consulta desde cargarDatosMotor (retirada en Etapa 3). Mejora
+    // "Zonas Extremas" (sección 15 del pedido): resolverMatrizParaRodeo() es
+    // el ÚNICO punto que decide matriz normal vs. especial — MISMO resolver
+    // que usa ejecutarSimulacion(), para que nunca haya inconsistencia entre
+    // una evaluación directa (aceptar/seleccionar) y la simulación.
     const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
-    const matriz = rodeo.clasificacion_codigo ? matrizPorClasificacion[rodeo.clasificacion_codigo] : null;
+    const matrizZonaExtrema = construirMatrizZonaExtremaDesdeConfiguracion(configuracion);
+    const resueltaMatriz = resolverMatrizParaRodeo(rodeo, matrizPorClasificacion, matrizZonaExtrema, configuracion.zonas_extremas?.asociaciones);
+    const matriz = resueltaMatriz.matriz;
     if (!matriz) return { error: 'TIPO_SIN_CLASIFICACION' };
 
     // comunaJuradoPorId se resuelve para TODOS los jurados activos (no solo
@@ -658,7 +728,13 @@ function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = co
     estado.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     estado.trasladosTemporalesPorJurado = new Map(); // sin corrida encima — evaluación directa contra estado real de BD únicamente
 
-    return { evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado, configuracion) };
+    return {
+        evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado, configuracion),
+        // Zona Extrema — para que el llamador (aceptar/seleccionar directo)
+        // pueda mostrar el mismo aviso "⚠ Zona Extrema · Prioridad automática
+        // C → B" que la simulación (sección 17 del pedido) sin recalcularlo.
+        zonaExtrema: resueltaMatriz.fuente === 'ZONA_EXTREMA' ? { asociacion: resueltaMatriz.asociacion } : null
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -838,6 +914,11 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
 
     const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
     const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
+    // Mejora "Zonas Extremas" — derivada UNA vez por corrida (pura, sin BD,
+    // sección 15 del pedido); resolverMatrizParaRodeo() decide por rodeo si
+    // corresponde usarla en vez de matrizPorClasificacion.
+    const matrizZonaExtrema = construirMatrizZonaExtremaDesdeConfiguracion(configuracion);
+    const asociacionesZonaExtrema = configuracion.zonas_extremas?.asociaciones || [];
 
     // Comuna resuelta de cada jurado, precalculada una sola vez (61 llamadas
     // puras a resolverComuna, no hay N+1 de BD acá — ya está todo en memoria).
@@ -946,7 +1027,11 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // un snapshot de estado distinto (sin mutaciones de esta corrida todavía).
     const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
     for (const rodeo of rodeosEvaluables) {
-        const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
+        // Zona Extrema (sección 14 del pedido): la dificultad se estima con la
+        // MISMA matriz efectiva (normal o especial) que usará la evaluación
+        // real más abajo — nunca la matriz normal "a secas" para un rodeo que
+        // en realidad se va a evaluar con la especial.
+        const matriz = resolverMatrizParaRodeo(rodeo, matrizPorClasificacion, matrizZonaExtrema, asociacionesZonaExtrema).matriz;
         rodeo._candidatosPotenciales = jurados.filter(j =>
             evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoSoloBD, configuracion).elegible
         ).length;
@@ -965,7 +1050,21 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // las propuestas ya hechas a rodeos anteriores en esta misma corrida.
     const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
     for (const rodeo of rodeosEvaluables) {
-        const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
+        // Zona Extrema — mismo resolver que la dificultad de arriba (sección
+        // 14/15 del pedido: un único punto de decisión, nunca dos).
+        const resueltaMatriz = resolverMatrizParaRodeo(rodeo, matrizPorClasificacion, matrizZonaExtrema, asociacionesZonaExtrema);
+        const matriz = resueltaMatriz.matriz;
+        // Info de Zona Extrema para ESTE rodeo (sección 16 del pedido: "¿Por
+        // qué ganó?" nunca debe narrar la matriz normal si Zona Extrema la
+        // sustituyó) — se arma una vez, se adjunta tanto a SIN_PROPUESTA como
+        // a PROPUESTO más abajo. prioridad_categorias: ['C','B'] (orden
+        // ascendente de orden_preferencia, solo elegibles).
+        const zonaExtremaInfo = resueltaMatriz.fuente === 'ZONA_EXTREMA'
+            ? {
+                activa: true, asociacion: resueltaMatriz.asociacion,
+                prioridad_categorias: [...matrizZonaExtrema.ordenPorCategoria.entries()].sort((a, b) => a[1] - b[1]).map(([cat]) => cat)
+            }
+            : null;
         const evaluaciones = jurados.map(j => evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoActual, configuracion));
 
         // Mejora "Equidad Visible de Designaciones" — agregada de POBLACIÓN
@@ -1007,6 +1106,11 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
                 rodeo: { club: rodeo.club, fecha: rodeo.fecha, asociacion: rodeo.asociacion, clasificacion_codigo: rodeo.clasificacion_codigo },
                 candidatos_evaluados: evaluaciones.length,
                 candidatos_potenciales_bd: rodeo._candidatosPotenciales,
+                // Zona Extrema — sección 45 del pedido: si solo A estaba
+                // disponible y no está habilitada automáticamente, SIN_
+                // PROPUESTA también debe poder explicar por qué (nunca solo
+                // "sin candidatos", sin decir que Zona Extrema fue la causa).
+                zona_extrema: zonaExtremaInfo,
                 descartes, descartados
             });
             continue;
@@ -1080,6 +1184,10 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             rodeo: { club: rodeo.club, fecha: rodeo.fecha, asociacion: rodeo.asociacion, clasificacion_codigo: rodeo.clasificacion_codigo },
             candidatos_potenciales_bd: rodeo._candidatosPotenciales,
             top_candidatos: topCandidatos,
+            // Zona Extrema — sección 16 del pedido: se muestra a nivel de
+            // rodeo (aplica igual a todos los candidatos de esta fila, no
+            // solo al ganador).
+            zona_extrema: zonaExtremaInfo,
             jurado_propuesto: {
                 jurado_id: ganador.jurado.id,
                 nombre: ganador.jurado.nombre_completo,
@@ -1105,6 +1213,13 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
                 // cuando el criterio no participó de la decisión.
                 equidad_traslados_explicacion: equidadTrasladosActiva
                     ? construirExplicacionEquidadTraslados(equidadFueDecisivo, distanciaClasificacion, ganador.trasladosTemporada)
+                    : null,
+                // Zona Extrema — sección 16 del pedido: "¿Por qué ganó?" debe
+                // explicar la prioridad especial cuando aplicó, en vez de
+                // dejar que se infiera la matriz normal de la clasificación
+                // (que en este caso NO fue la que decidió).
+                zona_extrema_explicacion: zonaExtremaInfo
+                    ? construirExplicacionZonaExtrema(zonaExtremaInfo.asociacion, zonaExtremaInfo.prioridad_categorias)
                     : null,
                 designaciones_temporada_antes: ganador.designacionesAntes,
                 designaciones_temporada_despues: ganador.designacionesAntes + 1,
@@ -1464,5 +1579,7 @@ module.exports = {
     // Mejora "Equidad Visible de Designaciones" — funciones puras + batch nuevas.
     construirEquidadDesignacionesAgregada, construirEquidadDesignacionesCandidato,
     cargarHistorialRecienteBatch,
-    designacionesPorJuradoAConteos: _designacionesActualesComoMapa
+    designacionesPorJuradoAConteos: _designacionesActualesComoMapa,
+    // Mejora "Zonas Extremas" (schema_version=3) — funciones puras nuevas.
+    construirMatrizZonaExtremaDesdeConfiguracion, resolverMatrizParaRodeo, construirExplicacionZonaExtrema
 };

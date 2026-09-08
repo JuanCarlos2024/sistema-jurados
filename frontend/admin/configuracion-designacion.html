@@ -31,6 +31,28 @@
         .diff-antes { color: var(--rojo, #c0392b); }
         .diff-despues { color: var(--verde, #1e8449); }
         .modal-ancho .modal { max-width: 720px; }
+
+        /* ── Mejora "Zonas Extremas" (schema_version=3) ── */
+        .zona-extrema-seccion {
+            border: 1px solid #e5c07b; background: #fffdf5; border-radius: 10px; padding: 14px;
+        }
+        .zona-extrema-seccion .copy-precedencia {
+            font-size: 12px; color: #8a5a00; background: #fff3cd; border: 1px solid #ffe08a;
+            border-radius: 6px; padding: 8px 10px; margin: 8px 0 12px;
+        }
+        .chips-wrap { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
+        .chip {
+            display: inline-flex; align-items: center; gap: 6px; background: #eef6ff; border: 1px solid #b8d9f5;
+            border-radius: 16px; padding: 4px 6px 4px 12px; font-size: 13px;
+        }
+        .chip button {
+            border: none; background: none; cursor: pointer; font-size: 15px; line-height: 1; color: #6b7280;
+            padding: 2px 6px; border-radius: 50%;
+        }
+        .chip button:hover { background: #dbeafe; color: #c0392b; }
+        .btn-agregar-chip { font-size: 13px; padding: 6px 12px; }
+        .selector-agregar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+        .zona-extrema-seccion.deshabilitada { opacity: .6; }
     </style>
 </head>
 <body>
@@ -126,6 +148,33 @@ let capacidades = null;
 function soportaSchema2() {
     return !!(capacidades && Array.isArray(capacidades.schema_versions_soportadas) && capacidades.schema_versions_soportadas.includes(2));
 }
+// Mejora "Zonas Extremas" — MISMO patrón exacto de "feature capability" que
+// soportaSchema2(): nunca se infiere de un error, se lee explícitamente de
+// `capacidades.schema_versions_soportadas` (GET /activa o /defaults).
+function soportaSchema3() {
+    return !!(capacidades && Array.isArray(capacidades.schema_versions_soportadas) && capacidades.schema_versions_soportadas.includes(3));
+}
+// Default oficial de Zonas Extremas — SIEMPRE desde `capacidades.zonas_
+// extremas_default` (backend, sección 4/5 del pedido de UI: única fuente,
+// nunca hardcodeado acá). null mientras `capacidades` no se haya cargado
+// todavía o el backend no lo declare.
+function defaultZonasExtremas() {
+    return (capacidades && capacidades.zonas_extremas_default) || null;
+}
+
+// ─── Catálogo de asociaciones existentes (GET /asociaciones-existentes) ───
+// Cargado bajo demanda (lazy) al primer "+ Agregar asociación" — misma
+// fuente canónica ya usada en Propuesta de Designación (sección 10 del
+// pedido: "usar GET /asociaciones-existentes o la fuente canónica ya
+// existente"), nunca texto libre ni un catálogo paralelo.
+let asociacionesExistentesCache = null;
+async function cargarAsociacionesExistentes() {
+    if (asociacionesExistentesCache) return asociacionesExistentesCache;
+    const data = await api.get('/admin/propuesta-designacion/asociaciones-existentes');
+    asociacionesExistentesCache = data.asociaciones || [];
+    return asociacionesExistentesCache;
+}
+let mostrandoSelectorAsociacion = false; // estado UI: ¿el <select> "+ Agregar asociación" está desplegado?
 
 async function init() {
     await Promise.all([cargarActiva(), cargarHistorial()]);
@@ -146,10 +195,24 @@ async function cargarActiva() {
 // Texto de "Equidad de traslados" para la cabecera/historial (revisión de
 // cierre, sección 18): schema1 -> "No disponible" (nunca se reinterpreta
 // como "No activa" — son conceptos distintos: schema1 no tiene el campo en
-// absoluto). schema2 -> "Activa (N km)" o "No activa", según corresponda.
+// absoluto). schema 2 o 3 -> "Activa (N km)" o "No activa", según
+// corresponda (mejora "Zonas Extremas": schema_version=3 también admite
+// equidad de traslados — ambas reglas son ortogonales, corrección del bug
+// de "!== 2" que antes hubiera mostrado "No disponible" para schema3).
 function textoEquidadTraslados(c) {
-    if ((c.schema_version || 1) !== 2) return 'No disponible (schema 1)';
+    if ((c.schema_version || 1) < 2) return 'No disponible (schema 1)';
     return c.regla_equidad_traslados_activa ? `Activa (${c.umbral_lejania_km} km)` : 'No activa';
+}
+// Texto de "Zonas Extremas" para la cabecera/historial (sección 6/19 del
+// pedido de UI) — mismo criterio: schema < 3 -> "No disponible" (el campo
+// ni siquiera existe para esos schemas); schema 3 -> resumen real.
+function textoZonasExtremas(c) {
+    if ((c.schema_version || 1) < 3) return 'No disponible (schema < 3)';
+    if (!c.regla_zonas_extremas_activa) return 'No activa';
+    const asociaciones = (c.zonas_extremas && c.zonas_extremas.asociaciones) || [];
+    const prioridad = ((c.zonas_extremas && c.zonas_extremas.categorias) || [])
+        .filter(f => f.elegible).sort((a, b) => a.orden_preferencia - b.orden_preferencia).map(f => f.categoria).join(' → ');
+    return `Activa — ${asociaciones.length} asociación(es), prioridad ${prioridad || '—'}`;
 }
 
 function renderCabecera() {
@@ -167,6 +230,7 @@ function renderCabecera() {
             <div><strong>Creada:</strong> ${formatFechaHora(meta.created_at)}${meta.creado_por_nombre ? ' por ' + sanitizar(meta.creado_por_nombre) : ''}</div>
             <div><strong>Distancia máxima:</strong> ${distancia}</div>
             <div><strong>Equidad de traslados:</strong> ${sanitizar(textoEquidadTraslados(c))}</div>
+            <div><strong>Zonas Extremas:</strong> ${sanitizar(textoZonasExtremas(c))}</div>
             <div><strong>Prioridades:</strong> ${sanitizar(prioridades)}</div>
             ${meta.descripcion ? `<div><strong>Descripción:</strong> ${sanitizar(meta.descripcion)}</div>` : ''}
         </div>
@@ -283,6 +347,17 @@ function renderVistaSoloLectura(c, meta) {
             <div class="config-seccion">
                 <h4>Equidad de traslados</h4>
                 <p>${sanitizar(textoEquidadTraslados(c))}</p>
+            </div>
+            <div class="config-seccion">
+                <h4>Zonas Extremas</h4>
+                ${(c.schema_version || 1) < 3 ? `<p>${sanitizar(textoZonasExtremas(c))}</p>` : `
+                <p><strong>${c.regla_zonas_extremas_activa ? 'Activa' : 'No activa'}</strong></p>
+                <div><strong>Asociaciones:</strong> ${((c.zonas_extremas && c.zonas_extremas.asociaciones) || []).length
+                    ? sanitizar((c.zonas_extremas.asociaciones || []).join(', ')) : '—'}</div>
+                <div><strong>Prioridad:</strong> ${sanitizar(
+                    ((c.zonas_extremas && c.zonas_extremas.categorias) || []).filter(f => f.elegible)
+                        .sort((a, b) => a.orden_preferencia - b.orden_preferencia).map(f => f.categoria).join(' → ') || '—'
+                )}</div>`}
             </div>
             <div class="config-seccion">
                 <h4>Reglas de selección</h4>
@@ -464,6 +539,151 @@ function uiCambiarUmbralLejania(valor) {
     draft.configuracion.umbral_lejania_km = valor === '' ? null : Number(valor);
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// ZONAS EXTREMAS — sección del editor (pedido de UI, secciones 6-21).
+// Habilitada/deshabilitada según soportaSchema3() ("feature capability",
+// nunca hardcodeada) — mismo patrón exacto que EQUIDAD DE TRASLADOS arriba.
+// Ubicada junto a "CATEGORÍAS POR TIPO DE RODEO" (sección 6/18: ambas
+// controlan categoría, debe quedar visualmente claro que Zona Extrema tiene
+// PRECEDENCIA sobre esa matriz normal para las asociaciones incluidas).
+// ═════════════════════════════════════════════════════════════════════════
+function renderSeccionZonasExtremas(c) {
+    const soportado = soportaSchema3();
+    const activa = c.regla_zonas_extremas_activa === true;
+
+    if (!soportado) {
+        return `
+        <div class="config-seccion">
+            <h4>ZONAS EXTREMAS</h4>
+            <div class="zona-extrema-seccion deshabilitada">
+                <label style="display:flex;align-items:center;gap:8px;cursor:not-allowed;">
+                    <input type="checkbox" disabled title="Disponible después de aplicar la migración pendiente (053) y su despliegue de código asociado.">
+                    Aplicar regla especial de Zonas Extremas
+                </label>
+                <div class="alerta alerta-info" style="margin-top:8px;font-size:12px;">
+                    Sección preparada — no disponible todavía en esta pantalla. El motor y la
+                    validación ya soportan esta regla, pero falta aplicar una migración de base
+                    de datos pendiente (053) antes de poder crear una versión con esta regla
+                    activa desde aquí.
+                </div>
+            </div>
+        </div>`;
+    }
+
+    const ze = c.zonas_extremas || { asociaciones: [], categorias: [] };
+    const asociaciones = ze.asociaciones || [];
+    const categorias = ze.categorias || [];
+    const elegibles = categorias.filter(f => f.elegible).sort((a, b) => a.orden_preferencia - b.orden_preferencia);
+
+    const chips = asociaciones.map(a => `
+        <span class="chip">${sanitizar(a)} <button type="button" title="Quitar de Zonas Extremas" onclick="uiQuitarAsociacionZonaExtrema('${sanitizar(a).replace(/'/g, "\\'")}')">×</button></span>
+    `).join('');
+
+    const checksCategoria = CATEGORIAS_CONOCIDAS_UI.map(cat => {
+        const fila = categorias.find(f => f.categoria === cat);
+        return `<label><input type="checkbox" ${fila?.elegible ? 'checked' : ''} onchange="uiToggleCategoriaZonaExtrema('${cat}', this.checked)"> ${cat}</label>`;
+    }).join('');
+
+    const ordenHtml = elegibles.map((f, i) => `
+        <div class="fila-categoria">
+            <span class="nombre">${i + 1}. Categoría ${f.categoria}</span>
+            <button type="button" class="btn btn-outline btn-flecha" ${i === 0 ? 'disabled' : ''} onclick="uiMoverCategoriaZonaExtrema('${f.categoria}','arriba')">↑</button>
+            <button type="button" class="btn btn-outline btn-flecha" ${i === elegibles.length - 1 ? 'disabled' : ''} onclick="uiMoverCategoriaZonaExtrema('${f.categoria}','abajo')">↓</button>
+        </div>`).join('');
+
+    return `
+    <div class="config-seccion">
+        <h4>ZONAS EXTREMAS <span style="font-weight:400;font-size:12px;">(excepción de categoría por asociación)</span></h4>
+        <div class="zona-extrema-seccion">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:4px;">
+                <input type="checkbox" ${activa ? 'checked' : ''} onchange="uiToggleZonasExtremasActiva(this.checked)">
+                Aplicar regla especial de Zonas Extremas
+            </label>
+            <div class="copy-precedencia">
+                Para las asociaciones incluidas aquí, esta prioridad de categorías reemplaza
+                la configuración por tipo de rodeo ("Categorías por tipo de rodeo" más abajo) —
+                es una <strong>excepción</strong>, no una regla adicional.
+            </div>
+            ${activa ? `
+            <div style="margin-top:10px;">
+                <div style="font-size:13px;font-weight:600;margin-bottom:6px;">ASOCIACIONES INCLUIDAS</div>
+                <div class="chips-wrap">${chips || '<span class="texto-gris" style="font-size:12px;">Sin asociaciones incluidas</span>'}</div>
+                ${mostrandoSelectorAsociacion ? `
+                <div class="selector-agregar">
+                    <select class="form-control" id="select-agregar-asociacion" style="max-width:280px;" onchange="uiAgregarAsociacionZonaExtrema(this.value)">
+                        <option value="">Seleccionar asociación...</option>
+                        ${(asociacionesExistentesCache || []).filter(a => !asociaciones.includes(a)).map(a => `<option value="${sanitizar(a)}">${sanitizar(a)}</option>`).join('')}
+                    </select>
+                    <button type="button" class="btn btn-secundario btn-pequeño" onclick="mostrandoSelectorAsociacion=false; renderEditor();">Cancelar</button>
+                </div>` : `
+                <button type="button" class="btn btn-outline btn-agregar-chip" onclick="uiAbrirSelectorAsociacion()">+ Agregar asociación</button>`}
+
+                <div style="font-size:13px;font-weight:600;margin:16px 0 6px;">CATEGORÍAS AUTOMÁTICAS Y PRIORIDAD</div>
+                <div class="matriz-checks">${checksCategoria}</div>
+                ${ordenHtml || '<p class="texto-gris" style="font-size:12px;">Sin categorías elegibles</p>'}
+                <div class="form-hint" style="margin-top:6px;">
+                    Los jurados de categoría A no serán propuestos automáticamente mientras A
+                    esté deshabilitada, pero podrán seleccionarse manualmente con advertencia
+                    desde "Modificar jurado".
+                </div>
+            </div>` : ''}
+        </div>
+    </div>`;
+}
+
+// Activar/desactivar — delega en los helpers puros (mismos ya testeados en
+// configuracionDesignacionHelpers.test.js). Promueve el DRAFT a schema_
+// version=3 al activar (sección 2 del pedido de UI) — nunca modifica la
+// versión base, conserva TODAS las reglas que ya tenía el draft. Al
+// desactivar, NO vuelve a schema_version=2/1 (decisión documentada, sección
+// 3/35/36) y CONSERVA asociaciones/categorías en memoria (preferencia UX
+// explícita — reactivar más tarde no pierde lo ya configurado).
+function uiToggleZonasExtremasActiva(activa) {
+    draft.configuracion = activa
+        ? activarZonasExtremas(draft.configuracion, defaultZonasExtremas())
+        : desactivarZonasExtremas(draft.configuracion);
+    renderEditor();
+}
+async function uiAbrirSelectorAsociacion() {
+    try {
+        await cargarAsociacionesExistentes();
+    } catch (err) {
+        mostrarError(err);
+        return;
+    }
+    mostrandoSelectorAsociacion = true;
+    renderEditor();
+}
+function uiAgregarAsociacionZonaExtrema(valor) {
+    if (!valor) return;
+    const r = agregarAsociacionZonaExtrema(draft.configuracion, valor);
+    if (!r.agregada) { mostrarToast(r.error || 'No se pudo agregar', 'error'); return; }
+    draft.configuracion = r.configuracion;
+    mostrandoSelectorAsociacion = false;
+    renderEditor();
+}
+function uiQuitarAsociacionZonaExtrema(asociacion) {
+    draft.configuracion = quitarAsociacionZonaExtrema(draft.configuracion, asociacion);
+    renderEditor();
+}
+function uiToggleCategoriaZonaExtrema(categoria, marcar) {
+    const filas = draft.configuracion.zonas_extremas.categorias;
+    const elegiblesActuales = filas.filter(f => f.elegible).length;
+    if (!marcar && elegiblesActuales <= 1) {
+        mostrarToast('Zonas Extremas debe tener al menos 1 categoría elegible mientras la regla esté activa', 'error');
+        renderEditor();
+        return;
+    }
+    draft.configuracion.zonas_extremas.categorias = marcar
+        ? activarCategoria(filas, categoria)
+        : desactivarCategoria(filas, categoria);
+    renderEditor();
+}
+function uiMoverCategoriaZonaExtrema(categoria, direccion) {
+    draft.configuracion.zonas_extremas.categorias = moverCategoria(draft.configuracion.zonas_extremas.categorias, categoria, direccion);
+    renderEditor();
+}
+
 function renderEditor() {
     const c = draft.configuracion;
     const cuerpo = document.getElementById('editor-cuerpo');
@@ -589,8 +809,17 @@ function renderEditor() {
 
         <div class="divider"></div>
 
+        ${renderSeccionZonasExtremas(c)}
+
+        <div class="divider"></div>
+
         <div class="config-seccion">
             <h4>CATEGORÍAS POR TIPO DE RODEO</h4>
+            <div class="form-hint" style="margin-bottom:10px;">
+                Esta matriz se usa para rodeos normales. Si la asociación organizadora
+                pertenece a Zonas Extremas (arriba), se utiliza la prioridad especial
+                configurada ahí en su lugar.
+            </div>
             ${matrizHtml}
         </div>
 

@@ -159,9 +159,13 @@ describe('TEST E: versión inexistente por ID', () => {
 // SCHEMA_VERSIONES_SOPORTADAS). Lo que sigue siendo inválido es cualquier
 // schema_version FUERA de [1, 2] — ej. 3, todavía inexistente.
 describe('TEST F: schema_version no soportado — inválida, nunca fallback silencioso', () => {
-    test('CONFIGURACION_DESIGNACION_INVALIDA si schema_version es 3 (no soportado)', async () => {
+    // 4 (no 3): la mejora "Zonas Extremas" volvió a schema_version=3 un
+    // valor SOPORTADO (mismo tipo de actualización que ya ocurrió acá
+    // cuando 2 se volvió soportado con "Equidad de Traslados") — 4 sigue
+    // siendo un ejemplo válido de "schema_version desconocido".
+    test('CONFIGURACION_DESIGNACION_INVALIDA si schema_version es 4 (no soportado)', async () => {
         mockSupabaseRespuestas({
-            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 3 }], error: null },
+            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 4 }], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
@@ -229,26 +233,35 @@ describe('TEST I: distancia inválida — inválida', () => {
 
 // TEST J
 describe('TEST J: cantidad fija de consultas — sin N+1', () => {
-    test('cargarConfiguracionDesignacionActiva hace exactamente 3 llamadas a supabase.from(), sin importar el tamaño de la matriz/criterios', async () => {
+    // 5 (no 3): la mejora "Zonas Extremas" agrega 2 queries fijas nuevas
+    // (sus 2 tablas propias) — mismo tipo de actualización que ya ocurrió
+    // acá cuando "Equidad de Traslados" no agregó ninguna consulta nueva
+    // (reutilizó las columnas ya traídas por configuracion_designacion_
+    // versiones), pero Zonas Extremas SÍ necesita 2 tablas hijas nuevas,
+    // igual que orden_criterios/matriz — siguen siendo FIJAS, nunca por
+    // criterio/categoría/asociación (sin importar su tamaño).
+    test('cargarConfiguracionDesignacionActiva hace exactamente 5 llamadas a supabase.from(), sin importar el tamaño de la matriz/criterios/zonas extremas', async () => {
         mockSupabaseRespuestas({
             configuracion_designacion_versiones: { data: [VERSION_V1], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
         await cargarConfiguracionDesignacionActiva();
-        expect(supabase.from).toHaveBeenCalledTimes(3);
+        expect(supabase.from).toHaveBeenCalledTimes(5);
         expect(supabase.from.mock.calls.map(c => c[0]).sort()).toEqual([
-            'configuracion_designacion_matriz', 'configuracion_designacion_orden_criterios', 'configuracion_designacion_versiones'
+            'configuracion_designacion_matriz', 'configuracion_designacion_orden_criterios',
+            'configuracion_designacion_versiones',
+            'configuracion_designacion_zona_extrema_categorias', 'configuracion_designacion_zonas_extremas'
         ]);
     });
-    test('cargarConfiguracionDesignacionPorId también hace exactamente 3 llamadas', async () => {
+    test('cargarConfiguracionDesignacionPorId también hace exactamente 5 llamadas', async () => {
         mockSupabaseRespuestas({
             configuracion_designacion_versiones: { data: [VERSION_V1], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
         await cargarConfiguracionDesignacionPorId('v1-uuid');
-        expect(supabase.from).toHaveBeenCalledTimes(3);
+        expect(supabase.from).toHaveBeenCalledTimes(5);
     });
 });
 
@@ -370,6 +383,99 @@ describe('ESTADO 2/3 — crearVersionDesignacion despacha a la RPC correcta seg�
         expect(supabase.rpc.mock.calls[0][0]).toBe('crear_configuracion_designacion_version_v2');
         expect(supabase.rpc.mock.calls[0][1].p_regla_equidad_traslados_activa).toBe(false);
         expect(supabase.rpc.mock.calls[0][1].p_umbral_lejania_km).toBeNull();
+    });
+
+    // TEST 43 (pedido de UI "Zonas Extremas"): POST schema3 -> objeto
+    // completo llega al repository -> RPC v3 con los 15 parámetros,
+    // incluyendo asociaciones/categorías de Zonas Extremas.
+    test('schema_version=3 con Zonas Extremas activa llama EXCLUSIVAMENTE a la RPC v3, con TODOS los parámetros (heredados de schema1/2 + zonas extremas)', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-nueva-v3', numero_version: 8 }], error: null });
+        const configuracion = {
+            ...construirConfiguracionDefaultV1(),
+            schema_version: 3,
+            regla_equidad_traslados_activa: true, umbral_lejania_km: 350,
+            regla_zonas_extremas_activa: true,
+            zonas_extremas: {
+                asociaciones: ['ARICA Y TARAPACA', 'NORTE GRANDE', 'MAGALLANES', 'AYSEN', 'CUYO'],
+                categorias: [
+                    { categoria: 'A', elegible: false, orden_preferencia: null },
+                    { categoria: 'B', elegible: true, orden_preferencia: 2 },
+                    { categoria: 'C', elegible: true, orden_preferencia: 1 }
+                ]
+            },
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        };
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: 'v3 zonas extremas', creadoPor: 'admin-3' });
+
+        expect(resultado).toEqual({ id: 'v-nueva-v3', numero_version: 8 });
+        expect(supabase.rpc).toHaveBeenCalledTimes(1);
+        const [nombreRpc, params] = supabase.rpc.mock.calls[0];
+        expect(nombreRpc).toBe('crear_configuracion_designacion_version_v3'); // RPC NUEVA, nunca legacy/v2
+        expect(Object.keys(params).sort()).toEqual([
+            'p_creado_por', 'p_descripcion', 'p_distancia_maxima_km', 'p_matriz', 'p_orden_criterios',
+            'p_regla_asociacion_organizadora_activa', 'p_regla_distancia_maxima_activa',
+            'p_regla_equidad_traslados_activa', 'p_regla_finde_consecutivo_activa',
+            'p_regla_no_repetir_asociacion_activa', 'p_regla_un_rodeo_por_finde_activa',
+            'p_regla_zonas_extremas_activa', 'p_umbral_lejania_km',
+            'p_zonas_extremas_asociaciones', 'p_zonas_extremas_categorias'
+        ].sort());
+        expect(params.p_regla_zonas_extremas_activa).toBe(true);
+        expect(params.p_zonas_extremas_asociaciones).toEqual(['ARICA Y TARAPACA', 'NORTE GRANDE', 'MAGALLANES', 'AYSEN', 'CUYO']);
+        expect(params.p_zonas_extremas_categorias).toEqual([
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: true, orden_preferencia: 2 },
+            { categoria: 'C', elegible: true, orden_preferencia: 1 }
+        ]);
+        // Heredado de schema2 — EQUIDAD_TRASLADOS sigue viajando también.
+        expect(params.p_regla_equidad_traslados_activa).toBe(true);
+        expect(params.p_umbral_lejania_km).toBe(350);
+    });
+
+    test('schema_version=3 SIN Zonas Extremas activa también usa la RPC v3 — la elección es por schema_version, no por si la regla está activa', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-schema3-sin-ze', numero_version: 9 }], error: null });
+        const configuracion = { ...construirConfiguracionDefaultV1(), schema_version: 3 };
+        await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(supabase.rpc.mock.calls[0][0]).toBe('crear_configuracion_designacion_version_v3');
+        expect(supabase.rpc.mock.calls[0][1].p_regla_zonas_extremas_activa).toBe(false);
+        expect(supabase.rpc.mock.calls[0][1].p_zonas_extremas_asociaciones).toEqual([]);
+        expect(supabase.rpc.mock.calls[0][1].p_zonas_extremas_categorias).toEqual([]);
+    });
+});
+
+// TEST 43 (pedido de UI): GET versión schema3 -> asociaciones/categorías
+// completas reconstruidas desde las 2 tablas nuevas.
+describe('cargarConfiguracionDesignacionPorId — schema_version=3 reconstruye zonas_extremas completo', () => {
+    test('versión schema3 con Zonas Extremas activa -> configuracion.zonas_extremas trae asociaciones y categorías reales de BD', async () => {
+        const versionZE = {
+            ...VERSION_V1, id: 'v3-uuid', schema_version: 3, regla_zonas_extremas_activa: true,
+            regla_equidad_traslados_activa: false, umbral_lejania_km: null
+        };
+        mockSupabaseRespuestas({
+            configuracion_designacion_versiones: { data: [versionZE], error: null },
+            configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
+            configuracion_designacion_matriz: { data: MATRIZ_V1, error: null },
+            configuracion_designacion_zonas_extremas: {
+                data: [{ asociacion: 'MAGALLANES' }, { asociacion: 'AYSEN' }, { asociacion: 'CUYO' }], error: null
+            },
+            configuracion_designacion_zona_extrema_categorias: {
+                data: [
+                    { categoria: 'A', elegible: false, orden_preferencia: null },
+                    { categoria: 'B', elegible: true, orden_preferencia: 2 },
+                    { categoria: 'C', elegible: true, orden_preferencia: 1 }
+                ], error: null
+            }
+        });
+        const resultado = await cargarConfiguracionDesignacionPorId('v3-uuid');
+        expect(resultado.error).toBeUndefined();
+        expect(resultado.configuracion.regla_zonas_extremas_activa).toBe(true);
+        expect(resultado.configuracion.zonas_extremas.asociaciones).toEqual(['MAGALLANES', 'AYSEN', 'CUYO']);
+        expect(resultado.configuracion.zonas_extremas.categorias).toHaveLength(3);
+        expect(resultado.configuracion.zonas_extremas.categorias.find(f => f.categoria === 'C')).toEqual({ categoria: 'C', elegible: true, orden_preferencia: 1 });
     });
 });
 

@@ -13,23 +13,35 @@
 // están activas, sus parámetros, su orden y la matriz de categorías — nunca
 // código, expresiones ni SQL arbitrario (principio explícito del proyecto).
 // ═════════════════════════════════════════════════════════════════════════
+// normalizarAsociacion — services/asociaciones.js es JS puro (sin BD, solo
+// normalizarTexto de geografia.js) — importarlo acá no rompe la pureza de
+// este archivo. Se usa SOLO para deduplicar nombres de asociación de Zonas
+// Extremas (case/tilde/guion-insensible), nunca para decidir reglas.
+const { normalizarAsociacion } = require('./asociaciones');
 
 // ─── Constantes conocidas por schema_version ───────────────────────────────
 // Mejora "Equidad de Traslados" (ver informe): schema_version evoluciona de
 // forma ADITIVA y NUNCA retroactiva — schema_version=1 sigue significando
 // EXACTAMENTE lo mismo que antes de esta mejora (mismos 3 criterios, sin
 // campos de equidad de traslados); schema_version=2 agrega el criterio
-// EQUIDAD_TRASLADOS y sus 2 parámetros nuevos. Cualquier regla/criterio
-// nuevo futuro requiere evolucionar SCHEMA_VERSIONES_SOPORTADAS y estas
-// listas explícitamente — nunca aceptar un código desconocido.
+// EQUIDAD_TRASLADOS y sus 2 parámetros nuevos. Mejora "Zonas Extremas"
+// (migración 053, preparada — NO aplicada): agrega schema_version=3, que
+// admite TODO lo de schema_version=2 (EQUIDAD_TRASLADOS incluido — ambas
+// reglas son ortogonales, ver informe de diseño) MÁS la regla especial de
+// precedencia de categoría por asociación. Zonas Extremas NO agrega ningún
+// criterio de RANKING nuevo (no participa de ordenCriterios) — por eso
+// CRITERIOS_CONOCIDOS_POR_SCHEMA[3] es idéntico a [2]. Cualquier regla/
+// criterio nuevo futuro requiere evolucionar SCHEMA_VERSIONES_SOPORTADAS y
+// estas listas explícitamente — nunca aceptar un código desconocido.
 const SCHEMA_VERSION_SOPORTADO = 1; // se mantiene por compatibilidad — ver SCHEMA_VERSIONES_SOPORTADAS para la validación real
-const SCHEMA_VERSIONES_SOPORTADAS = [1, 2];
+const SCHEMA_VERSIONES_SOPORTADAS = [1, 2, 3];
 
 const CRITERIOS_CONOCIDOS = ['PRIORIDAD_CATEGORIA', 'MENOS_DESIGNACIONES_TEMPORADA', 'MENOR_DISTANCIA'];
-// schema_version=2 admite todos los de schema_version=1 MÁS EQUIDAD_TRASLADOS.
+// schema_version=2 y 3 admiten todos los de schema_version=1 MÁS EQUIDAD_TRASLADOS.
 const CRITERIOS_CONOCIDOS_POR_SCHEMA = {
     1: CRITERIOS_CONOCIDOS,
-    2: [...CRITERIOS_CONOCIDOS, 'EQUIDAD_TRASLADOS']
+    2: [...CRITERIOS_CONOCIDOS, 'EQUIDAD_TRASLADOS'],
+    3: [...CRITERIOS_CONOCIDOS, 'EQUIDAD_TRASLADOS']
 };
 function criteriosConocidosParaSchema(schemaVersion) {
     return CRITERIOS_CONOCIDOS_POR_SCHEMA[schemaVersion] || [];
@@ -51,6 +63,34 @@ const UMBRAL_LEJANIA_TECNICO_KM = 5000;
 
 const CLASIFICACIONES_CONOCIDAS = ['interclubes', 'provincial', 'interasociaciones', 'zonal', 'clasificatorio', 'nacional'];
 const CATEGORIAS_CONOCIDAS = ['A', 'B', 'C'];
+
+// ─── Zonas Extremas — DEFAULT inicial (sección 1/23 del pedido) ───────────
+// Lista de negocio INICIAL, NUNCA la única fuente de verdad permanente — el
+// motor/backend JAMÁS la lee directamente (ver motorPropuestaDesignacion.js:
+// resolverMatrizParaRodeo() solo lee configuracion.zonas_extremas, la
+// versión REAL persistida). Esta constante solo sirve como PAYLOAD por
+// defecto que el frontend puede ofrecer la primera vez que un administrador
+// activa la regla en un draft nuevo — igual rol que construirConfiguracion
+// DefaultV1() para el resto de la configuración.
+// "AYSÉN" (con tilde) — verificado por lectura directa en producción
+// (rodeos.asociacion/usuarios_pagados.asociacion, revisión previa a 053):
+// el valor REAL usado es "AYSÉN", nunca "AYSEN" sin tilde. No cambia el
+// comportamiento (normalizarAsociacion() ya trata ambos como equivalentes),
+// pero el default debe reflejar el nombre canónico real para que el chip
+// coincida visualmente con lo que el administrador ve en el resto del
+// sistema. "MAGALLANES" no tiene uso real todavía en los datos actuales
+// (0 filas en rodeos/usuarios_pagados) — se mantiene en la lista porque es
+// la lista de NEGOCIO pedida explícitamente (sección 1/23), no depende de
+// que ya exista actividad histórica con esa asociación.
+const ZONA_EXTREMA_ASOCIACIONES_DEFAULT = ['ARICA Y TARAPACA', 'NORTE GRANDE', 'MAGALLANES', 'AYSÉN', 'CUYO'];
+// C prioridad 1, B prioridad 2, A NO elegible automáticamente (sección 3/23) —
+// mismo modelo COMPLETO que una fila de `matriz` (las 3 categorías siempre
+// presentes explícitamente).
+const ZONA_EXTREMA_CATEGORIAS_DEFAULT = [
+    { categoria: 'A', elegible: false, orden_preferencia: null },
+    { categoria: 'B', elegible: true, orden_preferencia: 2 },
+    { categoria: 'C', elegible: true, orden_preferencia: 1 }
+];
 
 // Techo técnico anti-error-de-tipeo para distancia_maxima_km — NO es una
 // regla de negocio, es una protección contra escribir "6000" en vez de
@@ -238,6 +278,78 @@ function validarMatrizCompleta(matrizPorClasificacion) {
     return { valido: true };
 }
 
+// ─── Validación de Zonas Extremas (schema_version=3) ──────────────────────
+// `zonasExtremas`: { asociaciones: [string, ...], categorias: [{categoria,
+// elegible,orden_preferencia}, ...] }.
+//
+// GATE de la revisión final previa a 053 (corrección explícita): separa DOS
+// validaciones independientes, nunca mezcladas:
+//   A. ESTRUCTURAL — corre SIEMPRE que haya datos, sea la regla true o false.
+//      "Datos latentes con la regla OFF" (decisión UX confirmada: apagar el
+//      toggle CONSERVA lo ya configurado) puede existir, pero si existe debe
+//      ser un conjunto ESTRUCTURALMENTE válido — nunca basura persistida solo
+//      porque "total, no se está usando ahora mismo".
+//        - asociaciones (si el array no está vacío): cada una texto no vacío,
+//          sin duplicados NORMALIZADOS (normalizarAsociacion — misma función
+//          que ya usa el motor, nunca una comparación literal distinta).
+//        - categorias (si el array no está vacío): reutiliza
+//          validarMatrizClasificacion() — MISMO modelo exacto que una fila de
+//          `matriz` (3 categorías A/B/C siempre presentes, mínimo 1 elegible,
+//          orden_preferencia 1..N sin huecos entre elegibles, NULL en las no
+//          elegibles) — sin duplicar esa lógica (sección 15 del pedido
+//          original: "evitar duplicar"). Un conjunto de categorías, SI
+//          EXISTE, siempre debe ser una matriz completa y coherente — igual
+//          que la matriz normal nunca acepta "0 elegibles" ni "huecos en el
+//          orden" bajo ninguna circunstancia, esto tampoco depende de si
+//          regla_zonas_extremas_activa es true o false.
+//   B. MÍNIMOS — SOLO cuando `reglaActiva` es true (sección 5/6 de este
+//      gate): además de ser estructuralmente válida, debe haber >=1
+//      asociación Y >=1 categoría elegible para que la regla pueda
+//      funcionar de verdad. Con la regla OFF, 0 asociaciones/0 categorías
+//      (array vacío) sigue siendo perfectamente válido — apagar el toggle
+//      nunca obliga a vaciar lo ya configurado, pero tampoco lo exige.
+function validarZonasExtremas(reglaActiva, zonasExtremas) {
+    const z = zonasExtremas || {};
+    const asociaciones = z.asociaciones || [];
+    const categorias = z.categorias || [];
+
+    // A. ESTRUCTURAL — asociaciones (siempre, si hay alguna).
+    if (asociaciones.length > 0) {
+        if (asociaciones.some(a => typeof a !== 'string' || !a.trim())) {
+            return { valido: false, error: 'Zonas Extremas: cada asociación debe ser un texto no vacío' };
+        }
+        const normalizadas = new Set();
+        for (const a of asociaciones) {
+            const n = normalizarAsociacion(a);
+            if (normalizadas.has(n)) {
+                return { valido: false, error: `Zonas Extremas: asociación duplicada: ${a}` };
+            }
+            normalizadas.add(n);
+        }
+    }
+
+    // A. ESTRUCTURAL — categorías (siempre, si hay alguna). Un conjunto de
+    // categorías, si existe, SIEMPRE debe ser una matriz completa (3 filas,
+    // >=1 elegible, orden sin huecos) — validarMatrizClasificacion() ya
+    // exige exactamente eso, sin condicionarlo a `reglaActiva`.
+    if (categorias.length > 0) {
+        const rCategorias = validarMatrizClasificacion('ZONA_EXTREMA', categorias);
+        if (!rCategorias.valido) return rCategorias;
+    }
+
+    // B. MÍNIMOS — SOLO si la regla está activa.
+    if (reglaActiva) {
+        if (asociaciones.length === 0) {
+            return { valido: false, error: 'regla_zonas_extremas_activa está activa pero no hay ninguna asociación incluida (mínimo 1 requerida)' };
+        }
+        if (categorias.length === 0) {
+            return { valido: false, error: 'regla_zonas_extremas_activa está activa pero no tiene categorías configuradas (se requieren las 3: A, B, C)' };
+        }
+    }
+
+    return { valido: true };
+}
+
 // ─── Validación de la configuración COMPLETA ──────────────────────────────
 // Orquesta todas las validaciones anteriores sobre una configuración con
 // forma { schema_version, regla_distancia_maxima_activa, distancia_maxima_km,
@@ -308,6 +420,22 @@ function validarConfiguracion(configuracion) {
 
     const rMatriz = validarMatrizCompleta(c.matriz);
     if (!rMatriz.valido) return rMatriz;
+
+    // ── Zonas Extremas (schema_version=3) — mismo patrón exacto que equidad
+    // de traslados arriba: schema_version 1/2 NUNCA aceptan la regla activa
+    // (significado histórico intacto, ambas quedan exactamente igual que
+    // antes de esta mejora); el campo puede estar ausente/false/null para
+    // esos schemas (equivalente a "la regla no existe para ellos").
+    const reglaZonasActiva = c.regla_zonas_extremas_activa === true;
+    if (c.schema_version !== 3 && reglaZonasActiva) {
+        return { valido: false, error: 'regla_zonas_extremas_activa solo es válida desde schema_version=3 — schema_version 1/2 deben mantener su significado histórico exacto' };
+    }
+    if (c.regla_zonas_extremas_activa !== undefined && c.regla_zonas_extremas_activa !== null
+        && typeof c.regla_zonas_extremas_activa !== 'boolean') {
+        return { valido: false, error: 'regla_zonas_extremas_activa debe ser booleano' };
+    }
+    const rZonas = validarZonasExtremas(reglaZonasActiva, c.zonas_extremas);
+    if (!rZonas.valido) return rZonas;
 
     return { valido: true };
 }
@@ -453,7 +581,7 @@ function compararConfiguraciones(a, b) {
         'schema_version', 'regla_distancia_maxima_activa', 'distancia_maxima_km',
         'regla_no_repetir_asociacion_activa', 'regla_un_rodeo_por_finde_activa',
         'regla_finde_consecutivo_activa', 'regla_asociacion_organizadora_activa',
-        'regla_equidad_traslados_activa', 'umbral_lejania_km'
+        'regla_equidad_traslados_activa', 'umbral_lejania_km', 'regla_zonas_extremas_activa'
     ];
     for (const campo of camposEscalares) {
         if ((a || {})[campo] !== (b || {})[campo]) {
@@ -465,6 +593,14 @@ function compararConfiguraciones(a, b) {
     }
     if (JSON.stringify((a || {}).matriz) !== JSON.stringify((b || {}).matriz)) {
         cambios.push({ campo: 'matriz', anterior: (a || {}).matriz, nuevo: (b || {}).matriz });
+    }
+    // Zonas Extremas — bloque completo (asociaciones + categorías) como una
+    // unidad, mismo criterio que matriz/ordenCriterios arriba (sección 37
+    // del pedido: la UI de "diff al crear versión" arma su propio detalle
+    // +/- de asociaciones a partir de este bloque, no se sobrediseña acá un
+    // diff campo-a-campo de la lista).
+    if (JSON.stringify((a || {}).zonas_extremas) !== JSON.stringify((b || {}).zonas_extremas)) {
+        cambios.push({ campo: 'zonas_extremas', anterior: (a || {}).zonas_extremas, nuevo: (b || {}).zonas_extremas });
     }
     return { hayDiferencias: cambios.length > 0, cambios };
 }
@@ -487,8 +623,10 @@ function compararConfiguraciones(a, b) {
 // @param versionRow fila de configuracion_designacion_versiones
 // @param criteriosRows [{criterio_codigo, orden}, ...] — SOLO los activos (ausente = inactivo)
 // @param matrizRows [{clasificacion_codigo, categoria, elegible, orden_preferencia}, ...] — 18 filas
+// @param zonasExtremasAsocRows [{asociacion}, ...] — mejora Zonas Extremas (schema_version=3), opcional
+// @param zonasExtremasCatRows [{categoria, elegible, orden_preferencia}, ...] — 3 filas, opcional
 // @returns objeto configuracion (sin validar todavía — ver validarConfiguracion())
-function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRows) {
+function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRows, zonasExtremasAsocRows, zonasExtremasCatRows) {
     const matriz = {};
     for (const fila of (matrizRows || [])) {
         if (!matriz[fila.clasificacion_codigo]) matriz[fila.clasificacion_codigo] = [];
@@ -528,6 +666,24 @@ function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRow
         reconstruida.umbral_lejania_km = (umbralRaw === null || umbralRaw === undefined) ? null : Number(umbralRaw);
     }
 
+    // Zonas Extremas (schema_version=3, migración 053) — MISMO patrón exacto
+    // que equidad de traslados arriba: se agrega SOLO si versionRow trae la
+    // columna (antes de aplicar 053 no existe en absoluto) — nunca se finge
+    // un dato que la BD todavía no tiene, y las versiones schema_version=1/2
+    // ya existentes se reconstruyen byte a byte igual que hoy.
+    if (versionRow.regla_zonas_extremas_activa !== undefined) {
+        reconstruida.regla_zonas_extremas_activa = versionRow.regla_zonas_extremas_activa;
+        reconstruida.zonas_extremas = {
+            asociaciones: (zonasExtremasAsocRows || []).map(f => f.asociacion),
+            categorias: (zonasExtremasCatRows || []).map(f => ({
+                categoria: f.categoria,
+                elegible: f.elegible,
+                orden_preferencia: f.orden_preferencia === null || f.orden_preferencia === undefined
+                    ? null : Number(f.orden_preferencia)
+            }))
+        };
+    }
+
     return reconstruida;
 }
 
@@ -550,6 +706,18 @@ function aplanarMatriz(matrizPorClasificacion) {
         }
     }
     return filas;
+}
+
+// ─── Aplanar categorías de Zonas Extremas → filas planas para la RPC v3 ───
+// `categorias`: [{categoria, elegible, orden_preferencia}, ...] — sin
+// clasificacion_codigo (una sola matriz especial por versión).
+// @returns [{categoria, elegible, orden_preferencia}, ...] — 3 filas si está completa
+function aplanarZonaExtremaCategorias(categorias) {
+    return (categorias || []).map(f => ({
+        categoria: f.categoria,
+        elegible: !!f.elegible,
+        orden_preferencia: f.elegible ? f.orden_preferencia : null
+    }));
 }
 
 // ─── Resumen liviano para UI (Etapa 4) ────────────────────────────────────
@@ -593,6 +761,15 @@ function construirResumenParaUI(configuracion, meta) {
         resumen.regla_equidad_traslados_activa = c.regla_equidad_traslados_activa ?? null;
         resumen.umbral_lejania_km = c.umbral_lejania_km ?? null;
     }
+    // Zonas Extremas — sección 39 del pedido: contrato de API explícito,
+    // SOLO se agrega si la configuración de origen realmente trae el campo
+    // (schema_version=3) — mismo criterio que equidad de traslados arriba.
+    if (c.regla_zonas_extremas_activa !== undefined) {
+        resumen.regla_zonas_extremas_activa = c.regla_zonas_extremas_activa ?? null;
+        resumen.zonas_extremas = c.zonas_extremas
+            ? { asociaciones: c.zonas_extremas.asociaciones || [], categorias: c.zonas_extremas.categorias || [] }
+            : { asociaciones: [], categorias: [] };
+    }
     return resumen;
 }
 
@@ -611,9 +788,19 @@ function obtenerCapacidadesSoportadas() {
         schema_versions_soportadas: [...SCHEMA_VERSIONES_SOPORTADAS],
         criterios_soportados_por_schema: {
             1: [...CRITERIOS_CONOCIDOS_POR_SCHEMA[1]],
-            2: [...CRITERIOS_CONOCIDOS_POR_SCHEMA[2]]
+            2: [...CRITERIOS_CONOCIDOS_POR_SCHEMA[2]],
+            3: [...CRITERIOS_CONOCIDOS_POR_SCHEMA[3]]
         },
-        umbral_lejania_default_km: 350
+        umbral_lejania_default_km: 350,
+        // Zonas Extremas — mismo rol que umbral_lejania_default_km: payload
+        // por defecto que el frontend puede ofrecer al activar la regla por
+        // primera vez en un draft schema_version=3 (sección 6/23 del pedido)
+        // — nunca la fuente real que lee el motor (eso es SIEMPRE
+        // configuracion.zonas_extremas de la versión persistida).
+        zonas_extremas_default: {
+            asociaciones: [...ZONA_EXTREMA_ASOCIACIONES_DEFAULT],
+            categorias: ZONA_EXTREMA_CATEGORIAS_DEFAULT.map(f => ({ ...f }))
+        }
     };
 }
 
@@ -642,5 +829,10 @@ module.exports = {
     reconstruirConfiguracionDesdeFilas,
     aplanarMatriz,
     construirResumenParaUI,
-    obtenerCapacidadesSoportadas
+    obtenerCapacidadesSoportadas,
+    // Mejora "Zonas Extremas" (schema_version=3, migración 053 preparada).
+    ZONA_EXTREMA_ASOCIACIONES_DEFAULT,
+    ZONA_EXTREMA_CATEGORIAS_DEFAULT,
+    validarZonasExtremas,
+    aplanarZonaExtremaCategorias
 };

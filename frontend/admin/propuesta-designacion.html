@@ -935,7 +935,7 @@ function construirFilaPreviewDesdeResultado(r) {
         return {
             ...base, jurado_id_propuesto: jp.jurado_id, nombre_propuesto: jp.nombre,
             estado_revision: 'PENDIENTE',
-            explicacion_json: { jurado_propuesto: jp, top_candidatos: r.top_candidatos || [] },
+            explicacion_json: { jurado_propuesto: jp, top_candidatos: r.top_candidatos || [], zona_extrema: r.zona_extrema || null },
             metricas_json: { candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes },
             jurado_efectivo: {
                 id: jp.jurado_id, nombre: jp.nombre, categoria: jp.categoria, categoria_preferente: jp.categoria_preferente,
@@ -949,14 +949,16 @@ function construirFilaPreviewDesdeResultado(r) {
                 // Mejora "Equidad Visible de Designaciones" — mismos campos
                 // que ya trae jp (jurado_propuesto del motor), solo reestructurados.
                 equidad_designaciones: jp.equidad_designaciones ?? null,
-                historial_reciente: jp.historial_reciente ?? null
+                historial_reciente: jp.historial_reciente ?? null,
+                // Mejora "Zonas Extremas" — mismo campo que ya trae jp.
+                zona_extrema_explicacion: jp.zona_extrema_explicacion ?? null
             }
         };
     }
     if (r.estado === 'SIN_PROPUESTA') {
         return {
             ...base, jurado_id_propuesto: null, nombre_propuesto: null, estado_revision: 'SIN_PROPUESTA',
-            explicacion_json: { descartados: r.descartados || [] },
+            explicacion_json: { descartados: r.descartados || [], zona_extrema: r.zona_extrema || null },
             metricas_json: { candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes },
             jurado_efectivo: null
         };
@@ -1302,6 +1304,20 @@ function renderEquidadDesignaciones(j) {
 // 10/12/13/14/15). Máximo 4, más reciente primero — MISMA fuente/formato
 // que el popover de jurado de Rodeos (renderContenidoPopoverJurado en
 // rodeos.html), nunca una segunda definición de historial.
+// Mejora "Zonas Extremas" — indicador de FILA (no de jurado, sección 24/25
+// del pedido de UI): aplica igual sin importar quién termine seleccionado.
+// NUNCA oculta la clasificación real del rodeo (ya visible más arriba en la
+// tarjeta) — solo explica que, para categoría, se usó la excepción.
+function renderZonaExtrema(d) {
+    const ze = d.explicacion_json?.zona_extrema;
+    if (!ze) return '';
+    return `<div style="margin-top:6px;">
+        <span style="font-size:12px; font-weight:700; color:#8a5a00; background:#fff3cd; border:1px solid #ffe08a; border-radius:6px; padding:4px 10px; display:inline-block;">
+            ⚠ ZONA EXTREMA · Asociación: ${sanitizar(ze.asociacion)} · Prioridad de categoría: ${sanitizar((ze.prioridad_categorias || []).join(' → '))}
+        </span>
+    </div>`;
+}
+
 function renderHistorialReciente(j) {
     const hist = j?.historial_reciente;
     if (!hist) return ''; // no calculado para esta fila (ej. propuesta antigua, o corrida sin ganadores)
@@ -1377,6 +1393,13 @@ function renderFilaDetallePropuesta(d, modo) {
         if (j?.equidad_traslados_explicacion) {
             detallesExtra += `<div class="check-linea" style="color:var(--gris); margin-top:4px;">↔ Equidad de traslados: "${sanitizar(j.equidad_traslados_explicacion)}"</div>`;
         }
+        // Zona Extrema — narrativa dinámica de "¿Por qué ganó?" (sección 26
+        // del pedido de UI): nunca "Interasociaciones prioriza A" cuando en
+        // realidad Zona Extrema sustituyó esa matriz — se explica la
+        // excepción real que decidió.
+        if (j?.zona_extrema_explicacion) {
+            detallesExtra += `<div class="check-linea" style="color:var(--gris); margin-top:4px;">⚠ ${sanitizar(j.zona_extrema_explicacion)}</div>`;
+        }
     }
     if (d.explicacion_json?.top_candidatos?.length > 0) {
         detallesExtra += `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:14px; color:var(--gris);">¿Por qué ganó? — Top ${d.explicacion_json.top_candidatos.length} candidatos finales</summary>${renderTopCandidatos(d.explicacion_json.top_candidatos)}</details>`;
@@ -1415,6 +1438,7 @@ function renderFilaDetallePropuesta(d, modo) {
                     <strong>Clasificación:</strong> ${sanitizar(r.clasificacion_nombre || '—')}
                     ${r.comuna_nombre ? '<br><strong>Comuna:</strong> ' + sanitizar(r.comuna_nombre) : ''}
                 </div>
+                ${renderZonaExtrema(d)}
             </div>
             <div style="flex:1 1 220px;">
                 <div style="font-size:13px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Propuesta</div>
@@ -1509,7 +1533,13 @@ const FILTROS_MODAL_DEFECTO = {
 let modalCandidatos = null; // { modo, id, candidatosValidos, candidatosDescartados, filtros }
 
 function abrirModalCandidatos(modo, id) {
-    modalCandidatos = { modo, id, candidatosValidos: [], candidatosDescartados: [], filtros: { ...FILTROS_MODAL_DEFECTO } };
+    // Mejora "Zonas Extremas" — disponible SINCRÓNICAMENTE desde la fila ya
+    // cargada (explicacion_json.zona_extrema, mismo dato que ya alimenta el
+    // badge de la tarjeta PROPUESTA) — no hace falta esperar la respuesta de
+    // candidatos para saber si este rodeo es zona extrema (sección 27/28).
+    const filaActual = filaPorModoId(modo, id);
+    const zonaExtrema = filaActual?.explicacion_json?.zona_extrema || null;
+    modalCandidatos = { modo, id, candidatosValidos: [], candidatosDescartados: [], filtros: { ...FILTROS_MODAL_DEFECTO }, zonaExtrema };
     document.getElementById('modal-candidatos-overlay').classList.remove('oculto');
     document.getElementById('mc-filtros-cont').innerHTML = '';
     document.getElementById('mc-checks').innerHTML = '';
@@ -1543,10 +1573,19 @@ function renderModalContexto() {
         ? `Jurado actual: <strong>${sanitizar(nombreActual)}</strong>${huboCambio ? ' <span style="color:var(--gris);">(motor propuso: ' + sanitizar(fila.nombre_propuesto) + ')</span>' : ''}`
         : `<span style="color:#aaa;">Sin jurado designado todavía</span>`;
 
+    // Mejora "Zonas Extremas" — cabecera compacta (sección 27 del pedido de
+    // UI): "⚠ ZONA EXTREMA · Prioridad automática C → B", sin agrandar el
+    // modal (una línea más, mismo estilo que el resto de la cabecera).
+    const ze = modalCandidatos.zonaExtrema;
+    const lineaZonaExtrema = ze
+        ? `<div style="margin-top:4px; font-size:12px; font-weight:700; color:#8a5a00;">⚠ ZONA EXTREMA · Prioridad automática ${sanitizar((ze.prioridad_categorias || []).join(' → '))}</div>`
+        : '';
+
     document.getElementById('mc-contexto').innerHTML = `
         <div class="mc-rodeo-nombre">${sanitizar(r.club || '—')}</div>
         ${r.fecha ? formatFecha(r.fecha) : '—'} · ${sanitizar(r.tipo_rodeo_nombre || '—')} · ${sanitizar(r.clasificacion_nombre || '—')} · ${sanitizar(r.asociacion || '—')}${r.comuna_nombre ? ' · ' + sanitizar(r.comuna_nombre) : ''}
-        <div class="mc-actual">${lineaActual}</div>`;
+        <div class="mc-actual">${lineaActual}</div>
+        ${lineaZonaExtrema}`;
 }
 
 async function cargarModalCandidatos() {
@@ -1637,15 +1676,31 @@ function aplicarFiltrosModal() {
 
 // ✓/⚠ por cada causa — reutiliza ETIQUETAS_CAUSA (mismas etiquetas que el
 // resto de la pantalla), nunca texto de reglas inventado en el frontend.
+// Mejora "Zonas Extremas" (sección 4/17/28 del pedido): CATEGORIA_
+// INCOMPATIBLE reutiliza la MISMA causa ya existente (mismo mecanismo de
+// advertencia + confirmación manual, sin causa nueva) — pero cuando este
+// rodeo es zona extrema, el copy es específico ("Categoría X no habilitada
+// automáticamente para Zona Extrema"), nunca el genérico "categoría
+// incompatible con este tipo de rodeo" (que describiría la matriz normal,
+// no la que realmente decidió).
 function renderMotivosCandidato(c) {
     if (!c.causas || c.causas.length === 0) {
         return `<div class="mc-reglas"><span class="check-linea ok">✓ Cumple todas las reglas duras</span></div>`;
     }
-    return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${etiquetaCausaModal(cod)}</div>`).join('')}</div>`;
+    const lineaCausa = (cod) => {
+        if (cod === 'CATEGORIA_INCOMPATIBLE' && modalCandidatos?.zonaExtrema) {
+            return `Categoría ${sanitizar(c.categoria || '—')} no habilitada automáticamente para Zona Extrema`;
+        }
+        return etiquetaCausaModal(cod);
+    };
+    return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${lineaCausa(cod)}</div>`).join('')}</div>`;
 }
 
 // DISTANCIA_EXCEDIDA usa el km real de la configuración de ESTE modal (su
-// propio preview/borrador, Etapa 4 sección 43) — el resto reutiliza ETIQUETAS_CAUSA tal cual.
+// propio preview/borrador, Etapa 4 sección 43) — el resto reutiliza
+// ETIQUETAS_CAUSA tal cual. CATEGORIA_INCOMPATIBLE con Zona Extrema activa
+// tiene copy específico por categoría — ver renderMotivosCandidato(), que
+// intercepta ese caso antes de llegar acá.
 function etiquetaCausaModal(codigo, modo) {
     if (codigo === 'DISTANCIA_EXCEDIDA') return etiquetaDistanciaExcedida(modo || modalCandidatos?.modo);
     return ETIQUETAS_CAUSA[codigo] || codigo;

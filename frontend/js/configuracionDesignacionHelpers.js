@@ -155,6 +155,106 @@ function desactivarEquidadTraslados(configuracion) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// ZONAS EXTREMAS (schema_version=3, migración 053 preparada — NO aplicada)
+// — activar/desactivar (mismo patrón exacto que EQUIDAD DE TRASLADOS arriba:
+// promueve schema_version, nunca modifica la versión base, nunca "baja" el
+// schema al desactivar). Trabaja sobre la configuración COMPLETA porque
+// gestiona schema_version + regla_zonas_extremas_activa + zonas_extremas
+// juntos, de forma coherente.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Activa Zonas Extremas — PROMUEVE el draft a schema_version=3 (sección
+// 2 del pedido de UI): nunca modifica la versión base, solo la copia en
+// memoria. Conserva TODAS las reglas que ya tenía el draft (distancia,
+// EQUIDAD_TRASLADOS, orden de criterios, matriz normal) — no las toca.
+//
+// `defaultZonaExtrema` — { asociaciones, categorias } — SIEMPRE viene de
+// `capacidades.zonas_extremas_default` (backend, GET /activa o /defaults),
+// NUNCA hardcodeado acá (sección 4/5 del pedido: única fuente backend, no
+// duplicar la lista en el HTML). Si el draft YA tenía datos propios de
+// Zonas Extremas (copiado de una versión schema3 histórica, o el
+// administrador ya los había cargado antes en este mismo draft), se
+// CONSERVAN intactos — nunca se sobrescriben con el default (sección 8).
+function activarZonasExtremas(configuracion, defaultZonaExtrema) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.schema_version = 3;
+    c.regla_zonas_extremas_activa = true;
+    const yaTeniaDatos = c.zonas_extremas && Array.isArray(c.zonas_extremas.asociaciones) && c.zonas_extremas.asociaciones.length > 0;
+    if (!yaTeniaDatos) {
+        c.zonas_extremas = {
+            asociaciones: [...((defaultZonaExtrema && defaultZonaExtrema.asociaciones) || [])],
+            categorias: ((defaultZonaExtrema && defaultZonaExtrema.categorias) || []).map(f => ({ ...f }))
+        };
+    }
+    return c;
+}
+
+// ─── Desactiva Zonas Extremas (sección 3/35/36 del pedido — GATE ya
+// resuelto y confirmado compatible con la migración 053 preparada: la RPC
+// v3 inserta asociaciones/categorías SIEMPRE que vengan en el payload,
+// activa o no la regla, y la validación estructural solo exige mínimos
+// cuando regla_zonas_extremas_activa=true).
+//
+// DECISIÓN DOCUMENTADA (mismo patrón que desactivarEquidadTraslados): NO se
+// revierte schema_version a 2/1 automáticamente — el draft queda en
+// schema_version=3 (sin la regla activa) hasta que el administrador la
+// vuelva a activar o guarde así. Y — a diferencia de equidad de traslados —
+// NO se limpian asociaciones/categorías: se CONSERVAN in-memory en el draft
+// para que reactivar el toggle más tarde no pierda lo ya configurado
+// (preferencia UX explícita del pedido, sección 36). El backend simplemente
+// las ignora funcionalmente mientras la regla esté en false.
+function desactivarZonasExtremas(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.regla_zonas_extremas_activa = false;
+    return c;
+}
+
+// ─── Normalización de asociación PARA LA UI (feedback inmediato de ────────
+// duplicados) — réplica del algoritmo de services/asociaciones.js
+// (normalizarAsociacion: trim, minúsculas, sin tildes, guiones→espacio,
+// espacios colapsados, sin el prefijo "asociación ") — el backend sigue
+// siendo la autoridad final (sección 12 del pedido: "reutilizar
+// normalizarAsociacion(); backend sigue siendo autoridad final").
+function _normalizarAsociacionUI(str) {
+    let n = (str || '').toString().trim().toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // sin tildes (marcas diacríticas combinantes)
+        .replace(/-/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    n = n.replace(/^asociacion\s+/, '');
+    return n.trim();
+}
+
+// ─── Agrega una asociación al draft (sección 10) — idempotente/sin ────────
+// duplicados (comparación NORMALIZADA, sección 12). NO modifica ningún
+// rodeo ni el catálogo de asociaciones — solo el array en memoria.
+// @returns { configuracion, agregada:boolean, error? }
+function agregarAsociacionZonaExtrema(configuracion, asociacion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    const texto = (asociacion || '').trim();
+    if (!texto) return { configuracion: c, agregada: false, error: 'Asociación vacía' };
+    const actuales = (c.zonas_extremas && c.zonas_extremas.asociaciones) || [];
+    const normTexto = _normalizarAsociacionUI(texto);
+    if (actuales.some(a => _normalizarAsociacionUI(a) === normTexto)) {
+        return { configuracion: c, agregada: false, error: 'Esa asociación ya está incluida' };
+    }
+    c.zonas_extremas = c.zonas_extremas || { asociaciones: [], categorias: [] };
+    c.zonas_extremas.asociaciones = [...actuales, texto];
+    return { configuracion: c, agregada: true };
+}
+
+// ─── Quita una asociación del draft (sección 11) — SOLO del array en ──────
+// memoria de esta configuración; nunca borra la asociación real ni toca
+// ningún rodeo.
+function quitarAsociacionZonaExtrema(configuracion, asociacion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    const actuales = (c.zonas_extremas && c.zonas_extremas.asociaciones) || [];
+    c.zonas_extremas = c.zonas_extremas || { asociaciones: [], categorias: [] };
+    c.zonas_extremas.asociaciones = actuales.filter(a => a !== asociacion);
+    return c;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // MATRIZ DE CATEGORÍAS (Nivel 2) — trabaja sobre `filasClasificacion`: array
 // de EXACTAMENTE 3 filas { categoria, elegible, orden_preferencia } (A/B/C)
 // para UNA clasificación.
@@ -236,16 +336,20 @@ function validarDraft(configuracion) {
         }
     }
 
-    // ── Equidad de traslados (schema_version=2) — revisión de cierre, sección
-    // 12: réplica de UX de la validación de autoridad en el backend
-    // (configuracionDesignacion.js validarConfiguracion()). Casos A-G:
+    // ── Equidad de traslados (schema_version 2 o 3) — revisión de cierre,
+    // sección 12: réplica de UX de la validación de autoridad en el backend
+    // (configuracionDesignacion.js validarConfiguracion()). Casos A-G.
+    // Mejora "Zonas Extremas": schema_version=3 admite TODO lo de schema
+    // 2 (EQUIDAD_TRASLADOS incluida, ambas reglas ortogonales) — solo
+    // schema_version=1 sigue rechazándola (significado histórico intacto).
     const reglaEquidadActiva = c.regla_equidad_traslados_activa === true;
     const criterioEquidad = ordenCriterios.find(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS');
-    if (c.schema_version !== 2 && reglaEquidadActiva) {
-        return { valido: false, error: 'La equidad de traslados solo es válida en schema_version=2' }; // A
+    const schemaAdmiteEquidad = c.schema_version === 2 || c.schema_version === 3;
+    if (!schemaAdmiteEquidad && reglaEquidadActiva) {
+        return { valido: false, error: 'La equidad de traslados solo es válida desde schema_version=2' }; // A
     }
-    if (c.schema_version !== 2 && criterioEquidad) {
-        return { valido: false, error: 'EQUIDAD_TRASLADOS solo es válido en schema_version=2' }; // B
+    if (!schemaAdmiteEquidad && criterioEquidad) {
+        return { valido: false, error: 'EQUIDAD_TRASLADOS solo es válido desde schema_version=2' }; // B
     }
     if (reglaEquidadActiva) {
         const n = Number(c.umbral_lejania_km);
@@ -275,6 +379,30 @@ function validarDraft(configuracion) {
         const elegibles = filas.filter(f => f.elegible);
         if (elegibles.length === 0) {
             return { valido: false, error: `[${codigo}] debe tener al menos 1 categoría elegible` };
+        }
+    }
+
+    // ── Zonas Extremas (schema_version=3) — réplica de UX de validarZonas
+    // Extremas() en el backend (configuracionDesignacion.js). SOLO se exige
+    // algo cuando la regla está ACTIVA — apagar el toggle nunca obliga a
+    // vaciar lo ya configurado (sección 16/26/36 del pedido de UI).
+    const reglaZonasActiva = c.regla_zonas_extremas_activa === true;
+    if (c.schema_version !== 3 && reglaZonasActiva) {
+        return { valido: false, error: 'Zonas Extremas solo es válida en schema_version=3' };
+    }
+    if (reglaZonasActiva) {
+        const ze = c.zonas_extremas || {};
+        const asociaciones = ze.asociaciones || [];
+        if (asociaciones.length === 0) {
+            return { valido: false, error: 'Zonas Extremas está activa pero no hay ninguna asociación incluida' };
+        }
+        const categorias = ze.categorias || [];
+        if (categorias.length !== CATEGORIAS_CONOCIDAS_UI.length) {
+            return { valido: false, error: 'Zonas Extremas: debe haber las 3 categorías (A, B, C)' };
+        }
+        const elegiblesZE = categorias.filter(f => f.elegible);
+        if (elegiblesZE.length === 0) {
+            return { valido: false, error: 'Zonas Extremas está activa pero ninguna categoría está habilitada' };
         }
     }
 
@@ -360,6 +488,26 @@ function construirDiffParaUI(configBase, configNueva) {
         }
     });
 
+    // Zonas Extremas (schema_version=3) — mismas 3 líneas conceptuales del
+    // pedido (sección 21): activación, asociaciones incluidas, prioridad de
+    // categorías. Mismo estilo antes/después PLANO (lista completa, no un
+    // delta +/-) que ya usa el resto de esta función (Prioridades/matriz por
+    // clasificación arriba) — consistencia con el patrón ya establecido.
+    const zeActivaA = a.regla_zonas_extremas_activa === true, zeActivaB = b.regla_zonas_extremas_activa === true;
+    if (zeActivaA !== zeActivaB) {
+        cambios.push({ etiqueta: 'Zonas Extremas', antes: zeActivaA ? 'Activada' : 'Desactivada', despues: zeActivaB ? 'Activada' : 'Desactivada' });
+    }
+    const asocA = ((a.zonas_extremas && a.zonas_extremas.asociaciones) || []).slice().sort();
+    const asocB = ((b.zonas_extremas && b.zonas_extremas.asociaciones) || []).slice().sort();
+    if (asocA.join('|') !== asocB.join('|')) {
+        cambios.push({ etiqueta: 'Asociaciones Zona Extrema', antes: asocA.join(', ') || '—', despues: asocB.join(', ') || '—' });
+    }
+    const prioridadZeA = textoOrdenCategorias((a.zonas_extremas && a.zonas_extremas.categorias) || []);
+    const prioridadZeB = textoOrdenCategorias((b.zonas_extremas && b.zonas_extremas.categorias) || []);
+    if (prioridadZeA !== prioridadZeB) {
+        cambios.push({ etiqueta: 'Prioridad Zona Extrema', antes: prioridadZeA || '—', despues: prioridadZeB || '—' });
+    }
+
     return { hayDiferencias: cambios.length > 0, cambios };
 }
 
@@ -372,7 +520,11 @@ const _configuracionDesignacionHelpersExports = {
     activarCriterio, desactivarCriterio, moverCriterio,
     activarEquidadTraslados, desactivarEquidadTraslados,
     activarCategoria, desactivarCategoria, moverCategoria,
-    validarDraft, construirDiffParaUI
+    validarDraft, construirDiffParaUI,
+    // Mejora "Zonas Extremas" (schema_version=3).
+    activarZonasExtremas, desactivarZonasExtremas,
+    agregarAsociacionZonaExtrema, quitarAsociacionZonaExtrema,
+    _normalizarAsociacionUI
 };
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = _configuracionDesignacionHelpersExports;
