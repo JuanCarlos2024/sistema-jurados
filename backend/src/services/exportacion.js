@@ -571,18 +571,23 @@ async function exportarHistorialHojaVida(perfil, filas, resumen, res) {
     ws.addRow([]);
 
     // Tabla detallada de rodeos (conserva Club y Tipo de Rodeo)
-    const headerRow = ws.addRow(['Fecha', 'Asociación', 'Club', 'Tipo de Rodeo', 'Cantidad de Situaciones', 'Nota']);
+    const headerRow = ws.addRow(['Fecha', 'Asociación', 'Club', 'Tipo de Rodeo', 'Altera resultado', 'Cantidad de Situaciones', 'Nota']);
     headerRow.eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
 
     if (!filas || filas.length === 0) {
         ws.addRow(['No existen rodeos registrados para este jurado.']);
     } else {
         filas.forEach((f, i) => {
+            // Mismo dato y mismo criterio que la pantalla (a.altera_resultado /
+            // renderAlteraResultado en hojavida.html): true→"Sí", false→"No",
+            // null (sin evaluación asociada)→"—" — nunca "No" por defecto.
+            const alteraTxto = f.altera_resultado === true ? 'Sí' : f.altera_resultado === false ? 'No' : '—';
             const row = ws.addRow([
                 formatFechaDDMMYYYY(f.fecha),
                 f.asociacion || '—',
                 f.club || '—',
                 f.tipo_rodeo || '—',
+                alteraTxto,
                 f.situaciones ?? 0,
                 f.nota != null ? Number(f.nota) : 'Sin nota'
             ]);
@@ -594,8 +599,9 @@ async function exportarHistorialHojaVida(perfil, filas, resumen, res) {
     ws.getColumn(2).width = 22;
     ws.getColumn(3).width = 26;
     ws.getColumn(4).width = 28;
-    ws.getColumn(5).width = 20;
-    ws.getColumn(6).width = 14;
+    ws.getColumn(5).width = 18;
+    ws.getColumn(6).width = 20;
+    ws.getColumn(7).width = 14;
     autoWidth(ws);
 
     const filename = `Hoja_Vida_${sanitizarNombreArchivo(perfil?.nombre_completo)}.xlsx`;

@@ -302,6 +302,16 @@ const TIPO_SITUACION_LABEL = { interpretativa: 'Apreciación', reglamentaria: 'R
 const TIPO_SITUACION_SIGLA = { reglamentaria: 'R', interpretativa: 'A', informativo: 'C' };
 const ORDEN_TIPOS_SITUACION = ['reglamentaria', 'interpretativa', 'informativo'];
 
+// Celda "Altera resultado" de la tabla de historial. Dato real de Análisis de Caso
+// (evaluaciones.resultados_alterados vía a.altera_resultado calculado en backend):
+// true → Sí (alteró); false → No (existe evaluación y expresamente no alteró);
+// null → sin evaluación asociada, nunca se muestra "No" por defecto.
+function renderAlteraResultado(v) {
+    if (v === true)  return '<span class="badge" style="background:#fdecea;color:#c0392b;">Sí</span>';
+    if (v === false) return '<span class="texto-gris">No</span>';
+    return '<span class="texto-gris">—</span>';
+}
+
 // Celda compacta "Situaciones" de la tabla de historial: desglose R/A/C + Total.
 function renderSituacionesCelda(porTipo, total) {
     if (!total) return '<span style="text-align:center; display:block;">0</span>';
@@ -378,6 +388,7 @@ function renderHistorial(historial) {
             <td>${a.categoria_aplicada || '—'}</td>
             <td class="monto-positivo">${rechazado ? '<span class="texto-gris">—</span>' : formatCLP(a.pago_base_calculado)}</td>
             <td>${estadoBadge}</td>
+            <td>${renderAlteraResultado(a.altera_resultado)}</td>
             <td>${renderSituacionesCelda(a.situaciones_por_tipo, a.situaciones ?? 0)}</td>
             <td>${notaChip(nr?.nota)}</td>
             <td style="max-width:220px; font-size:12px; color:${comentarioAdmin ? 'var(--oscuro)' : 'var(--gris)'};">${comentarioAdmin ? sanitizar(comentarioAdmin) : '—'}</td>
@@ -401,7 +412,7 @@ function renderHistorial(historial) {
         <table class="tabla">
             <thead><tr>
                 <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Cat.</th>
-                <th>Pago base</th><th>Estado</th><th>Situaciones</th><th>Nota</th><th>Coment. Jefe Deportivo</th><th></th>
+                <th>Pago base</th><th>Estado</th><th>Altera resultado</th><th>Situaciones</th><th>Nota</th><th>Coment. Jefe Deportivo</th><th></th>
             </tr></thead>
             <tbody>${filas}</tbody>
         </table>

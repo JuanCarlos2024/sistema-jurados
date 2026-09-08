@@ -129,14 +129,22 @@ router.get('/:id', async (req, res) => {
         (notas || []).forEach(n => { notasMap[n.asignacion_id] = n; });
     }
 
-    // 3.5 Evaluaciones — link por rodeo_id para botón "Ver evaluación" en hoja de vida
+    // 3.5 Evaluaciones — link por rodeo_id para botón "Ver evaluación" en hoja de vida.
+    // resultados_alterados se reutiliza aquí mismo (misma fila, sin query nueva) como
+    // fuente de verdad de "Altera resultado": mismo dato/tabla que usa Análisis de Caso
+    // (evaluaciones.resultados_alterados, boolean NOT NULL DEFAULT false — ver
+    // database/migrations/024_reporte_deportivo.sql). evaluaciones.rodeo_id es UNIQUE
+    // (migración 019), por lo que existe a lo más un análisis por rodeo: no hay
+    // múltiples registros que consolidar. Si el rodeo no tiene evaluación (o su única
+    // evaluación está anulada), evalMap no tendrá entrada para ese rodeo_id — eso se
+    // traduce más abajo en null ("—"), nunca en "No" por defecto.
     let evalMap = {};
     if (todasAsigs.length > 0) {
         const rodeoIds = [...new Set(todasAsigs.map(a => a.rodeos?.id).filter(Boolean))];
         if (rodeoIds.length > 0) {
             const { data: evals } = await supabase
                 .from('evaluaciones')
-                .select('id, rodeo_id, estado')
+                .select('id, rodeo_id, estado, resultados_alterados')
                 .in('rodeo_id', rodeoIds)
                 .eq('anulada', false);
             (evals || []).forEach(e => { evalMap[e.rodeo_id] = e; });
@@ -159,6 +167,9 @@ router.get('/:id', async (req, res) => {
             notas_rodeo: notasMap[a.id] || null,
             eval_id:     evalMap[a.rodeos?.id]?.id     || null,
             eval_estado: evalMap[a.rodeos?.id]?.estado || null,
+            // true/false = valor real guardado en Análisis de Caso; null = no existe
+            // evaluación (o su única evaluación fue anulada) — nunca se infiere "No".
+            altera_resultado: evalMap[a.rodeos?.id] ? !!evalMap[a.rodeos.id].resultados_alterados : null,
             situaciones: situaciones.porRodeo[a.rodeos?.id] || 0,
             situaciones_por_tipo: situaciones.porTipoPorRodeo[a.rodeos?.id] || {}
         }));
@@ -586,6 +597,20 @@ router.get('/:id/exportar', async (req, res) => {
         historial, situaciones.porTipoPorRodeo, a => a.rodeo_id
     );
 
+    // "Altera resultado" — misma fuente y mismo criterio que GET /:id (arriba):
+    // evaluaciones.resultados_alterados, filtrado por anulada=false. rodeo_id es
+    // UNIQUE en evaluaciones, por lo que a lo más hay un análisis por rodeo. Sin
+    // entrada en evalMap = sin evaluación (o anulada) = null, nunca "No" por defecto.
+    let evalMap = {};
+    if (rodeoIds.length > 0) {
+        const { data: evals } = await supabase
+            .from('evaluaciones')
+            .select('rodeo_id, resultados_alterados')
+            .in('rodeo_id', rodeoIds)
+            .eq('anulada', false);
+        (evals || []).forEach(e => { evalMap[e.rodeo_id] = e; });
+    }
+
     // Promedio de nota: MISMA definición que el indicador "Promedio" de Hoja de Vida
     // (GET /:id) — excluye asignaciones rechazadas, promedia solo las que tienen nota.
     const noEjecutadas = historial.filter(a => a.estado_designacion !== 'rechazado');
@@ -603,6 +628,7 @@ router.get('/:id/exportar', async (req, res) => {
             asociacion:  a.rodeos?.asociacion || null,
             club:        a.rodeos?.club || null,
             tipo_rodeo:  a.rodeos?.tipo_rodeo_nombre || null,
+            altera_resultado: evalMap[a.rodeo_id] ? !!evalMap[a.rodeo_id].resultados_alterados : null,
             situaciones: situaciones.porRodeo[a.rodeo_id] || 0,
             nota:        notasMap[a.id] ?? null
         }))
