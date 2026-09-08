@@ -23,10 +23,20 @@ const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz 
 // motor) + campos de METADATA/DISPLAY (Etapa 4: activa, descripcion,
 // creado_por, created_at) — estos últimos nunca se usan para decidir nada,
 // solo se propagan a `meta` para la UI (historial, cabecera, "Ver reglas").
+//
+// regla_equidad_traslados_activa/umbral_lejania_km — mejora "Equidad de
+// Traslados" (migración 052, pendiente de aplicar). IMPORTANTE: estas 2
+// columnas NO EXISTEN en la base de datos hasta que se aplique esa
+// migración — este archivo queda PREPARADO para leerlas, pero desplegarlo
+// ANTES de aplicar 052 hace que CUALQUIER consulta con SELECT_VERSION
+// falle con un error claro de Postgres ("column does not exist"), nunca un
+// fallback silencioso ni una configuración a medias. Orden correcto:
+// 1) aplicar 052, 2) recién entonces desplegar este archivo.
 const SELECT_VERSION =
     'id, numero_version, schema_version, activa, regla_distancia_maxima_activa, distancia_maxima_km, ' +
     'regla_no_repetir_asociacion_activa, regla_un_rodeo_por_finde_activa, regla_finde_consecutivo_activa, ' +
-    'regla_asociacion_organizadora_activa, descripcion, creado_por, created_at';
+    'regla_asociacion_organizadora_activa, regla_equidad_traslados_activa, umbral_lejania_km, ' +
+    'descripcion, creado_por, created_at';
 
 // ─── Dado un versionRow ya resuelto, carga sus componentes (2 queries fijas
 // en paralelo, nunca una por criterio/categoría) y reconstruye+valida. ─────
@@ -148,6 +158,18 @@ async function obtenerVersionDesignacionDetalle(versionId) {
 // con validarConfiguracion() (JS) ANTES de llamar a la RPC (sección 47:
 // "no confiar solo en frontend") — la RPC vuelve a proteger la integridad
 // en Postgres como defensa en profundidad, nunca reemplaza esta validación.
+//
+// Mejora "Equidad de Traslados" (migración 052, pendiente de aplicar — ver
+// nota en SELECT_VERSION arriba): se ELIGE EXPLÍCITAMENTE la RPC según
+// configuracion.schema_version — nunca una sobrecarga ambigua resuelta
+// implícitamente por PostgREST (revisión de cierre, sección 3: "no confiar
+// en sobrecargas ambiguas si pueden evitarse"). schema_version=1 sigue
+// llamando EXACTAMENTE a la misma RPC legacy con los mismos 10 parámetros
+// de siempre — cero cambio de comportamiento para el caso ya usado en
+// producción. schema_version=2 llama a la RPC nueva
+// crear_configuracion_designacion_version_v2 (que no existe hasta aplicar
+// la migración 052 — si se invoca antes, Postgres devuelve un error claro
+// de función inexistente, nunca un fallback silencioso).
 // @param configuracion objeto configuracion completo (misma forma que construirConfiguracionDefaultV1())
 // @param descripcion texto opcional
 // @param creadoPor uuid del administrador (req.usuario.id) | null
@@ -158,18 +180,46 @@ async function crearVersionDesignacion({ configuracion, descripcion, creadoPor }
         return { error: 'CONFIGURACION_DESIGNACION_INVALIDA', detalle: val.error };
     }
 
-    const { data, error } = await supabase.rpc('crear_configuracion_designacion_version', {
-        p_regla_distancia_maxima_activa: configuracion.regla_distancia_maxima_activa,
-        p_distancia_maxima_km: configuracion.distancia_maxima_km,
-        p_regla_no_repetir_asociacion_activa: configuracion.regla_no_repetir_asociacion_activa,
-        p_regla_un_rodeo_por_finde_activa: configuracion.regla_un_rodeo_por_finde_activa,
-        p_regla_finde_consecutivo_activa: configuracion.regla_finde_consecutivo_activa,
-        p_regla_asociacion_organizadora_activa: configuracion.regla_asociacion_organizadora_activa,
-        p_descripcion: descripcion || null,
-        p_creado_por: creadoPor || null,
-        p_orden_criterios: configuracion.ordenCriterios || [],
-        p_matriz: aplanarMatriz(configuracion.matriz)
-    });
+    // Despacho EXPLÍCITO por schema_version (revisión de cierre, sección 15:
+    // "if schema1 → legacy, if schema2 → v2, otro schema → error controlado,
+    // no fallback"). validarConfiguracion() ya rechazó cualquier valor fuera
+    // de [1, 2] arriba, así que la rama `else` de abajo no debería alcanzarse
+    // en la práctica — se deja como defensa en profundidad explícita ante una
+    // discrepancia inesperada entre capas, nunca cayendo silenciosamente en
+    // la RPC legacy para un schema que no es 1.
+    let data, error;
+    if (configuracion.schema_version === 1) {
+        ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version', {
+            p_regla_distancia_maxima_activa: configuracion.regla_distancia_maxima_activa,
+            p_distancia_maxima_km: configuracion.distancia_maxima_km,
+            p_regla_no_repetir_asociacion_activa: configuracion.regla_no_repetir_asociacion_activa,
+            p_regla_un_rodeo_por_finde_activa: configuracion.regla_un_rodeo_por_finde_activa,
+            p_regla_finde_consecutivo_activa: configuracion.regla_finde_consecutivo_activa,
+            p_regla_asociacion_organizadora_activa: configuracion.regla_asociacion_organizadora_activa,
+            p_descripcion: descripcion || null,
+            p_creado_por: creadoPor || null,
+            p_orden_criterios: configuracion.ordenCriterios || [],
+            p_matriz: aplanarMatriz(configuracion.matriz)
+        }));
+    } else if (configuracion.schema_version === 2) {
+        ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version_v2', {
+            p_regla_distancia_maxima_activa: configuracion.regla_distancia_maxima_activa,
+            p_distancia_maxima_km: configuracion.distancia_maxima_km,
+            p_regla_no_repetir_asociacion_activa: configuracion.regla_no_repetir_asociacion_activa,
+            p_regla_un_rodeo_por_finde_activa: configuracion.regla_un_rodeo_por_finde_activa,
+            p_regla_finde_consecutivo_activa: configuracion.regla_finde_consecutivo_activa,
+            p_regla_asociacion_organizadora_activa: configuracion.regla_asociacion_organizadora_activa,
+            p_regla_equidad_traslados_activa: !!configuracion.regla_equidad_traslados_activa,
+            p_umbral_lejania_km: configuracion.umbral_lejania_km ?? null,
+            p_descripcion: descripcion || null,
+            p_creado_por: creadoPor || null,
+            p_orden_criterios: configuracion.ordenCriterios || [],
+            p_matriz: aplanarMatriz(configuracion.matriz)
+        }));
+    } else {
+        return { error: 'CONFIGURACION_DESIGNACION_INVALIDA', detalle: `schema_version no soportado para crear versión: ${configuracion.schema_version}` };
+    }
+
     // La RPC ya validó estructuralmente (defensa en profundidad) — si de
     // todos modos falló acá habiendo pasado validarConfiguracion() en JS,
     // es una discrepancia inesperada entre las dos capas: se reporta igual

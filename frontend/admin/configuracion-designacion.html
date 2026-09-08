@@ -100,7 +100,8 @@ document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre |
 const NOMBRE_CRITERIO = {
     PRIORIDAD_CATEGORIA: 'Prioridad de categoría',
     MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones',
-    MENOR_DISTANCIA: 'Menor distancia'
+    MENOR_DISTANCIA: 'Menor distancia',
+    EQUIDAD_TRASLADOS: 'Equidad de traslados'
 };
 const NOMBRE_CLASIFICACION = {
     interclubes: 'Interclubes', provincial: 'Provincial', interasociaciones: 'Interasociaciones',
@@ -113,6 +114,19 @@ let activaActual = null;   // { configuracion, meta }
 let historial = [];        // [{id, numero_version, activa, ...}]
 let draft = null;          // { configuracion, baseConfiguracion, baseMeta, esRestaurarDefaults, categoriasNuevas:Set }
 
+// Mejora "Equidad de Traslados" (revisión de cierre, sección 3): "feature
+// capability" — el frontend NUNCA infiere si el backend soporta
+// schema_version=2 a partir de un error; lo lee explícitamente de la
+// respuesta de GET /activa o GET /defaults (campo `capacidades`, ver
+// configuracion-designacion.js). Mientras no se haya cargado ninguna
+// respuesta todavía (o la migración 052 no esté aplicada y el backend sea
+// uno más antiguo que nunca mandó este campo), queda `null` y la sección
+// EQUIDAD DE TRASLADOS se muestra deshabilitada — nunca se asume soporte.
+let capacidades = null;
+function soportaSchema2() {
+    return !!(capacidades && Array.isArray(capacidades.schema_versions_soportadas) && capacidades.schema_versions_soportadas.includes(2));
+}
+
 async function init() {
     await Promise.all([cargarActiva(), cargarHistorial()]);
 }
@@ -122,10 +136,20 @@ async function cargarActiva() {
     const div = document.getElementById('card-cabecera');
     try {
         activaActual = await api.get('/admin/configuracion-designacion/activa');
+        if (activaActual.capacidades) capacidades = activaActual.capacidades;
         renderCabecera();
     } catch (err) {
         div.innerHTML = `<div class="alerta alerta-peligro">No se pudo cargar la configuración activa: ${sanitizar(err.message || '')}</div>`;
     }
+}
+
+// Texto de "Equidad de traslados" para la cabecera/historial (revisión de
+// cierre, sección 18): schema1 -> "No disponible" (nunca se reinterpreta
+// como "No activa" — son conceptos distintos: schema1 no tiene el campo en
+// absoluto). schema2 -> "Activa (N km)" o "No activa", según corresponda.
+function textoEquidadTraslados(c) {
+    if ((c.schema_version || 1) !== 2) return 'No disponible (schema 1)';
+    return c.regla_equidad_traslados_activa ? `Activa (${c.umbral_lejania_km} km)` : 'No activa';
 }
 
 function renderCabecera() {
@@ -142,6 +166,7 @@ function renderCabecera() {
         <div style="font-size:13px; line-height:1.9;">
             <div><strong>Creada:</strong> ${formatFechaHora(meta.created_at)}${meta.creado_por_nombre ? ' por ' + sanitizar(meta.creado_por_nombre) : ''}</div>
             <div><strong>Distancia máxima:</strong> ${distancia}</div>
+            <div><strong>Equidad de traslados:</strong> ${sanitizar(textoEquidadTraslados(c))}</div>
             <div><strong>Prioridades:</strong> ${sanitizar(prioridades)}</div>
             ${meta.descripcion ? `<div><strong>Descripción:</strong> ${sanitizar(meta.descripcion)}</div>` : ''}
         </div>
@@ -230,7 +255,7 @@ function crearDesdeVersionHistorica() {
 
 function renderVistaSoloLectura(c, meta) {
     const prioridades = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden)
-        .map(o => `<li>${sanitizar(NOMBRE_CRITERIO[o.criterio_codigo] || o.criterio_codigo)}</li>`).join('');
+        .map(o => `<li>${sanitizar(NOMBRE_CRITERIO[o.criterio_codigo] || o.criterio_codigo)}${o.criterio_codigo === 'EQUIDAD_TRASLADOS' ? ' 🔒' : ''}</li>`).join('');
     const reglas = [
         ['regla_no_repetir_asociacion_activa', 'No repetir asociación durante la temporada'],
         ['regla_un_rodeo_por_finde_activa', 'Máximo un rodeo por fin de semana'],
@@ -254,6 +279,10 @@ function renderVistaSoloLectura(c, meta) {
             <div class="config-seccion">
                 <h4>Distancia</h4>
                 <p>${c.regla_distancia_maxima_activa ? `Descartar candidatos a más de <strong>${c.distancia_maxima_km} km</strong>` : 'Regla de distancia máxima desactivada'}</p>
+            </div>
+            <div class="config-seccion">
+                <h4>Equidad de traslados</h4>
+                <p>${sanitizar(textoEquidadTraslados(c))}</p>
             </div>
             <div class="config-seccion">
                 <h4>Reglas de selección</h4>
@@ -332,6 +361,7 @@ function abrirCrearNuevaVersion() {
 async function abrirRestaurarDefaults() {
     try {
         const data = await api.get('/admin/configuracion-designacion/defaults');
+        if (data.capacidades) capacidades = data.capacidades;
         draft = {
             configuracion: clonar(data.configuracion),
             baseConfiguracion: activaActual ? activaActual.configuracion : null,
@@ -355,26 +385,128 @@ function cancelarEdicion() {
     document.getElementById('card-editor').classList.add('oculto');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// EQUIDAD DE TRASLADOS — sección del editor (revisión de cierre, sección 2/
+// 3/15). Habilitada/deshabilitada según soportaSchema2() ("feature
+// capability", nunca hardcodeada) — no inferida de ningún error.
+// ═════════════════════════════════════════════════════════════════════════
+function renderSeccionEquidadTraslados(c) {
+    const soportado = soportaSchema2();
+    const activa = c.regla_equidad_traslados_activa === true;
+
+    if (!soportado) {
+        // Mismo contenido informativo que antes — sigue apareciendo
+        // deshabilitada mientras el backend no declare soporte (antes de
+        // aplicar la migración 052 + desplegar el código correspondiente).
+        return `
+        <div class="config-seccion">
+            <h4>EQUIDAD DE TRASLADOS</h4>
+            <label style="display:flex;align-items:center;gap:8px;cursor:not-allowed;margin-bottom:8px;opacity:.6;">
+                <input type="checkbox" disabled title="Disponible después de aplicar la migración pendiente (052) y su despliegue de código asociado.">
+                Aplicar equidad de traslados
+            </label>
+            <div class="form-grupo" style="max-width:220px;opacity:.6;">
+                <label class="form-label">Umbral para considerar viaje lejano (km)</label>
+                <input type="number" class="form-control" value="${UMBRAL_LEJANIA_DEFAULT_KM_UI}" disabled>
+            </div>
+            <div class="form-hint">
+                Los candidatos a ${UMBRAL_LEJANIA_DEFAULT_KM_UI} km o menos se consideran cercanos. Sobre ${UMBRAL_LEJANIA_DEFAULT_KM_UI} km se
+                consideran lejanos. Los viajes lejanos no se descartan; el sistema busca
+                distribuirlos de manera equitativa entre los jurados.
+            </div>
+            <div class="alerta alerta-info" style="margin-top:8px;font-size:12px;">
+                Sección preparada — no disponible todavía en esta pantalla. El motor y la
+                validación ya soportan esta regla, pero falta aplicar una migración de base
+                de datos pendiente (052) antes de poder crear una versión con esta regla
+                activa desde aquí.
+            </div>
+        </div>`;
+    }
+
+    // Soportado por el backend — sección REAL, interactiva.
+    return `
+        <div class="config-seccion">
+            <h4>EQUIDAD DE TRASLADOS</h4>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px;">
+                <input type="checkbox" ${activa ? 'checked' : ''} onchange="uiToggleEquidadActiva(this.checked)">
+                Aplicar equidad de traslados
+            </label>
+            <div class="form-grupo" style="max-width:220px;">
+                <label class="form-label">Umbral para considerar viaje lejano (km)</label>
+                <input type="number" class="form-control" min="1" max="${UMBRAL_LEJANIA_TECNICO_KM_UI}" value="${c.umbral_lejania_km ?? ''}" ${activa ? '' : 'disabled'} onchange="uiCambiarUmbralLejania(this.value)">
+            </div>
+            <div class="form-hint">
+                Los candidatos al umbral configurado o menos se consideran cercanos. Sobre
+                ese umbral se consideran lejanos. Los viajes lejanos no se descartan; el
+                sistema busca distribuirlos de manera equitativa entre los jurados.
+            </div>
+            ${activa ? `
+            <div class="alerta alerta-info" style="margin-top:8px;font-size:12px;">
+                Al activarse, "Equidad de traslados" pasó automáticamente a ser el criterio
+                Nº1 de prioridad (arriba) y queda fijo ahí mientras esta regla esté activa —
+                así se garantiza que la cercanía siempre se evalúe antes que cualquier otro
+                criterio. Los criterios 2 en adelante pueden reordenarse libremente. Para
+                quitarlo, apague este interruptor.
+            </div>` : ''}
+        </div>`;
+}
+
+// Activar/desactivar equidad — delega en los helpers puros (misma lógica ya
+// testeada en configuracionDesignacionHelpers.test.js). Promueve el DRAFT a
+// schema_version=2 al activar (sección 6/7) — nunca modifica la versión
+// base. Al desactivar, NO vuelve a schema_version=1 (decisión documentada,
+// sección 8) — el draft queda en schema2 sin equidad, válido igual.
+function uiToggleEquidadActiva(activa) {
+    draft.configuracion = activa ? activarEquidadTraslados(draft.configuracion) : desactivarEquidadTraslados(draft.configuracion);
+    renderEditor();
+}
+function uiCambiarUmbralLejania(valor) {
+    draft.configuracion.umbral_lejania_km = valor === '' ? null : Number(valor);
+}
+
 function renderEditor() {
     const c = draft.configuracion;
     const cuerpo = document.getElementById('editor-cuerpo');
 
     // ── Prioridades ──
+    // Mejora "Equidad de Traslados": la lista de criterios CONOCIDOS depende
+    // del schema_version del draft (criteriosConocidosUIParaSchema) — nunca
+    // se usa la lista fija de schema1 si el draft ya es schema2. EQUIDAD_
+    // TRASLADOS NUNCA aparece en la lista de "inactivos" activables por
+    // checkbox genérico — tiene su propio toggle dedicado en la sección
+    // EQUIDAD DE TRASLADOS más abajo (revisión de cierre, sección 11).
     const activos = (c.ordenCriterios || []).slice().sort((a, b) => a.orden - b.orden);
     const codigosActivos = new Set(activos.map(o => o.criterio_codigo));
-    const inactivos = CRITERIOS_CONOCIDOS_UI.filter(cod => !codigosActivos.has(cod));
-    const distanciaPrimero = activos[0]?.criterio_codigo === 'MENOR_DISTANCIA';
+    const listaConocidosSchema = criteriosConocidosUIParaSchema(c.schema_version || 1);
+    const inactivos = listaConocidosSchema.filter(cod => cod !== 'EQUIDAD_TRASLADOS' && !codigosActivos.has(cod));
+    // "Menor distancia se aplicará de forma estricta" debe evaluar el primer
+    // criterio REAL/movible (después de EQUIDAD_TRASLADOS si está bloqueado
+    // en Nº1), no la posición 1 a secas.
+    const primerMovibleIdx = activos[0]?.criterio_codigo === 'EQUIDAD_TRASLADOS' ? 1 : 0;
+    const distanciaPrimero = activos[primerMovibleIdx]?.criterio_codigo === 'MENOR_DISTANCIA';
 
-    const filasActivos = activos.map((o, i) => `
+    const filasActivos = activos.map((o, i) => {
+        // EQUIDAD_TRASLADOS bloqueado en Nº1 (revisión de cierre, sección 9/
+        // 11): sin checkbox de desactivar ni flechas — la única forma de
+        // quitarlo es el toggle "Aplicar equidad de traslados" más abajo.
+        if (o.criterio_codigo === 'EQUIDAD_TRASLADOS') {
+            return `
+        <div class="fila-criterio" style="background:#eef6ff;border-color:#b8d9f5;">
+            <span class="nombre">${i + 1}. ${sanitizar(NOMBRE_CRITERIO[o.criterio_codigo])} 🔒</span>
+            <span class="texto-gris" style="font-size:11px;white-space:nowrap;" title="Fijo en prioridad Nº1 mientras la equidad de traslados esté activa. Para quitarlo, apague &quot;Aplicar equidad de traslados&quot; más abajo.">Bloqueado en Nº1</span>
+        </div>`;
+        }
+        return `
         <div class="fila-criterio">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;">
                 <input type="checkbox" checked onchange="uiDesactivarCriterio('${o.criterio_codigo}')">
                 <span class="nombre">${i + 1}. ${sanitizar(NOMBRE_CRITERIO[o.criterio_codigo])}</span>
             </label>
-            <button type="button" class="btn btn-outline btn-flecha" ${i === 0 ? 'disabled' : ''} onclick="uiMoverCriterio('${o.criterio_codigo}','arriba')">↑</button>
+            <button type="button" class="btn btn-outline btn-flecha" ${i === primerMovibleIdx ? 'disabled' : ''} onclick="uiMoverCriterio('${o.criterio_codigo}','arriba')">↑</button>
             <button type="button" class="btn btn-outline btn-flecha" ${i === activos.length - 1 ? 'disabled' : ''} onclick="uiMoverCriterio('${o.criterio_codigo}','abajo')">↓</button>
         </div>
-    `).join('');
+    `;
+    }).join('');
     const filasInactivos = inactivos.map(cod => `
         <div class="fila-criterio inactivo">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;">
@@ -429,6 +561,10 @@ function renderEditor() {
             </div>
             <div class="form-hint">Distinto del criterio de prioridad "Menor distancia" (arriba) — este descarta candidatos fuera de rango; aquel solo ordena entre los que ya son válidos.</div>
         </div>
+
+        <div class="divider"></div>
+
+        ${renderSeccionEquidadTraslados(c)}
 
         <div class="divider"></div>
 

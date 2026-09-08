@@ -154,17 +154,36 @@ describe('TEST E: versión inexistente por ID', () => {
     });
 });
 
-// TEST F
+// TEST F — actualizado por la mejora "Equidad de Traslados": schema_version=2
+// ahora es un valor SOPORTADO (ver configuracionDesignacion.js,
+// SCHEMA_VERSIONES_SOPORTADAS). Lo que sigue siendo inválido es cualquier
+// schema_version FUERA de [1, 2] — ej. 3, todavía inexistente.
 describe('TEST F: schema_version no soportado — inválida, nunca fallback silencioso', () => {
-    test('CONFIGURACION_DESIGNACION_INVALIDA si schema_version no es 1', async () => {
+    test('CONFIGURACION_DESIGNACION_INVALIDA si schema_version es 3 (no soportado)', async () => {
         mockSupabaseRespuestas({
-            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 2 }], error: null },
+            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 3 }], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
         const resultado = await cargarConfiguracionDesignacionActiva();
         expect(resultado.error).toBe('CONFIGURACION_DESIGNACION_INVALIDA');
         expect(resultado.configuracion).toBeUndefined();
+    });
+    // Nuevo — confirma explícitamente que una fila con schema_version=2 pero
+    // SIN columnas de equidad de traslados (la forma real que devuelve
+    // Supabase HOY, antes de aplicar la migración 052 — ver informe) se
+    // reconstruye y valida igual que V1, funcionalmente. No es más una fila
+    // "distinta de 1" rechazada — es la evolución compatible pedida.
+    test('schema_version=2 con la misma forma de fila que V1 (sin columnas de equidad) es VÁLIDA', async () => {
+        mockSupabaseRespuestas({
+            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 2 }], error: null },
+            configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
+            configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
+        });
+        const resultado = await cargarConfiguracionDesignacionActiva();
+        expect(resultado.error).toBeUndefined();
+        expect(resultado.configuracion.schema_version).toBe(2);
+        expect('regla_equidad_traslados_activa' in resultado.configuracion).toBe(false);
     });
 });
 
@@ -295,6 +314,62 @@ describe('TEST 53.D/E/F: crearVersionDesignacion — configuración válida', ()
         // de la RPC (activa=false hardcodeado ahí, migración 051) — el JS no
         // hace ningún INSERT/UPDATE propio que pudiera tocarlas.
         expect(supabase.from).not.toHaveBeenCalled();
+    });
+});
+
+// Mejora "Equidad de Traslados" (revisión de cierre, sección 3/21/22/23):
+// crearVersionDesignacion() elige EXPLÍCITAMENTE la RPC según schema_version
+// — nunca una sobrecarga ambigua. Estos tests confirman el despacho, con la
+// RPC igualmente mockeada (nunca contra Supabase real ni producción).
+describe('ESTADO 2/3 — crearVersionDesignacion despacha a la RPC correcta según schema_version', () => {
+    test('ESTADO 2 — schema_version=1 (config histórica de siempre) sigue llamando EXCLUSIVAMENTE a la RPC legacy, con los mismos 10 parámetros de siempre — comportamiento 100% igual al actual', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-legacy', numero_version: 5 }], error: null });
+        const configuracion = construirConfiguracionDefaultV1(); // schema_version: 1
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: 'v1 nueva', creadoPor: 'admin-1' });
+
+        expect(resultado).toEqual({ id: 'v-legacy', numero_version: 5 });
+        expect(supabase.rpc).toHaveBeenCalledTimes(1);
+        const [nombreRpc, params] = supabase.rpc.mock.calls[0];
+        expect(nombreRpc).toBe('crear_configuracion_designacion_version'); // RPC LEGACY, nunca la v2
+        // Exactamente los mismos 10 parámetros de siempre — sin ningún campo
+        // de equidad de traslados (esos ni existen para esta RPC).
+        expect(Object.keys(params).sort()).toEqual([
+            'p_creado_por', 'p_descripcion', 'p_distancia_maxima_km', 'p_matriz', 'p_orden_criterios',
+            'p_regla_asociacion_organizadora_activa', 'p_regla_distancia_maxima_activa',
+            'p_regla_finde_consecutivo_activa', 'p_regla_no_repetir_asociacion_activa', 'p_regla_un_rodeo_por_finde_activa'
+        ].sort());
+    });
+
+    test('ESTADO 3 — schema_version=2 con equidad activa llama EXCLUSIVAMENTE a la RPC v2, con los parámetros de equidad incluidos', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-nueva-v2', numero_version: 6 }], error: null });
+        const configuracion = {
+            ...construirConfiguracionDefaultV1(),
+            schema_version: 2, regla_equidad_traslados_activa: true, umbral_lejania_km: 350,
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        };
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: 'v2 equidad', creadoPor: 'admin-2' });
+
+        expect(resultado).toEqual({ id: 'v-nueva-v2', numero_version: 6 });
+        expect(supabase.rpc).toHaveBeenCalledTimes(1);
+        const [nombreRpc, params] = supabase.rpc.mock.calls[0];
+        expect(nombreRpc).toBe('crear_configuracion_designacion_version_v2'); // RPC NUEVA, nunca la legacy
+        expect(params.p_regla_equidad_traslados_activa).toBe(true);
+        expect(params.p_umbral_lejania_km).toBe(350);
+        expect(params.p_orden_criterios[0]).toEqual({ criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 });
+    });
+
+    test('schema_version=2 SIN equidad activa (config nueva pero sin usar la regla) también usa la RPC v2 — la elección es por schema_version, no por si equidad está activa', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-schema2-sin-equidad', numero_version: 7 }], error: null });
+        const configuracion = { ...construirConfiguracionDefaultV1(), schema_version: 2 };
+        await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(supabase.rpc.mock.calls[0][0]).toBe('crear_configuracion_designacion_version_v2');
+        expect(supabase.rpc.mock.calls[0][1].p_regla_equidad_traslados_activa).toBe(false);
+        expect(supabase.rpc.mock.calls[0][1].p_umbral_lejania_km).toBeNull();
     });
 });
 

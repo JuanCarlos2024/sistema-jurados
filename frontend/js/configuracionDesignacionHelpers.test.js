@@ -1,7 +1,8 @@
 const {
     activarCriterio, desactivarCriterio, moverCriterio,
+    activarEquidadTraslados, desactivarEquidadTraslados,
     activarCategoria, desactivarCategoria, moverCategoria,
-    validarDraft, construirDiffParaUI
+    validarDraft, construirDiffParaUI, criteriosConocidosUIParaSchema
 } = require('./configuracionDesignacionHelpers');
 
 // ─── Fixture V1 real (Etapa 4, sección 56: "Test de V1") ───────────────────
@@ -232,5 +233,172 @@ describe('validarDraft', () => {
         const config = configV1();
         config.matriz.nacional = config.matriz.nacional.map(f => ({ ...f, elegible: false, orden_preferencia: null }));
         expect(validarDraft(config).valido).toBe(false);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Equidad de Traslados" — revisión de cierre: promoción schema1→2,
+// bloqueo del criterio Nº1, apagar equidad, distancia hard OFF + equidad ON,
+// validarDraft A-G, diff V1→schema2.
+// ═════════════════════════════════════════════════════════════════════════
+
+// TEST UI — PROMOCIÓN (sección 23 del pedido)
+describe('activarEquidadTraslados — promoción schema1 -> schema2', () => {
+    test('draft V1 + activar equidad -> schema_version=2, regla=true, umbral=350, EQUIDAD_TRASLADOS en orden=1, resto desplazado', () => {
+        const draft = activarEquidadTraslados(configV1());
+        expect(draft.schema_version).toBe(2);
+        expect(draft.regla_equidad_traslados_activa).toBe(true);
+        expect(draft.umbral_lejania_km).toBe(350);
+        expect(draft.ordenCriterios).toEqual([
+            { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+            { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+            { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+            { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+        ]);
+    });
+    test('NO modifica el objeto original (la versión base V1 queda intacta)', () => {
+        const base = configV1();
+        const baseClon = JSON.parse(JSON.stringify(base));
+        activarEquidadTraslados(base);
+        expect(base).toEqual(baseClon);
+    });
+    test('validarDraft() del resultado es válido', () => {
+        expect(validarDraft(activarEquidadTraslados(configV1())).valido).toBe(true);
+    });
+});
+
+// TEST UI — BLOQUEO Nº1 (sección 24 del pedido)
+describe('EQUIDAD_TRASLADOS bloqueado en orden=1 — moverCriterio/desactivarCriterio', () => {
+    test('intentar mover EQUIDAD_TRASLADOS hacia abajo -> no cambia', () => {
+        const draft = activarEquidadTraslados(configV1());
+        const resultado = moverCriterio(draft.ordenCriterios, 'EQUIDAD_TRASLADOS', 'abajo');
+        expect(resultado).toEqual(draft.ordenCriterios);
+    });
+    test('intentar mover PRIORIDAD_CATEGORIA (posición 2) hacia arriba -> tampoco desplaza a EQUIDAD_TRASLADOS de la posición 1', () => {
+        const draft = activarEquidadTraslados(configV1());
+        const resultado = moverCriterio(draft.ordenCriterios, 'PRIORIDAD_CATEGORIA', 'arriba');
+        expect(resultado).toEqual(draft.ordenCriterios); // sin cambios
+    });
+    test('mover el criterio 3 (MENOS_DESIGNACIONES) hacia arriba SÍ funciona (no involucra la posición 1)', () => {
+        const draft = activarEquidadTraslados(configV1());
+        const resultado = moverCriterio(draft.ordenCriterios, 'MENOS_DESIGNACIONES_TEMPORADA', 'arriba');
+        expect(resultado.find(o => o.criterio_codigo === 'MENOS_DESIGNACIONES_TEMPORADA').orden).toBe(2);
+        expect(resultado.find(o => o.criterio_codigo === 'PRIORIDAD_CATEGORIA').orden).toBe(3);
+        expect(resultado.find(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS').orden).toBe(1); // sigue Nº1
+    });
+    test('intentar desactivar EQUIDAD_TRASLADOS desde la lista de criterios -> no permitido', () => {
+        const draft = activarEquidadTraslados(configV1());
+        const resultado = desactivarCriterio(draft.ordenCriterios, 'EQUIDAD_TRASLADOS');
+        expect(resultado).toEqual(draft.ordenCriterios); // sigue presente, nada cambia
+    });
+});
+
+// TEST UI — APAGAR EQUIDAD (sección 25 del pedido)
+describe('desactivarEquidadTraslados — apagar el toggle', () => {
+    test('schema2 con equidad ON -> apagar: regla=false, umbral=null, EQUIDAD_TRASLADOS eliminado, resto renumerado 1..N, schema_version se MANTIENE en 2', () => {
+        const conEquidad = activarEquidadTraslados(configV1());
+        const draft = desactivarEquidadTraslados(conEquidad);
+        expect(draft.regla_equidad_traslados_activa).toBe(false);
+        expect(draft.umbral_lejania_km).toBeNull();
+        expect(draft.ordenCriterios.some(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS')).toBe(false);
+        expect(draft.ordenCriterios).toEqual([
+            { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+            { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 2 },
+            { criterio_codigo: 'MENOR_DISTANCIA', orden: 3 }
+        ]);
+        // Decisión documentada (sección 8 del pedido): NO vuelve a schema_version=1.
+        expect(draft.schema_version).toBe(2);
+    });
+    test('el resultado es válido según validarDraft()', () => {
+        const draft = desactivarEquidadTraslados(activarEquidadTraslados(configV1()));
+        expect(validarDraft(draft).valido).toBe(true);
+    });
+});
+
+// TEST DISTANCIA HARD OFF + EQUIDAD ON (sección 26 del pedido)
+describe('Distancia máxima desactivada + equidad de traslados activa — combinación válida (frontend y backend)', () => {
+    test('draft válido: schema=2, hard distancia=false, distancia_maxima=NULL, equidad=true, umbral=350, EQUIDAD orden=1', () => {
+        const draft = {
+            ...activarEquidadTraslados(configV1()),
+            regla_distancia_maxima_activa: false,
+            distancia_maxima_km: null
+        };
+        expect(validarDraft(draft)).toEqual({ valido: true });
+    });
+});
+
+// TESTS validarDraft A-G (sección 12 del pedido)
+describe('validarDraft — Equidad de Traslados, casos A-G', () => {
+    test('A: schema1 + regla_equidad_traslados_activa=true -> rechazado', () => {
+        const draft = { ...configV1(), regla_equidad_traslados_activa: true, umbral_lejania_km: 350 };
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('B: schema1 + EQUIDAD_TRASLADOS presente en el orden -> rechazado', () => {
+        const draft = { ...configV1(), ordenCriterios: [{ criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 }, ...ORDEN_CRITERIOS_V1.map(o => ({ ...o, orden: o.orden + 1 }))] };
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('C: schema2 + equidad=true + sin umbral -> rechazado', () => {
+        const draft = { ...activarEquidadTraslados(configV1()), umbral_lejania_km: null };
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('D: schema2 + equidad=true + EQUIDAD no en orden=1 -> rechazado', () => {
+        const draft = activarEquidadTraslados(configV1());
+        draft.ordenCriterios = [
+            { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+            { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 2 },
+            { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+            { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+        ];
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('E: schema2 + equidad=false + EQUIDAD_TRASLADOS presente -> rechazado', () => {
+        const draft = activarEquidadTraslados(configV1());
+        draft.regla_equidad_traslados_activa = false;
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('F: umbral <= 0 -> rechazado', () => {
+        const draft = { ...activarEquidadTraslados(configV1()), umbral_lejania_km: 0 };
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('G: umbral > 5000 -> rechazado', () => {
+        const draft = { ...activarEquidadTraslados(configV1()), umbral_lejania_km: 5001 };
+        expect(validarDraft(draft).valido).toBe(false);
+    });
+    test('caso válido de control: schema2 + equidad=true + umbral=350 + EQUIDAD orden=1 -> aceptado', () => {
+        expect(validarDraft(activarEquidadTraslados(configV1())).valido).toBe(true);
+    });
+});
+
+// TEST DIFF (sección 31 del pedido)
+describe('construirDiffParaUI — V1 -> draft schema2 con equidad activa', () => {
+    test('refleja distancia máxima, equidad y umbral como cambios distintos', () => {
+        const v1 = configV1(); // hard 600, equidad OFF
+        const draftSchema2 = {
+            ...activarEquidadTraslados(configV1()),
+            regla_distancia_maxima_activa: false,
+            distancia_maxima_km: null
+        }; // hard OFF, equidad ON, 350
+
+        const diff = construirDiffParaUI(v1, draftSchema2);
+        expect(diff.hayDiferencias).toBe(true);
+
+        const porEtiqueta = {};
+        diff.cambios.forEach(c => { porEtiqueta[c.etiqueta] = c; });
+
+        expect(porEtiqueta['Distancia máxima']).toEqual({ etiqueta: 'Distancia máxima', antes: '600 km', despues: 'Desactivada' });
+        expect(porEtiqueta['Equidad de traslados']).toEqual({ etiqueta: 'Equidad de traslados', antes: 'Desactivada', despues: 'Activada' });
+        expect(porEtiqueta['Umbral de lejanía']).toEqual({ etiqueta: 'Umbral de lejanía', antes: '—', despues: '350 km' });
+        expect(porEtiqueta['Schema']).toEqual({ etiqueta: 'Schema', antes: '1', despues: '2' });
+        expect(porEtiqueta['Prioridades'].despues).toMatch(/^Equidad de traslados →/);
+    });
+});
+
+// criteriosConocidosUIParaSchema — soporte de lista por schema
+describe('criteriosConocidosUIParaSchema', () => {
+    test('schema 1 no incluye EQUIDAD_TRASLADOS', () => {
+        expect(criteriosConocidosUIParaSchema(1)).not.toContain('EQUIDAD_TRASLADOS');
+    });
+    test('schema 2 incluye EQUIDAD_TRASLADOS', () => {
+        expect(criteriosConocidosUIParaSchema(2)).toContain('EQUIDAD_TRASLADOS');
     });
 });

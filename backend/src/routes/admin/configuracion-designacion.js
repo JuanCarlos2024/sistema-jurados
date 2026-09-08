@@ -24,7 +24,7 @@ const express = require('express');
 const router = express.Router();
 const auditoria = require('../../services/auditoria');
 const { soloRolEvaluacion } = require('../../middleware/auth');
-const { construirConfiguracionDefaultV1 } = require('../../services/configuracionDesignacion');
+const { construirConfiguracionDefaultV1, obtenerCapacidadesSoportadas } = require('../../services/configuracionDesignacion');
 const {
     cargarConfiguracionDesignacionActiva,
     listarVersionesDesignacion,
@@ -67,13 +67,18 @@ router.get('/versiones/:id', async (req, res) => {
 });
 
 // ─── GET /activa — atajo: detalle completo de la configuración ACTIVA ─────
+// `capacidades` (mejora "Equidad de Traslados", revisión de cierre, sección
+// 3) — SIEMPRE se agrega, para que el frontend sepa qué schema_version/
+// criterios soporta ESTE backend sin inferirlo de errores. Es metadata pura
+// de código (obtenerCapacidadesSoportadas(), sin BD) — nunca cambia según
+// qué versión esté activa.
 router.get('/activa', async (req, res) => {
     try {
         const activa = await cargarConfiguracionDesignacionActiva();
         if (activa.error) return responderError(res, activa, 500);
         const detalle = await obtenerVersionDesignacionDetalle(activa.meta.id);
         if (detalle.error) return responderError(res, detalle, 500);
-        res.json(detalle);
+        res.json({ ...detalle, capacidades: obtenerCapacidadesSoportadas() });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -81,9 +86,14 @@ router.get('/activa', async (req, res) => {
 
 // ─── GET /defaults — Versión 1 predeterminada (pura, sin BD) ──────────────
 // Usada por "Restaurar configuración predeterminada" (sección 33) para
-// mostrar el diff ANTES de crear la nueva versión — nunca modifica nada.
+// mostrar el diff ANTES de crear la nueva versión — nunca modifica nada. Los
+// defaults siguen representando V1/schema_version=1 (sección 17 de la
+// revisión de cierre) — "Restaurar predeterminada" no cambia a schema 2.
+// `capacidades` se agrega igual que en /activa — es el endpoint más liviano
+// (sin BD), útil para que el frontend resuelva soporte de schema2 apenas
+// carga la pantalla, sin esperar la config activa.
 router.get('/defaults', (req, res) => {
-    res.json({ configuracion: construirConfiguracionDefaultV1() });
+    res.json({ configuracion: construirConfiguracionDefaultV1(), capacidades: obtenerCapacidadesSoportadas() });
 });
 
 // ─── POST /versiones — crear una versión NUEVA, siempre INACTIVA ──────────

@@ -94,6 +94,17 @@ describe('GET /activa', () => {
         expect(body.meta.id).toBe('v1-uuid');
         expect(obtenerVersionDesignacionDetalle).toHaveBeenCalledWith('v1-uuid');
     });
+    // Mejora "Equidad de Traslados" (revisión de cierre, sección 3) — el
+    // frontend debe poder leer explícitamente qué schema_version soporta
+    // este backend, sin inferirlo de errores.
+    test('incluye capacidades.schema_versions_soportadas = [1, 2]', async () => {
+        cargarConfiguracionDesignacionActiva.mockResolvedValue({ configuracion: {}, meta: { id: 'v1-uuid', numero_version: 1 } });
+        obtenerVersionDesignacionDetalle.mockResolvedValue({ configuracion: { schema_version: 1 }, meta: { id: 'v1-uuid', numero_version: 1, creado_por_nombre: null } });
+        const { body } = await llamarRuta({ method: 'GET', url: '/activa' });
+        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2]);
+        expect(body.capacidades.criterios_soportados_por_schema[2]).toContain('EQUIDAD_TRASLADOS');
+        expect(body.capacidades.criterios_soportados_por_schema[1]).not.toContain('EQUIDAD_TRASLADOS');
+    });
     test('0 activas → 500 controlado, nunca asume ninguna', async () => {
         cargarConfiguracionDesignacionActiva.mockResolvedValue({ error: 'CONFIGURACION_DESIGNACION_NO_RESUELTA', detalle: '0 activas' });
         const { status, body } = await llamarRuta({ method: 'GET', url: '/activa' });
@@ -111,6 +122,17 @@ describe('GET /defaults', () => {
         expect(body.configuracion).toEqual(construirConfiguracionDefaultV1());
         expect(cargarConfiguracionDesignacionActiva).not.toHaveBeenCalled();
         expect(listarVersionesDesignacion).not.toHaveBeenCalled();
+    });
+    // Sección 17 de la revisión de cierre: los defaults siguen siendo V1/
+    // schema_version=1 — "Restaurar predeterminada" NO cambia a schema 2.
+    test('los defaults siguen siendo schema_version=1 (Restaurar predeterminada no promueve a schema2)', async () => {
+        const { body } = await llamarRuta({ method: 'GET', url: '/defaults' });
+        expect(body.configuracion.schema_version).toBe(1);
+    });
+    test('incluye capacidades.schema_versions_soportadas = [1, 2] (mismo endpoint liviano, sin BD)', async () => {
+        const { body } = await llamarRuta({ method: 'GET', url: '/defaults' });
+        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2]);
+        expect(body.capacidades.criterios_soportados_por_schema[2]).toContain('EQUIDAD_TRASLADOS');
     });
 });
 
@@ -132,6 +154,47 @@ describe('POST /versiones — crear (sección 4/38 del pedido de Etapa 4)', () =
         expect(auditoria.registrar).toHaveBeenCalledWith(expect.objectContaining({
             accion: 'CREAR_VERSION_CONFIG_DESIGNACION', registro_id: 'v2-uuid', actor_id: 'admin-77'
         }));
+    });
+
+    // Mejora "Equidad de Traslados" (revisión de cierre, sección 14/27): la
+    // ruta debe aceptar un objeto schema_version=2 COMPLETO sin filtrar ni
+    // eliminar los campos nuevos, y delegar en crearVersionDesignacion() tal
+    // cual — sin ninguna lógica especial de negocio para schema2 en la ruta
+    // (esa lógica vive en configuracionDesignacion.js/el repositorio).
+    test('POST /versiones con configuración schema_version=2 completa → se pasa TAL CUAL al repositorio, sin filtrar campos de equidad', async () => {
+        crearVersionDesignacion.mockResolvedValue({ id: 'v-schema2-uuid', numero_version: 8 });
+        const configuracionSchema2 = {
+            ...construirConfiguracionDefaultV1(),
+            schema_version: 2,
+            regla_distancia_maxima_activa: false,
+            distancia_maxima_km: null,
+            regla_equidad_traslados_activa: true,
+            umbral_lejania_km: 350,
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 2 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        };
+
+        const { status, body } = await llamarRuta({
+            method: 'POST', url: '/versiones',
+            body: { configuracion: configuracionSchema2, descripcion: 'Equidad de traslados 350km' },
+            usuario: { id: 'admin-9', tipo: 'administrador', rol_evaluacion: null }
+        });
+
+        expect(status).toBe(201);
+        expect(body).toEqual({ id: 'v-schema2-uuid', numero_version: 8, activa: false });
+        // El objeto COMPLETO llega al repositorio — regla_equidad_traslados_activa
+        // y umbral_lejania_km presentes, nada filtrado en la ruta.
+        expect(crearVersionDesignacion).toHaveBeenCalledWith({
+            configuracion: configuracionSchema2, descripcion: 'Equidad de traslados 350km', creadoPor: 'admin-9'
+        });
+        const configuracionRecibida = crearVersionDesignacion.mock.calls[0][0].configuracion;
+        expect(configuracionRecibida.schema_version).toBe(2);
+        expect(configuracionRecibida.regla_equidad_traslados_activa).toBe(true);
+        expect(configuracionRecibida.umbral_lejania_km).toBe(350);
     });
 
     // Revisión final Etapa 4, sección 5: la UI NO puede decidir creado_por —

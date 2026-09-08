@@ -14,20 +14,40 @@
 // código, expresiones ni SQL arbitrario (principio explícito del proyecto).
 // ═════════════════════════════════════════════════════════════════════════
 
-// ─── Constantes conocidas para schema_version = 1 ─────────────────────────
-// Cualquier regla/criterio nuevo requiere evolucionar SCHEMA_VERSION_SOPORTADO
-// y estas listas explícitamente — nunca aceptar un código desconocido.
-const SCHEMA_VERSION_SOPORTADO = 1;
+// ─── Constantes conocidas por schema_version ───────────────────────────────
+// Mejora "Equidad de Traslados" (ver informe): schema_version evoluciona de
+// forma ADITIVA y NUNCA retroactiva — schema_version=1 sigue significando
+// EXACTAMENTE lo mismo que antes de esta mejora (mismos 3 criterios, sin
+// campos de equidad de traslados); schema_version=2 agrega el criterio
+// EQUIDAD_TRASLADOS y sus 2 parámetros nuevos. Cualquier regla/criterio
+// nuevo futuro requiere evolucionar SCHEMA_VERSIONES_SOPORTADAS y estas
+// listas explícitamente — nunca aceptar un código desconocido.
+const SCHEMA_VERSION_SOPORTADO = 1; // se mantiene por compatibilidad — ver SCHEMA_VERSIONES_SOPORTADAS para la validación real
+const SCHEMA_VERSIONES_SOPORTADAS = [1, 2];
 
 const CRITERIOS_CONOCIDOS = ['PRIORIDAD_CATEGORIA', 'MENOS_DESIGNACIONES_TEMPORADA', 'MENOR_DISTANCIA'];
+// schema_version=2 admite todos los de schema_version=1 MÁS EQUIDAD_TRASLADOS.
+const CRITERIOS_CONOCIDOS_POR_SCHEMA = {
+    1: CRITERIOS_CONOCIDOS,
+    2: [...CRITERIOS_CONOCIDOS, 'EQUIDAD_TRASLADOS']
+};
+function criteriosConocidosParaSchema(schemaVersion) {
+    return CRITERIOS_CONOCIDOS_POR_SCHEMA[schemaVersion] || [];
+}
 
 // Nombres visuales — SOLO para UI futura. Nunca se usan en lógica/validación
 // (la lógica compara siempre por código estable, nunca por este texto).
 const CRITERIO_NOMBRE_VISUAL = {
     PRIORIDAD_CATEGORIA: 'Prioridad de categoría',
     MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones',
-    MENOR_DISTANCIA: 'Menor distancia'
+    MENOR_DISTANCIA: 'Menor distancia',
+    EQUIDAD_TRASLADOS: 'Equidad de traslados'
 };
+
+// Techo técnico anti-error-de-tipeo para umbral_lejania_km — mismo criterio
+// y mismo valor que DISTANCIA_MAXIMA_TECNICA_KM (ver más abajo): no es una
+// regla de negocio, solo protege contra un error de tipeo evidente.
+const UMBRAL_LEJANIA_TECNICO_KM = 5000;
 
 const CLASIFICACIONES_CONOCIDAS = ['interclubes', 'provincial', 'interasociaciones', 'zonal', 'clasificatorio', 'nacional'];
 const CATEGORIAS_CONOCIDAS = ['A', 'B', 'C'];
@@ -60,17 +80,40 @@ function validarDistancia(reglaActiva, distanciaMaximaKm) {
     return { valido: true };
 }
 
+// ─── Validación de umbral_lejania_km (CLASIFICACIÓN, no descarte) ─────────
+// Mismo patrón exacto que validarDistancia() — pero es un concepto TOTALMENTE
+// distinto: distancia_maxima_km descarta candidatos; umbral_lejania_km solo
+// clasifica un candidato YA elegible como CERCA o LEJOS para el criterio
+// EQUIDAD_TRASLADOS (ver informe, sección 3). Solo se exige un valor válido
+// cuando regla_equidad_traslados_activa está activa.
+function validarUmbralLejania(reglaActiva, umbralLejaniaKm) {
+    if (!reglaActiva) return { valido: true };
+    if (umbralLejaniaKm === null || umbralLejaniaKm === undefined || umbralLejaniaKm === '') {
+        return { valido: false, error: 'umbral_lejania_km es requerido cuando la regla de equidad de traslados está activa' };
+    }
+    const n = Number(umbralLejaniaKm);
+    if (Number.isNaN(n)) return { valido: false, error: 'umbral_lejania_km debe ser numérico' };
+    if (n <= 0) return { valido: false, error: 'umbral_lejania_km debe ser mayor que 0' };
+    if (n > UMBRAL_LEJANIA_TECNICO_KM) {
+        return { valido: false, error: `umbral_lejania_km supera el máximo técnico permitido (${UMBRAL_LEJANIA_TECNICO_KM} km) — probable error de tipeo` };
+    }
+    return { valido: true };
+}
+
 // ─── Validación del orden global de criterios (Nivel 1) ───────────────────
 // `ordenCriterios`: array de { criterio_codigo, orden } — SOLO los criterios
 // ACTIVOS de esta configuración (un código ausente = inactivo, igual que en
-// la migración 050). Exige: schema soportado, códigos conocidos, sin
+// la migración 050). Exige: schema soportado, códigos conocidos PARA ESE
+// SCHEMA (schema_version=1 sigue aceptando exactamente los mismos 3 de
+// siempre — EQUIDAD_TRASLADOS solo es válido desde schema_version=2), sin
 // duplicados de código, sin duplicados de orden, secuencia 1..N sin huecos,
 // y mínimo 1 criterio activo (nunca 0 — el ganador jamás debe depender
 // únicamente del desempate final por jurado_id de forma accidental).
 function validarOrdenCriterios(ordenCriterios, schemaVersion = SCHEMA_VERSION_SOPORTADO) {
-    if (schemaVersion !== SCHEMA_VERSION_SOPORTADO) {
+    if (!SCHEMA_VERSIONES_SOPORTADAS.includes(schemaVersion)) {
         return { valido: false, error: `schema_version no soportado: ${schemaVersion}` };
     }
+    const criteriosConocidos = criteriosConocidosParaSchema(schemaVersion);
     const lista = ordenCriterios || [];
     if (lista.length === 0) {
         return { valido: false, error: 'Debe haber al menos 1 criterio de ranking activo' };
@@ -79,7 +122,7 @@ function validarOrdenCriterios(ordenCriterios, schemaVersion = SCHEMA_VERSION_SO
     const codigosVistos = new Set();
     const ordenesVistos = new Set();
     for (const c of lista) {
-        if (!CRITERIOS_CONOCIDOS.includes(c.criterio_codigo)) {
+        if (!criteriosConocidos.includes(c.criterio_codigo)) {
             return { valido: false, error: `Criterio de ranking desconocido: ${c.criterio_codigo}` };
         }
         if (codigosVistos.has(c.criterio_codigo)) {
@@ -204,7 +247,7 @@ function validarMatrizCompleta(matrizPorClasificacion) {
 function validarConfiguracion(configuracion) {
     const c = configuracion || {};
 
-    if (c.schema_version !== SCHEMA_VERSION_SOPORTADO) {
+    if (!SCHEMA_VERSIONES_SOPORTADAS.includes(c.schema_version)) {
         return { valido: false, error: `schema_version no soportado: ${c.schema_version}` };
     }
 
@@ -222,8 +265,46 @@ function validarConfiguracion(configuracion) {
     const rDist = validarDistancia(c.regla_distancia_maxima_activa, c.distancia_maxima_km);
     if (!rDist.valido) return rDist;
 
+    // ── Equidad de traslados (schema_version=2) — ver informe sección 5/7 ──
+    // schema_version=1 NUNCA acepta regla_equidad_traslados_activa=true: así
+    // se garantiza que una configuración "vieja" (incluida V1) no pueda
+    // activar esta regla por error/copy-paste y cambiar silenciosamente su
+    // significado histórico. El campo puede estar ausente/false/null en
+    // schema_version=1 (equivalente a "la regla no existe para este schema").
+    const reglaEquidadActiva = c.regla_equidad_traslados_activa === true;
+    if (c.schema_version === 1 && reglaEquidadActiva) {
+        return { valido: false, error: 'regla_equidad_traslados_activa solo es válida desde schema_version=2 — schema_version=1 debe mantener su significado histórico exacto' };
+    }
+    if (c.regla_equidad_traslados_activa !== undefined && c.regla_equidad_traslados_activa !== null
+        && typeof c.regla_equidad_traslados_activa !== 'boolean') {
+        return { valido: false, error: 'regla_equidad_traslados_activa debe ser booleano' };
+    }
+    const rUmbral = validarUmbralLejania(reglaEquidadActiva, c.umbral_lejania_km);
+    if (!rUmbral.valido) return rUmbral;
+
     const rOrden = validarOrdenCriterios(c.ordenCriterios, c.schema_version);
     if (!rOrden.valido) return rOrden;
+
+    // ── Coherencia regla/criterio + "SIEMPRE preferir cercanía" ───────────
+    // Decisión de negocio confirmada (revisión de cierre): cuando la regla
+    // está activa, EQUIDAD_TRASLADOS DEBE ser el criterio Nº1 del orden — de
+    // lo contrario un criterio anterior (categoría, equidad de designaciones,
+    // etc.) podría decidir entre un candidato CERCA y uno LEJOS antes de que
+    // la cercanía tenga oportunidad de pesar, contradiciendo el requisito de
+    // negocio "un jurado lejano sigue siendo elegible, pero el sistema
+    // SIEMPRE debe preferir cercanía". Con la regla INACTIVA, el criterio no
+    // debe figurar en absoluto en el orden (mismo criterio que antes).
+    const criterioEquidad = (c.ordenCriterios || []).find(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS');
+    if (reglaEquidadActiva) {
+        if (!criterioEquidad) {
+            return { valido: false, error: 'regla_equidad_traslados_activa está activa pero EQUIDAD_TRASLADOS no está en el orden de criterios' };
+        }
+        if (criterioEquidad.orden !== 1) {
+            return { valido: false, error: 'EQUIDAD_TRASLADOS debe ser el criterio Nº1 (orden=1) mientras regla_equidad_traslados_activa esté activa — así se garantiza que la cercanía siempre se evalúe antes que cualquier otro criterio' };
+        }
+    } else if (criterioEquidad) {
+        return { valido: false, error: 'EQUIDAD_TRASLADOS aparece en el orden de criterios pero regla_equidad_traslados_activa no está activa' };
+    }
 
     const rMatriz = validarMatrizCompleta(c.matriz);
     if (!rMatriz.valido) return rMatriz;
@@ -235,15 +316,32 @@ function validarConfiguracion(configuracion) {
 // Etapa 2 (NO implementada todavía en el motor): la comuna del jurado solo
 // es indispensable si algo en la configuración realmente usa distancia —
 // la regla dura DISTANCIA_MAXIMA, el criterio de ranking MENOR_DISTANCIA, o
-// ambos. Si ninguno de los dos está activo, JURADO_SIN_COMUNA_RESOLVIBLE ya
-// no debería descartar exclusivamente por una regla de distancia que dejó
-// de usarse — esa conexión se implementa en Etapa 2; acá solo se resuelve
-// el booleano puro que la futura Etapa 2 consultará.
+// (mejora Equidad de Traslados) la regla_equidad_traslados_activa/criterio
+// EQUIDAD_TRASLADOS, que también necesita distancia para clasificar
+// CERCA/LEJOS (informe, sección 24: "reutilizar la lógica existente de
+// comuna resoluble, no crear una segunda causa distinta"). Si nada de esto
+// está activo, JURADO_SIN_COMUNA_RESOLVIBLE ya no debería descartar
+// exclusivamente por una regla de distancia que dejó de usarse.
 function configuracionRequiereDistancia(configuracion) {
     const c = configuracion || {};
     if (c.regla_distancia_maxima_activa) return true;
+    if (c.regla_equidad_traslados_activa) return true;
     const ordenCriterios = c.ordenCriterios || [];
-    return ordenCriterios.some(o => o.criterio_codigo === 'MENOR_DISTANCIA');
+    return ordenCriterios.some(o => o.criterio_codigo === 'MENOR_DISTANCIA' || o.criterio_codigo === 'EQUIDAD_TRASLADOS');
+}
+
+// ─── Clasificación CERCA/LEJOS — criterio EQUIDAD_TRASLADOS ───────────────
+// Pura, sin acceso a BD. umbral_lejania_km es SOLO un umbral de clasificación
+// (informe, sección 2/3) — NUNCA una distancia máxima de descarte, ambos
+// conceptos son independientes y pueden coexistir con valores distintos (ej.
+// distancia_maxima_km desactivada + umbral_lejania_km=350 activo).
+//   distancia <= umbral → 'CERCA'
+//   distancia >  umbral → 'LEJOS'
+//   distancia null (sin comuna resoluble) → null (ni CERCA ni LEJOS)
+function clasificarTraslado(distanciaKm, umbralLejaniaKm) {
+    if (distanciaKm === null || distanciaKm === undefined) return null;
+    if (umbralLejaniaKm === null || umbralLejaniaKm === undefined) return null;
+    return distanciaKm <= umbralLejaniaKm ? 'CERCA' : 'LEJOS';
 }
 
 // ─── Configuración DEFAULT — Versión 1, equivalente EXACTO al motor actual ─
@@ -354,7 +452,8 @@ function compararConfiguraciones(a, b) {
     const camposEscalares = [
         'schema_version', 'regla_distancia_maxima_activa', 'distancia_maxima_km',
         'regla_no_repetir_asociacion_activa', 'regla_un_rodeo_por_finde_activa',
-        'regla_finde_consecutivo_activa', 'regla_asociacion_organizadora_activa'
+        'regla_finde_consecutivo_activa', 'regla_asociacion_organizadora_activa',
+        'regla_equidad_traslados_activa', 'umbral_lejania_km'
     ];
     for (const campo of camposEscalares) {
         if ((a || {})[campo] !== (b || {})[campo]) {
@@ -404,7 +503,7 @@ function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRow
     const distanciaRaw = versionRow.distancia_maxima_km;
     const distancia_maxima_km = (distanciaRaw === null || distanciaRaw === undefined) ? null : Number(distanciaRaw);
 
-    return {
+    const reconstruida = {
         schema_version: Number(versionRow.schema_version),
         regla_distancia_maxima_activa: versionRow.regla_distancia_maxima_activa,
         distancia_maxima_km,
@@ -415,6 +514,21 @@ function reconstruirConfiguracionDesdeFilas(versionRow, criteriosRows, matrizRow
         ordenCriterios: (criteriosRows || []).map(c => ({ criterio_codigo: c.criterio_codigo, orden: Number(c.orden) })),
         matriz
     };
+
+    // Equidad de traslados (schema_version=2, migración 052) — se agrega
+    // SOLO si versionRow realmente trae estas columnas. Antes de aplicar la
+    // migración 052, la fila de BD no las tiene en absoluto (columnas
+    // inexistentes) — se omiten del objeto reconstruido en vez de forzar
+    // false/null, para no fingir un dato que la BD todavía no tiene. Esto
+    // también preserva byte a byte la forma reconstruida hoy de versiones
+    // schema_version=1 ya existentes (tests de equivalencia V1, sin tocarlos).
+    if (versionRow.regla_equidad_traslados_activa !== undefined) {
+        reconstruida.regla_equidad_traslados_activa = versionRow.regla_equidad_traslados_activa;
+        const umbralRaw = versionRow.umbral_lejania_km;
+        reconstruida.umbral_lejania_km = (umbralRaw === null || umbralRaw === undefined) ? null : Number(umbralRaw);
+    }
+
+    return reconstruida;
 }
 
 // ─── Aplanar matriz objeto → filas planas (inverso de reconstruirConfigu- ──
@@ -447,7 +561,7 @@ function aplanarMatriz(matrizPorClasificacion) {
 // @param meta { id, numero_version, ... } — de cargarConfiguracionDesignacion*()
 function construirResumenParaUI(configuracion, meta) {
     const c = configuracion || {};
-    return {
+    const resumen = {
         id: meta?.id ?? null,
         numero_version: meta?.numero_version ?? null,
         regla_distancia_maxima_activa: c.regla_distancia_maxima_activa ?? null,
@@ -469,25 +583,64 @@ function construirResumenParaUI(configuracion, meta) {
             .sort((a, b) => a.orden - b.orden)
             .map(o => o.criterio_codigo)
     };
+    // Equidad de traslados — SOLO se agrega al resumen si la configuración
+    // de origen realmente trae el campo (schema_version=2). Una config
+    // schema_version=1 (incluida V1) no lo tiene definido — se omite del
+    // resumen en vez de forzar false/null, preservando exactamente la forma
+    // ya devuelta hoy para configuraciones existentes (tests de Etapa 4, sin
+    // tocarlos).
+    if (c.regla_equidad_traslados_activa !== undefined) {
+        resumen.regla_equidad_traslados_activa = c.regla_equidad_traslados_activa ?? null;
+        resumen.umbral_lejania_km = c.umbral_lejania_km ?? null;
+    }
+    return resumen;
+}
+
+// ─── Capacidades soportadas por este backend — "feature capability" ──────
+// Mejora "Equidad de Traslados" (revisión de cierre, sección 3): el
+// frontend NO debe inferir si el backend soporta schema_version=2 a partir
+// de errores — debe leerlo explícitamente de acá. Se expone tal cual desde
+// GET /defaults y GET /activa (configuracion-designacion.js) — pura, sin
+// BD, siempre refleja lo que este código realmente sabe validar/ejecutar
+// (nunca lo que la BD "debería" tener — antes de aplicar la migración 052
+// esto ya declara soporte para schema 2 a nivel de código; la RPC v2 real
+// solo existe después de aplicar esa migración, lo cual fallará controlado
+// si se intenta antes, nunca silenciosamente).
+function obtenerCapacidadesSoportadas() {
+    return {
+        schema_versions_soportadas: [...SCHEMA_VERSIONES_SOPORTADAS],
+        criterios_soportados_por_schema: {
+            1: [...CRITERIOS_CONOCIDOS_POR_SCHEMA[1]],
+            2: [...CRITERIOS_CONOCIDOS_POR_SCHEMA[2]]
+        },
+        umbral_lejania_default_km: 350
+    };
 }
 
 module.exports = {
     SCHEMA_VERSION_SOPORTADO,
+    SCHEMA_VERSIONES_SOPORTADAS,
     CRITERIOS_CONOCIDOS,
+    CRITERIOS_CONOCIDOS_POR_SCHEMA,
+    criteriosConocidosParaSchema,
     CRITERIO_NOMBRE_VISUAL,
     CLASIFICACIONES_CONOCIDAS,
     CATEGORIAS_CONOCIDAS,
     DISTANCIA_MAXIMA_TECNICA_KM,
+    UMBRAL_LEJANIA_TECNICO_KM,
     validarDistancia,
+    validarUmbralLejania,
     validarOrdenCriterios,
     validarMatrizClasificacion,
     validarMatrizCompleta,
     validarConfiguracion,
     configuracionRequiereDistancia,
+    clasificarTraslado,
     construirConfiguracionDefaultV1,
     clonarConfiguracion,
     compararConfiguraciones,
     reconstruirConfiguracionDesdeFilas,
     aplanarMatriz,
-    construirResumenParaUI
+    construirResumenParaUI,
+    obtenerCapacidadesSoportadas
 };

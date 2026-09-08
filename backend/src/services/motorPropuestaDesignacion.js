@@ -21,7 +21,7 @@ const { resolverComuna, calcularDistanciaKm, cargarCatalogoResolucionComunas } =
 const { normalizarAsociacion, mismaAsociacion } = require('./asociaciones');
 const { calcularBloqueRodeo, contarSabadosEntre, rangoFechas } = require('./feriados');
 const {
-    construirConfiguracionDefaultV1, validarConfiguracion, configuracionRequiereDistancia
+    construirConfiguracionDefaultV1, validarConfiguracion, configuracionRequiereDistancia, clasificarTraslado
 } = require('./configuracionDesignacion');
 
 // Etapa 2 — Configuración de Propuesta de Designación. Valor histórico
@@ -134,6 +134,106 @@ function construirMatrizPorClasificacionDesdeConfiguracion(configuracionMatriz) 
     return resultado;
 }
 
+// ─── EQUIDAD_TRASLADOS — comparador dedicado (mejora "Equidad de Traslados") ─
+// Recibe los resultados YA calculados de evaluarCandidato() (a.distanciaKm,
+// a.trasladosTemporada — ver más abajo) — nunca vuelve a tocar la BD ni
+// recalcula distancias/Haversine (eso ya existe en calcularDistanciaKm(),
+// geografia.js — no se duplica ningún motor de distancia).
+//
+// Algoritmo (informe de diseño, secciones 9/14/15 del pedido):
+//   NIVEL 0 — cercanía a ESTE rodeo SIEMPRE primero: un candidato CERCA de
+//     este rodeo específico le gana a uno LEJOS de este mismo rodeo, sin
+//     importar el historial de ninguno de los dos (sección 9: "A 220km debe
+//     preferirse sobre B a 850km" — ambos elegibles, pero distinta clase
+//     PARA ESTE rodeo). Esto es independiente de MENOR_DISTANCIA (que sigue
+//     comparando el valor exacto sin redondeo si está configurado aparte).
+//   NIVEL 1 — cuando ambos quedan en la MISMA clase (ambos CERCA o ambos
+//     LEJOS de este rodeo), se balancea la carga histórica de la temporada
+//     (secciones 11/12/13/14):
+//     · Si el rodeo actual es LEJOS para ambos: preferir 1) quien NO tuvo su
+//       última salida LEJOS, 2) luego menos salidas_lejos en la temporada,
+//       3) luego menor proporción de carga lejos (salidas_lejos / total).
+//     · Si el rodeo actual es CERCA para ambos: preferir 1) quien SÍ tuvo su
+//       última salida LEJOS (compensación), 2) luego MÁS salidas_lejos en la
+//       temporada (compensación), como indica la sección 12.
+// Candidatos sin distancia resoluble (clasificación null) quedan al final —
+// en la práctica no debería ocurrir: si EQUIDAD_TRASLADOS está activo,
+// configuracionRequiereDistancia() ya exige comuna resoluble como regla dura
+// (JURADO_SIN_COMUNA_RESOLVIBLE), así que todo candidato que llega hasta acá
+// ya tiene distanciaKm no-null.
+function compararEquidadTraslados(a, b, umbralLejaniaKm) {
+    const claseA = clasificarTraslado(a.distanciaKm, umbralLejaniaKm);
+    const claseB = clasificarTraslado(b.distanciaKm, umbralLejaniaKm);
+    const rango = (clase) => clase === 'CERCA' ? 0 : clase === 'LEJOS' ? 1 : 2;
+    if (rango(claseA) !== rango(claseB)) return rango(claseA) - rango(claseB);
+    if (claseA === null) return 0; // ambos sin distancia resoluble — empate, no debería ocurrir en la práctica (ver comentario arriba)
+
+    const cargaA = a.trasladosTemporada || { salidas_cerca: 0, salidas_lejos: 0, ultima_salida_tipo: null };
+    const cargaB = b.trasladosTemporada || { salidas_cerca: 0, salidas_lejos: 0, ultima_salida_tipo: null };
+    const proporcionLejos = (c) => {
+        const total = c.salidas_cerca + c.salidas_lejos;
+        return total === 0 ? 0 : c.salidas_lejos / total;
+    };
+
+    if (claseA === 'LEJOS') {
+        // 1) preferir quien NO tuvo última salida LEJOS
+        const ultA = cargaA.ultima_salida_tipo === 'LEJOS' ? 1 : 0;
+        const ultB = cargaB.ultima_salida_tipo === 'LEJOS' ? 1 : 0;
+        if (ultA !== ultB) return ultA - ultB;
+        // 2) menos salidas lejos en la temporada
+        if (cargaA.salidas_lejos !== cargaB.salidas_lejos) return cargaA.salidas_lejos - cargaB.salidas_lejos;
+        // 3) menor proporción/carga de viajes lejos
+        return proporcionLejos(cargaA) - proporcionLejos(cargaB);
+    }
+    // claseA === 'CERCA' (== claseB, ya empatadas arriba)
+    // 1) preferir quien SÍ tuvo última salida LEJOS (compensación)
+    const ultA = cargaA.ultima_salida_tipo === 'LEJOS' ? 0 : 1;
+    const ultB = cargaB.ultima_salida_tipo === 'LEJOS' ? 0 : 1;
+    if (ultA !== ultB) return ultA - ultB;
+    // 2) mayor carga de viajes lejos en la temporada (compensación)
+    if (cargaA.salidas_lejos !== cargaB.salidas_lejos) return cargaB.salidas_lejos - cargaA.salidas_lejos;
+    return 0;
+}
+
+// ─── "¿Por qué ganó?" — narrativa de Equidad de Traslados (informe, sección
+// 41; revisión de cierre, sección 19) ──────────────────────────────────────
+// Pura, solo texto — nunca decide nada, se llama DESPUÉS de que el ganador
+// ya está determinado. `clasificacionActual` es la del GANADOR respecto al
+// rodeo que se está proponiendo; `trasladosTemporada` es su carga de la
+// temporada (calcularCargaTraslados()), tal cual la vio el comparador.
+//
+// `fueDecisivo` (revisión de cierre — bloqueante de negocio, sección 19): que
+// EQUIDAD_TRASLADOS "forme parte del orden" (y sea Nº1) NO basta para decir
+// que fue la razón de la victoria — pudo haber quedado EMPATADO contra el
+// segundo candidato del grupo (mismo clasificación CERCA/LEJOS, misma carga
+// histórica) y haber sido en realidad OTRO criterio posterior el que decidió.
+// El llamador (ejecutarSimulacion) calcula esto comparando al ganador contra
+// el candidato inmediatamente siguiente (grupo[1]) con el MISMO comparador
+// que usó el ranking real — nunca se infiere ni se aproxima acá.
+function construirExplicacionEquidadTraslados(fueDecisivo, clasificacionActual, trasladosTemporada) {
+    if (!clasificacionActual || !trasladosTemporada) return null;
+    const ultimaTxt = trasladosTemporada.ultima_salida_tipo === 'LEJOS' ? 'lejana'
+        : trasladosTemporada.ultima_salida_tipo === 'CERCA' ? 'cercana' : null;
+
+    let descripcion;
+    if (clasificacionActual === 'LEJOS') {
+        descripcion = ultimaTxt
+            ? `Última salida ${ultimaTxt}; ${trasladosTemporada.salidas_lejos} viaje(s) lejano(s) esta temporada`
+            : `Sin salidas previas esta temporada; ${trasladosTemporada.salidas_lejos} viaje(s) lejano(s) hasta ahora`;
+    } else {
+        // clasificacionActual === 'CERCA'
+        descripcion = trasladosTemporada.ultima_salida_tipo === 'LEJOS'
+            ? 'Última salida lejana; priorizado para una salida cercana'
+            : (ultimaTxt ? `Última salida ${ultimaTxt}; sin viaje lejano reciente que compensar` : 'Sin salidas previas esta temporada');
+    }
+
+    // Decisivo: se presenta como la razón real de la selección (fraseo tal
+    // cual). NO decisivo: se marca explícitamente como empate — el mismo
+    // dato queda como CONTEXTO, nunca como "ganó por esto" (sección 19: "no
+    // decir que ganó por equidad" cuando otro criterio fue quien decidió).
+    return fueDecisivo ? descripcion : `Equidad de traslados: empate (${descripcion}) — decidido por otro criterio`;
+}
+
 // ─── Comparación de dos candidatos (ya evaluados) según UN criterio ───────
 // Recibe los resultados de evaluarCandidato() para a y b — nunca vuelve a
 // tocar la BD ni recalcula nada, solo lee los campos ya calculados.
@@ -145,9 +245,15 @@ function construirMatrizPorClasificacionDesdeConfiguracion(configuracionMatriz) 
 //                                    pedido — "10.1 km gana a 10.2 km" es
 //                                    intencional cuando este criterio ocupa
 //                                    la primera prioridad).
+//   EQUIDAD_TRASLADOS             → ver compararEquidadTraslados() arriba
+//                                    (nuevo criterio, mejora "Equidad de
+//                                    Traslados" — MENOR_DISTANCIA NO se toca).
 // Un código desconocido nunca debería llegar aquí (validarConfiguracion ya
 // lo rechaza antes de ejecutar) — se trata como empate (0) por seguridad.
-function compararPorCriterio(criterioCodigo, a, b) {
+// `umbralLejaniaKm` solo lo usa EQUIDAD_TRASLADOS — se recibe aparte (no
+// dentro de a/b) porque es un PARÁMETRO de la configuración, no un dato
+// calculado por candidato.
+function compararPorCriterio(criterioCodigo, a, b, umbralLejaniaKm) {
     switch (criterioCodigo) {
         case 'PRIORIDAD_CATEGORIA': {
             const oa = a.categoriaOrdenPreferencia ?? Infinity;
@@ -161,6 +267,8 @@ function compararPorCriterio(criterioCodigo, a, b) {
             const db = b.distanciaKm ?? Infinity;
             return da - db;
         }
+        case 'EQUIDAD_TRASLADOS':
+            return compararEquidadTraslados(a, b, umbralLejaniaKm);
         default:
             return 0;
     }
@@ -175,15 +283,17 @@ function compararPorCriterio(criterioCodigo, a, b) {
 // en la configuración (sección 6/18 del pedido).
 // @param ordenCriterios [{criterio_codigo, orden}] — no necesita venir
 //   preordenado, esta función lo ordena internamente.
+// @param umbralLejaniaKm solo lo usa EQUIDAD_TRASLADOS si está en el orden —
+//   ignorado por los demás criterios (mejora "Equidad de Traslados").
 // @returns (a, b) => number — comparador listo para Array.prototype.sort().
-function construirComparadorJerarquico(ordenCriterios) {
+function construirComparadorJerarquico(ordenCriterios, umbralLejaniaKm) {
     const criteriosEnOrden = [...(ordenCriterios || [])]
         .sort((a, b) => a.orden - b.orden)
         .map(c => c.criterio_codigo);
 
     return (a, b) => {
         for (const codigo of criteriosEnOrden) {
-            const cmp = compararPorCriterio(codigo, a, b);
+            const cmp = compararPorCriterio(codigo, a, b, umbralLejaniaKm);
             if (cmp !== 0) return cmp;
         }
         return a.jurado.id < b.jurado.id ? -1 : (a.jurado.id > b.jurado.id ? 1 : 0);
@@ -207,7 +317,7 @@ function construirComparadorJerarquico(ordenCriterios) {
 //   reglas ESTRUCTURALES (disponibilidad, categoría-como-regla, desempate)
 //   NUNCA se leen desde acá — siguen siempre activas, tal como antes.
 function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPorId, estado, configuracion) {
-    const { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado } = estado;
+    const { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado } = estado;
     const causas = [];
 
     // Regla 0 — disponibilidad para TODAS las fechas del rodeo (ESTRUCTURAL,
@@ -283,12 +393,107 @@ function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPor
 
     const designacionesAntes = designacionesPorJurado.get(jurado.id)?.size || 0;
 
+    // ── Equidad de Traslados — carga de traslados de la TEMPORADA, relativa
+    // a la fecha de ESTE rodeo (informe, secciones 13/18/19/21). Se computa
+    // SOLO cuando regla_equidad_traslados_activa está activa (schema_version=2
+    // con equidad configurada) — para V1/schema_version=1, o schema_version=2
+    // sin equidad, queda en null: nunca se muestra un "0 salidas cercanas/0
+    // lejanas" que sugeriría equidad configurada cuando en realidad no existe
+    // para esta versión (sección 44: V1 debe seguir funcionando EXACTAMENTE
+    // igual, incluida su superficie de datos expuesta).
+    let trasladosTemporada = null;
+    if (trasladosPorJuradoBD && configuracion.regla_equidad_traslados_activa) {
+        trasladosTemporada = calcularCargaTraslados(
+            trasladosPorJuradoBD.get(jurado.id),
+            trasladosTemporalesPorJurado ? trasladosTemporalesPorJurado.get(jurado.id) : null,
+            rodeo.fecha,
+            configuracion.umbral_lejania_km
+        );
+    }
+
     return {
         jurado, causas, elegible: causas.length === 0,
         distanciaKm, comunaJurado, categoriaOrdenPreferencia, categoriaCompatible,
         disponible, mismaAsoc, repiteAsociacionTemporada, mismoFinde, findeConsecutivo,
-        designacionesAntes
+        designacionesAntes, trasladosTemporada
     };
+}
+
+// ─── Carga de traslados de temporada — RELATIVA a un rodeo objetivo ───────
+// Pura, sin BD. Combina:
+//   - `trasladosBD` [{fecha, distanciaKm}, ...] ya ordenado por fecha ASC —
+//     SOLO las entradas con fecha ANTERIOR a `fechaRodeoObjetivo` cuentan
+//     (informe, sección 19: nunca usar una salida posterior para decidir una
+//     anterior). Si `fechaRodeoObjetivo` es null/undefined, cuenta TODO
+//     (usado por evaluarCandidatoDirecto()/tarjeta, donde no hay "rodeo
+//     objetivo futuro" que filtrar).
+//   - `trasladosTemporales` [{distanciaKm}, ...] — asignaciones propuestas
+//     por ESTA MISMA corrida de ejecutarSimulacion() para rodeos procesados
+//     antes que este en el orden de dificultad (informe, sección 21/50):
+//     se tratan como "más recientes que cualquier entrada de BD" y cuentan
+//     SIEMPRE (no llevan fecha propia — el estado temporal del motor nunca
+//     compara fechas entre sí, mismo criterio ya usado por designacionesPor
+//     Jurado/asociacionesPorJurado/bloquesPorJurado).
+// @returns { salidas_cerca, salidas_lejos, ultima_salida_tipo, ultima_salida_distancia_km }
+function calcularCargaTraslados(trasladosBD, trasladosTemporales, fechaRodeoObjetivo, umbralLejaniaKm) {
+    let salidas_cerca = 0, salidas_lejos = 0;
+    let ultimaClase = null, ultimaDistancia = null;
+
+    const historicoRelevante = (trasladosBD || []).filter(x => !fechaRodeoObjetivo || x.fecha < fechaRodeoObjetivo);
+    for (const x of historicoRelevante) {
+        const clase = clasificarTraslado(x.distanciaKm, umbralLejaniaKm);
+        if (clase === 'CERCA') salidas_cerca++;
+        else if (clase === 'LEJOS') salidas_lejos++;
+        // La lista viene ordenada por fecha ASC — cada iteración sobrescribe
+        // con la más reciente hasta el momento; al terminar el loop queda la
+        // última salida real anterior al rodeo objetivo.
+        if (clase !== null) { ultimaClase = clase; ultimaDistancia = x.distanciaKm; }
+    }
+    // Las temporales de esta misma corrida son "más recientes que todo BD"
+    // por diseño (sección 21) — se procesan al final; si hay varias, la
+    // última del array manda (orden de inserción = orden de propuesta).
+    for (const x of (trasladosTemporales || [])) {
+        const clase = clasificarTraslado(x.distanciaKm, umbralLejaniaKm);
+        if (clase === 'CERCA') salidas_cerca++;
+        else if (clase === 'LEJOS') salidas_lejos++;
+        if (clase !== null) { ultimaClase = clase; ultimaDistancia = x.distanciaKm; }
+    }
+
+    return { salidas_cerca, salidas_lejos, ultima_salida_tipo: ultimaClase, ultima_salida_distancia_km: ultimaDistancia };
+}
+
+// ─── Historial de traslados de TODA la temporada, por jurado — SOLO BD ────
+// Batch, sin N+1 (informe, sección 39): recorre `asignacionesTemporada` (ya
+// cargada UNA vez por cargarDatosMotor, extendida con la comuna del rodeo de
+// cada fila — ver cargarDatosMotor) y reconstruye la distancia de cada
+// asignación pasada vía Haversine — MISMA función que usa el motor hoy para
+// distancia en vivo (calcularDistanciaKm, geografia.js) — usando la comuna
+// ACTUAL del jurado (usuarios_pagados.comuna). Limitación aceptada y
+// documentada (ver informe de diseño, sección "Distancia histórica"):
+// usuarios_pagados.comuna es un valor único mutable, SIN historización — si
+// un jurado cambió de comuna durante la temporada, sus traslados anteriores
+// a ese cambio se reconstruyen igual con su comuna actual, lo que puede
+// reclasificar una salida antigua como CERCA/LEJOS de forma distinta a la
+// situación real de ese momento. Es la MISMA asunción que ya hace hoy el
+// motor para MENOR_DISTANCIA/DISTANCIA_EXCEDIDA (tampoco existe distancia
+// histórica persistida) — no es una asunción nueva introducida acá.
+// asignaciones.distancia_km (kilometraje declarado para bono de traslado)
+// NUNCA se usa para esto — es una magnitud distinta (ver informe, sección 3).
+// @returns Map(jurado_id -> [{fecha, distanciaKm}, ...]) ordenado por fecha ASC
+function construirTrasladosPorJuradoBD(asignacionesTemporada, comunaJuradoPorId) {
+    const porJurado = new Map();
+    for (const a of (asignacionesTemporada || [])) {
+        const comunaJurado = comunaJuradoPorId.get(a.usuario_pagado_id);
+        const comunaRodeo = a.rodeos?.comunas_chile;
+        let distanciaKm = null;
+        if (comunaJurado?.resuelto && comunaRodeo?.latitud != null && comunaRodeo?.longitud != null) {
+            distanciaKm = calcularDistanciaKm(comunaJurado.latitud, comunaJurado.longitud, comunaRodeo.latitud, comunaRodeo.longitud);
+        }
+        if (!porJurado.has(a.usuario_pagado_id)) porJurado.set(a.usuario_pagado_id, []);
+        porJurado.get(a.usuario_pagado_id).push({ fecha: a.rodeos.fecha, distanciaKm });
+    }
+    for (const lista of porJurado.values()) lista.sort((x, y) => (x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : 0));
+    return porJurado;
 }
 
 // ─── Estado SOLO-BD (asociaciones/bloques/designaciones) por jurado ──────
@@ -356,8 +561,18 @@ function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = co
     const matriz = rodeo.clasificacion_codigo ? matrizPorClasificacion[rodeo.clasificacion_codigo] : null;
     if (!matriz) return { error: 'TIPO_SIN_CLASIFICACION' };
 
-    const comunaJuradoPorId = new Map([[jurado.id, resolverComuna(jurado.comuna, contexto.catalogoComunas)]]);
+    // comunaJuradoPorId se resuelve para TODOS los jurados activos (no solo
+    // juradoId) — necesario para reconstruir el historial de traslados de
+    // temporada (construirTrasladosPorJuradoBD recorre asignacionesTemporada
+    // completa, que incluye asignaciones de otros jurados). Son llamadas
+    // puras a resolverComuna() (sin BD, ya son ~110 hoy en ejecutarSimulacion)
+    // — no introduce ningún query nuevo.
+    const comunaJuradoPorId = new Map();
+    for (const j of (contexto.jurados || [])) comunaJuradoPorId.set(j.id, resolverComuna(j.comuna, contexto.catalogoComunas));
+
     const estado = construirEstadoDesdeBD(contexto.asignacionesTemporada);
+    estado.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
+    estado.trasladosTemporalesPorJurado = new Map(); // sin corrida encima — evaluación directa contra estado real de BD únicamente
 
     return { evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado, configuracion) };
 }
@@ -462,13 +677,22 @@ async function cargarDatosMotor(rodeoIdsInput) {
     //    ÚNICO de "asignación efectiva" (esAsignacionEfectiva) más abajo —
     //    la query solo excluye anuladas como optimización, pero el filtro
     //    real y completo (incluye rechazadas) se aplica en un solo lugar.
+    //    comunas_chile(latitud, longitud) — mejora "Equidad de Traslados":
+    //    misma extensión de columnas EXISTENTES ya usadas para la comuna de
+    //    los rodeos solicitados (paso 2) — NO es una consulta nueva, solo
+    //    columnas adicionales de esta misma consulta ya existente. Permite
+    //    reconstruir en memoria la distancia histórica de cada asignación de
+    //    la temporada (construirTrasladosPorJuradoBD, más abajo) sin ningún
+    //    query por jurado/asignación. `id` — mejora "Métricas de Rendimiento":
+    //    misma razón, permite unir con notas_rodeo.asignacion_id en batch
+    //    (cargarRendimientoTemporada) sin ninguna consulta nueva de asignaciones.
     let asignacionesRaw = [];
     {
         let offset = 0;
         while (true) {
             const { data, error } = await supabase
                 .from('asignaciones')
-                .select('usuario_pagado_id, rodeo_id, estado, estado_designacion, rodeos!inner(fecha, duracion_dias, asociacion)')
+                .select('id, usuario_pagado_id, rodeo_id, estado, estado_designacion, rodeos!inner(fecha, duracion_dias, asociacion, comunas_chile(latitud, longitud))')
                 .eq('tipo_persona', 'jurado')
                 .neq('estado', 'anulado')
                 .range(offset, offset + PAGINA - 1);
@@ -531,12 +755,28 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
     const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
 
+    // Comuna resuelta de cada jurado, precalculada una sola vez (61 llamadas
+    // puras a resolverComuna, no hay N+1 de BD acá — ya está todo en memoria).
+    // Se mueve ANTES del estado (antes se calculaba después) porque
+    // construirTrasladosPorJuradoBD() la necesita para reconstruir distancias
+    // históricas — mismo resultado, mismo costo, solo cambia el orden.
+    const comunaJuradoPorId = new Map();
+    for (const j of jurados) comunaJuradoPorId.set(j.id, resolverComuna(j.comuna, catalogoComunas));
+
     // ── Estado temporal de la corrida (BD + asignaciones temporales unificadas) ──
     // Sembrado desde la BD (asignacionesTemporada, vía construirEstadoDesdeBD
     // — misma reducción que usa evaluarCandidatoDirecto(), nunca duplicada) y
     // mutado a medida que el motor va proponiendo jurados dentro de esta
     // misma simulación. Nunca se escribe en BD — vive solo en memoria.
     const { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado } = construirEstadoDesdeBD(asignacionesTemporada);
+
+    // Equidad de Traslados — historial de temporada por jurado (SOLO BD, sin
+    // mutar) + acumulador TEMPORAL (mutado por registrarAsignacionTemporal a
+    // medida que esta corrida propone jurados — informe, sección 21/50: una
+    // propuesta anterior del MISMO batch debe pesar en las siguientes, sin
+    // persistir nada). Ambos son baratos: arrays ya en memoria, sin BD nueva.
+    const trasladosPorJuradoBD = construirTrasladosPorJuradoBD(asignacionesTemporada, comunaJuradoPorId);
+    const trasladosTemporalesPorJurado = new Map(); // jurado_id -> [{distanciaKm}, ...]
 
     // Snapshot de designaciones SOLO-BD por jurado (antes de cualquier
     // propuesta de esta corrida) — para el resumen final de distribución
@@ -545,7 +785,11 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     for (const [juradoId, set] of designacionesPorJurado.entries()) designacionesAntesOriginal.set(juradoId, set.size);
 
     const asignacionesTemporalesLog = [];
-    const registrarAsignacionTemporal = (juradoId, rodeo) => {
+    // `distanciaKm` — la del GANADOR contra ESTE rodeo (puede ser null si no
+    // se pudo resolver comuna) — se agrega al acumulador temporal para que
+    // los rodeos procesados DESPUÉS en esta misma corrida vean esta salida
+    // recién propuesta como parte de la carga de traslados del jurado.
+    const registrarAsignacionTemporal = (juradoId, rodeo, distanciaKm) => {
         if (!designacionesPorJurado.has(juradoId)) designacionesPorJurado.set(juradoId, new Set());
         designacionesPorJurado.get(juradoId).add(rodeo.id);
 
@@ -557,13 +801,11 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             asociacionesPorJurado.get(juradoId).add(normalizarAsociacion(rodeo.asociacion));
         }
 
+        if (!trasladosTemporalesPorJurado.has(juradoId)) trasladosTemporalesPorJurado.set(juradoId, []);
+        trasladosTemporalesPorJurado.get(juradoId).push({ distanciaKm: distanciaKm ?? null });
+
         asignacionesTemporalesLog.push({ jurado_id: juradoId, rodeo_id: rodeo.id, fecha: rodeo.fecha, asociacion: rodeo.asociacion });
     };
-
-    // Comuna resuelta de cada jurado, precalculada una sola vez (61 llamadas
-    // puras a resolverComuna, no hay N+1 de BD acá — ya está todo en memoria).
-    const comunaJuradoPorId = new Map();
-    for (const j of jurados) comunaJuradoPorId.set(j.id, resolverComuna(j.comuna, catalogoComunas));
 
     // ── 1. Clasificar cada id solicitado: NO_EVALUABLE inmediato o evaluable ──
     const resultados = [];
@@ -609,7 +851,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // Es la MISMA función evaluarCandidato() que se usa en la evaluación real
     // más abajo — no hay una segunda versión de las reglas, solo se le pasa
     // un snapshot de estado distinto (sin mutaciones de esta corrida todavía).
-    const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado };
+    const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
     for (const rodeo of rodeosEvaluables) {
         const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
         rodeo._candidatosPotenciales = jurados.filter(j =>
@@ -628,7 +870,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // A partir de aquí, `estadoActual` sí se muta (registrarAsignacionTemporal
     // agrega a las mismas Map/Set que arriba) — cada rodeo que se procesa ve
     // las propuestas ya hechas a rodeos anteriores en esta misma corrida.
-    const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado };
+    const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
     for (const rodeo of rodeosEvaluables) {
         const matriz = matrizPorClasificacion[rodeo.clasificacion_codigo];
         const evaluaciones = jurados.map(j => evaluarCandidato(j, rodeo, matriz, disponibilidad, comunaJuradoPorId, estadoActual, configuracion));
@@ -669,7 +911,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
         // ORDEN GLOBAL de criterios (configuracion.ordenCriterios).
         const criteriosOrdenados = [...configuracion.ordenCriterios].sort((a, b) => a.orden - b.orden);
         const primerCriterioEsCategoria = criteriosOrdenados[0]?.criterio_codigo === 'PRIORIDAD_CATEGORIA';
-        const comparador = construirComparadorJerarquico(configuracion.ordenCriterios);
+        const comparador = construirComparadorJerarquico(configuracion.ordenCriterios, configuracion.umbral_lejania_km);
 
         // Paridad EXACTA con el comportamiento actual (sección 2 del pedido
         // de Etapa 2): si PRIORIDAD_CATEGORIA es el criterio Nº1, el grupo
@@ -703,7 +945,26 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
         }));
 
         const ganador = grupo[0];
-        registrarAsignacionTemporal(ganador.jurado.id, rodeo);
+        registrarAsignacionTemporal(ganador.jurado.id, rodeo, ganador.distanciaKm);
+
+        // Equidad de Traslados — datos SOLO INFORMATIVOS del ganador (informe,
+        // secciones 2/25/41). distancia_clasificacion usa el umbral de ESTA
+        // configuración (null si EQUIDAD_TRASLADOS no está configurado — sin
+        // umbral no hay clasificación). Nunca influyen en who gana MÁS ALLÁ
+        // de lo que ya decidió el comparador jerárquico de arriba.
+        const distanciaClasificacion = clasificarTraslado(ganador.distanciaKm, configuracion.umbral_lejania_km);
+        const equidadTrasladosActiva = criteriosOrdenados.some(c => c.criterio_codigo === 'EQUIDAD_TRASLADOS');
+
+        // ¿Fue EQUIDAD_TRASLADOS realmente decisivo? (revisión de cierre,
+        // sección 19) — se compara al ganador contra el candidato siguiente
+        // del MISMO grupo (grupo[1], ya ordenado por el comparador jerárquico
+        // real) con el mismo compararEquidadTraslados() que usó el ranking.
+        // Si el resultado es 0 (empate en este criterio), quien decidió
+        // realmente fue OTRO criterio posterior — nunca se le atribuye la
+        // victoria a la equidad en ese caso. Sin un segundo candidato con
+        // quien comparar, no hay ambigüedad posible que evitar.
+        const equidadFueDecisivo = !equidadTrasladosActiva ? false
+            : (grupo.length < 2 || compararEquidadTraslados(ganador, grupo[1], configuracion.umbral_lejania_km) !== 0);
 
         resultados.push({
             rodeo_id: rodeo.id, estado: 'PROPUESTO',
@@ -718,6 +979,24 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
                 comuna_canonica: ganador.comunaJurado?.nombre || null,
                 origen_comuna: ganador.comunaJurado?.origen || null,
                 distancia_km: ganador.distanciaKm !== null ? Math.round(ganador.distanciaKm * 10) / 10 : null,
+                // Equidad de Traslados — nulo si umbral_lejania_km no está
+                // configurado (V1/schema_version=1 y schema_version=2 sin
+                // equidad activa): "CERCA"|"LEJOS"|null.
+                distancia_clasificacion: distanciaClasificacion,
+                traslados_temporada: ganador.trasladosTemporada ? {
+                    salidas_cercanas: ganador.trasladosTemporada.salidas_cerca,
+                    salidas_lejanas: ganador.trasladosTemporada.salidas_lejos,
+                    ultima_salida_tipo: ganador.trasladosTemporada.ultima_salida_tipo,
+                    ultima_salida_distancia_km: ganador.trasladosTemporada.ultima_salida_distancia_km !== null
+                        ? Math.round(ganador.trasladosTemporada.ultima_salida_distancia_km * 10) / 10 : null
+                } : null,
+                // "¿Por qué ganó?" — solo se agrega narrativa cuando EQUIDAD_
+                // TRASLADOS realmente forma parte del orden de criterios
+                // configurado (informe, sección 41) — nunca una frase inventada
+                // cuando el criterio no participó de la decisión.
+                equidad_traslados_explicacion: equidadTrasladosActiva
+                    ? construirExplicacionEquidadTraslados(equidadFueDecisivo, distanciaClasificacion, ganador.trasladosTemporada)
+                    : null,
                 designaciones_temporada_antes: ganador.designacionesAntes,
                 designaciones_temporada_despues: ganador.designacionesAntes + 1,
                 checks: {
@@ -772,6 +1051,163 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     };
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Métricas de Rendimiento (informe, Objetivo B) — SOLO INFORMATIVO, NUNCA
+// participa del ranking (no se lee dentro de evaluarCandidato()/comparador
+// — separación explícita pedida en la sección 40 del informe). Se calcula
+// DESPUÉS de ejecutarSimulacion(), únicamente para los jurados que resultaron
+// GANADORES en esta corrida — no para los ~59 candidatos evaluados durante
+// el ranking, evitando cargar datos innecesarios en el camino caliente.
+//
+// Fuentes canónicas reutilizadas (ver informe de diseño — nunca inventadas):
+//   - nota: notas_rodeo.nota, vinculada a asignaciones.id — misma fuente que
+//     Hoja de Vida (hojavida.js) y GET /admin/dashboard/desempeno.
+//   - promedio jurado / categoría / general: MISMA metodología ya usada por
+//     GET /admin/dashboard/desempeno (dashboard.js) — promedio jurado y
+//     promedio categoría son promedios "de promedios por jurado"; promedio
+//     general es un promedio PLANO de todas las notas individuales (dos
+//     metodologías distintas dentro de la misma fuente oficial — se
+//     reutilizan tal cual, sin homogeneizarlas).
+//   - participación/alteración: esAsignacionEfectiva() (mismo criterio único
+//     del motor) + evaluaciones.resultados_alterados, contando RODEOS
+//     DISTINTOS (evaluaciones.rodeo_id es UNIQUE — nunca hay más de 1
+//     evaluación por rodeo, así que no hay riesgo de inflar el conteo).
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Carga batch — 2 queries NUEVAS, FIJAS (no crecen con la cantidad de ──
+// jurados/rodeos evaluados en el ranking) ──────────────────────────────────
+// Reutiliza contexto.asignacionesTemporada (YA cargada por cargarDatosMotor,
+// sin query adicional) como población base — misma fuente/filtro que usa el
+// motor para equidad de traslados (esAsignacionEfectiva + rango de
+// temporada activa). Se salta por completo si no hay ninguna asignación de
+// temporada (nada que enriquecer).
+// @returns { asignacionesTemporada, notasPorAsignacion: Map(asignacion_id->nota),
+//            alteradoPorRodeo: Map(rodeo_id->boolean), queriesAproximadas }
+async function cargarRendimientoTemporada(contexto) {
+    const asignacionesTemporada = contexto.asignacionesTemporada || [];
+    if (asignacionesTemporada.length === 0) {
+        return { asignacionesTemporada, notasPorAsignacion: new Map(), alteradoPorRodeo: new Map(), queriesAproximadas: 0 };
+    }
+
+    const asigIds = asignacionesTemporada.map(a => a.id).filter(Boolean);
+    const rodeoIds = [...new Set(asignacionesTemporada.map(a => a.rodeo_id))];
+    let queries = 0;
+
+    const { data: notasRaw, error: errNotas } = await supabase
+        .from('notas_rodeo').select('asignacion_id, nota').in('asignacion_id', asigIds);
+    queries++;
+    if (errNotas) throw new Error('No se pudieron cargar notas para métricas de rendimiento: ' + errNotas.message);
+    const notasPorAsignacion = new Map();
+    for (const n of (notasRaw || [])) notasPorAsignacion.set(n.asignacion_id, parseFloat(n.nota));
+
+    // anulada=false — misma semántica ya documentada: evaluaciones.rodeo_id
+    // es UNIQUE, así que como mucho hay 1 fila por rodeo; una evaluación
+    // anulada se trata como "sin evaluación" (nunca como alteración=false).
+    const { data: evalsRaw, error: errEvals } = await supabase
+        .from('evaluaciones').select('rodeo_id, resultados_alterados').in('rodeo_id', rodeoIds).eq('anulada', false);
+    queries++;
+    if (errEvals) throw new Error('No se pudieron cargar evaluaciones para métricas de rendimiento: ' + errEvals.message);
+    const alteradoPorRodeo = new Map();
+    for (const e of (evalsRaw || [])) alteradoPorRodeo.set(e.rodeo_id, !!e.resultados_alterados);
+
+    return { asignacionesTemporada, notasPorAsignacion, alteradoPorRodeo, queriesAproximadas: queries };
+}
+
+// ─── Cálculo PURO de rendimiento por jurado — sin BD, testeable con fixtures ─
+// @param datos      { asignacionesTemporada, notasPorAsignacion, alteradoPorRodeo } — de cargarRendimientoTemporada()
+// @param jurados     [{id, categoria}, ...] — lista completa (para resolver categoría de cada jurado)
+// @param juradoIdsAMostrar  iterable de jurado_id — SOLO se calcula/devuelve para estos (los ganadores de esta corrida)
+// @param hoyChile    'YYYY-MM-DD' — corte: rodeos con fecha > hoyChile se excluyen (informe, sección 36)
+// @returns Map(jurado_id -> { ultima_nota, promedio_jurado, promedio_categoria, promedio_general, alteracion:{alterados,total,porcentaje} })
+function construirRendimientoPorJurado(datos, jurados, juradoIdsAMostrar, hoyChile) {
+    const { asignacionesTemporada, notasPorAsignacion, alteradoPorRodeo } = datos;
+    const categoriaPorJurado = new Map((jurados || []).map(j => [j.id, j.categoria]));
+
+    // Solo rodeos YA REALIZADOS — nunca futuros (sección 36).
+    const pasadas = (asignacionesTemporada || []).filter(a => a.rodeos?.fecha && a.rodeos.fecha <= hoyChile);
+
+    // Por jurado: entradas ordenadas por fecha + set de rodeos DISTINTOS en
+    // los que participó (denominador de alteración — sección 33/34: RODEOS
+    // DISTINTOS, nunca filas de evaluación ni cantidad de notas).
+    const porJurado = new Map();
+    for (const a of pasadas) {
+        if (!porJurado.has(a.usuario_pagado_id)) porJurado.set(a.usuario_pagado_id, { entradas: [], rodeosDistintos: new Set() });
+        const registro = porJurado.get(a.usuario_pagado_id);
+        registro.rodeosDistintos.add(a.rodeo_id);
+        const nota = a.id != null ? notasPorAsignacion.get(a.id) : undefined;
+        registro.entradas.push({ fecha: a.rodeos.fecha, rodeo_id: a.rodeo_id, nota: nota != null ? nota : null });
+    }
+    for (const registro of porJurado.values()) {
+        registro.entradas.sort((x, y) => (x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : 0));
+    }
+
+    // Promedio general — PLANO sobre TODAS las notas válidas de la temporada
+    // (misma metodología que dashboard.js /desempeno: resumen.promedio_nota_general).
+    const todasNotas = [];
+    for (const registro of porJurado.values()) {
+        for (const e of registro.entradas) if (e.nota != null) todasNotas.push(e.nota);
+    }
+    const promedioGeneral = todasNotas.length
+        ? Math.round((todasNotas.reduce((s, n) => s + n, 0) / todasNotas.length) * 100) / 100 : null;
+
+    // Promedio por categoría — promedio DE LOS PROMEDIOS por jurado dentro
+    // de cada categoría (misma metodología que dashboard.js /desempeno:
+    // por_categoria[cat].promedio_nota — NO un promedio plano de notas
+    // individuales; se reutiliza tal cual, sin homogeneizar con el general).
+    const promediosPorJuradoPorCategoria = new Map();
+    for (const [juradoId, registro] of porJurado.entries()) {
+        const notasValidas = registro.entradas.map(e => e.nota).filter(n => n != null);
+        if (notasValidas.length === 0) continue;
+        const promedioJurado = notasValidas.reduce((s, n) => s + n, 0) / notasValidas.length;
+        const cat = categoriaPorJurado.get(juradoId) || '?';
+        if (!promediosPorJuradoPorCategoria.has(cat)) promediosPorJuradoPorCategoria.set(cat, []);
+        promediosPorJuradoPorCategoria.get(cat).push(promedioJurado);
+    }
+    const promedioPorCategoria = new Map();
+    for (const [cat, lista] of promediosPorJuradoPorCategoria.entries()) {
+        promedioPorCategoria.set(cat, Math.round((lista.reduce((s, n) => s + n, 0) / lista.length) * 100) / 100);
+    }
+
+    const resultado = new Map();
+    for (const juradoId of juradoIdsAMostrar) {
+        const registro = porJurado.get(juradoId);
+        const categoria = categoriaPorJurado.get(juradoId) ?? null;
+        const promedioCategoria = categoria != null ? (promedioPorCategoria.get(categoria) ?? null) : null;
+
+        if (!registro || registro.entradas.length === 0) {
+            resultado.set(juradoId, {
+                ultima_nota: null, promedio_jurado: null,
+                promedio_categoria: promedioCategoria, promedio_general: promedioGeneral,
+                alteracion: { alterados: 0, total: 0, porcentaje: null }
+            });
+            continue;
+        }
+
+        // Última nota = la del ÚLTIMO rodeo (por fecha) en que participó —
+        // NO la última nota que exista salteando rodeos sin nota (sección
+        // 28: "si el último rodeo no posee nota, mostrar Sin nota/N/D", no
+        // buscar hacia atrás la nota anterior más cercana).
+        const ultimaEntrada = registro.entradas[registro.entradas.length - 1];
+        const ultimaNota = ultimaEntrada.nota;
+
+        const notasValidas = registro.entradas.map(e => e.nota).filter(n => n != null);
+        const promedioJurado = notasValidas.length
+            ? Math.round((notasValidas.reduce((s, n) => s + n, 0) / notasValidas.length) * 100) / 100 : null;
+
+        const total = registro.rodeosDistintos.size;
+        let alterados = 0;
+        for (const rodeoId of registro.rodeosDistintos) if (alteradoPorRodeo.get(rodeoId)) alterados++;
+        const porcentaje = total > 0 ? Math.round((alterados / total) * 100) : null; // total=0 nunca divide — sección 35
+
+        resultado.set(juradoId, {
+            ultima_nota: ultimaNota, promedio_jurado: promedioJurado,
+            promedio_categoria: promedioCategoria, promedio_general: promedioGeneral,
+            alteracion: { alterados, total, porcentaje }
+        });
+    }
+    return resultado;
+}
+
 // Etapa 2 — Configuración de Propuesta de Designación. `configuracion` es
 // un parámetro OPCIONAL (por defecto Versión 1 hardcodeada) agregado al
 // final para no romper ningún llamador existente. Desde Etapa 3, la ruta de
@@ -785,9 +1221,30 @@ async function generarSimulacion(rodeoIdsInput, topN = 5, configuracion = constr
     const finCargaMs = Date.now();
     const resultado = ejecutarSimulacion(contexto, topN, configuracion);
     const finMotorMs = Date.now();
+
+    // Métricas de Rendimiento (Objetivo B) — SOLO para los jurados GANADORES
+    // de esta corrida (informe, sección 40), enriquecidas DESPUÉS del
+    // ranking — nunca antes, para no pagar su costo si nadie resultó
+    // PROPUESTO (ej. una corrida que solo devuelve SIN_PROPUESTA/NO_EVALUABLE).
+    const juradoIdsGanadores = [...new Set(
+        resultado.resultados.filter(r => r.estado === 'PROPUESTO').map(r => r.jurado_propuesto.jurado_id)
+    )];
+    if (juradoIdsGanadores.length > 0) {
+        const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+        const datosRendimiento = await cargarRendimientoTemporada(contexto);
+        const rendimientoPorJurado = construirRendimientoPorJurado(datosRendimiento, contexto.jurados, juradoIdsGanadores, hoyChile);
+        for (const r of resultado.resultados) {
+            if (r.estado === 'PROPUESTO') {
+                r.jurado_propuesto.rendimiento_temporada = rendimientoPorJurado.get(r.jurado_propuesto.jurado_id) || null;
+            }
+        }
+        resultado.metricas.queries_rendimiento_aproximadas = datosRendimiento.queriesAproximadas;
+    }
+
     resultado.temporada = contexto.temporada ? contexto.temporada.nombre : null;
     resultado.modo = 'DRY_RUN';
     resultado.metricas = {
+        ...resultado.metricas,
         tiempo_ejecucion_ms: finMotorMs - inicioMs,
         tiempo_carga_bd_ms: finCargaMs - inicioMs,
         tiempo_motor_memoria_ms: finMotorMs - finCargaMs,
@@ -805,5 +1262,10 @@ module.exports = {
     // Etapa 2 — Configuración de Propuesta de Designación (funciones puras
     // nuevas, testeables sin BD; ver informe de entrega).
     construirMatrizPorClasificacionDesdeConfiguracion, compararPorCriterio, construirComparadorJerarquico,
-    DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL, TOP_N_TODOS_LOS_CANDIDATOS
+    DISTANCIA_MAXIMA_KM, ORDEN_CAUSA_PRINCIPAL, TOP_N_TODOS_LOS_CANDIDATOS,
+    // Mejora "Equidad de Traslados" — funciones puras nuevas, testeables sin BD.
+    compararEquidadTraslados, calcularCargaTraslados, construirTrasladosPorJuradoBD,
+    construirExplicacionEquidadTraslados,
+    // Mejora "Métricas de Rendimiento" — ver más abajo (cargarRendimientoTemporada/construirRendimientoPorJurado).
+    cargarRendimientoTemporada, construirRendimientoPorJurado
 };

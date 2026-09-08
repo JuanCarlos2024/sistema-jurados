@@ -923,7 +923,16 @@ function construirFilaPreviewDesdeResultado(r) {
             estado_revision: 'PENDIENTE',
             explicacion_json: { jurado_propuesto: jp, top_candidatos: r.top_candidatos || [] },
             metricas_json: { candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes },
-            jurado_efectivo: { id: jp.jurado_id, nombre: jp.nombre, categoria: jp.categoria, categoria_preferente: jp.categoria_preferente, comuna: jp.comuna_canonica, distancia_km: jp.distancia_km, designaciones_temporada_antes: jp.designaciones_temporada_antes }
+            jurado_efectivo: {
+                id: jp.jurado_id, nombre: jp.nombre, categoria: jp.categoria, categoria_preferente: jp.categoria_preferente,
+                comuna: jp.comuna_canonica, distancia_km: jp.distancia_km, designaciones_temporada_antes: jp.designaciones_temporada_antes,
+                // Mejora "Equidad de Traslados" + "Métricas de Rendimiento" — mismos
+                // campos que ya trae jp (jurado_propuesto del motor), solo reestructurados.
+                distancia_clasificacion: jp.distancia_clasificacion ?? null,
+                traslados_temporada: jp.traslados_temporada ?? null,
+                equidad_traslados_explicacion: jp.equidad_traslados_explicacion ?? null,
+                rendimiento_temporada: jp.rendimiento_temporada ?? null
+            }
         };
     }
     if (r.estado === 'SIN_PROPUESTA') {
@@ -1201,6 +1210,52 @@ function renderVistaPropuesta() {
     </div>`;
 }
 
+// Mejora "Métricas de Rendimiento" — bloque SOLO INFORMATIVO de la tarjeta
+// PROPUESTA. Formato de nota con coma decimal (estilo chileno, mismo patrón
+// visual usado en el resto del sistema). "N/D" para cualquier dato sin
+// información suficiente — nunca se muestra "0" o se inventa un valor.
+function _fmtNotaCL(n) {
+    return (n === null || n === undefined) ? 'N/D' : String(n).replace('.', ',');
+}
+function renderRendimientoTemporada(j) {
+    const rend = j?.rendimiento_temporada;
+    if (!rend) return ''; // no calculado para esta fila (ej. propuesta antigua, o corrida sin ganadores)
+    const alt = rend.alteracion || { alterados: 0, total: 0, porcentaje: null };
+    const altTxto = alt.total > 0 ? `${alt.alterados}/${alt.total} (${alt.porcentaje}%)` : '0/0 (N/D)';
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Rendimiento temporada</div>
+        <div style="font-size:14px; color:var(--gris); line-height:1.75;">
+            Última nota: ${_fmtNotaCL(rend.ultima_nota)}<br>
+            Promedio jurado: ${_fmtNotaCL(rend.promedio_jurado)}<br>
+            ${rend.promedio_categoria != null ? `Promedio categoría ${sanitizar(j.categoria || '')}: ${_fmtNotaCL(rend.promedio_categoria)}<br>` : ''}
+            Promedio general: ${_fmtNotaCL(rend.promedio_general)}<br>
+            Alteración de puntaje: ${altTxto}
+        </div>
+    </div>`;
+}
+
+// Mejora "Equidad de Traslados" — bloque de la tarjeta PROPUESTA. Solo se
+// muestra si el motor realmente calculó traslados_temporada (equidad de
+// traslados activa en la configuración de esta propuesta) — para V1/
+// configuraciones sin equidad activa, el campo es null y el bloque
+// simplemente no aparece (sección 44: V1 sigue funcionando igual).
+function renderTrasladosTemporada(j) {
+    const t = j?.traslados_temporada;
+    if (!t) return '';
+    const ultimaTxt = t.ultima_salida_tipo === 'LEJOS' ? 'Lejana' : t.ultima_salida_tipo === 'CERCA' ? 'Cercana' : null;
+    const ultimaLinea = ultimaTxt
+        ? ultimaTxt + (t.ultima_salida_distancia_km !== null ? ' · ' + t.ultima_salida_distancia_km + ' km' : '')
+        : 'Sin salidas previas';
+    return `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
+        <div style="font-size:11px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Traslados temporada</div>
+        <div style="font-size:14px; color:var(--gris); line-height:1.75;">
+            Salidas cercanas: ${t.salidas_cercanas}<br>
+            Salidas lejanas: ${t.salidas_lejanas}<br>
+            Última salida: ${ultimaLinea}
+        </div>
+    </div>`;
+}
+
 // Tarjeta de una fila de propuesta — REUTILIZADA para PREVIEW (sin guardar,
 // modo='preview') y BORRADOR (ya persistido, modo='borrador'). El tipo de
 // rodeo y la clasificación quedan SIEMPRE visibles (nunca dentro de un "ver
@@ -1257,6 +1312,13 @@ function renderFilaDetallePropuesta(d, modo) {
             ${lineaConfigurable(configVisible?.regla_distancia_maxima_activa, checks.dentro_600km, etiquetaDentroDeDistancia(modo))}
             ${lineaCheck(checks.categoria_compatible, 'Categoría compatible')}
         </div>`;
+        // Equidad de Traslados — narrativa dinámica de "¿Por qué ganó?" (solo
+        // si el criterio realmente participó — el motor deja el campo en
+        // null si EQUIDAD_TRASLADOS no está en el orden de criterios de esta
+        // configuración; nunca se inventa texto acá).
+        if (j?.equidad_traslados_explicacion) {
+            detallesExtra += `<div class="check-linea" style="color:var(--gris); margin-top:4px;">↔ Equidad de traslados: "${sanitizar(j.equidad_traslados_explicacion)}"</div>`;
+        }
     }
     if (d.explicacion_json?.top_candidatos?.length > 0) {
         detallesExtra += `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:14px; color:var(--gris);">¿Por qué ganó? — Top ${d.explicacion_json.top_candidatos.length} candidatos finales</summary>${renderTopCandidatos(d.explicacion_json.top_candidatos)}</details>`;
@@ -1303,9 +1365,11 @@ function renderFilaDetallePropuesta(d, modo) {
                     <div style="font-size:14px; color:var(--gris); line-height:1.75; margin-top:2px;">
                         Categoría ${sanitizar(j.categoria || '—')}${j.categoria_preferente ? ' (preferente)' : ''}<br>
                         ${j.comuna ? 'Comuna: ' + sanitizar(j.comuna) + '<br>' : ''}
-                        ${j.distancia_km !== null ? 'Distancia: ' + j.distancia_km + ' km<br>' : ''}
+                        ${j.distancia_km !== null ? 'Distancia: ' + j.distancia_km + ' km' + (j.distancia_clasificacion ? ' · ' + j.distancia_clasificacion : '') + '<br>' : ''}
                         ${j.designaciones_temporada_antes !== null ? 'Designaciones temporada: ' + j.designaciones_temporada_antes : ''}
-                    </div>` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
+                    </div>
+                    ${renderRendimientoTemporada(j)}
+                    ${renderTrasladosTemporada(j)}` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
                         ? `<div style="font-size:14px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong><br>
                            <span style="color:#b9560a;">Ese jurado fue movido a otro rodeo de esta propuesta — requiere una nueva decisión.</span></div>`
                         : '<span style="color:#aaa; font-size:15px;">Sin jurado designado</span>')}

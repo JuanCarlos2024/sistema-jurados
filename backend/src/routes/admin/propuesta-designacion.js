@@ -1059,7 +1059,22 @@ router.get('/propuestas/:id', async (req, res) => {
                 comuna: infoJurado?.comuna || null,
                 distancia_km: metricasMotor?.distancia_km ?? null,
                 categoria_preferente: metricasMotor?.categoria_preferente ?? null,
-                designaciones_temporada_antes: metricasMotor?.designaciones_temporada_antes ?? null
+                designaciones_temporada_antes: metricasMotor?.designaciones_temporada_antes ?? null,
+                // Mejora "Equidad de Traslados" — snapshot tal cual quedó al
+                // guardar/aceptar esta fila (mismo criterio que los campos de
+                // arriba: solo válidos mientras el jurado efectivo siga
+                // siendo el propuesto originalmente por el motor). null para
+                // toda propuesta generada con V1/schema_version=1 o con
+                // equidad de traslados desactivada — nunca se inventa un
+                // valor.
+                distancia_clasificacion: metricasMotor?.distancia_clasificacion ?? null,
+                traslados_temporada: metricasMotor?.traslados_temporada ?? null,
+                equidad_traslados_explicacion: metricasMotor?.equidad_traslados_explicacion ?? null,
+                // Mejora "Métricas de Rendimiento" — SOLO INFORMATIVO, mismo
+                // snapshot; null si la corrida no llegó a calcularlo (ej.
+                // ningún rodeo resultó PROPUESTO) o para filas muy antiguas
+                // guardadas antes de esta mejora.
+                rendimiento_temporada: metricasMotor?.rendimiento_temporada ?? null
             } : null,
             estado_revision: d.estado_revision,
             origen_seleccion: d.origen_seleccion,

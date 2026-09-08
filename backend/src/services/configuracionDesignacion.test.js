@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const {
-    SCHEMA_VERSION_SOPORTADO, CRITERIOS_CONOCIDOS,
-    validarDistancia, validarOrdenCriterios, validarMatrizClasificacion, validarMatrizCompleta,
-    validarConfiguracion, configuracionRequiereDistancia,
+    SCHEMA_VERSION_SOPORTADO, SCHEMA_VERSIONES_SOPORTADAS, CRITERIOS_CONOCIDOS, CRITERIOS_CONOCIDOS_POR_SCHEMA,
+    criteriosConocidosParaSchema,
+    validarDistancia, validarUmbralLejania, validarOrdenCriterios, validarMatrizClasificacion, validarMatrizCompleta,
+    validarConfiguracion, configuracionRequiereDistancia, clasificarTraslado,
     construirConfiguracionDefaultV1, clonarConfiguracion, compararConfiguraciones,
     reconstruirConfiguracionDesdeFilas, aplanarMatriz, construirResumenParaUI
 } = require('./configuracionDesignacion');
@@ -349,15 +350,30 @@ describe('TEST R/S/T: configuracionRequiereDistancia', () => {
     });
 });
 
-// TEST U
-describe('TEST U: schema_version desconocido es inválido', () => {
-    test('validarOrdenCriterios rechaza schema_version distinto de 1', () => {
-        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 2);
+// TEST U — actualizado por la mejora "Equidad de Traslados": schema_version=2
+// ahora es un valor SOPORTADO (no "distinto de 1" = inválido) — ver
+// SCHEMA_VERSIONES_SOPORTADAS y CRITERIOS_CONOCIDOS_POR_SCHEMA. Lo que sigue
+// siendo inválido es cualquier schema_version FUERA de [1, 2].
+describe('TEST U: schema_version desconocido (fuera de [1, 2]) es inválido', () => {
+    test('validarOrdenCriterios rechaza schema_version 3 (no soportado)', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 3);
         expect(r.valido).toBe(false);
     });
-    test('validarConfiguracion rechaza schema_version distinto de 1', () => {
-        const config = { ...defaultV1, schema_version: 2 };
+    test('validarConfiguracion rechaza schema_version 3 (no soportado)', () => {
+        const config = { ...defaultV1, schema_version: 3 };
         expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    // Nuevo — confirma explícitamente que schema_version=2 SÍ es válido desde
+    // esta mejora, incluso usando solo los 3 criterios de siempre (sin
+    // activar equidad de traslados): schema_version=2 es un SUPERCONJUNTO
+    // compatible de schema_version=1, nunca una ruptura.
+    test('validarOrdenCriterios acepta schema_version=2 con los 3 criterios de siempre', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 2);
+        expect(r.valido).toBe(true);
+    });
+    test('validarConfiguracion acepta schema_version=2 sin equidad de traslados activa', () => {
+        const config = { ...defaultV1, schema_version: 2 };
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
     });
 });
 
@@ -644,5 +660,207 @@ describe('Etapa 4 — construirResumenParaUI', () => {
             regla_finde_consecutivo_activa: null, regla_asociacion_organizadora_activa: null,
             orden_criterios_codigos: []
         });
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Equidad de Traslados" — schema_version=2, regla_equidad_traslados_
+// activa, umbral_lejania_km, criterio EQUIDAD_TRASLADOS, clasificarTraslado().
+// V1/schema_version=1 no se toca — estos tests cubren específicamente el
+// comportamiento NUEVO y su convivencia con lo existente.
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('Equidad de Traslados — clasificarTraslado (CERCA/LEJOS)', () => {
+    test('350 km exactos = CERCA (umbral inclusivo)', () => {
+        expect(clasificarTraslado(350, 350)).toBe('CERCA');
+    });
+    test('350.1 km = LEJOS', () => {
+        expect(clasificarTraslado(350.1, 350)).toBe('LEJOS');
+    });
+    test('174 km = CERCA', () => {
+        expect(clasificarTraslado(174, 350)).toBe('CERCA');
+    });
+    test('850 km = LEJOS', () => {
+        expect(clasificarTraslado(850, 350)).toBe('LEJOS');
+    });
+    test('1200 km = LEJOS', () => {
+        expect(clasificarTraslado(1200, 350)).toBe('LEJOS');
+    });
+    test('distancia null (sin comuna resoluble) -> null', () => {
+        expect(clasificarTraslado(null, 350)).toBeNull();
+    });
+    test('umbral null/undefined -> null (no clasifica sin umbral configurado)', () => {
+        expect(clasificarTraslado(100, null)).toBeNull();
+        expect(clasificarTraslado(100, undefined)).toBeNull();
+    });
+});
+
+describe('Equidad de Traslados — validarUmbralLejania', () => {
+    test('regla inactiva -> siempre valido, cualquier valor (incluso ausente)', () => {
+        expect(validarUmbralLejania(false, undefined)).toEqual({ valido: true });
+        expect(validarUmbralLejania(false, null)).toEqual({ valido: true });
+        expect(validarUmbralLejania(false, -5)).toEqual({ valido: true });
+    });
+    test('regla activa + umbral ausente -> invalido', () => {
+        expect(validarUmbralLejania(true, null).valido).toBe(false);
+        expect(validarUmbralLejania(true, undefined).valido).toBe(false);
+    });
+    test('regla activa + umbral <= 0 -> invalido', () => {
+        expect(validarUmbralLejania(true, 0).valido).toBe(false);
+        expect(validarUmbralLejania(true, -10).valido).toBe(false);
+    });
+    test('regla activa + umbral > techo tecnico -> invalido', () => {
+        expect(validarUmbralLejania(true, 5001).valido).toBe(false);
+    });
+    test('regla activa + umbral valido (350) -> valido', () => {
+        expect(validarUmbralLejania(true, 350)).toEqual({ valido: true });
+    });
+});
+
+describe('Equidad de Traslados — criteriosConocidosParaSchema / CRITERIOS_CONOCIDOS_POR_SCHEMA', () => {
+    test('schema_version=1 NO incluye EQUIDAD_TRASLADOS (significado historico intacto)', () => {
+        expect(criteriosConocidosParaSchema(1)).toEqual(CRITERIOS_CONOCIDOS);
+        expect(criteriosConocidosParaSchema(1)).not.toContain('EQUIDAD_TRASLADOS');
+    });
+    test('schema_version=2 incluye los 3 de siempre MAS EQUIDAD_TRASLADOS', () => {
+        const c2 = criteriosConocidosParaSchema(2);
+        expect(c2).toEqual(expect.arrayContaining(CRITERIOS_CONOCIDOS));
+        expect(c2).toContain('EQUIDAD_TRASLADOS');
+        expect(c2).toHaveLength(CRITERIOS_CONOCIDOS.length + 1);
+    });
+    test('SCHEMA_VERSIONES_SOPORTADAS = [1, 2]', () => {
+        expect(SCHEMA_VERSIONES_SOPORTADAS).toEqual([1, 2]);
+    });
+});
+
+describe('Equidad de Traslados — validarConfiguracion (compatibilidad V1 y reglas nuevas)', () => {
+    test('schema_version=1 con regla_equidad_traslados_activa=true es RECHAZADO -- V1 no puede activar equidad', () => {
+        const config = { ...defaultV1, schema_version: 1, regla_equidad_traslados_activa: true, umbral_lejania_km: 350 };
+        const r = validarConfiguracion(config);
+        expect(r.valido).toBe(false);
+        expect(r.error).toMatch(/schema_version=2/);
+    });
+    test('schema_version=1 default V1 tal cual (sin tocar) sigue siendo valida', () => {
+        expect(validarConfiguracion(defaultV1)).toEqual({ valido: true });
+    });
+    // Decisión de negocio (revisión de cierre): "SIEMPRE preferir cercanía"
+    // exige que EQUIDAD_TRASLADOS sea SIEMPRE el criterio Nº1 mientras la
+    // regla esté activa — nunca en una posición posterior.
+    test('schema_version=2 con EQUIDAD_TRASLADOS activo, umbral y en orden=1 -> valido', () => {
+        const config = {
+            ...defaultV1,
+            schema_version: 2,
+            regla_equidad_traslados_activa: true,
+            umbral_lejania_km: 350,
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        };
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+    test('schema_version=2 con EQUIDAD_TRASLADOS activo pero en orden=2 (no Nº1) -> INVALIDO', () => {
+        const config = {
+            ...defaultV1,
+            schema_version: 2,
+            regla_equidad_traslados_activa: true,
+            umbral_lejania_km: 350,
+            ordenCriterios: [
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        };
+        const r = validarConfiguracion(config);
+        expect(r.valido).toBe(false);
+        expect(r.error).toMatch(/Nº1/);
+    });
+    test('regla_equidad_traslados_activa=true pero EQUIDAD_TRASLADOS ausente del orden -> invalido', () => {
+        const config = {
+            ...defaultV1, schema_version: 2, regla_equidad_traslados_activa: true, umbral_lejania_km: 350,
+            ordenCriterios: [{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }]
+        };
+        const r = validarConfiguracion(config);
+        expect(r.valido).toBe(false);
+        expect(r.error).toMatch(/EQUIDAD_TRASLADOS/);
+    });
+    test('EQUIDAD_TRASLADOS en el orden de criterios SIN regla_equidad_traslados_activa -> invalido (estado inconsistente)', () => {
+        const config = {
+            ...defaultV1,
+            schema_version: 2,
+            regla_equidad_traslados_activa: false,
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 }
+            ]
+        };
+        const r = validarConfiguracion(config);
+        expect(r.valido).toBe(false);
+        expect(r.error).toMatch(/EQUIDAD_TRASLADOS/);
+    });
+    test('regla_equidad_traslados_activa=true sin umbral_lejania_km -> invalido', () => {
+        const config = {
+            ...defaultV1, schema_version: 2, regla_equidad_traslados_activa: true, umbral_lejania_km: null,
+            ordenCriterios: [{ criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 }, { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 }]
+        };
+        expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    test('schema_version=2 SIN equidad de traslados (regla_equidad_traslados_activa ausente) sigue exactamente igual a V1 en efecto', () => {
+        const config = { ...defaultV1, schema_version: 2 };
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+        expect(configuracionRequiereDistancia(config)).toBe(true); // sigue siendo true SOLO por regla_distancia_maxima_activa/MENOR_DISTANCIA, como hoy
+    });
+});
+
+describe('Equidad de Traslados — configuracionRequiereDistancia', () => {
+    test('regla_equidad_traslados_activa=true por si sola ya requiere distancia (aunque distancia_maxima/MENOR_DISTANCIA esten OFF)', () => {
+        const c = {
+            regla_distancia_maxima_activa: false, regla_equidad_traslados_activa: true,
+            ordenCriterios: [{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }, { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 2 }]
+        };
+        expect(configuracionRequiereDistancia(c)).toBe(true);
+    });
+    test('todas las fuentes de distancia OFF (incluida equidad) -> false', () => {
+        const c = {
+            regla_distancia_maxima_activa: false, regla_equidad_traslados_activa: false,
+            ordenCriterios: [{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }]
+        };
+        expect(configuracionRequiereDistancia(c)).toBe(false);
+    });
+});
+
+describe('Equidad de Traslados — reconstruirConfiguracionDesdeFilas / construirResumenParaUI: compatibilidad de forma', () => {
+    const versionRowV1SinEquidad = {
+        id: 'v1-uuid', numero_version: 1, schema_version: 1,
+        regla_distancia_maxima_activa: true, distancia_maxima_km: '600',
+        regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
+        regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true
+        // sin regla_equidad_traslados_activa/umbral_lejania_km -- simula una fila de BD ANTES de aplicar la migracion 052.
+    };
+    test('una fila de BD sin columnas de equidad no agrega esas claves al objeto reconstruido', () => {
+        const reconstruida = reconstruirConfiguracionDesdeFilas(versionRowV1SinEquidad, [], []);
+        expect('regla_equidad_traslados_activa' in reconstruida).toBe(false);
+        expect('umbral_lejania_km' in reconstruida).toBe(false);
+    });
+    test('una fila de BD CON columnas de equidad (schema_version=2) si las incluye, normalizando umbral a Number', () => {
+        const versionRowV2 = { ...versionRowV1SinEquidad, schema_version: 2, regla_equidad_traslados_activa: true, umbral_lejania_km: '350' };
+        const reconstruida = reconstruirConfiguracionDesdeFilas(versionRowV2, [], []);
+        expect(reconstruida.regla_equidad_traslados_activa).toBe(true);
+        expect(reconstruida.umbral_lejania_km).toBe(350);
+        expect(typeof reconstruida.umbral_lejania_km).toBe('number');
+    });
+    test('construirResumenParaUI no agrega campos de equidad para una configuracion que no los trae (V1)', () => {
+        const resumen = construirResumenParaUI(defaultV1, { id: 'v1-uuid', numero_version: 1 });
+        expect('regla_equidad_traslados_activa' in resumen).toBe(false);
+        expect('umbral_lejania_km' in resumen).toBe(false);
+    });
+    test('construirResumenParaUI incluye los campos de equidad cuando la configuracion los trae', () => {
+        const config = { ...defaultV1, schema_version: 2, regla_equidad_traslados_activa: true, umbral_lejania_km: 350 };
+        const resumen = construirResumenParaUI(config, { id: 'v2-uuid', numero_version: 2 });
+        expect(resumen.regla_equidad_traslados_activa).toBe(true);
+        expect(resumen.umbral_lejania_km).toBe(350);
     });
 });

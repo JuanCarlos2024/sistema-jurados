@@ -14,10 +14,26 @@
 // pedido de Etapa 4: "backend vuelve a validar", nunca se confía solo en esto).
 // ═════════════════════════════════════════════════════════════════════════
 
+// Mejora "Equidad de Traslados" — schema_version=2 agrega EQUIDAD_TRASLADOS
+// a los criterios conocidos, SIN tocar la lista de schema_version=1 (mismos
+// 3 de siempre — nunca se reinterpreta schema1). Mismo patrón que
+// CRITERIOS_CONOCIDOS_POR_SCHEMA del backend (configuracionDesignacion.js)
+// — fuente de verdad duplicada intencionalmente en 2 lenguajes (JS puro sin
+// build step, no hay forma de compartir un módulo entre frontend/backend en
+// este proyecto), pero ambas listas deben mantenerse en sincronía manual.
 const CRITERIOS_CONOCIDOS_UI = ['PRIORIDAD_CATEGORIA', 'MENOS_DESIGNACIONES_TEMPORADA', 'MENOR_DISTANCIA'];
+const CRITERIOS_CONOCIDOS_UI_POR_SCHEMA = {
+    1: CRITERIOS_CONOCIDOS_UI,
+    2: [...CRITERIOS_CONOCIDOS_UI, 'EQUIDAD_TRASLADOS']
+};
+function criteriosConocidosUIParaSchema(schemaVersion) {
+    return CRITERIOS_CONOCIDOS_UI_POR_SCHEMA[schemaVersion] || CRITERIOS_CONOCIDOS_UI;
+}
 const CLASIFICACIONES_CONOCIDAS_UI = ['interclubes', 'provincial', 'interasociaciones', 'zonal', 'clasificatorio', 'nacional'];
 const CATEGORIAS_CONOCIDAS_UI = ['A', 'B', 'C'];
 const DISTANCIA_MAXIMA_TECNICA_KM_UI = 5000;
+const UMBRAL_LEJANIA_TECNICO_KM_UI = 5000; // mismo techo técnico que distancia_maxima_km — ver DISTANCIA_MAXIMA_TECNICA_KM_UI
+const UMBRAL_LEJANIA_DEFAULT_KM_UI = 350;  // valor inicial sugerido al activar equidad (informativo — el administrador puede cambiarlo)
 
 // ─── Renumera un array ya en el orden deseado como 1..N sin huecos ───────
 function renumerar(lista, campoOrden) {
@@ -43,7 +59,19 @@ function activarCriterio(ordenCriterios, criterioCodigo) {
 // restantes 1..N sin huecos. NUNCA deja 0 criterios activos (sección 13):
 // si es el último, no hace nada y devuelve la lista intacta — el llamador
 // (UI) debe avisar al administrador, nunca guardar en ese estado.
+//
+// EQUIDAD_TRASLADOS (mejora "Equidad de Traslados", revisión de cierre,
+// sección 11): NUNCA se desactiva desde la lista genérica de criterios —
+// mientras esté presente, está por definición ligado a
+// regla_equidad_traslados_activa=true y fijo en orden=1 (ver
+// validarConfiguracion() en el backend). La ÚNICA forma correcta de
+// quitarlo es apagar el toggle dedicado "Aplicar equidad de traslados"
+// (ver desactivarEquidadTraslados() más abajo), que además limpia
+// regla_equidad_traslados_activa/umbral_lejania_km de forma coherente —
+// algo que esta función genérica no sabe hacer. Evita el estado
+// incoherente "criterio ausente pero regla todavía activa".
 function desactivarCriterio(ordenCriterios, criterioCodigo) {
+    if (criterioCodigo === 'EQUIDAD_TRASLADOS') return ordenCriterios || [];
     const lista = ordenCriterios || [];
     if (lista.length <= 1) return lista; // nunca deja 0 activos
     const restante = lista.filter(c => c.criterio_codigo !== criterioCodigo).sort((a, b) => a.orden - b.orden);
@@ -52,14 +80,78 @@ function desactivarCriterio(ordenCriterios, criterioCodigo) {
 
 // ─── Mueve un criterio activo un lugar arriba/abajo — intercambia orden ───
 // con su vecino inmediato. En los extremos no hace nada.
+//
+// EQUIDAD_TRASLADOS (revisión de cierre, sección 9/11): SIEMPRE bloqueado
+// en orden=1 mientras esté presente — "no puede subir, no puede bajar".
+// Tampoco se permite que otro criterio se mueva HACIA la posición 1
+// desplazándolo (el intercambio de posiciones es simétrico: mover "B" hacia
+// arriba cuando está en la posición 2 intercambiaría con EQUIDAD_TRASLADOS
+// en la posición 1 — se bloquea desde ambos lados).
 function moverCriterio(ordenCriterios, criterioCodigo, direccion) {
+    if (criterioCodigo === 'EQUIDAD_TRASLADOS') return ordenCriterios || [];
     const lista = [...(ordenCriterios || [])].sort((a, b) => a.orden - b.orden);
     const idx = lista.findIndex(c => c.criterio_codigo === criterioCodigo);
     if (idx === -1) return lista;
     const destino = direccion === 'arriba' ? idx - 1 : idx + 1;
     if (destino < 0 || destino >= lista.length) return lista;
+    if (lista[destino].criterio_codigo === 'EQUIDAD_TRASLADOS') return lista; // no desplazar al criterio bloqueado en Nº1
     [lista[idx], lista[destino]] = [lista[destino], lista[idx]];
     return renumerar(lista, 'orden');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// EQUIDAD DE TRASLADOS — activar/desactivar (revisión de cierre, secciones
+// 6/7/8). Trabaja sobre la configuración COMPLETA (no solo ordenCriterios)
+// porque promueve/gestiona schema_version + regla_equidad_traslados_activa
+// + umbral_lejania_km + ordenCriterios juntos, de forma coherente.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Activa equidad de traslados — PROMUEVE el draft a schema_version=2 ───
+// (sección 6/7): nunca modifica la versión base (V1 u otra), solo la copia
+// en memoria (`configuracion` ya es esa copia, según el patrón ya usado por
+// el resto del editor). Inserta EQUIDAD_TRASLADOS en orden=1 y desplaza los
+// criterios existentes a 2..N+1, CONSERVANDO su orden relativo (sección 7).
+// umbral_lejania_km: se conserva si ya tenía un valor válido (>0) — útil si
+// el administrador la había activado antes en el mismo draft y la apagó —
+// si no, usa UMBRAL_LEJANIA_DEFAULT_KM_UI (350).
+function activarEquidadTraslados(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.schema_version = 2;
+    c.regla_equidad_traslados_activa = true;
+    if (!(Number(c.umbral_lejania_km) > 0)) c.umbral_lejania_km = UMBRAL_LEJANIA_DEFAULT_KM_UI;
+
+    const restantes = (c.ordenCriterios || [])
+        .filter(o => o.criterio_codigo !== 'EQUIDAD_TRASLADOS')
+        .slice().sort((a, b) => a.orden - b.orden)
+        .map((o, i) => ({ criterio_codigo: o.criterio_codigo, orden: i + 2 }));
+    c.ordenCriterios = [{ criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 }, ...restantes];
+    return c;
+}
+
+// ─── Desactiva equidad de traslados (sección 8) ───────────────────────────
+// Quita EQUIDAD_TRASLADOS del orden (renumerando 1..N el resto) y limpia
+// regla_equidad_traslados_activa=false / umbral_lejania_km=null.
+//
+// DECISIÓN DOCUMENTADA (sección 8 del pedido): NO se revierte
+// schema_version a 1 automáticamente — el draft queda en schema_version=2
+// (sin equidad activa) hasta que el administrador lo guarde así o vuelva a
+// activar equidad. Motivo: revertir "hacia atrás" el schema requeriría
+// lógica reversible adicional (¿qué pasa si el administrador ya usó otro
+// campo exclusivo de schema2 en el mismo draft?) sin ningún beneficio real
+// — una configuración schema_version=2 con equidad desactivada es
+// perfectamente válida y equivalente en efecto a schema_version=1 (el
+// motor no la trata distinto), y deja la puerta abierta a futuras
+// funciones de schema2 sin necesitar otra promoción.
+function desactivarEquidadTraslados(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.regla_equidad_traslados_activa = false;
+    c.umbral_lejania_km = null;
+    const restantes = (c.ordenCriterios || [])
+        .filter(o => o.criterio_codigo !== 'EQUIDAD_TRASLADOS')
+        .slice().sort((a, b) => a.orden - b.orden)
+        .map((o, i) => ({ criterio_codigo: o.criterio_codigo, orden: i + 1 }));
+    c.ordenCriterios = restantes;
+    return c;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -144,6 +236,36 @@ function validarDraft(configuracion) {
         }
     }
 
+    // ── Equidad de traslados (schema_version=2) — revisión de cierre, sección
+    // 12: réplica de UX de la validación de autoridad en el backend
+    // (configuracionDesignacion.js validarConfiguracion()). Casos A-G:
+    const reglaEquidadActiva = c.regla_equidad_traslados_activa === true;
+    const criterioEquidad = ordenCriterios.find(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS');
+    if (c.schema_version !== 2 && reglaEquidadActiva) {
+        return { valido: false, error: 'La equidad de traslados solo es válida en schema_version=2' }; // A
+    }
+    if (c.schema_version !== 2 && criterioEquidad) {
+        return { valido: false, error: 'EQUIDAD_TRASLADOS solo es válido en schema_version=2' }; // B
+    }
+    if (reglaEquidadActiva) {
+        const n = Number(c.umbral_lejania_km);
+        if (c.umbral_lejania_km === null || c.umbral_lejania_km === undefined || c.umbral_lejania_km === '' || Number.isNaN(n)) {
+            return { valido: false, error: 'El umbral de lejanía es obligatorio mientras la equidad de traslados esté activa' }; // C
+        }
+        if (n <= 0) return { valido: false, error: 'El umbral de lejanía debe ser mayor que 0' }; // F
+        if (n > UMBRAL_LEJANIA_TECNICO_KM_UI) {
+            return { valido: false, error: `El umbral de lejanía no puede superar ${UMBRAL_LEJANIA_TECNICO_KM_UI} km` }; // G
+        }
+        if (!criterioEquidad) {
+            return { valido: false, error: 'EQUIDAD_TRASLADOS debe estar en el orden de criterios mientras la equidad de traslados esté activa' };
+        }
+        if (criterioEquidad.orden !== 1) {
+            return { valido: false, error: 'EQUIDAD_TRASLADOS debe ser el criterio Nº1 (orden=1) mientras la equidad de traslados esté activa' }; // D
+        }
+    } else if (criterioEquidad) {
+        return { valido: false, error: 'EQUIDAD_TRASLADOS aparece en el orden de criterios pero la equidad de traslados no está activa' }; // E
+    }
+
     const matriz = c.matriz || {};
     for (const codigo of CLASIFICACIONES_CONOCIDAS_UI) {
         const filas = matriz[codigo] || [];
@@ -168,7 +290,8 @@ function validarDraft(configuracion) {
 const NOMBRE_CRITERIO_UI = {
     PRIORIDAD_CATEGORIA: 'Prioridad de categoría',
     MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones',
-    MENOR_DISTANCIA: 'Menor distancia'
+    MENOR_DISTANCIA: 'Menor distancia',
+    EQUIDAD_TRASLADOS: 'Equidad de traslados'
 };
 
 function textoOrdenCriterios(ordenCriterios) {
@@ -200,6 +323,21 @@ function construirDiffParaUI(configBase, configNueva) {
     const distB = b.regla_distancia_maxima_activa ? `${b.distancia_maxima_km} km` : 'Desactivada';
     if (distA !== distB) cambios.push({ etiqueta: 'Distancia máxima', antes: distA, despues: distB });
 
+    // Equidad de traslados (schema_version=2) — revisión de cierre, sección
+    // 19/31: schema, activación y umbral se muestran como líneas separadas
+    // del diff, igual que el resto de las reglas.
+    const schemaA = a.schema_version ?? 1, schemaB = b.schema_version ?? 1;
+    if (schemaA !== schemaB) cambios.push({ etiqueta: 'Schema', antes: String(schemaA), despues: String(schemaB) });
+
+    const eqActivaA = a.regla_equidad_traslados_activa === true, eqActivaB = b.regla_equidad_traslados_activa === true;
+    if (eqActivaA !== eqActivaB) {
+        cambios.push({ etiqueta: 'Equidad de traslados', antes: eqActivaA ? 'Activada' : 'Desactivada', despues: eqActivaB ? 'Activada' : 'Desactivada' });
+    }
+    const umbralA = a.umbral_lejania_km ?? null, umbralB = b.umbral_lejania_km ?? null;
+    if (umbralA !== umbralB) {
+        cambios.push({ etiqueta: 'Umbral de lejanía', antes: umbralA !== null ? `${umbralA} km` : '—', despues: umbralB !== null ? `${umbralB} km` : '—' });
+    }
+
     const REGLAS_UI = [
         ['regla_no_repetir_asociacion_activa', 'No repetir asociación durante la temporada'],
         ['regla_un_rodeo_por_finde_activa', 'Máximo un rodeo por fin de semana'],
@@ -228,8 +366,11 @@ function construirDiffParaUI(configBase, configNueva) {
 // Funciona como <script> global en el navegador y como módulo require()-able
 // en Node/Jest — mismo patrón que candidatosFiltro.js.
 const _configuracionDesignacionHelpersExports = {
-    CRITERIOS_CONOCIDOS_UI, CLASIFICACIONES_CONOCIDAS_UI, CATEGORIAS_CONOCIDAS_UI, DISTANCIA_MAXIMA_TECNICA_KM_UI,
+    CRITERIOS_CONOCIDOS_UI, CRITERIOS_CONOCIDOS_UI_POR_SCHEMA, criteriosConocidosUIParaSchema,
+    CLASIFICACIONES_CONOCIDAS_UI, CATEGORIAS_CONOCIDAS_UI, DISTANCIA_MAXIMA_TECNICA_KM_UI,
+    UMBRAL_LEJANIA_TECNICO_KM_UI, UMBRAL_LEJANIA_DEFAULT_KM_UI,
     activarCriterio, desactivarCriterio, moverCriterio,
+    activarEquidadTraslados, desactivarEquidadTraslados,
     activarCategoria, desactivarCategoria, moverCategoria,
     validarDraft, construirDiffParaUI
 };
