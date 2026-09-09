@@ -57,7 +57,16 @@ async function apiFetch(endpoint, options = {}) {
             // `data` completo se incluye además de `message` para que endpoints que
             // devuelven info estructurada en el error (p.ej. 409 con advertencias
             // a confirmar) puedan leerla sin romper a quienes solo usan err.message.
-            throw { status: response.status, message: data?.error || 'Error en la solicitud', data };
+            //
+            // Diagnóstico "CONFIGURACION_DESIGNACION_INVALIDA" (Zonas Extremas):
+            // el backend ya calcula un `detalle` legible (validarConfiguracion() /
+            // mensaje de la RPC) en CADA error de configuración de designación,
+            // pero antes de este cambio se descartaba acá — el administrador solo
+            // veía el código genérico. Se concatena `detalle` cuando existe, sin
+            // tocar `data` (los llamadores que ya leían err.data siguen igual).
+            const mensajeBase = data?.error || 'Error en la solicitud';
+            const mensaje = data?.detalle ? `${mensajeBase}: ${data.detalle}` : mensajeBase;
+            throw { status: response.status, message: mensaje, data };
         }
 
         return data;

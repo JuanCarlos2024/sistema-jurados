@@ -19,7 +19,7 @@ const {
     listarVersionesDesignacion, obtenerVersionDesignacionDetalle,
     crearVersionDesignacion, activarVersionDesignacion
 } = require('./configuracionDesignacionRepositorio');
-const { construirConfiguracionDefaultV1 } = require('./configuracionDesignacion');
+const { construirConfiguracionDefaultV1, validarConfiguracion } = require('./configuracionDesignacion');
 
 // ─── Fixtures — mismas filas reales verificadas en BD para V1 ─────────────
 // Etapa 4: SELECT_VERSION ahora incluye también activa/descripcion/
@@ -674,5 +674,165 @@ describe('errores de la propia consulta se propagan (no se convierten en un CONF
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
         await expect(cargarConfiguracionDesignacionActiva()).rejects.toThrow(/orden de criterios/);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// REGRESIÓN — diagnóstico "CONFIGURACION_DESIGNACION_INVALIDA" al guardar
+// Schema3 desde la V2 REAL de producción (reporte de bug del administrador).
+//
+// Reproduce el flujo COMPLETO exactamente como lo hace la UI real, usando
+// las filas EXACTAS de V2 activa extraídas de producción (solo lectura, ver
+// diagnóstico de este mismo cierre): GET /activa (reconstrucción) →
+// abrirCrearNuevaVersion (clonar) → activar Zonas Extremas (helper frontend
+// real) → diff para UI (helper frontend real) → validarDraft (frontend) →
+// validarConfiguracion (backend) → POST /versiones → repository → RPC v3.
+//
+// Resultado de la investigación: con los datos REALES, este flujo NO
+// reproduce el error — el draft, el diff y ambas validaciones son correctos
+// en cada paso. Este test queda como regresión permanente de ese hallazgo
+// (si algo en el futuro rompe cualquiera de estos pasos, este test lo
+// detecta) — no reemplaza la necesidad de que el administrador reintente
+// tras un refresco duro del navegador (ver reporte).
+// ═════════════════════════════════════════════════════════════════════════
+describe('REGRESIÓN — V2 real de producción → activar Zonas Extremas → guardar (bug CONFIGURACION_DESIGNACION_INVALIDA)', () => {
+    // Filas EXACTAS de la versión V2 activa real, extraídas solo-lectura de
+    // producción en el diagnóstico de este bug (proyecto witynpyhuhbobrxevmcp,
+    // version_id 0ac4f340-968b-4076-9687-1b13cd358d6b) — NUNCA sintéticas/
+    // uniformes, a diferencia de construirConfiguracionDefaultV1().
+    const VERSION_V2_REAL = {
+        id: '0ac4f340-968b-4076-9687-1b13cd358d6b', numero_version: 2, schema_version: 2, activa: true,
+        regla_distancia_maxima_activa: true, distancia_maxima_km: '1000',
+        regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
+        regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true,
+        regla_equidad_traslados_activa: true, umbral_lejania_km: '350',
+        regla_zonas_extremas_activa: false,
+        descripcion: null, creado_por: null, created_at: '2026-09-01T00:00:00Z'
+    };
+    const CRITERIOS_V2_REAL = [
+        { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+        { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+        { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+        { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+    ];
+    const MATRIZ_V2_REAL = [
+        { clasificacion_codigo: 'clasificatorio', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'clasificatorio', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'clasificatorio', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'interasociaciones', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'interasociaciones', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'interasociaciones', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'interclubes', categoria: 'A', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'interclubes', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'interclubes', categoria: 'C', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'nacional', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'nacional', categoria: 'B', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'nacional', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'provincial', categoria: 'A', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'provincial', categoria: 'B', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'provincial', categoria: 'C', elegible: false, orden_preferencia: null },
+        { clasificacion_codigo: 'zonal', categoria: 'A', elegible: true, orden_preferencia: 1 },
+        { clasificacion_codigo: 'zonal', categoria: 'B', elegible: true, orden_preferencia: 2 },
+        { clasificacion_codigo: 'zonal', categoria: 'C', elegible: false, orden_preferencia: null }
+    ];
+
+    const { obtenerCapacidadesSoportadas } = require('./configuracionDesignacion');
+    // Módulo del FRONTEND real — mismo require cross-root que usa Jest para
+    // frontend/js/*.test.js (jest.roots incluye <rootDir>/../frontend/js).
+    const feHelpers = require('../../../frontend/js/configuracionDesignacionHelpers');
+
+    test('paso 1 — GET /activa reconstruye V2 real como válida (línea base)', async () => {
+        mockSupabaseRespuestas({
+            configuracion_designacion_versiones: { data: [VERSION_V2_REAL], error: null },
+            configuracion_designacion_orden_criterios: { data: CRITERIOS_V2_REAL, error: null },
+            configuracion_designacion_matriz: { data: MATRIZ_V2_REAL, error: null }
+            // zonas_extremas / zona_extrema_categorias: default {data:[],error:null} (0 filas reales en V2)
+        });
+        const activa = await cargarConfiguracionDesignacionActiva();
+        expect(activa.error).toBeUndefined();
+        expect(activa.configuracion.regla_zonas_extremas_activa).toBe(false);
+        expect(activa.configuracion.zonas_extremas).toEqual({ asociaciones: [], categorias: [] });
+
+        // paso 2 — activar Zonas Extremas sobre el draft clonado (helper FRONTEND real)
+        const draftClonado = JSON.parse(JSON.stringify(activa.configuracion));
+        const capacidades = obtenerCapacidadesSoportadas();
+        const draftActivado = feHelpers.activarZonasExtremas(draftClonado, capacidades.zonas_extremas_default);
+
+        expect(draftActivado.schema_version).toBe(3);
+        expect(draftActivado.regla_zonas_extremas_activa).toBe(true);
+        expect(draftActivado.zonas_extremas.asociaciones).toEqual(
+            ['ARICA Y TARAPACA', 'NORTE GRANDE', 'MAGALLANES', 'AYSÉN', 'CUYO']
+        );
+        expect(draftActivado.zonas_extremas.categorias).toEqual([
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: true, orden_preferencia: 2 },
+            { categoria: 'C', elegible: true, orden_preferencia: 1 }
+        ]);
+
+        // paso 3 — V2 preservada íntegra dentro del draft promovido (sección 24 del pedido)
+        expect(draftActivado.regla_distancia_maxima_activa).toBe(true);
+        expect(draftActivado.distancia_maxima_km).toBe(1000);
+        expect(draftActivado.regla_equidad_traslados_activa).toBe(true);
+        expect(draftActivado.umbral_lejania_km).toBe(350);
+        expect(draftActivado.ordenCriterios).toEqual(CRITERIOS_V2_REAL);
+        expect(draftActivado.matriz).toEqual(activa.configuracion.matriz);
+
+        // paso 4 — diff EXACTO que vería el administrador en "Cambios respecto
+        // a la versión base" — DEBE mostrar "C→B", nunca solo "C" (sección 12/20).
+        const diff = feHelpers.construirDiffParaUI(activa.configuracion, draftActivado);
+        const filaPrioridad = diff.cambios.find(c => c.etiqueta === 'Prioridad Zona Extrema');
+        expect(filaPrioridad).toBeDefined();
+        expect(filaPrioridad.antes).toBe('—');
+        expect(filaPrioridad.despues).toBe('C→B');
+        const filaAsociaciones = diff.cambios.find(c => c.etiqueta === 'Asociaciones Zona Extrema');
+        expect(filaAsociaciones.despues.split(', ').sort()).toEqual(
+            ['ARICA Y TARAPACA', 'AYSÉN', 'CUYO', 'MAGALLANES', 'NORTE GRANDE']
+        );
+
+        // paso 5 — ambas validaciones (frontend liviana + backend fuente de verdad) pasan
+        expect(feHelpers.validarDraft(draftActivado)).toEqual({ valido: true });
+        expect(validarConfiguracion(draftActivado)).toEqual({ valido: true });
+
+        // paso 6 — GUARDAR: POST /versiones -> repository -> RPC v3 EXCLUSIVAMENTE,
+        // con el payload COMPLETO (18 filas de matriz, 3 categorías de zona
+        // extrema, 5 asociaciones) — nada se filtra en el camino.
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-nueva-desde-v2-real', numero_version: 3 }], error: null });
+        const resultado = await crearVersionDesignacion({
+            configuracion: draftActivado, descripcion: 'Promoción real V2->V3 (regresión)', creadoPor: 'admin-real'
+        });
+        expect(resultado).toEqual({ id: 'v-nueva-desde-v2-real', numero_version: 3 });
+        expect(supabase.rpc).toHaveBeenCalledTimes(1);
+        const [nombreRpc, params] = supabase.rpc.mock.calls[0];
+        expect(nombreRpc).toBe('crear_configuracion_designacion_version_v3');
+        expect(params.p_matriz).toHaveLength(18);
+        expect(params.p_zonas_extremas_categorias).toHaveLength(3);
+        expect(params.p_zonas_extremas_asociaciones).toHaveLength(5);
+        expect(params.p_zonas_extremas_categorias).toEqual([
+            { categoria: 'A', elegible: false, orden_preferencia: null },
+            { categoria: 'B', elegible: true, orden_preferencia: 2 },
+            { categoria: 'C', elegible: true, orden_preferencia: 1 }
+        ]);
+        expect(params.p_regla_equidad_traslados_activa).toBe(true);
+        expect(params.p_umbral_lejania_km).toBe(350);
+        expect(params.p_distancia_maxima_km).toBe(1000);
+    });
+
+    test('toggle OFF conserva los datos latentes; toggle ON de nuevo los recupera intactos (sección 22)', () => {
+        const capacidades = obtenerCapacidadesSoportadas();
+        const base = { ...construirConfiguracionDefaultV1(), schema_version: 3 };
+        const activado = feHelpers.activarZonasExtremas(base, capacidades.zonas_extremas_default);
+        const desactivado = feHelpers.desactivarZonasExtremas(activado);
+        expect(desactivado.regla_zonas_extremas_activa).toBe(false);
+        expect(desactivado.zonas_extremas).toEqual(activado.zonas_extremas); // datos latentes conservados
+        const reactivado = feHelpers.activarZonasExtremas(desactivado, capacidades.zonas_extremas_default);
+        expect(reactivado.zonas_extremas).toEqual(activado.zonas_extremas); // recuperados intactos, no reemplazados por default
+    });
+
+    test('las 5 asociaciones default están presentes, sin duplicados, AYSÉN con nombre canónico (sección 23)', () => {
+        const { asociaciones } = obtenerCapacidadesSoportadas().zonas_extremas_default;
+        expect(asociaciones).toHaveLength(5);
+        expect(new Set(asociaciones).size).toBe(5);
+        expect(asociaciones).toContain('AYSÉN');
+        expect(asociaciones).not.toContain('AYSEN');
     });
 });
