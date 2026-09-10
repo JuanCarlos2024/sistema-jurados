@@ -270,10 +270,44 @@ async function cargarStatsAsignacionesPorRodeo(rodeoIds) {
     return sp;
 }
 
+// ─── Indicadores de adjuntos (Cartilla Jurado / Cartilla Delegado / Video) —
+// MOVIDA acá desde GET /admin/adjuntos/resumen (routes/admin/adjuntos.js),
+// que sigue existiendo y ahora delega en esta misma función — fuente única,
+// usada por el indicador "CJ/CD/VY" de la tabla de Rodeos Y por la
+// exportación a Excel (columnas Cartilla Jurado/Cartilla Delegado/Video).
+// Condición EXACTA, sin cambios: CJ = existe rodeo_adjuntos con
+// tipo_adjunto IN ('cartilla_jurado','cartilla' [legacy]); CD = existe
+// rodeo_adjuntos con tipo_adjunto='cartilla_delegado'; Video = existe
+// CUALQUIER fila en rodeo_links para ese rodeo.
+// @returns Map rodeo_id -> { cj, cd, vy } (booleanos)
+async function cargarIndicadoresAdjuntosPorRodeo(rodeoIds) {
+    if (!rodeoIds || rodeoIds.length === 0) return {};
+
+    const [adjRes, linkRes] = await Promise.all([
+        supabase.from('rodeo_adjuntos').select('rodeo_id, tipo_adjunto').in('rodeo_id', rodeoIds),
+        supabase.from('rodeo_links').select('rodeo_id').in('rodeo_id', rodeoIds)
+    ]);
+
+    const result = {};
+    rodeoIds.forEach(id => { result[id] = { cj: false, cd: false, vy: false }; });
+
+    (adjRes.data || []).forEach(a => {
+        if (!result[a.rodeo_id]) return;
+        if (['cartilla_jurado', 'cartilla'].includes(a.tipo_adjunto)) result[a.rodeo_id].cj = true;
+        if (a.tipo_adjunto === 'cartilla_delegado')                   result[a.rodeo_id].cd = true;
+    });
+    (linkRes.data || []).forEach(l => {
+        if (result[l.rodeo_id]) result[l.rodeo_id].vy = true;
+    });
+
+    return result;
+}
+
 module.exports = {
     resolverFiltrosComplejos,
     resolverBusquedaJuradoIds,
     construirQueryRodeosFiltrada,
     textoEstadoDesignacion,
-    cargarStatsAsignacionesPorRodeo
+    cargarStatsAsignacionesPorRodeo,
+    cargarIndicadoresAdjuntosPorRodeo
 };

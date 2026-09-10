@@ -1,7 +1,7 @@
 const ExcelJS = require('exceljs');
 const supabase = require('../config/supabase');
 const { calcularResumenMensual, obtenerRetencion } = require('./calculo');
-const { construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo } = require('./rodeosListado');
+const { construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo, cargarIndicadoresAdjuntosPorRodeo } = require('./rodeosListado');
 
 // Estilo de encabezado estándar
 const HEADER_STYLE = {
@@ -286,19 +286,30 @@ function generarCSV(headers, filas) {
  *
  * `filtros` es literalmente req.query del endpoint de exportación: acepta
  * TODOS los filtros que ya soporta GET /admin/rodeos (ver rodeosListado.js).
+ *
+ * "Origen" (manual/importado) se quitó de este Excel a pedido — el filtro
+ * `origen` sigue funcionando igual (vive en construirQueryRodeosFiltrada),
+ * solo dejó de mostrarse como columna acá.
+ * "Cartilla Jurado"/"Cartilla Delegado"/"Video" usan cargarIndicadoresAdjuntosPorRodeo()
+ * — MISMA fuente exacta que ya usa el indicador "CJ/CD/VY" de la tabla en
+ * pantalla (GET /admin/adjuntos/resumen), nunca una lógica nueva.
  */
 async function exportarRodeos(filtros, res) {
     const { año, mes } = filtros;
 
     const { query, vacioPorFiltro } = await construirQueryRodeosFiltrada(
-        filtros, 'id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, origen, estado'
+        filtros, 'id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, estado'
     );
     const { data: rodeos } = vacioPorFiltro ? { data: [] } : await query;
 
-    // Stats de asignaciones (pago total + jurados/estado de designación) —
-    // misma fuente que la tabla, nunca una agregación paralela.
     const ids = (rodeos || []).map(r => r.id);
-    const statsMap = await cargarStatsAsignacionesPorRodeo(ids);
+    // Stats de asignaciones (pago total + jurados/estado de designación) e
+    // indicadores de adjuntos (cartillas/video) — misma fuente que la
+    // tabla, nunca una agregación paralela.
+    const [statsMap, indicMap] = await Promise.all([
+        cargarStatsAsignacionesPorRodeo(ids),
+        cargarIndicadoresAdjuntosPorRodeo(ids)
+    ]);
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Sistema Jurados - Rodeo Chileno';
@@ -310,10 +321,12 @@ async function exportarRodeos(filtros, res) {
         { header: 'Asociación',         key: 'asoc',       width: 22 },
         { header: 'Tipo Rodeo',         key: 'tipo',       width: 30 },
         { header: 'Días',               key: 'dias',       width: 8  },
-        { header: 'Origen',             key: 'origen',     width: 12 },
         { header: 'Jurado',             key: 'jurado',     width: 30 },
         { header: 'Estado designación', key: 'estado_des', width: 20 },
         { header: 'Jurados',            key: 'jurados',    width: 10 },
+        { header: 'Cartilla Jurado',    key: 'cj',         width: 15 },
+        { header: 'Cartilla Delegado',  key: 'cd',         width: 16 },
+        { header: 'Video',              key: 'video',      width: 10 },
         { header: 'Total Pagos',        key: 'total',      width: 16 },
     ];
     ws.getRow(1).eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
@@ -326,9 +339,12 @@ async function exportarRodeos(filtros, res) {
         // orden, nunca se pierde ninguno.
         const jurado     = lista.length > 0 ? lista.map(j => j.nombre).join(' / ') : 'Sin jurado';
         const estadoDes  = lista.length > 0 ? lista.map(j => j.estado_designacion_texto).join(' / ') : '—';
+        const ind = indicMap[r.id] || { cj: false, cd: false, vy: false };
         const row = ws.addRow([
-            r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias, r.origen,
-            jurado, estadoDes, s.jurados || 0, formatCLP(s.total_pago_base || 0)
+            r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias,
+            jurado, estadoDes, s.jurados || 0,
+            ind.cj ? 'Sí' : 'No', ind.cd ? 'Sí' : 'No', ind.vy ? 'Sí' : 'No',
+            formatCLP(s.total_pago_base || 0)
         ]);
         if (i % 2 === 0) row.eachCell(c => { c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4F8' } }; });
     });

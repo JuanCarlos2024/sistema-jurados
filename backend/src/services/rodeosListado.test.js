@@ -13,7 +13,8 @@ const supabase = require('../config/supabase');
 const {
     construirQueryRodeosFiltrada,
     cargarStatsAsignacionesPorRodeo,
-    textoEstadoDesignacion
+    textoEstadoDesignacion,
+    cargarIndicadoresAdjuntosPorRodeo
 } = require('./rodeosListado');
 
 // ─── Mock chainable/registrador — cada .from(tabla) abre una cadena nueva,
@@ -208,5 +209,57 @@ describe('cargarStatsAsignacionesPorRodeo — Jurado + Estado designación (CASO
         expect(sp.r1.jurados_lista).toEqual([
             { id: null, nombre: 'MARÍA SILVA (pendiente de vincular)', estado_designacion_texto: 'No publicado' }
         ]);
+    });
+});
+
+// ─── cargarIndicadoresAdjuntosPorRodeo — MISMA fuente que GET /admin/
+// adjuntos/resumen (indicador "CJ/CD/VY" de la tabla de Rodeos en pantalla),
+// ahora también reutilizada por la exportación a Excel (columnas Cartilla
+// Jurado/Cartilla Delegado/Video). Este bloque cubre exactamente los 3
+// casos de prueba obligatorios del pedido (CJ/CD/VV en todas las
+// combinaciones) más el caso legacy 'cartilla' sin sufijo.
+describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Delegado / Video (misma fuente que la pantalla)', () => {
+    test('CASO 1 — con cartilla jurado + cartilla delegado + video -> {cj:true, cd:true, vy:true}', async () => {
+        respuestas.rodeo_adjuntos = { data: [
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' },
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado' }
+        ], error: null };
+        respuestas.rodeo_links = { data: [{ rodeo_id: 'r1' }], error: null };
+        const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+        expect(ind.r1).toEqual({ cj: true, cd: true, vy: true });
+    });
+    test('CASO 2 — con cartillas pero SIN video -> {cj:true, cd:true, vy:false}', async () => {
+        respuestas.rodeo_adjuntos = { data: [
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' },
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado' }
+        ], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+        expect(ind.r1).toEqual({ cj: true, cd: true, vy: false });
+    });
+    test('CASO 3 — sin ningún adjunto ni link -> {cj:false, cd:false, vy:false}', async () => {
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+        expect(ind.r1).toEqual({ cj: false, cd: false, vy: false });
+    });
+    test('tipo_adjunto legacy "cartilla" (sin sufijo) también cuenta como Cartilla Jurado — mismo criterio que GET /admin/adjuntos/resumen', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla' }], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+        expect(ind.r1.cj).toBe(true);
+    });
+    test('varios rodeos a la vez, cada uno con su propio resultado independiente', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' }], error: null };
+        respuestas.rodeo_links = { data: [{ rodeo_id: 'r2' }], error: null };
+        const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1', 'r2', 'r3']);
+        expect(ind.r1).toEqual({ cj: true, cd: false, vy: false });
+        expect(ind.r2).toEqual({ cj: false, cd: false, vy: true });
+        expect(ind.r3).toEqual({ cj: false, cd: false, vy: false });
+    });
+    test('array de ids vacío -> {} sin consultar BD', async () => {
+        const ind = await cargarIndicadoresAdjuntosPorRodeo([]);
+        expect(ind).toEqual({});
+        expect(supabase.from).not.toHaveBeenCalled();
     });
 });

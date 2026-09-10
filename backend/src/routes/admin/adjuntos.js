@@ -3,6 +3,7 @@ const router   = express.Router();
 const multer   = require('multer');
 const supabase = require('../../config/supabase');
 const { soloNoAnalista, soloNoComisionTecnica } = require('../../middleware/auth');
+const { cargarIndicadoresAdjuntosPorRodeo } = require('../../services/rodeosListado');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -31,25 +32,10 @@ router.get('/resumen', async (req, res) => {
     const ids = rodeo_ids.split(',').map(s => s.trim()).filter(Boolean);
     if (ids.length === 0) return res.json({});
 
-    const [adjRes, linkRes] = await Promise.all([
-        supabase.from('rodeo_adjuntos').select('rodeo_id, tipo_adjunto').in('rodeo_id', ids),
-        supabase.from('rodeo_links').select('rodeo_id').in('rodeo_id', ids)
-    ]);
-
-    const result = {};
-    ids.forEach(id => { result[id] = { cj: false, cd: false, vy: false }; });
-
-    (adjRes.data || []).forEach(a => {
-        if (!result[a.rodeo_id]) return;
-        // CJ: tipo nuevo + tipo legacy ('cartilla' sin sufijo)
-        if (['cartilla_jurado', 'cartilla'].includes(a.tipo_adjunto)) result[a.rodeo_id].cj = true;
-        if (a.tipo_adjunto === 'cartilla_delegado')                   result[a.rodeo_id].cd = true;
-    });
-
-    (linkRes.data || []).forEach(l => {
-        if (result[l.rodeo_id]) result[l.rodeo_id].vy = true;
-    });
-
+    // Lógica movida a services/rodeosListado.js — fuente ÚNICA, reutilizada
+    // también por la exportación a Excel de Rodeos (columnas Cartilla
+    // Jurado/Cartilla Delegado/Video). Mismo resultado exacto que antes.
+    const result = await cargarIndicadoresAdjuntosPorRodeo(ids);
     res.json(result);
 });
 
