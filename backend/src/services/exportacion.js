@@ -1,6 +1,7 @@
 const ExcelJS = require('exceljs');
 const supabase = require('../config/supabase');
 const { calcularResumenMensual, obtenerRetencion } = require('./calculo');
+const { construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo } = require('./rodeosListado');
 
 // Estilo de encabezado estándar
 const HEADER_STYLE = {
@@ -272,61 +273,63 @@ function generarCSV(headers, filas) {
 
 /**
  * Exportar listado de rodeos con totales de asignaciones.
- * Respeta filtros: año, mes, buscar.
+ *
+ * CORRECCIÓN (bug "Exportar no respeta los filtros aplicados en pantalla"):
+ * antes esta función tenía su propia query, independiente de GET /admin/
+ * rodeos, que solo entendía año/mes/buscar — cualquier otro filtro activo
+ * en la pantalla (fecha_desde/hasta, categoría, tipo, asociación, club,
+ * jurado, delegado, estados, cartillas, video, origen, temporada) se
+ * ignoraba en silencio y el Excel terminaba trayendo prácticamente todo.
+ * Ahora usa construirQueryRodeosFiltrada()/cargarStatsAsignacionesPorRodeo()
+ * — EXACTAMENTE la misma lógica de filtrado que ya usa la tabla — para que
+ * listado y exportación nunca puedan volver a desincronizarse.
+ *
+ * `filtros` es literalmente req.query del endpoint de exportación: acepta
+ * TODOS los filtros que ya soporta GET /admin/rodeos (ver rodeosListado.js).
  */
 async function exportarRodeos(filtros, res) {
-    const { año, mes, buscar } = filtros;
-    const añoNum = parseInt(año);
-    const mesNum = parseInt(mes);
+    const { año, mes } = filtros;
 
-    let q = supabase
-        .from('rodeos')
-        .select('id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, origen, estado')
-        .eq('estado', 'activo')
-        .order('fecha', { ascending: false });
+    const { query, vacioPorFiltro } = await construirQueryRodeosFiltrada(
+        filtros, 'id, club, asociacion, fecha, tipo_rodeo_nombre, duracion_dias, origen, estado'
+    );
+    const { data: rodeos } = vacioPorFiltro ? { data: [] } : await query;
 
-    if (!isNaN(añoNum) && !isNaN(mesNum) && mesNum >= 1 && mesNum <= 12) {
-        q = q.gte('fecha', `${añoNum}-${String(mesNum).padStart(2,'0')}-01`)
-             .lte('fecha', new Date(añoNum, mesNum, 0).toISOString().split('T')[0]);
-    } else if (!isNaN(añoNum)) {
-        q = q.gte('fecha', `${añoNum}-01-01`).lte('fecha', `${añoNum}-12-31`);
-    }
-    if (buscar) q = q.or(`club.ilike.%${buscar}%,asociacion.ilike.%${buscar}%`);
-
-    const { data: rodeos } = await q;
-
-    // Agregar stats de asignaciones
+    // Stats de asignaciones (pago total + jurados/estado de designación) —
+    // misma fuente que la tabla, nunca una agregación paralela.
     const ids = (rodeos || []).map(r => r.id);
-    const { data: asigs } = ids.length > 0
-        ? await supabase.from('asignaciones').select('rodeo_id, pago_base_calculado').in('rodeo_id', ids).eq('estado', 'activo')
-        : { data: [] };
-
-    const statsMap = {};
-    (asigs || []).forEach(a => {
-        if (!statsMap[a.rodeo_id]) statsMap[a.rodeo_id] = { n: 0, total: 0 };
-        statsMap[a.rodeo_id].n++;
-        statsMap[a.rodeo_id].total += (a.pago_base_calculado || 0);
-    });
+    const statsMap = await cargarStatsAsignacionesPorRodeo(ids);
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Sistema Jurados - Rodeo Chileno';
     const ws = wb.addWorksheet('Rodeos');
 
     ws.columns = [
-        { header: 'Fecha',       key: 'fecha',     width: 14 },
-        { header: 'Club',        key: 'club',       width: 28 },
-        { header: 'Asociación',  key: 'asoc',       width: 22 },
-        { header: 'Tipo Rodeo',  key: 'tipo',       width: 30 },
-        { header: 'Días',        key: 'dias',       width: 8  },
-        { header: 'Origen',      key: 'origen',     width: 12 },
-        { header: 'Jurados',     key: 'jurados',    width: 10 },
-        { header: 'Total Pagos', key: 'total',      width: 16 },
+        { header: 'Fecha',              key: 'fecha',     width: 14 },
+        { header: 'Club',               key: 'club',       width: 28 },
+        { header: 'Asociación',         key: 'asoc',       width: 22 },
+        { header: 'Tipo Rodeo',         key: 'tipo',       width: 30 },
+        { header: 'Días',               key: 'dias',       width: 8  },
+        { header: 'Origen',             key: 'origen',     width: 12 },
+        { header: 'Jurado',             key: 'jurado',     width: 30 },
+        { header: 'Estado designación', key: 'estado_des', width: 20 },
+        { header: 'Jurados',            key: 'jurados',    width: 10 },
+        { header: 'Total Pagos',        key: 'total',      width: 16 },
     ];
     ws.getRow(1).eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
 
     (rodeos || []).forEach((r, i) => {
-        const s = statsMap[r.id] || { n: 0, total: 0 };
-        const row = ws.addRow([r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias, r.origen, s.n, formatCLP(s.total)]);
+        const s = statsMap[r.id] || { jurados: 0, total_pago_base: 0, jurados_lista: [] };
+        const lista = s.jurados_lista || [];
+        // Varios jurados en el mismo rodeo (sí puede ocurrir hoy, ver
+        // tabla de Rodeos) -> se listan ambos, alineados 1:1 en el mismo
+        // orden, nunca se pierde ninguno.
+        const jurado     = lista.length > 0 ? lista.map(j => j.nombre).join(' / ') : 'Sin jurado';
+        const estadoDes  = lista.length > 0 ? lista.map(j => j.estado_designacion_texto).join(' / ') : '—';
+        const row = ws.addRow([
+            r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias, r.origen,
+            jurado, estadoDes, s.jurados || 0, formatCLP(s.total_pago_base || 0)
+        ]);
         if (i % 2 === 0) row.eachCell(c => { c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4F8' } }; });
     });
     autoWidth(ws);

@@ -461,11 +461,14 @@ function limpiar() {
 
 function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 
-async function cargar(pagina = 1) {
-    paginaActual = pagina;
-    const wrap = document.getElementById('tabla-wrap');
-    mostrarSpinner(wrap);
-    const p = toQueryString({
+// ─── Filtros avanzados actuales de la pantalla — ÚNICA fuente, usada tanto
+// por cargar() (la tabla) como por exportar() (el botón "Exportar"). Antes,
+// exportar() armaba su propio objeto con solo 3 de los 18 filtros — el
+// Excel nunca coincidía con lo que la tabla mostraba. Cualquier filtro
+// nuevo que se agregue a la pantalla debe agregarse SOLO acá para que
+// ambos sigan viendo exactamente lo mismo.
+function obtenerFiltrosActuales() {
+    return {
         mes:             gv('f-mes'),
         año:             gv('f-año'),
         buscar:          gv('f-buscar'),
@@ -483,7 +486,16 @@ async function cargar(pagina = 1) {
         cartilla_delegado: gv('f-cd'),
         video:           gv('f-video'),
         origen:          gv('f-origen'),
-        temporada:       gv('f-temporada'),
+        temporada:       gv('f-temporada')
+    };
+}
+
+async function cargar(pagina = 1) {
+    paginaActual = pagina;
+    const wrap = document.getElementById('tabla-wrap');
+    mostrarSpinner(wrap);
+    const p = toQueryString({
+        ...obtenerFiltrosActuales(),
         page:  paginaActual,
         limit: POR_PAGINA
     });
@@ -1842,11 +1854,13 @@ function sugerirCategoria(sel) {
 }
 
 async function exportar() {
-    const año    = gv('f-año');
-    const mes    = gv('f-mes');
-    const buscar = gv('f-buscar');
+    // Mismos filtros EXACTOS que ve la tabla en este momento — ver
+    // obtenerFiltrosActuales() (fuente única, corrección del bug "el Excel
+    // no respeta los filtros aplicados").
+    const filtros = obtenerFiltrosActuales();
+    const { año, mes } = filtros;
     try {
-        await api.descargar('/admin/exportacion/rodeos?' + toQueryString({ año, mes, buscar }), `rodeos${año?'_'+año:''}${mes?'_'+mes:''}.xlsx`);
+        await api.descargar('/admin/exportacion/rodeos?' + toQueryString(filtros), `rodeos${año?'_'+año:''}${mes?'_'+mes:''}.xlsx`);
     } catch(err) { mostrarError(err); }
 }
 
