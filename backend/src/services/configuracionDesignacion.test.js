@@ -780,6 +780,30 @@ describe('Equidad de Traslados — validarConfiguracion (compatibilidad V1 y reg
         };
         expect(validarConfiguracion(config)).toEqual({ valido: true });
     });
+    // Regresión del bug "CONFIGURACION_DESIGNACION_INVALIDA" al guardar
+    // Schema3 desde la V2 real (diagnóstico previo a la migración 054): a
+    // nivel de validarConfiguracion() (JS) esta combinación YA era válida
+    // desde que se agregó schema_version=3 en 053 — el bug real vivía
+    // exclusivamente en un CHECK de la tabla en Postgres
+    // (chk_config_designacion_equidad_requiere_schema2, migración 052, nunca
+    // ampliado a schema3), invisible para este test porque valida solo la
+    // capa de aplicación, nunca la base de datos real. Este test documenta
+    // que la capa JS nunca tuvo el bug — la migración 054 corrige la capa SQL.
+    test('schema_version=3 con EQUIDAD_TRASLADOS activo, umbral y en orden=1 -> valido (Zonas Extremas es ortogonal)', () => {
+        const config = {
+            ...defaultV1,
+            schema_version: 3,
+            regla_equidad_traslados_activa: true,
+            umbral_lejania_km: 350,
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        };
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
     test('schema_version=2 con EQUIDAD_TRASLADOS activo pero en orden=2 (no Nº1) -> INVALIDO', () => {
         const config = {
             ...defaultV1,

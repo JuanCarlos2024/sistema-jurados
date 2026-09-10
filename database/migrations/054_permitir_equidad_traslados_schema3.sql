@@ -1,0 +1,150 @@
+-- ═════════════════════════════════════════════════════════════════════════
+-- 054_permitir_equidad_traslados_schema3.sql
+-- Corrige un CHECK constraint de 052 que quedó sin ampliar al agregar
+-- schema_version=3 en la migración 053 — BUG CONFIRMADO EN PRODUCCIÓN.
+--
+-- ✅ APLICADA EN PRODUCCIÓN (aplicada vía MCP Supabase apply_migration el
+--    2026-09-10, con precheck/postcheck de solo lectura antes y después,
+--    mismo protocolo que 050-053; validada además con una simulación en
+--    memoria real usando v9/schema3+equidad antes de este commit). NO
+--    volver a ejecutarla.
+--
+-- BUG REPORTADO (prueba manual autenticada en producción, 2026-09-09):
+-- guardar una versión nueva Schema3 con Zonas Extremas activa, PARTIENDO DE
+-- LA V2 REAL activa (que tiene regla_equidad_traslados_activa=true), falla
+-- con:
+--   CONFIGURACION_DESIGNACION_INVALIDA: new row for relation
+--   "configuracion_designacion_versiones" violates check constraint
+--   "chk_config_designacion_equidad_requiere_schema2"
+--
+-- CAUSA RAÍZ (confirmada por archivo de migración, sin necesidad de
+-- inspección en vivo — el historial de migraciones ES la fuente de verdad
+-- de qué constraints existen hoy en producción, dado que este proyecto no
+-- permite cambios de esquema fuera de migraciones versionadas):
+--   1. La migración 052 creó:
+--        ALTER TABLE configuracion_designacion_versiones
+--            ADD CONSTRAINT chk_config_designacion_equidad_requiere_schema2
+--            CHECK (regla_equidad_traslados_activa = false OR schema_version = 2);
+--      En ese momento schema_version=3 no existía — la intención semántica
+--      real siempre fue "EQUIDAD_TRASLADOS requiere un schema que la
+--      soporte", pero el CHECK quedó escrito con el literal "= 2".
+--   2. La migración 053 SÍ amplió correctamente el CHECK de schema_version
+--      general (chk_config_designacion_schema_version -> IN (1,2,3)) y la
+--      función _validar_estructura_configuracion_designacion() (que YA
+--      acepta EQUIDAD_TRASLADOS para schema IN (2,3), ver ese archivo) —
+--      pero NUNCA tocó chk_config_designacion_equidad_requiere_schema2, que
+--      sigue exigiendo literalmente schema_version=2.
+--   3. crear_configuracion_designacion_version_v3() hace el INSERT de
+--      cabecera (schema_version=3, regla_equidad_traslados_activa=true al
+--      copiar la V2 real) ANTES de llamar a
+--      _validar_estructura_configuracion_designacion() — Postgres evalúa
+--      TODOS los CHECK de la fila en el INSERT mismo, así que el rechazo
+--      ocurre ahí, nunca llega a la función de validación de aplicación
+--      (que sí lo habría aceptado). La transacción completa hace rollback
+--      (los 5 INSERT de la RPC son atómicos) — 0 filas quedan en ninguna
+--      tabla. Confirmado en producción: schema_version=3 sigue en 0 filas
+--      después del intento fallido.
+--
+-- OTROS CHECK REVISADOS (mismo método — archivo de migración como fuente
+-- de verdad) buscando cualquier otro constraint "atado a schema2" que
+-- también necesite admitir schema3 — NINGÚN otro caso encontrado:
+--   - chk_config_designacion_schema_version — ya amplió a (1,2,3) en 053. OK.
+--   - chk_config_designacion_distancia — no depende de schema_version en
+--     absoluto (solo de regla_distancia_maxima_activa/distancia_maxima_km).
+--     No requiere cambio.
+--   - chk_config_designacion_equidad — no depende de schema_version en
+--     absoluto (solo de regla_equidad_traslados_activa/umbral_lejania_km:
+--     "si la regla está activa, umbral NOT NULL/positivo/<=5000 km").
+--     Ya permite exactamente schema_version=3 + equidad=true + umbral=350 —
+--     NO requiere cambio.
+--   - chk_config_designacion_equidad_requiere_schema2 — el único bug real,
+--     corregido acá.
+--   - chk_config_designacion_zonas_extremas_requiere_schema3 (de 053) — por
+--     diseño exige exactamente schema_version=3 (Zonas Extremas NO existe
+--     para 1/2) — correcto tal cual, no requiere cambio.
+--   - chk_orden_criterios_codigo (configuracion_designacion_orden_criterios,
+--     052) — CHECK (criterio_codigo IN ('PRIORIDAD_CATEGORIA',
+--     'MENOS_DESIGNACIONES_TEMPORADA','MENOR_DISTANCIA','EQUIDAD_TRASLADOS'))
+--     — NO depende de schema_version en absoluto a nivel de CHECK (cualquier
+--     schema puede tener cualquiera de esos 4 códigos a nivel de tabla); la
+--     restricción de "EQUIDAD_TRASLADOS solo para schema IN (2,3)" vive
+--     exclusivamente en _validar_estructura_configuracion_designacion(),
+--     que YA la tiene correcta desde 053 (línea ~402: "IF v_schema_version
+--     NOT IN (2, 3) THEN RAISE EXCEPTION"). NO requiere cambio.
+--   - chk_matriz_elegible_orden / UNIQUE de configuracion_designacion_matriz
+--     (050) — taxonomía fija (clasificacion/categoría), sin dependencia de
+--     schema_version. NO requiere cambio.
+--   - CHECK de las 2 tablas nuevas de 053 (zonas extremas) — no tienen
+--     columna schema_version en absoluto (solo version_id FK); su relación
+--     con schema_version vive en la función de validación, ya correcta.
+--     NO requiere cambio.
+--
+-- SEMÁNTICA CORRECTA (y por qué NO usar ">= 2"):
+--   Schema1: EQUIDAD_TRASLADOS no disponible (sin cambios).
+--   Schema2: EQUIDAD_TRASLADOS disponible (sin cambios, protege la V2 real).
+--   Schema3: EQUIDAD_TRASLADOS también disponible (bug corregido acá).
+--   Un futuro schema_version=4 NO debe quedar automáticamente autorizado
+--   sin una decisión de diseño explícita — por eso IN (2,3) explícito, NUNCA
+--   ">= 2" (que habría colado silenciosamente cualquier schema futuro).
+--
+-- QUÉ NO HACE (deliberadamente):
+--   - NO reejecuta ni modifica la migración 053 (histórica, ya aplicada).
+--   - NO modifica ninguna fila existente (0 UPDATE, 0 INSERT, 0 DELETE) —
+--     V1 y V2 reales quedan exactamente iguales; el nuevo CHECK las sigue
+--     aceptando (V1: equidad=false, cumple por el "OR" corto-circuitado;
+--     V2: equidad=true Y schema_version=2, sigue en el IN (2,3)).
+--   - NO activa ninguna versión.
+--   - NO crea ninguna versión de prueba.
+--   - NO requiere cambio de código de aplicación — el backend actualmente
+--     desplegado (commit 72e281f) ya construye correctamente el INSERT con
+--     schema_version=3 + regla_equidad_traslados_activa=true al promover un
+--     draft desde la V2 real; el único obstáculo era este CHECK. Aplicar
+--     esta migración es compatible con el backend YA desplegado, sin
+--     necesitar un nuevo deploy.
+--
+-- ═════════════════════════════════════════════════════════════════════════
+
+BEGIN;
+
+-- El nombre anterior ("...requiere_schema2") quedaría engañoso una vez que
+-- también admite schema3 explícitamente — se reemplaza por un nombre claro,
+-- mismo patrón que chk_config_designacion_zonas_extremas_requiere_schema3.
+-- (Ningún código de aplicación ni test referencia el nombre anterior —
+-- verificado por búsqueda en todo el repositorio: solo aparecía en el
+-- archivo de la migración 052 que lo creó.)
+ALTER TABLE configuracion_designacion_versiones
+    DROP CONSTRAINT IF EXISTS chk_config_designacion_equidad_requiere_schema2;
+
+ALTER TABLE configuracion_designacion_versiones
+    ADD CONSTRAINT chk_config_designacion_equidad_requiere_schema_2_o_3 CHECK (
+        regla_equidad_traslados_activa = false OR schema_version IN (2, 3)
+    );
+
+COMMIT;
+
+-- ── Verificación sugerida post-aplicación (no destructiva) ─────────────────
+--
+-- SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+--   WHERE conrelid = 'configuracion_designacion_versiones'::regclass AND contype = 'c'
+--   ORDER BY conname;
+--   -- debe incluir chk_config_designacion_equidad_requiere_schema_2_o_3 con
+--   -- "CHECK (((regla_equidad_traslados_activa = false) OR (schema_version = ANY (ARRAY[2, 3]))))"
+--   -- y NO debe seguir apareciendo chk_config_designacion_equidad_requiere_schema2.
+--
+-- SELECT numero_version, schema_version, regla_equidad_traslados_activa
+--   FROM configuracion_designacion_versiones ORDER BY numero_version;
+--   -- V1 (schema1, equidad=false) y V2 (schema2, equidad=true) deben seguir
+--   -- existiendo idénticas — 0 filas nuevas, 0 filas modificadas.
+--
+-- -- Prueba conceptual de integridad (transaccional, con ROLLBACK explícito
+-- -- — nunca persiste nada; usar solo si se quiere verificar el CHECK en
+-- -- vivo sin pasar por la RPC v3 completa):
+-- -- BEGIN;
+-- --   INSERT INTO configuracion_designacion_versiones (
+-- --     schema_version, activa, regla_distancia_maxima_activa,
+-- --     regla_no_repetir_asociacion_activa, regla_un_rodeo_por_finde_activa,
+-- --     regla_finde_consecutivo_activa, regla_asociacion_organizadora_activa,
+-- --     regla_equidad_traslados_activa, umbral_lejania_km
+-- --   ) VALUES (3, false, false, false, false, false, false, true, 350);
+-- --   -- debe tener éxito (antes de esta migración, fallaba con el CHECK viejo).
+-- -- ROLLBACK;
