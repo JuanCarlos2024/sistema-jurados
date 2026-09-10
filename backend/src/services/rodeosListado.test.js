@@ -14,7 +14,8 @@ const {
     construirQueryRodeosFiltrada,
     cargarStatsAsignacionesPorRodeo,
     textoEstadoDesignacion,
-    cargarIndicadoresAdjuntosPorRodeo
+    cargarIndicadoresAdjuntosPorRodeo,
+    cargarNotasPorRodeo
 } = require('./rodeosListado');
 
 // ─── Mock chainable/registrador — cada .from(tabla) abre una cadena nueva,
@@ -260,6 +261,60 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
     test('array de ids vacío -> {} sin consultar BD', async () => {
         const ind = await cargarIndicadoresAdjuntosPorRodeo([]);
         expect(ind).toEqual({});
+        expect(supabase.from).not.toHaveBeenCalled();
+    });
+});
+
+// ─── cargarNotasPorRodeo — Nota Comisión (rodeo_notas_secundarias),
+// Nota Delegado (rodeo_notas_secundarias) y Nota Final (evaluaciones,
+// filtrada por anulada=false, MISMO filtro que usa GET /admin/rodeos/:id y
+// GET /admin/evaluaciones). Devuelve el valor CRUDO (incluido null
+// explícito) — la conversión a "Pendiente" es responsabilidad de quien
+// consume el mapa (exportacion.js), nunca de esta función.
+describe('cargarNotasPorRodeo — Nota Comisión / Nota Delegado / Nota Final (misma fuente que "Notas secundarias" y el listado de Evaluaciones)', () => {
+    test('rodeo con las 3 notas -> valores numéricos exactos, tal cual están en BD', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 7, nota_delegado: 6.5 }], error: null };
+        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 5.5 }], error: null };
+        const notas = await cargarNotasPorRodeo(['r1']);
+        expect(notas.r1).toEqual({ nota_comision: 7, nota_delegado: 6.5, nota_final: 5.5 });
+    });
+    test('nota_delegado NULL en la fila -> se conserva null (no se convierte a 0 ni se omite)', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 7, nota_delegado: null }], error: null };
+        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 5.5 }], error: null };
+        const notas = await cargarNotasPorRodeo(['r1']);
+        expect(notas.r1.nota_delegado).toBeNull();
+        expect(notas.r1.nota_delegado).not.toBe(0);
+    });
+    test('rodeo sin fila en rodeo_notas_secundarias -> ambas notas secundarias null (no lanza excepción)', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [], error: null };
+        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 5.5 }], error: null };
+        const notas = await cargarNotasPorRodeo(['r1']);
+        expect(notas.r1.nota_comision).toBeNull();
+        expect(notas.r1.nota_delegado).toBeNull();
+    });
+    test('rodeo sin evaluación asociada (0 filas en evaluaciones) -> nota_final null', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 7, nota_delegado: 6 }], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        const notas = await cargarNotasPorRodeo(['r1']);
+        expect(notas.r1.nota_final).toBeNull();
+    });
+    test('nota mínima real (1.0) nunca se confunde con ausencia — no cae a null/0', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 1.0, nota_delegado: 1.0 }], error: null };
+        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 1.0 }], error: null };
+        const notas = await cargarNotasPorRodeo(['r1']);
+        expect(notas.r1).toEqual({ nota_comision: 1, nota_delegado: 1, nota_final: 1 });
+    });
+    test('varios rodeos -> 2 consultas fijas (nunca una por rodeo / sin N+1)', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        await cargarNotasPorRodeo(['r1', 'r2', 'r3', 'r4', 'r5']);
+        const llamadas = supabase.from.mock.calls.map(c => c[0]);
+        expect(llamadas.filter(t => t === 'rodeo_notas_secundarias').length).toBe(1);
+        expect(llamadas.filter(t => t === 'evaluaciones').length).toBe(1);
+    });
+    test('array de ids vacío -> {} sin consultar BD', async () => {
+        const notas = await cargarNotasPorRodeo([]);
+        expect(notas).toEqual({});
         expect(supabase.from).not.toHaveBeenCalled();
     });
 });

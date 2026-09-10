@@ -303,11 +303,58 @@ async function cargarIndicadoresAdjuntosPorRodeo(rodeoIds) {
     return result;
 }
 
+// ─── Notas por rodeo (Nota Comisión / Nota Delegado / Nota Final) — usada
+// por la exportación a Excel de Rodeos. MISMA fuente exacta que ya usa el
+// resto del sistema, sin recalcular ni derivar nada nuevo:
+//   - Nota Comisión / Nota Delegado: tabla `rodeo_notas_secundarias`
+//     (columnas nota_comision/nota_delegado, NUMERIC(3,1), 1 fila por
+//     rodeo — rodeo_id UNIQUE, migración 028) — misma tabla/columnas que
+//     lee/escribe GET|PUT /admin/rodeos/:id/notas-secundarias (sección
+//     "Notas secundarias" de la pantalla de edición del rodeo).
+//   - Nota Final: columna `evaluaciones.nota_final` (NUMERIC(4,2)) — YA
+//     CALCULADA Y PERSISTIDA por la RPC de finalización de evaluación
+//     (migraciones 019/021/031); acá solo se LEE, nunca se recalcula.
+//     Mismo filtro `anulada = false` que ya usan GET /admin/rodeos/:id
+//     (detalle del rodeo) y GET /admin/evaluaciones (listado del módulo
+//     de evaluaciones) — una evaluación anulada nunca aporta su nota_final
+//     como "la" nota del rodeo, igual que en esas dos pantallas.
+//     `evaluaciones.rodeo_id` es UNIQUE (migración 019) — a lo sumo 1
+//     evaluación por rodeo, sin ambigüedad posible al construir el mapa.
+// NULL/ausencia de fila = nota inexistente ("Pendiente" es responsabilidad
+// de quien consume este mapa, nunca de esta función — acá se devuelve el
+// valor crudo, incluyendo `null` explícito, para no perder la distinción
+// entre "0 numérico" (técnicamente imposible por los CHECK de rango, pero
+// nunca se asume) y "no existe todavía").
+// @returns Map rodeo_id -> { nota_comision: number|null, nota_delegado: number|null, nota_final: number|null }
+async function cargarNotasPorRodeo(rodeoIds) {
+    if (!rodeoIds || rodeoIds.length === 0) return {};
+
+    const [{ data: notasSec }, { data: evals }] = await Promise.all([
+        supabase.from('rodeo_notas_secundarias').select('rodeo_id, nota_comision, nota_delegado').in('rodeo_id', rodeoIds),
+        supabase.from('evaluaciones').select('rodeo_id, nota_final').in('rodeo_id', rodeoIds).eq('anulada', false)
+    ]);
+
+    const result = {};
+    rodeoIds.forEach(id => { result[id] = { nota_comision: null, nota_delegado: null, nota_final: null }; });
+
+    (notasSec || []).forEach(n => {
+        if (!result[n.rodeo_id]) return;
+        result[n.rodeo_id].nota_comision = n.nota_comision ?? null;
+        result[n.rodeo_id].nota_delegado = n.nota_delegado ?? null;
+    });
+    (evals || []).forEach(e => {
+        if (result[e.rodeo_id]) result[e.rodeo_id].nota_final = e.nota_final ?? null;
+    });
+
+    return result;
+}
+
 module.exports = {
     resolverFiltrosComplejos,
     resolverBusquedaJuradoIds,
     construirQueryRodeosFiltrada,
     textoEstadoDesignacion,
     cargarStatsAsignacionesPorRodeo,
-    cargarIndicadoresAdjuntosPorRodeo
+    cargarIndicadoresAdjuntosPorRodeo,
+    cargarNotasPorRodeo
 };

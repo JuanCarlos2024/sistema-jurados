@@ -1,7 +1,7 @@
 const ExcelJS = require('exceljs');
 const supabase = require('../config/supabase');
 const { calcularResumenMensual, obtenerRetencion } = require('./calculo');
-const { construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo, cargarIndicadoresAdjuntosPorRodeo } = require('./rodeosListado');
+const { construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo, cargarIndicadoresAdjuntosPorRodeo, cargarNotasPorRodeo } = require('./rodeosListado');
 
 // Estilo de encabezado estándar
 const HEADER_STYLE = {
@@ -13,6 +13,21 @@ const HEADER_STYLE = {
         left: { style: 'thin' }, right: { style: 'thin' }
     }
 };
+
+// Fuente roja para celdas "Pendiente" (Nota Comisión/Delegado/Final) — usa
+// exclusivamente la API de estilos que ya trae ExcelJS (misma librería que
+// ya pinta HEADER_STYLE/las filas alternadas más abajo), sin dependencia nueva.
+const PENDIENTE_FONT = { color: { argb: 'FFCC0000' }, bold: true };
+
+// ─── Nota (Comisión/Delegado/Final) -> valor numérico o el texto exacto
+// "Pendiente". Chequeo EXPLÍCITO de null/undefined (nunca `if (!valor)`,
+// que trataría incorrectamente un futuro valor 0 como pendiente) — hoy
+// ninguna de las 3 notas puede valer 0 (CHECK de rango 1.0-7.0 en BD /
+// mínimo 1.0 del cálculo de nota_final), pero el chequeo se hace explícito
+// de todas formas, nunca por conveniencia con una condición genérica.
+function valorNotaOPendiente(valor) {
+    return (valor === null || valor === undefined) ? 'Pendiente' : Number(valor);
+}
 
 function autoWidth(sheet) {
     sheet.columns.forEach(col => {
@@ -293,6 +308,10 @@ function generarCSV(headers, filas) {
  * "Cartilla Jurado"/"Cartilla Delegado"/"Video" usan cargarIndicadoresAdjuntosPorRodeo()
  * — MISMA fuente exacta que ya usa el indicador "CJ/CD/VY" de la tabla en
  * pantalla (GET /admin/adjuntos/resumen), nunca una lógica nueva.
+ * "Nota Comisión"/"Nota Delegado"/"Nota Final" usan cargarNotasPorRodeo() —
+ * MISMA fuente exacta que ya usan "Notas secundarias" (edición del rodeo) y
+ * el listado de Evaluaciones; nota inexistente = texto "Pendiente" en rojo,
+ * nunca 0/NULL/celda vacía.
  */
 async function exportarRodeos(filtros, res) {
     const { año, mes } = filtros;
@@ -303,12 +322,14 @@ async function exportarRodeos(filtros, res) {
     const { data: rodeos } = vacioPorFiltro ? { data: [] } : await query;
 
     const ids = (rodeos || []).map(r => r.id);
-    // Stats de asignaciones (pago total + jurados/estado de designación) e
-    // indicadores de adjuntos (cartillas/video) — misma fuente que la
-    // tabla, nunca una agregación paralela.
-    const [statsMap, indicMap] = await Promise.all([
+    // Stats de asignaciones (pago total + jurados/estado de designación),
+    // indicadores de adjuntos (cartillas/video) y notas (comisión/delegado/
+    // final) — misma fuente que la tabla/pantallas existentes, 3 consultas
+    // fijas en paralelo (nunca una por rodeo, sin importar cuántos se exporten).
+    const [statsMap, indicMap, notasMap] = await Promise.all([
         cargarStatsAsignacionesPorRodeo(ids),
-        cargarIndicadoresAdjuntosPorRodeo(ids)
+        cargarIndicadoresAdjuntosPorRodeo(ids),
+        cargarNotasPorRodeo(ids)
     ]);
 
     const wb = new ExcelJS.Workbook();
@@ -327,9 +348,14 @@ async function exportarRodeos(filtros, res) {
         { header: 'Cartilla Jurado',    key: 'cj',         width: 15 },
         { header: 'Cartilla Delegado',  key: 'cd',         width: 16 },
         { header: 'Video',              key: 'video',      width: 10 },
+        { header: 'Nota Comisión',      key: 'nota_com',   width: 15 },
+        { header: 'Nota Delegado',      key: 'nota_del',   width: 15 },
+        { header: 'Nota Final',         key: 'nota_fin',   width: 13 },
         { header: 'Total Pagos',        key: 'total',      width: 16 },
     ];
     ws.getRow(1).eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
+    // Columnas de notas (Nota Comisión, Nota Delegado, Nota Final) en ese orden.
+    const COL_NOTAS = [12, 13, 14];
 
     (rodeos || []).forEach((r, i) => {
         const s = statsMap[r.id] || { jurados: 0, total_pago_base: 0, jurados_lista: [] };
@@ -340,13 +366,23 @@ async function exportarRodeos(filtros, res) {
         const jurado     = lista.length > 0 ? lista.map(j => j.nombre).join(' / ') : 'Sin jurado';
         const estadoDes  = lista.length > 0 ? lista.map(j => j.estado_designacion_texto).join(' / ') : '—';
         const ind = indicMap[r.id] || { cj: false, cd: false, vy: false };
+        const notas = notasMap[r.id] || { nota_comision: null, nota_delegado: null, nota_final: null };
+        const valNotaComision = valorNotaOPendiente(notas.nota_comision);
+        const valNotaDelegado = valorNotaOPendiente(notas.nota_delegado);
+        const valNotaFinal    = valorNotaOPendiente(notas.nota_final);
         const row = ws.addRow([
             r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias,
             jurado, estadoDes, s.jurados || 0,
             ind.cj ? 'Sí' : 'No', ind.cd ? 'Sí' : 'No', ind.vy ? 'Sí' : 'No',
+            valNotaComision, valNotaDelegado, valNotaFinal,
             formatCLP(s.total_pago_base || 0)
         ]);
         if (i % 2 === 0) row.eachCell(c => { c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4F8' } }; });
+        // "Pendiente" en rojo — solo la celda, sin tocar el resto de la fila.
+        COL_NOTAS.forEach(colNum => {
+            const cell = row.getCell(colNum);
+            if (cell.value === 'Pendiente') cell.font = PENDIENTE_FONT;
+        });
     });
     autoWidth(ws);
 
