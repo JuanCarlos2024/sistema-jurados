@@ -186,6 +186,7 @@ const RODEO_ID = params.get('rodeo_id');
 let _cartillaId    = null;
 let _estado        = null;
 let _guardando     = false;
+let _jurados       = []; // Jurado(s) real(es) asignados al rodeo — SOLO LECTURA (nuevo formato 2026-2027)
 
 // ── Globals ETAPA 2 ──────────────────────────────────────────────────────────
 let _seriesGanado   = [];
@@ -197,12 +198,19 @@ let _disc    = {};  // disciplina
 let _recinto = {};  // recinto deportivo
 let _col     = {};  // colleras invitadas
 let _ree     = {};  // reemplazo jinetes
+// Informe general de accidentes (bloque breve entre Sección I y Sección II,
+// documento oficial 2026-2027): TEXTO LIBRE independiente del detalle
+// estructurado de "VII. Reporte de accidentes" (`_acc`). Comparte solo el
+// Sí/No `_acc.hubo_accidentes` (misma pregunta), pero el relato es propio.
+let _accGeneral = '';
 
 // ── Globals ETAPA 4 ──────────────────────────────────────────────────────────
 let _acc  = {};  // accidentes
 let _ba   = {};  // bienestar animal
 let _vet  = {};  // veterinario
 let _recs = {};  // reclamos/sugerencias
+let _com  = {};  // Anexo 03 — comentarios generales (nuevo formato 2026-2027)
+let _ant  = {};  // Anexo 04 — antecedentes disciplinarios complementarios (nuevo formato 2026-2027)
 
 if (!RODEO_ID) {
     document.getElementById('cuerpo-cartilla').innerHTML =
@@ -225,7 +233,8 @@ async function init() {
 // RENDER PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
 function renderCartilla(r) {
-    const { rodeo, perfil, cartilla } = r;
+    const { rodeo, perfil, cartilla, jurados } = r;
+    _jurados = Array.isArray(jurados) ? jurados : [];
     _estado     = cartilla ? cartilla.estado : 'nueva';
     _cartillaId = cartilla ? cartilla.id     : null;
     const ya    = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
@@ -234,6 +243,22 @@ function renderCartilla(r) {
     _seriesGanado   = Array.isArray(_respuestasJson.ganado_series)
         ? _respuestasJson.ganado_series.map(s => ({ ...s }))
         : [];
+    // `_vet` se inicializa acá (además de en _initSecciones4, misma fuente)
+    // para que el encabezado (Sección I) pueda mostrar el nombre/teléfono/
+    // correo del veterinario apenas se pinta la cartilla, sin esperar a que
+    // se rendericen las secciones dinámicas más abajo.
+    _vet = Object.assign({
+        nombre: '', telefono: '', correo: '',
+        preparacion: '', especifica_tecnico: '', especifica_otro: '',
+        sombra_ganado: null, sombra_ganado_obs: '',
+        sombra_equinos: null, sombra_equinos_obs: '',
+        agua_ganado: null, agua_ganado_obs: '',
+        agua_equinos: null, agua_equinos_obs: '',
+        comida_ganado: null, comida_ganado_obs: '',
+        comida_equinos: null, comida_equinos_obs: '',
+        observaciones: '',
+        detalle_lesiones_equinos: '', detalle_lesiones_bovinos: ''
+    }, _respuestasJson.informe_veterinario || {});
 
     const fechaRodeo = rodeo?.fecha
         ? new Date(rodeo.fecha + 'T12:00:00').toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' })
@@ -340,6 +365,26 @@ function renderCartilla(r) {
                     <input type="text" id="f-secretario_numero_socio" class="form-control" placeholder="Ej: 12345" value="${sanitizar(fld('secretario_numero_socio'))}" ${ya ? 'readonly' : ''}>
                 </div>
             </div>
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Jurado(s) del Rodeo</label>
+                    <input type="text" class="form-control" readonly disabled value="${sanitizar(_jurados.length > 0 ? _jurados.join(' / ') : 'Sin jurado asignado aún')}">
+                </div>
+            </div>
+            <!-- Asociación/Club — EN VIVO desde rodeos.asociacion/rodeos.club, nunca
+                 duplicados en cartillas_delegado (gate de la 2a revisión: "no duplicar
+                 datos que ya tengan una fuente confiable"). Solo lectura: si el rodeo
+                 no tiene el dato, queda "—" (nunca se inventa). -->
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Asociación organizadora</label>
+                    <input type="text" class="form-control" readonly disabled value="${sanitizar(rodeo?.asociacion || '—')}">
+                </div>
+                <div>
+                    <label class="form-label">Club organizador</label>
+                    <input type="text" class="form-control" readonly disabled value="${sanitizar(rodeo?.club || '—')}">
+                </div>
+            </div>
             <div style="margin-bottom:14px;">
                 <label class="form-label">Club y/o Asociación Organizador(a) del Rodeo <span class="req">*</span></label>
                 <input type="text" id="f-club_asociacion_organizador" class="form-control" value="${sanitizar(fld('club_asociacion_organizador'))}" ${ya ? 'readonly' : ''}>
@@ -350,9 +395,29 @@ function renderCartilla(r) {
                     <input type="text" id="f-tipo_rodeo" class="form-control" placeholder="Ej: Regional, Nacional" value="${sanitizar(fld('tipo_rodeo'))}" ${ya ? 'readonly' : ''}>
                 </div>
                 <div>
-                    <label class="form-label">Público en la Serie de Campeones</label>
+                    <label class="form-label">Público</label>
                     <input type="number" id="f-publico_serie_campeones" class="form-control" min="0" placeholder="Ej: 350" value="${fld('publico_serie_campeones')}" ${ya ? 'readonly' : ''}>
                 </div>
+            </div>
+            <!-- Veterinario/técnico — vista previa de solo lectura de los
+                 mismos datos que se completan en la Sección IX (Anexo 02):
+                 objeto _vet, con nombre/telefono/correo. No se duplica la
+                 captura del dato (única edición posible es en la Sección
+                 IX), solo se muestra tempranamente en el encabezado. -->
+            <div class="campo-grid" style="margin-bottom:6px;">
+                <div>
+                    <label class="form-label">Nombre veterinario, técnico u otro</label>
+                    <input type="text" id="hdr-vet-nombre" class="form-control" readonly disabled value="${sanitizar(_vet.nombre || '—')}">
+                </div>
+                <div>
+                    <label class="form-label">Teléfono veterinario/técnico</label>
+                    <input type="text" id="hdr-vet-telefono" class="form-control" readonly disabled value="${sanitizar(_vet.telefono || '—')}">
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label class="form-label">Correo veterinario/técnico</label>
+                <input type="text" id="hdr-vet-correo" class="form-control" readonly disabled value="${sanitizar(_vet.correo || '—')}">
+                <p style="font-size:11px;color:#888;margin:4px 0 0;">Complete o corrija estos datos en <a href="#sec-veterinario" onclick="document.getElementById('sec-veterinario')?.scrollIntoView({behavior:'smooth'});return false;">Sección IX — Anexo 02 (Informe del veterinario del Rodeo)</a>.</p>
             </div>
             <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
             <div style="margin-bottom:14px;">
@@ -399,63 +464,116 @@ function renderCartilla(r) {
         </div>
     </div>`;
 
-    // ─── SECCIÓN II — Ganado (ETAPA 2) ───────────────────────────────────────
+    // ═══ ORDEN DEFINITIVO (2ª revisión, nuevo formato 2026-2027) — I.Series,
+    // Reemplazo de Jinetes, II.Ganado, III.Desempeño, IV.Disciplina,
+    // V.Recinto, VI.Colleras, VII.Accidentes, VIII.Anexo01, IX.Anexo02,
+    // X.Anexo03, XI.Anexo04, XII.Reclamos. Mismas estructuras/datos de
+    // siempre — solo cambia el ORDEN VISUAL y, en Series/Ganado, se separan
+    // en dos bloques que ya existían mezclados en uno (misma tabla de datos
+    // `_seriesGanado`, nunca duplicada). ═══
+
+    // ─── SECCIÓN I — Información de las Series del Rodeo ─────────────────────
+    // (colleras + vueltas en apiñadero, por serie y por animal — antes vivía
+    // mezclada dentro del mismo bloque que "Informe del Ganado").
+    html += `<div class="bloque" id="bloque-series">
+        <div class="bloque-header">I. Información de las Series del Rodeo</div>
+        <div class="bloque-body" id="series-cuerpo"></div>
+    </div>`;
+
+    // ─── Reemplazo de Jinetes — inmediatamente después de Series (sin
+    // numeral romano, tal como el pedido lo distingue con "1." en vez de "I."). ─
+    html += `<div class="bloque">
+        <div class="bloque-header">Reemplazo de Jinetes</div>
+        <div class="bloque-body" id="sec-reemplazo"></div>
+    </div>`;
+
+    // ─── Faltas o sanciones disciplinarias en cada serie — bloque breve,
+    // por serie (señale el artículo correspondiente). Reutiliza los mismos
+    // objetos de `_seriesGanado` (Sección I), agregando 3 propiedades por
+    // serie (`falta_hubo`/`falta_articulo`/`falta_obs`) — no es una
+    // estructura nueva independiente, solo se extiende la ya existente.
+    // NO reemplaza ni se confunde con "IV. Informe de disciplina", que
+    // registra el detalle completo de los hechos con los infractores.
+    html += `<div class="bloque">
+        <div class="bloque-header">Faltas o sanciones disciplinarias en cada serie</div>
+        <div class="bloque-body" id="sec-faltas-serie"></div>
+    </div>`;
+
+    // ─── Informe de accidentes (mención general) — bloque breve que
+    // reutiliza los mismos campos `hubo_accidentes`/`observaciones_generales`
+    // del objeto `_acc` (Sección VII), sin duplicar la información. El
+    // detalle completo (médico, contacto, accidentados) permanece
+    // exclusivamente en "VII. Reporte de accidentes".
+    html += `<div class="bloque">
+        <div class="bloque-header">Informe de accidentes</div>
+        <div class="bloque-body" id="sec-accidentes-breve"></div>
+    </div>`;
+
+    // ─── SECCIÓN II — Informe del Ganado ──────────────────────────────────────
+    // (calidad + fuera de peso, por serie y por animal — misma fuente
+    // `_seriesGanado` que la Sección I, nunca se pide reescribir el nombre).
     html += `<div class="bloque" id="bloque-ganado">
-        <div class="bloque-header">II. Información sobre el ganado utilizado en el Rodeo</div>
+        <div class="bloque-header">II. Informe del Ganado</div>
         <div class="bloque-body" id="ganado-cuerpo"></div>
     </div>`;
 
-    // ─── SECCIÓN III — Desempeño del Jurado (ETAPA 3) ────────────────────────
+    // ─── SECCIÓN III — Desempeño del Jurado ───────────────────────────────────
     html += `<div class="bloque">
         <div class="bloque-header">III. Informe sobre el desempeño del Jurado</div>
         <div class="bloque-body" id="sec-desempeno"></div>
     </div>`;
 
-    // ─── SECCIÓN IV — Disciplina (ETAPA 3) ───────────────────────────────────
+    // ─── SECCIÓN IV — Disciplina ───────────────────────────────────────────────
     html += `<div class="bloque">
         <div class="bloque-header">IV. Informe de disciplina</div>
         <div class="bloque-body" id="sec-disciplina"></div>
     </div>`;
 
-    // ─── SECCIÓN V — Recinto Deportivo (ETAPA 3) ─────────────────────────────
+    // ─── SECCIÓN V — Recinto Deportivo (5 campos del documento nuevo) ────────
     html += `<div class="bloque">
-        <div class="bloque-header">V. Estado del recinto deportivo</div>
+        <div class="bloque-header">V. Informe sobre el estado del recinto deportivo</div>
         <div class="bloque-body" id="sec-recinto"></div>
     </div>`;
 
-    // ─── SECCIÓN VI — Colleras Invitadas (ETAPA 3) ───────────────────────────
+    // ─── SECCIÓN VI — Colleras Invitadas ───────────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VI. Colleras invitadas</div>
+        <div class="bloque-header">VI. Informe de colleras invitadas</div>
         <div class="bloque-body" id="sec-colleras"></div>
     </div>`;
 
-    // ─── SECCIÓN VII — Reemplazo de Jinetes (ETAPA 3) ────────────────────────
+    // ─── SECCIÓN VII — Reporte de Accidentes ──────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VII. Reemplazo de jinetes</div>
-        <div class="bloque-body" id="sec-reemplazo"></div>
-    </div>`;
-
-    // ─── SECCIÓN VIII — Accidentes (ETAPA 4) ─────────────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">VIII. Informe de accidentes</div>
+        <div class="bloque-header">VII. Reporte de accidentes</div>
         <div class="bloque-body" id="sec-accidentes"></div>
     </div>`;
 
-    // ─── SECCIÓN IX — Bienestar Animal (ETAPA 4) ─────────────────────────────
+    // ─── SECCIÓN VIII — Anexo 01: Bienestar Animal ────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">IX. Informe condiciones de Bienestar Animal</div>
+        <div class="bloque-header">VIII. Anexo 01 — Informe condiciones de Bienestar Animal</div>
         <div class="bloque-body" id="sec-bienestar"></div>
     </div>`;
 
-    // ─── SECCIÓN X — Veterinario (ETAPA 4) ───────────────────────────────────
+    // ─── SECCIÓN IX — Anexo 02: Veterinario del Rodeo ─────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">X. Informe del veterinario del Rodeo</div>
+        <div class="bloque-header">IX. Anexo 02 — Informe del veterinario del Rodeo</div>
         <div class="bloque-body" id="sec-veterinario"></div>
     </div>`;
 
-    // ─── SECCIÓN XI — Reclamos o sugerencias (ETAPA 4) ───────────────────────
+    // ─── SECCIÓN X — Anexo 03: Comentarios generales ──────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">XI. Reclamos o sugerencias</div>
+        <div class="bloque-header">X. Anexo 03 — Comentarios generales</div>
+        <div class="bloque-body" id="sec-comentarios"></div>
+    </div>`;
+
+    // ─── SECCIÓN XI — Anexo 04: Antecedentes disciplinarios complementarios ──
+    html += `<div class="bloque">
+        <div class="bloque-header">XI. Anexo 04 — Antecedentes disciplinarios complementarios</div>
+        <div class="bloque-body" id="sec-antecedentes"></div>
+    </div>`;
+
+    // ─── SECCIÓN XII — Reclamos o sugerencias ─────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">XII. Reclamos o sugerencias</div>
         <div class="bloque-body" id="sec-reclamos"></div>
     </div>`;
 
@@ -468,6 +586,7 @@ function renderCartilla(r) {
     document.getElementById('cuerpo-cartilla').innerHTML = html;
 
     // Renderizar secciones dinámicas
+    renderBloqueSeries(ya);
     renderBloqueGanado(ya);
     _initSecciones3(cartilla);
     _initSecciones4(cartilla);
@@ -484,11 +603,14 @@ function renderCartilla(r) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ETAPA 2 — GANADO
+// SECCIÓN I — SERIES DEL RODEO  /  SECCIÓN II — GANADO
+// (misma fuente de datos `_seriesGanado`; se muestran en dos bloques
+// separados por pedido explícito de la 2ª revisión — antes vivían juntos
+// bajo un solo encabezado sin distinguir "Series" de "Ganado")
 // ═════════════════════════════════════════════════════════════════════════════
 
-function renderBloqueGanado(ya) {
-    const cont = document.getElementById('ganado-cuerpo');
+function renderBloqueSeries(ya) {
+    const cont = document.getElementById('series-cuerpo');
     if (!cont) return;
     const haySeries = _seriesGanado.length > 0;
     const btnAgregar = ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSerie()">+ Agregar serie</button>`;
@@ -500,13 +622,20 @@ function renderBloqueGanado(ya) {
     html += `<div class="tabla-wrap-ganado">${renderTablaColleras(ya)}</div>`;
     html += `<div class="sub-titulo-ganado">2. Vueltas en apiñadero, tipo y peso del ganado</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaVueltas(ya)}</div>`;
-    html += `<div class="sub-titulo-ganado">3. Calidad del ganado</div>`;
+    html += btnAgregar;
+    cont.innerHTML = html;
+}
+
+function renderBloqueGanado(ya) {
+    const cont = document.getElementById('ganado-cuerpo');
+    if (!cont) return;
+    let html = '';
+    html += `<div class="sub-titulo-ganado">1. Calidad del ganado</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaCalidad(ya)}</div>`;
-    html += `<div class="sub-titulo-ganado">4. Ganado fuera de peso</div>`;
+    html += `<div class="sub-titulo-ganado">2. Ganado fuera de peso</div>`;
     html += `<p style="font-size:12px;color:#666;margin:-4px 0 10px;">En caso de existir ganado fuera de peso en cualquier serie, indique la cantidad y el porcentaje (Art. 242).</p>`;
     html += `<div id="aviso-ganado-bajo-peso" class="aviso-ganado-bajo-peso">⚠ Ha ingresado datos de ganado fuera de peso. Se recomienda marcar "Sí" en "¿Incluye informe de ganado bajo peso?" (Sección I).</div>`;
     html += `<div class="tabla-wrap-ganado">${renderTablaFueraPeso(ya)}</div>`;
-    html += btnAgregar;
     cont.innerHTML = html;
     calcTotalesB4();
 }
@@ -651,8 +780,8 @@ function calcTotalesB4() {
 function setText(id,val){ const el=document.getElementById(id); if(el) el.textContent=val; }
 function numPos(v){ const n=parseFloat(v); return(!isNaN(n)&&n>=0)?n:0; }
 function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function agregarSerie(){ _seriesGanado.push({nombre:''}); renderBloqueGanado(false); }
-function quitarSerie(idx){ if(!confirm('¿Quitar esta serie de todas las tablas?')) return; _seriesGanado.splice(idx,1); renderBloqueGanado(false); }
+function agregarSerie(){ _seriesGanado.push({nombre:''}); renderBloqueSeries(false); renderBloqueGanado(false); }
+function quitarSerie(idx){ if(!confirm('¿Quitar esta serie de todas las tablas?')) return; _seriesGanado.splice(idx,1); renderBloqueSeries(false); renderBloqueGanado(false); }
 function setCelda(idx,campo,valor){ if(_seriesGanado[idx]) _seriesGanado[idx][campo]=valor; }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -661,7 +790,12 @@ function setCelda(idx,campo,valor){ if(_seriesGanado[idx]) _seriesGanado[idx][ca
 
 function _initSecciones3(cartilla) {
     const rj = _respuestasJson;
-    _dj      = Object.assign({ evaluacion_realizada:null, fecha_evaluacion:'', cantidad_jurados:'', mas_de_un_jurado:null, observaciones:'', jurados:[] }, rj.desempeno_jurado  || {});
+    // Nuevo formato 2026-2027: exactamente 4 aspectos (1.0-7.0) + Nota
+    // Promedio automática. Los campos antiguos (evaluacion_realizada,
+    // cantidad_jurados, jurados[]...) se conservan por compatibilidad de
+    // LECTURA de cartillas ya enviadas con el formato anterior — nunca se
+    // eliminan ni se pisan — pero ya no se editan desde esta pantalla.
+    _dj      = Object.assign({ evaluacion_realizada:null, fecha_evaluacion:'', cantidad_jurados:'', mas_de_un_jurado:null, observaciones:'', jurados:[], aspecto_1:null, aspecto_2:null, aspecto_3:null, aspecto_4:null, nota_promedio:null }, rj.desempeno_jurado  || {});
     _disc    = Object.assign({ hubo_informe:null, situaciones:[] }, rj.disciplina_informe || {});
     _recinto = Object.assign({}, rj.recinto_deportivo || {});
     _col     = Object.assign({ no_hubo:false, items:[] }, rj.colleras_invitadas || {});
@@ -673,88 +807,78 @@ function _initSecciones3(cartilla) {
     renderSeccionRecinto(ya);
     renderSeccionColleras(ya);
     renderSeccionReemplazo(ya);
+    renderFaltasPorSerie(ya);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN III — DESEMPEÑO DEL JURADO
+// SECCIÓN III — DESEMPEÑO DEL JURADO (nuevo formato 2026-2027)
+// Exactamente 4 aspectos, nota 1.0-7.0 cada uno, Nota Promedio automática.
+// La Nota Promedio alimenta DIRECTAMENTE rodeo_notas_secundarias.nota_delegado
+// al enviar el informe (services/cartillaDelegadoNotas.js, backend) — misma
+// fuente que ya usan los reportes/exportaciones del sistema, nunca una nota
+// paralela. Validación de rango idéntica en frontend y backend.
 // ═════════════════════════════════════════════════════════════════════════════
+
+const ASPECTOS_DESEMPENO_UI = [
+    { key:'aspecto_1', label:'1. Sanciona correctamente las faltas en el apiñadero.' },
+    { key:'aspecto_2', label:'2. Sanciona correctamente las faltas en la cancha (incluye zona de postura).' },
+    { key:'aspecto_3', label:'3. Identifica correctamente atajadas válidas (0-2-3-4). Justifica correctamente las atajadas no válidas. Sanciona correctamente las faltas que se producen en la atajada.' },
+    { key:'aspecto_4', label:'4. Sanciona correctamente las faltas que se producen en la cuarta carrera (entrega del novillo).' }
+];
+
+function calcularPromedioDesempenoUI() {
+    const notas = ASPECTOS_DESEMPENO_UI.map(a => _dj[a.key]);
+    if (notas.some(n => n === null || n === undefined || n === '')) return null;
+    const nums = notas.map(Number);
+    if (nums.some(n => isNaN(n) || n < 1 || n > 7)) return null;
+    return Math.round((nums.reduce((a,b)=>a+b,0) / 4) * 10) / 10;
+}
 
 function renderSeccionDesempeno(ya) {
     const cont = document.getElementById('sec-desempeno');
     if (!cont) return;
-    const dis = ya ? 'disabled' : '';
-    const ro  = ya ? 'readonly' : '';
-    const chk = (campo, val) => _dj[campo] === val ? 'checked' : '';
+    const ro = ya ? 'disabled' : '';
 
-    let html = `
-    <a class="link-externo" href="https://ferochi.cl/encuesta-informe-de-evaluacion-jurado/" target="_blank" rel="noopener">
-        🔗 Ir a la evaluación en ferochi.cl (Área deportiva → Encuestas → Informe de evaluación)
-    </a>
-    <p style="font-size:13px;color:#555;margin:0 0 14px;">Complete un informe por cada jurado si hubo más de uno. Plazo: 3 días hábiles desde el rodeo.</p>
+    const filas = ASPECTOS_DESEMPENO_UI.map(a => `
+        <div class="aspecto-desemp" style="margin-bottom:14px;padding:10px 14px;background:#fafcff;border:1px solid #e0e8f5;border-radius:6px;">
+            <label class="form-label" style="margin-bottom:6px;">${sanitizar(a.label)}</label>
+            <input type="number" min="1" max="7" step="0.1" class="form-control" style="max-width:140px;"
+                value="${_dj[a.key] !== null && _dj[a.key] !== undefined ? esc(_dj[a.key]) : ''}"
+                ${ro} placeholder="1.0 – 7.0"
+                oninput="setAspectoDesemp('${a.key}', this.value)">
+        </div>`).join('');
 
-    <div class="campo-grid" style="margin-bottom:12px;">
-        <div>
-            <label class="form-label">¿Evaluación de jurado realizada?</label>
-            <div class="radio-grupo">
-                <label><input type="radio" name="dj_eval" value="si" ${chk('evaluacion_realizada','si')} ${dis} onchange="setCampoDesemp('evaluacion_realizada','si')"> Sí</label>
-                <label><input type="radio" name="dj_eval" value="no" ${chk('evaluacion_realizada','no')} ${dis} onchange="setCampoDesemp('evaluacion_realizada','no')"> No</label>
-            </div>
-        </div>
-        <div>
-            <label class="form-label">Fecha de realización</label>
-            <input type="date" class="form-control" value="${esc(_dj.fecha_evaluacion||'')}" ${ro} oninput="setCampoDesemp('fecha_evaluacion',this.value)">
-        </div>
+    const promedio = calcularPromedioDesempenoUI();
+    _dj.nota_promedio = promedio;
+
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 14px;">Califique cada aspecto con una nota de <strong>1,0 a 7,0</strong>. La Nota Promedio se calcula automáticamente y queda registrada como la Nota Delegado de este rodeo.</p>
+    ${filas}
+    <div id="dj-promedio-wrap" style="margin-top:10px;padding:12px 16px;background:${promedio!==null?'#eafaf1':'#fff8e1'};border:1px solid ${promedio!==null?'#27ae60':'#ffc107'};border-radius:8px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-weight:700;color:${promedio!==null?'#145a32':'#795800'};">NOTA PROMEDIO</span>
+        <span id="dj-promedio-valor" style="font-size:20px;font-weight:700;color:${promedio!==null?'#145a32':'#795800'};">${promedio!==null?promedio.toFixed(1):'Pendiente'}</span>
     </div>
-    <div class="campo-grid" style="margin-bottom:12px;">
-        <div>
-            <label class="form-label">Cantidad de jurados evaluados</label>
-            <input type="number" min="0" class="form-control" value="${esc(_dj.cantidad_jurados||'')}" ${ro} oninput="setCampoDesemp('cantidad_jurados',this.value)" placeholder="Ej: 3">
-        </div>
-        <div>
-            <label class="form-label">¿Hubo más de un jurado?</label>
-            <div class="radio-grupo">
-                <label><input type="radio" name="dj_mas" value="si" ${chk('mas_de_un_jurado','si')} ${dis} onchange="setCampoDesemp('mas_de_un_jurado','si')"> Sí</label>
-                <label><input type="radio" name="dj_mas" value="no" ${chk('mas_de_un_jurado','no')} ${dis} onchange="setCampoDesemp('mas_de_un_jurado','no')"> No</label>
-            </div>
-        </div>
-    </div>
-    <div style="margin-bottom:14px;">
+    <div style="margin-top:14px;">
         <label class="form-label">Observaciones del delegado sobre el desempeño</label>
-        <textarea class="form-control" rows="3" ${ro} oninput="setCampoDesemp('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_dj.observaciones||'')}</textarea>
-    </div>
-    <div class="sec-sub">Lista de jurados evaluados (opcional)</div>
-    <div id="dj-jurados-tabla"></div>
-    ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" style="margin-top:6px;" onclick="agregarJuradoDj()">+ Agregar jurado</button>`}`;
-
-    cont.innerHTML = html;
-    renderTablaJuradosDj(ya);
+        <textarea class="form-control" rows="3" ${ya?'readonly':''} oninput="setCampoDesemp('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_dj.observaciones||'')}</textarea>
+    </div>`;
 }
 
-function renderTablaJuradosDj(ya) {
-    const wrap = document.getElementById('dj-jurados-tabla');
-    if (!wrap) return;
-    if (_dj.jurados.length === 0) {
-        wrap.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin jurados registrados.</p>';
-        return;
+function setAspectoDesemp(key, valor) {
+    _dj[key] = valor === '' ? null : valor;
+    const promedio = calcularPromedioDesempenoUI();
+    _dj.nota_promedio = promedio;
+    const wrap = document.getElementById('dj-promedio-wrap');
+    const val  = document.getElementById('dj-promedio-valor');
+    if (val) val.textContent = promedio !== null ? promedio.toFixed(1) : 'Pendiente';
+    if (wrap) {
+        wrap.style.background   = promedio !== null ? '#eafaf1' : '#fff8e1';
+        wrap.style.borderColor  = promedio !== null ? '#27ae60' : '#ffc107';
+        wrap.querySelectorAll('span').forEach(s => { s.style.color = promedio !== null ? '#145a32' : '#795800'; });
     }
-    const dis = ya ? 'disabled' : '';
-    const opts = (v) => ['Sí','No','N/A'].map(o => `<option ${v===o?'selected':''}>${o}</option>`).join('');
-    let rows = _dj.jurados.map((j,i) => `<tr>
-        <td><input class="inp-din" value="${esc(j.nombre||'')}" ${dis} oninput="setJuradoDj(${i},'nombre',this.value)" placeholder="Nombre completo"></td>
-        <td style="width:90px;"><select class="sel-din" ${dis} onchange="setJuradoDj(${i},'evaluado',this.value)"><option value="">—</option>${opts(j.evaluado)}</select></td>
-        <td><input class="inp-din" value="${esc(j.observacion||'')}" ${dis} oninput="setJuradoDj(${i},'observacion',this.value)" placeholder="Observación"></td>
-        ${ya ? '' : `<td style="width:36px;text-align:center;"><button class="btn-q" onclick="quitarJuradoDj(${i})">✕</button></td>`}
-    </tr>`).join('');
-    wrap.innerHTML = `<div class="tabla-wrap-ganado"><table class="tbl-din">
-        <thead><tr><th>Nombre del jurado</th><th>¿Evaluado?</th><th>Observación</th>${ya?'':'<th></th>'}</tr></thead>
-        <tbody>${rows}</tbody>
-    </table></div>`;
 }
 
 function setCampoDesemp(campo, valor) { _dj[campo] = valor; }
-function setJuradoDj(idx, campo, valor) { if(_dj.jurados[idx]) _dj.jurados[idx][campo] = valor; }
-function agregarJuradoDj() { _dj.jurados.push({nombre:'',evaluado:'',observacion:''}); renderTablaJuradosDj(false); }
-function quitarJuradoDj(idx) { if(!confirm('¿Quitar este jurado?')) return; _dj.jurados.splice(idx,1); renderTablaJuradosDj(false); }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECCIÓN IV — DISCIPLINA
@@ -870,9 +994,17 @@ function quitarSituacion(idx) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECCIÓN V — RECINTO DEPORTIVO
+// Nuevo formato 2026-2027 (2ª revisión, punto 2): exactamente 5 campos —
+// Cancha, Iluminación, Instalaciones públicas, Casetas de jurados, Otros.
+// Compatibilidad: las cartillas ANTIGUAS que ya tengan datos en los 18
+// aspectos del formato anterior se detectan por PRESENCIA DE DATOS (no por
+// una bandera de versión ni migración) y se siguen mostrando/editando con
+// su formato original, sin perder ni transformar su información.
 // ═════════════════════════════════════════════════════════════════════════════
 
-const ASPECTOS_RECINTO = [
+// Formato antiguo (18 aspectos) — se conserva SOLO para poder seguir
+// mostrando/editando cartillas ya guardadas con este formato.
+const ASPECTOS_RECINTO_LEGACY = [
     {key:'piso',                   label:'Piso'},
     {key:'riego',                  label:'Riego de la cancha'},
     {key:'lineas_sentencia',       label:'Líneas de sentencia'},
@@ -893,6 +1025,23 @@ const ASPECTOS_RECINTO = [
     {key:'stands_artesanos',       label:'Stands de artesanos'}
 ];
 
+// Formato nuevo (documento oficial 2026-2027) — 4 campos con estado +
+// observación, más "Otros" como texto libre (comparten la key 'otros' del
+// formato anterior, que ya era texto libre en ambos casos).
+const ASPECTOS_RECINTO_NUEVO = [
+    {key:'cancha',                 label:'Cancha'},
+    {key:'iluminacion_cancha',     label:'Iluminación'},
+    {key:'instalaciones_publicas', label:'Instalaciones públicas'},
+    {key:'casetas_jurados',        label:'Casetas de jurados'}
+];
+
+// Una cartilla es "formato antiguo" si tiene datos guardados en alguna de
+// las keys EXCLUSIVAS del formato de 18 aspectos (evita falsos positivos:
+// 'otros' es común a ambos formatos y no se usa para decidir).
+function esRecintoFormatoLegacy() {
+    return ASPECTOS_RECINTO_LEGACY.some(a => _recinto[a.key+'_estado'] || _recinto[a.key+'_obs']);
+}
+
 function renderSeccionRecinto(ya) {
     const cont = document.getElementById('sec-recinto');
     if (!cont) return;
@@ -900,8 +1049,10 @@ function renderSeccionRecinto(ya) {
     const ro  = ya ? 'readonly' : '';
     const estadoOpts = (k) => ['Bueno','Regular','Malo','No aplica'].map(o =>
         `<option value="${o}" ${_recinto[k+'_estado']===o?'selected':''}>${o}</option>`).join('');
+    const legacy = esRecintoFormatoLegacy();
+    const aspectos = legacy ? ASPECTOS_RECINTO_LEGACY : ASPECTOS_RECINTO_NUEVO;
 
-    const cards = ASPECTOS_RECINTO.map(a => `
+    const cards = aspectos.map(a => `
     <div class="aspecto-card">
         <span class="aspecto-label">${sanitizar(a.label)}</span>
         <select class="sel-estado" ${dis} onchange="setRecintoField('${a.key}_estado',this.value)">
@@ -911,7 +1062,10 @@ function renderSeccionRecinto(ya) {
         <input class="inp-obs-asp" type="text" value="${esc(_recinto[a.key+'_obs']||'')}" ${ro} oninput="setRecintoField('${a.key}_obs',this.value)" placeholder="Observación (opcional)">
     </div>`).join('');
 
+    const avisoLegacy = legacy ? `<div class="alerta alerta-info" style="font-size:12px;margin-bottom:12px;">Esta cartilla fue creada con el formato anterior del recinto deportivo (18 aspectos) y se conserva tal como fue registrada. Las cartillas nuevas usan el formato oficial vigente (5 campos).</div>` : '';
+
     cont.innerHTML = `
+    ${avisoLegacy}
     <p style="font-size:13px;color:#555;margin:0 0 14px;">Describa el estado de cada uno de los aspectos del recinto. Seleccione el estado e indique observaciones si corresponde.</p>
     <div class="aspectos-grid">${cards}</div>
     <div style="margin-top:14px;">
@@ -1063,6 +1217,45 @@ function quitarReemplazo(idx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// FALTAS O SANCIONES DISCIPLINARIAS EN CADA SERIE (bloque breve, entre
+// Sección I y Sección II). Reutiliza los mismos objetos de `_seriesGanado`
+// (Sección I), agregando por serie `falta_hubo`/`falta_articulo`/`falta_obs`
+// — no crea una estructura nueva independiente. NO reemplaza ni se confunde
+// con "IV. Informe de disciplina" (`_disc`), que registra el detalle
+// completo de los hechos e individualiza a los infractores.
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderFaltasPorSerie(ya) {
+    const cont = document.getElementById('sec-faltas-serie');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    if (_seriesGanado.length === 0) {
+        cont.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;">No hay series registradas (ver Sección I).</p>';
+        return;
+    }
+    const rows = _seriesGanado.map((s, i) => `<tr>
+        <td style="font-weight:600;">${esc(s.nombre || ('Serie ' + (i + 1)))}</td>
+        <td style="min-width:90px;">
+            <select class="sel-din" ${dis} onchange="setFaltaSerie(${i},'falta_hubo',this.value)">
+                <option value="">—</option>
+                <option value="si" ${s.falta_hubo === 'si' ? 'selected' : ''}>Sí</option>
+                <option value="no" ${s.falta_hubo === 'no' ? 'selected' : ''}>No</option>
+            </select>
+        </td>
+        <td><input class="inp-din" value="${esc(s.falta_articulo || '')}" ${ro} oninput="setFaltaSerie(${i},'falta_articulo',this.value)" placeholder="Artículo"></td>
+        <td><input class="inp-din" value="${esc(s.falta_obs || '')}" ${ro} oninput="setFaltaSerie(${i},'falta_obs',this.value)" placeholder="Observación breve"></td>
+    </tr>`).join('');
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 12px;">Informe de faltas o sanciones disciplinarias en cada serie (señale el artículo correspondiente). El detalle completo de los hechos e infractores se registra en la Sección IV — Informe de disciplina.</p>
+    <div class="tabla-wrap-ganado"><table class="tbl-din"><thead><tr>
+        <th>Serie</th><th>¿Hubo falta/sanción?</th><th>Artículo</th><th>Observación</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function setFaltaSerie(idx, campo, valor) { if (_seriesGanado[idx]) _seriesGanado[idx][campo] = valor; }
+
+// ═════════════════════════════════════════════════════════════════════════════
 // ETAPA 4 — INICIALIZACIÓN
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1073,30 +1266,55 @@ function _initSecciones4(cartilla) {
         medico_nombre: '', medico_email: '', medico_telefono: '',
         observaciones_generales: '', items: []
     }, rj.accidentes_informe  || {});
+    // Informe general de accidentes (bloque breve, independiente de `_acc`):
+    // texto libre. Cartillas antiguas sin este campo simplemente quedan
+    // vacías — no se transforma ni se completa con datos de `_acc`.
+    _accGeneral = rj.informe_accidentes_general || '';
+    // Bienestar Animal / Veterinario — nuevo formato 2026-2027: cada
+    // pregunta Sí/No ahora tiene su propia Observación (campos `_obs`,
+    // ADITIVOS) y las lesiones se registran separadas por Equinos/Bovinos
+    // (`detalle_lesiones_equinos`/`detalle_lesiones_bovinos`) en vez de un
+    // único campo mezclado. `detalle_lesiones` (campo anterior) se conserva
+    // sin tocar por compatibilidad de lectura de cartillas ya enviadas.
     _ba   = Object.assign({
-        sombra_ganado: null, sombra_equinos: null,
-        agua_ganado: null,   agua_equinos: null,
-        comida_ganado: null, comida_equinos: null,
+        sombra_ganado: null, sombra_ganado_obs: '',
+        sombra_equinos: null, sombra_equinos_obs: '',
+        agua_ganado: null, agua_ganado_obs: '',
+        agua_equinos: null, agua_equinos_obs: '',
+        comida_ganado: null, comida_ganado_obs: '',
+        comida_equinos: null, comida_equinos_obs: '',
         hubo_lesiones_equinos: null, hubo_lesiones_bovinos: null,
-        observaciones: '', detalle_lesiones: ''
+        observaciones: '', detalle_lesiones: '',
+        detalle_lesiones_equinos: '', detalle_lesiones_bovinos: ''
     }, rj.bienestar_animal     || {});
     _vet  = Object.assign({
         nombre: '', telefono: '', correo: '',
         preparacion: '', especifica_tecnico: '', especifica_otro: '',
-        sombra_ganado: null, sombra_equinos: null,
-        agua_ganado: null,   agua_equinos: null,
-        comida_ganado: null, comida_equinos: null,
-        observaciones: ''
+        sombra_ganado: null, sombra_ganado_obs: '',
+        sombra_equinos: null, sombra_equinos_obs: '',
+        agua_ganado: null, agua_ganado_obs: '',
+        agua_equinos: null, agua_equinos_obs: '',
+        comida_ganado: null, comida_ganado_obs: '',
+        comida_equinos: null, comida_equinos_obs: '',
+        observaciones: '',
+        detalle_lesiones_equinos: '', detalle_lesiones_bovinos: ''
     }, rj.informe_veterinario  || {});
     _recs = Object.assign({
         hubo_reclamos: null, sugerencias: '',
         observaciones_generales: '', items: []
     }, rj.reclamos_sugerencias || {});
+    // Anexo 03 — Comentarios generales / Anexo 04 — Antecedentes
+    // disciplinarios complementarios (nuevo formato 2026-2027).
+    _com  = Object.assign({ texto: '' }, rj.comentarios_generales || {});
+    _ant  = Object.assign({ texto: '' }, rj.antecedentes_disciplinarios || {});
 
     const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
     renderSeccionAccidentes(ya);
+    renderAccidentesBreve(ya);
     renderSeccionBienestar(ya);
     renderSeccionVeterinario(ya);
+    renderSeccionComentarios(ya);
+    renderSeccionAntecedentes(ya);
     renderSeccionReclamos(ya);
     renderSeccionAdjuntos(ya);
 }
@@ -1120,8 +1338,8 @@ function renderSeccionAccidentes(ya) {
         <div>
             <label class="form-label">¿Hubo accidentes en este Rodeo?</label>
             <div class="radio-grupo">
-                <label><input type="radio" name="acc_hubo" value="si" ${chk('hubo_accidentes','si')} ${dis} onchange="setAccCampo('hubo_accidentes','si');toggleAccTabla()"> Sí</label>
-                <label><input type="radio" name="acc_hubo" value="no" ${chk('hubo_accidentes','no')} ${dis} onchange="setAccCampo('hubo_accidentes','no');toggleAccTabla()"> No</label>
+                <label><input type="radio" name="acc_hubo" value="si" ${chk('hubo_accidentes','si')} ${dis} onchange="setAccCampo('hubo_accidentes','si');toggleAccTabla();refrescarAccBreve()"> Sí</label>
+                <label><input type="radio" name="acc_hubo" value="no" ${chk('hubo_accidentes','no')} ${dis} onchange="setAccCampo('hubo_accidentes','no');toggleAccTabla();refrescarAccBreve()"> No</label>
             </div>
         </div>
         <div>
@@ -1160,6 +1378,52 @@ function renderSeccionAccidentes(ya) {
     </div>`;
 
     renderAccidentesItems(ya);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// INFORME GENERAL DE ACCIDENTES (bloque breve entre Sección I y Sección II).
+// El relato ("Informe de accidentes") es TEXTO LIBRE INDEPENDIENTE, guardado
+// en `respuestas_json.informe_accidentes_general` — nunca se confunde ni se
+// sustituye por el detalle estructurado de "VII. Reporte de accidentes"
+// (`_acc`: médico, contacto, accidentados). Solo el Sí/No `hubo_accidentes`
+// se comparte con esa sección (misma pregunta), sincronizado en ambos
+// sentidos al cambiar cualquiera de los dos toggles.
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderAccidentesBreve(ya) {
+    const cont = document.getElementById('sec-accidentes-breve');
+    if (!cont) return;
+    const dis = ya ? 'disabled' : '';
+    const ro  = ya ? 'readonly' : '';
+    const chk = (val) => _acc.hubo_accidentes === val ? 'checked' : '';
+
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 12px;">Informe de accidentes. Debe informar todos los casos, ya sean leves o graves, ocurridos durante el Rodeo.</p>
+    <div style="margin-bottom:10px;">
+        <label class="form-label">¿Hubo accidentes en este Rodeo?</label>
+        <div class="radio-grupo">
+            <label><input type="radio" name="acc_hubo_breve" value="si" ${chk('si')} ${dis} onchange="setAccHuboBreve('si')"> Sí</label>
+            <label><input type="radio" name="acc_hubo_breve" value="no" ${chk('no')} ${dis} onchange="setAccHuboBreve('no')"> No</label>
+        </div>
+    </div>
+    <div style="margin-bottom:6px;">
+        <label class="form-label">Informe de accidentes</label>
+        <textarea class="form-control" rows="5" ${ro} oninput="setAccGeneralTexto(this.value)" placeholder="Relate los accidentes ocurridos durante el Rodeo (leves o graves)...">${esc(_accGeneral)}</textarea>
+        <p style="font-size:11px;color:#888;margin:4px 0 0;">El detalle formal (médico, contacto y datos del accidentado) se registra en la Sección VII — Reporte de accidentes.</p>
+    </div>`;
+}
+
+function setAccGeneralTexto(valor) { _accGeneral = valor; }
+
+function setAccHuboBreve(val) {
+    setAccCampo('hubo_accidentes', val);
+    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    renderAccidentesBreve(ya);
+    renderSeccionAccidentes(ya);
+}
+
+function refrescarAccBreve() {
+    renderAccidentesBreve(['enviada', 'reenviada', 'aprobada'].includes(_estado));
 }
 
 function renderAccidentesItems(ya) {
@@ -1265,6 +1529,30 @@ const BA_CAMPOS = [
     { key:'comida_equinos', label:'Comida para equinos' },
 ];
 
+// ─── Tabla Pregunta/SI/NO/Observaciones reutilizada por Bienestar Animal
+// (Anexo 01) Y Veterinario (Anexo 02) — mismas 6 preguntas, pero cada anexo
+// guarda sus respuestas en su PROPIO objeto (_ba/_vet), nunca compartido
+// (gate explícito del pedido: "NO utilizar los mismos campos... son dos
+// informes diferentes"). `objetivo` y `setterCampo`/`setterObs` son el
+// nombre de las funciones globales que corresponden a cada anexo.
+function renderTablaBienestarSiNoObs(obj, prefijo, dis, setterCampo, setterObs) {
+    return BA_CAMPOS.map(function(f) {
+        const chk = (v) => obj[f.key] === v ? 'checked' : '';
+        return `<tr>
+            <td style="padding:7px 10px;font-size:13px;border:1px solid #e0e8f5;">${sanitizar(f.label)}</td>
+            <td style="padding:7px 10px;border:1px solid #e0e8f5;text-align:center;white-space:nowrap;">
+                <div class="radio-grupo" style="justify-content:center;gap:12px;">
+                    <label><input type="radio" name="${prefijo}_${f.key}" value="si" ${chk('si')} ${dis} onchange="${setterCampo}('${f.key}','si')"> Sí</label>
+                    <label><input type="radio" name="${prefijo}_${f.key}" value="no" ${chk('no')} ${dis} onchange="${setterCampo}('${f.key}','no')"> No</label>
+                </div>
+            </td>
+            <td style="padding:4px 8px;border:1px solid #e0e8f5;">
+                <input type="text" class="form-control" style="font-size:12px;padding:5px 8px;" value="${esc(obj[f.key+'_obs']||'')}" ${dis} placeholder="Observaciones" oninput="${setterObs}('${f.key}',this.value)">
+            </td>
+        </tr>`;
+    }).join('');
+}
+
 function renderSeccionBienestar(ya) {
     const cont = document.getElementById('sec-bienestar');
     if (!cont) return;
@@ -1272,16 +1560,7 @@ function renderSeccionBienestar(ya) {
     const ro  = ya ? 'readonly' : '';
     const chkBA = (campo, val) => _ba[campo] === val ? 'checked' : '';
 
-    const filasSiNo = BA_CAMPOS.map(function(f) { return `
-    <tr>
-        <td style="padding:7px 10px;font-size:13px;border:1px solid #e0e8f5;">${sanitizar(f.label)}</td>
-        <td style="padding:7px 10px;border:1px solid #e0e8f5;text-align:center;">
-            <div class="radio-grupo" style="justify-content:center;gap:12px;">
-                <label><input type="radio" name="ba_${f.key}" value="si" ${chkBA(f.key,'si')} ${dis} onchange="setBaCampo('${f.key}','si')"> Sí</label>
-                <label><input type="radio" name="ba_${f.key}" value="no" ${chkBA(f.key,'no')} ${dis} onchange="setBaCampo('${f.key}','no')"> No</label>
-            </div>
-        </td>
-    </tr>`; }).join('');
+    const filasSiNo = renderTablaBienestarSiNoObs(_ba, 'ba', dis, 'setBaCampo', 'setBaObs');
 
     const huboLesEq = _ba.hubo_lesiones_equinos === 'si';
     const huboLesBo = _ba.hubo_lesiones_bovinos === 'si';
@@ -1290,8 +1569,9 @@ function renderSeccionBienestar(ya) {
     <div style="overflow-x:auto;margin-bottom:14px;">
         <table style="border-collapse:collapse;width:100%;">
             <thead><tr>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Condición de bienestar</th>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:170px;">¿El recinto cuenta con esto?</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Pregunta</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:150px;">SI / NO</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Observaciones</th>
             </tr></thead>
             <tbody>${filasSiNo}</tbody>
         </table>
@@ -1315,8 +1595,17 @@ function renderSeccionBienestar(ya) {
     </div>
 
     <div id="ba-detalle-wrap" style="display:${(huboLesEq||huboLesBo)?'block':'none'};margin-bottom:12px;">
-        <label class="form-label">Detalle de lesiones (tipo de animal, descripción, atención realizada)</label>
-        <textarea class="form-control" rows="4" ${ro} oninput="setBaCampo('detalle_lesiones',this.value)" placeholder="Describa las lesiones, tipo de animal y atención realizada...">${esc(_ba.detalle_lesiones||'')}</textarea>
+        <div class="sec-sub" style="margin-top:0;">Observaciones (señale si hubo lesiones tanto en equinos como en bovinos)</div>
+        <div class="campo-grid">
+            <div>
+                <label class="form-label">Equinos</label>
+                <textarea class="form-control" rows="3" ${ro} oninput="setBaCampo('detalle_lesiones_equinos',this.value)" placeholder="Describa lesiones en equinos...">${esc(_ba.detalle_lesiones_equinos||'')}</textarea>
+            </div>
+            <div>
+                <label class="form-label">Bovinos</label>
+                <textarea class="form-control" rows="3" ${ro} oninput="setBaCampo('detalle_lesiones_bovinos',this.value)" placeholder="Describa lesiones en bovinos...">${esc(_ba.detalle_lesiones_bovinos||'')}</textarea>
+            </div>
+        </div>
     </div>
 
     <div>
@@ -1324,6 +1613,8 @@ function renderSeccionBienestar(ya) {
         <textarea class="form-control" rows="3" ${ro} oninput="setBaCampo('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_ba.observaciones||'')}</textarea>
     </div>`;
 }
+
+function setBaObs(campo, valor) { _ba[campo + '_obs'] = valor; }
 
 function toggleBaDetalle() {
     const w = document.getElementById('ba-detalle-wrap');
@@ -1341,35 +1632,25 @@ function renderSeccionVeterinario(ya) {
     if (!cont) return;
     const dis  = ya ? 'disabled' : '';
     const ro   = ya ? 'readonly' : '';
-    const chkV = (campo, val) => _vet[campo] === val ? 'checked' : '';
     const prep = _vet.preparacion || '';
 
-    const filasSiNo = BA_CAMPOS.map(function(f) { return `
-    <tr>
-        <td style="padding:7px 10px;font-size:13px;border:1px solid #e0e8f5;">${sanitizar(f.label)}</td>
-        <td style="padding:7px 10px;border:1px solid #e0e8f5;text-align:center;">
-            <div class="radio-grupo" style="justify-content:center;gap:12px;">
-                <label><input type="radio" name="vet_${f.key}" value="si" ${chkV(f.key,'si')} ${dis} onchange="setVetCampo('${f.key}','si')"> Sí</label>
-                <label><input type="radio" name="vet_${f.key}" value="no" ${chkV(f.key,'no')} ${dis} onchange="setVetCampo('${f.key}','no')"> No</label>
-            </div>
-        </td>
-    </tr>`; }).join('');
+    const filasSiNo = renderTablaBienestarSiNoObs(_vet, 'vet', dis, 'setVetCampo', 'setVetObs');
 
     cont.innerHTML = `
     <div class="sec-sub">Datos del veterinario o personal a cargo</div>
     <div class="campo-grid" style="margin-bottom:12px;">
         <div>
             <label class="form-label">Nombre</label>
-            <input type="text" class="form-control" value="${esc(_vet.nombre||'')}" ${ro} oninput="setVetCampo('nombre',this.value)" placeholder="Nombre completo">
+            <input type="text" class="form-control" value="${esc(_vet.nombre||'')}" ${ro} oninput="setVetCampo('nombre',this.value);refrescarVetHeader()" placeholder="Nombre completo">
         </div>
         <div>
             <label class="form-label">Teléfono</label>
-            <input type="tel" class="form-control" value="${esc(_vet.telefono||'')}" ${ro} oninput="setVetCampo('telefono',this.value)" placeholder="+56 9 ...">
+            <input type="tel" class="form-control" value="${esc(_vet.telefono||'')}" ${ro} oninput="setVetCampo('telefono',this.value);refrescarVetHeader()" placeholder="+56 9 ...">
         </div>
     </div>
     <div style="margin-bottom:14px;">
         <label class="form-label">Correo (opcional)</label>
-        <input type="email" class="form-control" value="${esc(_vet.correo||'')}" ${ro} oninput="setVetCampo('correo',this.value)" placeholder="correo@ejemplo.cl">
+        <input type="email" class="form-control" value="${esc(_vet.correo||'')}" ${ro} oninput="setVetCampo('correo',this.value);refrescarVetHeader()" placeholder="correo@ejemplo.cl">
     </div>
 
     <div class="sec-sub">Preparación del personal</div>
@@ -1391,22 +1672,36 @@ function renderSeccionVeterinario(ya) {
         <input type="text" class="form-control" value="${esc(_vet.especifica_otro||'')}" ${ro} oninput="setVetCampo('especifica_otro',this.value)" placeholder="Especifique qué tipo de personal">
     </div>
 
-    <div class="sec-sub">Verificación condiciones de bienestar animal (por veterinario)</div>
+    <div class="sec-sub">Verificación condiciones de bienestar animal (por veterinario) — Anexo 02, informe independiente del Anexo 01</div>
     <div style="overflow-x:auto;margin-bottom:14px;">
         <table style="border-collapse:collapse;width:100%;">
             <thead><tr>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Condición de bienestar</th>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:170px;">¿El recinto cuenta con esto?</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Pregunta</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:150px;">SI / NO</th>
+                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Observaciones</th>
             </tr></thead>
             <tbody>${filasSiNo}</tbody>
         </table>
     </div>
 
+    <div class="sec-sub" style="margin-top:0;">Observaciones de lesiones (señale si hubo lesiones tanto en equinos como en bovinos)</div>
+    <div class="campo-grid" style="margin-bottom:12px;">
+        <div>
+            <label class="form-label">Equinos</label>
+            <textarea class="form-control" rows="3" ${ro} oninput="setVetCampo('detalle_lesiones_equinos',this.value)" placeholder="Describa lesiones en equinos...">${esc(_vet.detalle_lesiones_equinos||'')}</textarea>
+        </div>
+        <div>
+            <label class="form-label">Bovinos</label>
+            <textarea class="form-control" rows="3" ${ro} oninput="setVetCampo('detalle_lesiones_bovinos',this.value)" placeholder="Describa lesiones en bovinos...">${esc(_vet.detalle_lesiones_bovinos||'')}</textarea>
+        </div>
+    </div>
     <div>
-        <label class="form-label">Observaciones del veterinario (señalar si hubo lesiones en equinos o bovinos)</label>
-        <textarea class="form-control" rows="4" ${ro} oninput="setVetCampo('observaciones',this.value)" placeholder="Observaciones del veterinario, incluyendo lesiones detectadas...">${esc(_vet.observaciones||'')}</textarea>
+        <label class="form-label">Observaciones generales del veterinario</label>
+        <textarea class="form-control" rows="3" ${ro} oninput="setVetCampo('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_vet.observaciones||'')}</textarea>
     </div>`;
 }
+
+function setVetObs(campo, valor) { _vet[campo + '_obs'] = valor; }
 
 function setVetPrep(val) {
     _vet.preparacion = val;
@@ -1418,8 +1713,50 @@ function setVetPrep(val) {
 
 function setVetCampo(campo, valor) { _vet[campo] = valor; }
 
+// Refresca la vista previa de solo lectura del encabezado (Sección I) con
+// los valores actuales de _vet.nombre/telefono/correo, apenas se editan en
+// la Sección IX — Anexo 02 (única fuente de captura, sin duplicar datos).
+function refrescarVetHeader() {
+    const n = document.getElementById('hdr-vet-nombre');
+    const t = document.getElementById('hdr-vet-telefono');
+    const c = document.getElementById('hdr-vet-correo');
+    if (n) n.value = _vet.nombre || '—';
+    if (t) t.value = _vet.telefono || '—';
+    if (c) c.value = _vet.correo || '—';
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN XI — RECLAMOS O SUGERENCIAS
+// ANEXO 03 — COMENTARIOS GENERALES (nuevo formato 2026-2027)
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionComentarios(ya) {
+    const cont = document.getElementById('sec-comentarios');
+    if (!cont) return;
+    const ro = ya ? 'readonly' : '';
+    cont.innerHTML = `
+    <label class="form-label">Comentarios generales</label>
+    <textarea class="form-control" rows="4" ${ro} oninput="setComentariosGenerales(this.value)" placeholder="Comentarios generales sobre el rodeo...">${esc(_com.texto||'')}</textarea>`;
+}
+
+function setComentariosGenerales(valor) { _com.texto = valor; }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ANEXO 04 — ANTECEDENTES DISCIPLINARIOS COMPLEMENTARIOS (nuevo formato 2026-2027)
+// ═════════════════════════════════════════════════════════════════════════════
+
+function renderSeccionAntecedentes(ya) {
+    const cont = document.getElementById('sec-antecedentes');
+    if (!cont) return;
+    const ro = ya ? 'readonly' : '';
+    cont.innerHTML = `
+    <label class="form-label">Antecedentes disciplinarios complementarios</label>
+    <textarea class="form-control" rows="4" ${ro} oninput="setAntecedentesDisciplinarios(this.value)" placeholder="Antecedentes disciplinarios complementarios (si corresponde)...">${esc(_ant.texto||'')}</textarea>`;
+}
+
+function setAntecedentesDisciplinarios(valor) { _ant.texto = valor; }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN XII — RECLAMOS O SUGERENCIAS
 // ═════════════════════════════════════════════════════════════════════════════
 
 function renderSeccionReclamos(ya) {
@@ -1655,8 +1992,11 @@ function recolectarDatos() {
         colleras_invitadas:   _col,
         reemplazo_jinetes:    _ree,
         accidentes_informe:   _acc,
+        informe_accidentes_general: _accGeneral,
         bienestar_animal:     _ba,
         informe_veterinario:  _vet,
+        comentarios_generales:      _com,
+        antecedentes_disciplinarios: _ant,
         reclamos_sugerencias: _recs
     });
     return {
@@ -1734,6 +2074,19 @@ async function enviarCartilla() {
     const seriesSinNombre = _seriesGanado.filter(s => !s.nombre || !s.nombre.trim());
     if (seriesSinNombre.length > 0) {
         mostrarToast('Todas las series de ganado deben tener nombre antes de enviar.', 'advertencia');
+        return;
+    }
+
+    // Validación Sección III — desempeño del jurado: cada aspecto presente
+    // debe estar entre 1.0 y 7.0 (misma validación que hace el backend).
+    const aspectosFueraDeRango = ASPECTOS_DESEMPENO_UI.filter(a => {
+        const v = _dj[a.key];
+        if (v === null || v === undefined || v === '') return false;
+        const n = Number(v);
+        return isNaN(n) || n < 1 || n > 7;
+    });
+    if (aspectosFueraDeRango.length > 0) {
+        mostrarToast('Las notas del desempeño del jurado deben estar entre 1,0 y 7,0.', 'advertencia');
         return;
     }
 

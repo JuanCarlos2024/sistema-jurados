@@ -1,6 +1,10 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../../config/supabase');
+const {
+    ASPECTOS_DESEMPENO_JURADO, validarAspectosDesempeno, calcularPromedioDesempeno,
+    sincronizarNotaDelegado
+} = require('../../services/cartillaDelegadoNotas');
 
 // Middleware: solo delegados pueden usar este módulo
 router.use((req, res, next) => {
@@ -11,6 +15,13 @@ router.use((req, res, next) => {
 });
 
 // ─── Campos permitidos en escritura ──────────────────────────────────────────
+// Mejora "nuevo formato oficial 2026-2027": se revisó agregar columnas nuevas
+// para Asociación/Club/correo del delegado y se descartó (gate de la segunda
+// revisión) — ver nota en POST /rodeo/:rodeo_id más abajo sobre por qué
+// Asociación/Club se muestran EN VIVO desde `rodeos` en vez de duplicarse
+// acá, y por qué no existe `delegado_email` (el encabezado oficial nuevo NO
+// pide correo del delegado — el correo de contacto es del veterinario/
+// técnico, ya cubierto por respuestas_json.informe_veterinario.correo).
 const CAMPOS_EDITABLES = [
     'temporada', 'fecha_rodeo', 'delegado_nombre', 'delegado_telefono',
     'secretario_jurado', 'secretario_numero_socio', 'club_asociacion_organizador',
@@ -25,6 +36,24 @@ const CAMPOS_REQUERIDOS_ENVIO = [
     'temporada', 'fecha_rodeo', 'delegado_nombre',
     'club_asociacion_organizador', 'tipo_rodeo'
 ];
+
+// ─── Jurado(s) oficialmente asignado(s) al rodeo — SOLO LECTURA, nunca
+// almacenado en cartillas_delegado (pedido explícito: "Evita crear una
+// segunda fuente independiente"). Misma fuente/condición que ya usa el resto
+// del sistema para listar jurados de un rodeo: asignaciones activas con
+// tipo_persona='jurado' → usuarios_pagados.nombre_completo (con fallback a
+// nombre_importado para designaciones aún no vinculadas a un usuario).
+async function cargarJuradosRodeo(rodeoId) {
+    const { data } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id, nombre_importado, usuarios_pagados(nombre_completo)')
+        .eq('rodeo_id', rodeoId)
+        .eq('tipo_persona', 'jurado')
+        .eq('estado', 'activo');
+    return (data || [])
+        .map(a => a.usuarios_pagados?.nombre_completo || a.nombre_importado || null)
+        .filter(Boolean);
+}
 
 // ─── GET /api/usuario/cartilla-delegado/rodeo/:rodeo_id ──────────────────────
 // Carga datos del rodeo, perfil del delegado y cartilla existente (o null).
@@ -47,9 +76,9 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
         return res.status(404).json({ error: 'No tienes asignación activa para este rodeo.' });
     }
 
-    const [{ data: rodeo }, { data: perfil }, { data: cartilla }] = await Promise.all([
+    const [{ data: rodeo }, { data: perfil }, { data: cartilla }, jurados] = await Promise.all([
         supabase.from('rodeos')
-            .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre')
+            .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre, temporada_id, temporadas(nombre)')
             .eq('id', rodeoId).single(),
         supabase.from('usuarios_pagados')
             .select('nombre_completo, telefono')
@@ -58,10 +87,11 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
             .select('*')
             .eq('rodeo_id', rodeoId)
             .eq('delegado_id', uid)
-            .maybeSingle()
+            .maybeSingle(),
+        cargarJuradosRodeo(rodeoId)
     ]);
 
-    res.json({ rodeo, perfil, cartilla: cartilla || null, asignacion_id: asig.id });
+    res.json({ rodeo, perfil, cartilla: cartilla || null, asignacion_id: asig.id, jurados });
 });
 
 // ─── POST /api/usuario/cartilla-delegado/rodeo/:rodeo_id ─────────────────────
@@ -100,23 +130,34 @@ router.post('/rodeo/:rodeo_id', async (req, res) => {
     // Precargar datos del rodeo y perfil
     const [{ data: rodeo }, { data: perfil }] = await Promise.all([
         supabase.from('rodeos')
-            .select('club, asociacion, fecha, tipo_rodeo_nombre')
+            .select('club, asociacion, fecha, tipo_rodeo_nombre, temporada_id, temporadas(nombre)')
             .eq('id', rodeoId).single(),
         supabase.from('usuarios_pagados')
             .select('nombre_completo, telefono')
             .eq('id', uid).single()
     ]);
 
-    const año = rodeo?.fecha ? rodeo.fecha.slice(0, 4) : null;
+    // Temporada — fuente oficial: temporadas.nombre vía rodeos.temporada_id
+    // (ej. "2026-2027"), NUNCA hardcodeada. Solo si el rodeo no tiene
+    // temporada asignada en el sistema se usa el año de la fecha como
+    // respaldo mínimo (mismo comportamiento previo, ahora como fallback).
+    const temporadaNombre = rodeo?.temporadas?.nombre || (rodeo?.fecha ? rodeo.fecha.slice(0, 4) : null);
     const clubAsoc = [rodeo?.club, rodeo?.asociacion].filter(Boolean).join(' — ') || null;
 
+    // Asociación/Club organizador — gate de la segunda revisión: NO se
+    // duplican en columnas nuevas. `club_asociacion_organizador` (existente,
+    // sin cambios) sigue siendo el snapshot oficial editable. La pantalla
+    // muestra Asociación y Club por separado leyéndolos EN VIVO desde
+    // `rodeo.asociacion`/`rodeo.club` (ya viajan en la respuesta de este
+    // mismo POST y de GET /rodeo/:rodeo_id) — cero duplicación de una fuente
+    // que ya es confiable (rodeos.asociacion/rodeos.club).
     const { data: nueva, error } = await supabase
         .from('cartillas_delegado')
         .insert({
             rodeo_id:                   rodeoId,
             delegado_id:                uid,
             asignacion_id:              asig.id,
-            temporada:                  año,
+            temporada:                  temporadaNombre,
             fecha_rodeo:                rodeo?.fecha || null,
             delegado_nombre:            perfil?.nombre_completo || null,
             delegado_telefono:          perfil?.telefono        || null,
@@ -148,10 +189,30 @@ router.patch('/:id', async (req, res) => {
         return res.status(409).json({ error: 'La cartilla ya fue enviada y no puede modificarse.' });
     }
 
+    // Validación de rango 1.0–7.0 para las notas del desempeño del jurado
+    // (Sección III, nuevo formato) — SIEMPRE, aunque el borrador esté
+    // incompleto (aspectos ausentes son válidos; aspectos presentes fuera de
+    // rango NO lo son). Misma validación exacta que en /enviar.
+    if (req.body.respuestas_json?.desempeno_jurado !== undefined) {
+        const chk = validarAspectosDesempeno(req.body.respuestas_json.desempeno_jurado);
+        if (!chk.valido) return res.status(422).json({ error: chk.error, campos: chk.camposInvalidos });
+    }
+
     const updates = { updated_at: new Date().toISOString(), actualizado_por: uid };
     CAMPOS_EDITABLES.forEach(k => {
         if (req.body[k] !== undefined) updates[k] = req.body[k];
     });
+
+    // Nota Promedio — calculada SIEMPRE que las 4 notas estén completas y
+    // válidas (queda guardada dentro de respuestas_json.desempeno_jurado
+    // para que la pantalla la recupere igual que cualquier otro campo). La
+    // sincronización hacia rodeo_notas_secundarias.nota_delegado ocurre
+    // SOLO al enviar (ver POST /:id/enviar) — nunca en cada guardado de
+    // borrador, para no pisar el valor oficial mientras se sigue editando.
+    if (updates.respuestas_json?.desempeno_jurado) {
+        updates.respuestas_json.desempeno_jurado.nota_promedio =
+            calcularPromedioDesempeno(updates.respuestas_json.desempeno_jurado);
+    }
 
     const { data, error } = await supabase
         .from('cartillas_delegado')
@@ -194,6 +255,14 @@ router.post('/:id/enviar', async (req, res) => {
         });
     }
 
+    // Rango 1.0–7.0 de las notas del desempeño del jurado — misma
+    // validación que PATCH, defensa en profundidad final antes de enviar.
+    const djMerged = merged.respuestas_json?.desempeno_jurado;
+    if (djMerged !== undefined) {
+        const chk = validarAspectosDesempeno(djMerged);
+        if (!chk.valido) return res.status(422).json({ error: chk.error, campos: chk.camposInvalidos });
+    }
+
     const ahora = new Date().toISOString();
     // Si estaba observada, pasar a reenviada; si no, pasar a enviada
     const esReenvio   = cartilla.estado === 'observada';
@@ -218,6 +287,14 @@ router.post('/:id/enviar', async (req, res) => {
         if (body[k] !== undefined) updates[k] = body[k];
     });
 
+    // Nota Promedio — se recalcula sobre los datos finales que se están
+    // enviando (nunca sobre datos parciales de un guardado anterior).
+    let notaPromedio = null;
+    if (updates.respuestas_json?.desempeno_jurado) {
+        notaPromedio = calcularPromedioDesempeno(updates.respuestas_json.desempeno_jurado);
+        updates.respuestas_json.desempeno_jurado.nota_promedio = notaPromedio;
+    }
+
     const { data, error } = await supabase
         .from('cartillas_delegado')
         .update(updates)
@@ -226,8 +303,27 @@ router.post('/:id/enviar', async (req, res) => {
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // Sincronizar con rodeo_notas_secundarias.nota_delegado — MISMA fuente
+    // que ya usan los reportes/exportaciones del sistema (ver services/
+    // cartillaDelegadoNotas.js). Solo si las 4 notas quedaron completas y
+    // válidas; si no, no se toca nada (la Nota Delegado existente, si la
+    // hubiera, se preserva — nunca se sobrescribe con datos incompletos).
+    let notaDelegadoSincronizada = false;
+    if (notaPromedio !== null) {
+        try {
+            await sincronizarNotaDelegado(cartilla.rodeo_id, notaPromedio, uid);
+            notaDelegadoSincronizada = true;
+        } catch (errSync) {
+            console.error('[CARTILLA-DELEGADO enviar] Error sincronizando Nota Delegado:', errSync.message);
+            // No se revierte el envío de la cartilla por esto — el informe ya
+            // quedó guardado; se informa igual en la respuesta para que el
+            // delegado sepa que la Nota Delegado no llegó a sincronizarse.
+        }
+    }
+
     const msg = esReenvio ? 'Cartilla reenviada correctamente.' : 'Cartilla enviada correctamente.';
-    res.json({ mensaje: msg, cartilla: data });
+    res.json({ mensaje: msg, cartilla: data, nota_delegado_sincronizada: notaDelegadoSincronizada });
 });
 
 module.exports = router;
