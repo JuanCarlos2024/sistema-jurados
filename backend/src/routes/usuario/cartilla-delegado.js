@@ -22,19 +22,40 @@ router.use((req, res, next) => {
 // acá, y por qué no existe `delegado_email` (el encabezado oficial nuevo NO
 // pide correo del delegado — el correo de contacto es del veterinario/
 // técnico, ya cubierto por respuestas_json.informe_veterinario.correo).
+//
+// 4ª revisión (simplificar/evitar duplicación): `temporada` y `tipo_rodeo`
+// dejan de ser editables por el Delegado — son 100% automáticos, calculados
+// UNA VEZ al crear la cartilla (ver POST /rodeo/:rodeo_id) a partir de
+// `rodeo.temporadas.nombre`/`rodeo.tipo_rodeo_nombre`, y el frontend nuevo
+// los muestra en vivo directo desde `rodeo` (nunca los envía en el body).
+// Se retiran de CAMPOS_EDITABLES como defensa en profundidad: aunque algún
+// cliente antiguo los enviara, el backend ya no los sobrescribiría.
+// `club_asociacion_organizador` también se retira: quedó redundante con
+// Asociación/Club en vivo (ver POST /rodeo/:rodeo_id) — se deja de
+// escribir/aceptar, pero la columna y cualquier valor histórico existente
+// se conservan intactos para cartillas ya creadas (ver vista Administrador
+// y PDF, que siguen mostrando el valor histórico si existe).
+//
+// 5ª revisión: mismo tratamiento para `fecha_rodeo` — tenía exactamente el
+// mismo problema que `temporada` (el frontend la leía desde `cartilla`, que
+// no existe hasta el primer guardado). Se retira de CAMPOS_EDITABLES; el
+// frontend la muestra en vivo desde `rodeo.fecha`, nunca desde esta columna.
 const CAMPOS_EDITABLES = [
-    'temporada', 'fecha_rodeo', 'delegado_nombre', 'delegado_telefono',
-    'secretario_jurado', 'secretario_numero_socio', 'club_asociacion_organizador',
-    'tipo_rodeo', 'publico_serie_campeones',
+    'delegado_nombre', 'delegado_telefono',
+    'secretario_jurado', 'secretario_numero_socio',
+    'publico_serie_campeones',
     'serie_campeones_dos_vueltas', 'incluye_informe_disciplinario', 'incluye_informe_ganado_bajo_peso',
     'certificacion_medialuna_comuna', 'certificacion_mas_200_personas',
     'certificacion_mas_250_personas', 'certificacion_vinculacion_comunidad',
     'respuestas_json'
 ];
 
+// `club_asociacion_organizador` se retira de los requeridos: ya no se
+// escribe en cartillas nuevas (queda null), sería imposible enviar el
+// informe si siguiera siendo obligatorio. `temporada`/`tipo_rodeo` se
+// mantienen — siguen garantizados por el auto-cálculo del POST de creación.
 const CAMPOS_REQUERIDOS_ENVIO = [
-    'temporada', 'fecha_rodeo', 'delegado_nombre',
-    'club_asociacion_organizador', 'tipo_rodeo'
+    'temporada', 'fecha_rodeo', 'delegado_nombre', 'tipo_rodeo'
 ];
 
 // ─── Jurado(s) oficialmente asignado(s) al rodeo — SOLO LECTURA, nunca
@@ -141,16 +162,17 @@ router.post('/rodeo/:rodeo_id', async (req, res) => {
     // (ej. "2026-2027"), NUNCA hardcodeada. Solo si el rodeo no tiene
     // temporada asignada en el sistema se usa el año de la fecha como
     // respaldo mínimo (mismo comportamiento previo, ahora como fallback).
+    // 4ª revisión: se guarda como registro histórico de creación, pero deja
+    // de ser editable (ver CAMPOS_EDITABLES) — el frontend la muestra EN
+    // VIVO desde `rodeo`, nunca desde esta columna.
     const temporadaNombre = rodeo?.temporadas?.nombre || (rodeo?.fecha ? rodeo.fecha.slice(0, 4) : null);
-    const clubAsoc = [rodeo?.club, rodeo?.asociacion].filter(Boolean).join(' — ') || null;
 
-    // Asociación/Club organizador — gate de la segunda revisión: NO se
-    // duplican en columnas nuevas. `club_asociacion_organizador` (existente,
-    // sin cambios) sigue siendo el snapshot oficial editable. La pantalla
-    // muestra Asociación y Club por separado leyéndolos EN VIVO desde
-    // `rodeo.asociacion`/`rodeo.club` (ya viajan en la respuesta de este
-    // mismo POST y de GET /rodeo/:rodeo_id) — cero duplicación de una fuente
-    // que ya es confiable (rodeos.asociacion/rodeos.club).
+    // 4ª revisión (simplificar/evitar duplicación): `club_asociacion_organizador`
+    // YA NO se auto-completa en cartillas nuevas — quedó redundante con
+    // Asociación/Club, que se muestran EN VIVO desde `rodeo.asociacion`/
+    // `rodeo.club` (ya viajan en la respuesta de este mismo POST y de GET
+    // /rodeo/:rodeo_id). La columna se conserva para cartillas ya creadas
+    // antes de este cambio (no se migra ni se borra su valor histórico).
     const { data: nueva, error } = await supabase
         .from('cartillas_delegado')
         .insert({
@@ -161,7 +183,6 @@ router.post('/rodeo/:rodeo_id', async (req, res) => {
             fecha_rodeo:                rodeo?.fecha || null,
             delegado_nombre:            perfil?.nombre_completo || null,
             delegado_telefono:          perfil?.telefono        || null,
-            club_asociacion_organizador: clubAsoc,
             tipo_rodeo:                 rodeo?.tipo_rodeo_nombre || null,
             creado_por:                 uid
         })

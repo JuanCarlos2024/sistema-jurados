@@ -2180,8 +2180,9 @@ async function verCartillaDelegadoDigital(cartillaId) {
                 ${fila('N° de Socio (Secretario)', fld(c.secretario_numero_socio))}
                 ${fila('Asociación organizadora', fld(c.rodeo?.asociacion))}
                 ${fila('Club organizador', fld(c.rodeo?.club))}
-                ${fila('Club / Asociación Organizador', fld(c.club_asociacion_organizador))}
-                ${fila('Tipo de Rodeo', fld(c.tipo_rodeo))}
+                ${c.club_asociacion_organizador ? fila('Club / Asociación Organizador (dato histórico)', fld(c.club_asociacion_organizador)) : ''}
+                ${fila('Tipo de Rodeo', fld(c.rodeo?.tipo_rodeo_nombre))}
+                ${c.rodeo?.categoria_rodeo_nombre ? fila('Categoría de Rodeo', fld(c.rodeo.categoria_rodeo_nombre)) : ''}
                 ${fila('Público', fld(c.publico_serie_campeones))}
             </table>
             <table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:#fafafa;border-radius:6px;overflow:hidden;border:1px solid #eee;">
@@ -2196,11 +2197,10 @@ async function verCartillaDelegadoDigital(cartillaId) {
                 ${fila('Más de 250 personas (Serie Campeones)', check2txt(c.certificacion_mas_250_personas) + ' ' + (c.certificacion_mas_250_personas ? 'Sí' : 'No'))}
                 ${fila('Proyecto vinculación con la comunidad', check2txt(c.certificacion_vinculacion_comunidad) + ' ' + (c.certificacion_vinculacion_comunidad ? 'Sí' : 'No'))}
             </table>
-            ${renderSeriesModal(c.respuestas_json)}
+            ${renderSeriesGanadoModal(c.respuestas_json)}
             ${renderReemplazoModal(c.respuestas_json)}
             ${renderFaltasPorSerieModal(c.respuestas_json)}
             ${renderAccidentesBreveModal(c.respuestas_json)}
-            ${renderGanadoModal(c.respuestas_json)}
             ${renderEtapa3Modal(c.respuestas_json)}
             ${renderEtapa4Modal(c.respuestas_json)}
             <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
@@ -2220,74 +2220,86 @@ async function verCartillaDelegadoDigital(cartillaId) {
     }
 }
 
-// I. Información de las Series del Rodeo (colleras + vueltas/tipo/peso).
-// Reutiliza la misma fuente `rj.ganado_series` que "II. Informe del Ganado"
-// (nunca se duplica el dato) pero se muestra en un bloque visual separado.
-function renderSeriesModal(rj) {
+// I. Información de las Series e Informe del Ganado (UNIFICADA, 4ª
+// revisión). Antes eran dos bloques separados ("I. Series" + "II. Ganado")
+// que repetían la misma Serie dos veces; ahora se muestra UNA sola tabla
+// por Serie, con sus 4 animales y toda su información (colleras, vueltas,
+// tipo, peso, corrido, repetido, calidad) + fuera de peso reglamentario.
+// Misma fuente `rj.ganado_series`, nunca duplicada — igual que en el
+// formulario del Delegado.
+// Ganado bajo/sobrepeso reglamentario — 5ª revisión, punto 10: el
+// documento oficial lo pide POR CADA ANIMAL, no solo como total de la
+// Serie (`fp_tot`/`fp_baj`/`fp_sob`, formato anterior, se preservan sin
+// cambios para cartillas que ya los usaban). Detección por presencia de
+// datos, igual que en el formulario del Delegado — sin bandera de versión.
+function admEsFueraPesoLegacy(s) {
+    const tieneLegacy = !!(s.fp_tot || s.fp_baj || s.fp_sob);
+    const tieneNuevo  = !!(s.f1c || s.f2c || s.f3c || s.f4c);
+    return tieneLegacy && !tieneNuevo;
+}
+// Misma fórmula probada en cartillaDelegadoGanado.test.js (backend).
+function admCalcularPctFueraPeso(cantidadGanado, cantidadFueraPeso) {
+    const ganado = parseFloat(cantidadGanado);
+    if (isNaN(ganado) || ganado <= 0) return null;
+    const fuera = parseFloat(cantidadFueraPeso);
+    const fueraValida = (!isNaN(fuera) && fuera >= 0) ? fuera : 0;
+    return Math.round((fueraValida / ganado) * 1000) / 10;
+}
+
+function renderSeriesGanadoModal(rj) {
     const series = (rj && Array.isArray(rj.ganado_series) && rj.ganado_series.length > 0) ? rj.ganado_series : null;
     if (!series) return '';
 
-    const thS = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;"';
-    const thG = 'style="background:#2755a3;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;text-align:center;border:1px solid #14316a;"';
-    const tdS = 'style="padding:4px 7px;font-size:11px;background:#eaf0f8;border:1px solid #dde3ec;white-space:nowrap;"';
+    const thS = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
     const tdC = 'style="padding:4px 7px;font-size:11px;text-align:center;border:1px solid #dde3ec;"';
+    const tdA = 'style="padding:4px 7px;font-size:11px;background:#eaf0f8;border:1px solid #dde3ec;font-weight:600;white-space:nowrap;"';
+    const tdK = 'style="padding:4px 7px;font-size:11px;text-align:center;border:1px solid #dde3ec;background:#f0f7ec;font-weight:600;"';
     const val = (v) => (v !== undefined && v !== null && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>';
+    const numP = (v) => { const n = parseFloat(v); return (!isNaN(n) && n >= 0) ? n : 0; };
+    const nombresAnimal = ['1er animal', '2do animal', '3er animal', '4to animal'];
 
-    let b1rows = series.map(s => `<tr>
-        <td ${tdS}>${val(s.nombre)}</td>
-        <td ${tdC}>${val(s.c1n)}</td><td ${tdC}>${val(s.c1g)}</td>
-        <td ${tdC}>${val(s.c2n)}</td><td ${tdC}>${val(s.c2g)}</td>
-        <td ${tdC}>${val(s.c3n)}</td><td ${tdC}>${val(s.c3g)}</td>
-        <td ${tdC}>${val(s.c4n)}</td><td ${tdC}>${val(s.c4g)}</td>
-    </tr>`).join('');
-    const tbl1 = `<table style="border-collapse:collapse;min-width:100%;">
-        <thead>
-            <tr>
-                <th ${thS} rowspan="2">Serie</th>
-                <th ${thG} colspan="2">1er animal</th><th ${thG} colspan="2">2do animal</th>
-                <th ${thG} colspan="2">3er animal</th><th ${thG} colspan="2">4to animal</th>
-            </tr>
-            <tr>
-                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
-                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
-                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
-                <th ${thS}>N° col.</th><th ${thS}>Ganado</th>
-            </tr>
-        </thead>
-        <tbody>${b1rows}</tbody>
-    </table>`;
+    const bloques = series.map(s => {
+        const legacy = admEsFueraPesoLegacy(s);
+        const rows = [1, 2, 3, 4].map(n => {
+            const fueraAnimal = legacy ? '' : `
+            <td ${tdK}>${val(s['f'+n+'c'])}</td>
+            <td ${tdK}>${(function(){ const p = admCalcularPctFueraPeso(s['c'+n+'g'], s['f'+n+'c']); return p !== null ? sanitizar(p.toFixed(1)+'%') : '<span style="color:#ccc;">—</span>'; })()}</td>`;
+            return `<tr>
+            <td ${tdA}>${nombresAnimal[n-1]}</td>
+            <td ${tdC}>${val(s['c'+n+'n'])}</td><td ${tdC}>${val(s['c'+n+'g'])}</td>
+            <td ${tdC}>${val(s['v'+n+'v'])}</td><td ${tdC}>${val(s['v'+n+'t'])}</td><td ${tdC}>${val(s['v'+n+'p'])}</td>
+            <td ${tdC}>${val(s['q'+n+'c'])}</td><td ${tdC}>${val(s['q'+n+'r'])}</td><td ${tdC}>${val(s['q'+n+'k'])}</td>${fueraAnimal}
+        </tr>`;
+        }).join('');
+        const thsFueraAnimal = legacy ? '' : `<th ${thS}>Bajo/sobrepeso</th><th ${thS}>%</th>`;
+        const tabla = `<div style="overflow-x:auto;margin-bottom:6px;"><table style="border-collapse:collapse;min-width:100%;">
+            <thead><tr>
+                <th ${thS}>Animal</th><th ${thS}>N° colleras</th><th ${thS}># Ganado</th>
+                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso (kg)</th>
+                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>${thsFueraAnimal}
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
 
-    let b2rows = series.map(s => `<tr>
-        <td ${tdS}>${val(s.nombre)}</td>
-        <td ${tdC}>${val(s.v1v)}</td><td ${tdC}>${val(s.v1t)}</td><td ${tdC}>${val(s.v1p)}</td>
-        <td ${tdC}>${val(s.v2v)}</td><td ${tdC}>${val(s.v2t)}</td><td ${tdC}>${val(s.v2p)}</td>
-        <td ${tdC}>${val(s.v3v)}</td><td ${tdC}>${val(s.v3t)}</td><td ${tdC}>${val(s.v3p)}</td>
-        <td ${tdC}>${val(s.v4v)}</td><td ${tdC}>${val(s.v4t)}</td><td ${tdC}>${val(s.v4p)}</td>
-    </tr>`).join('');
-    const tbl2 = `<table style="border-collapse:collapse;min-width:100%;">
-        <thead>
-            <tr>
-                <th ${thS} rowspan="2">Serie</th>
-                <th ${thG} colspan="3">1er animal</th><th ${thG} colspan="3">2do animal</th>
-                <th ${thG} colspan="3">3er animal</th><th ${thG} colspan="3">4to animal</th>
-            </tr>
-            <tr>
-                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
-                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
-                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
-                <th ${thS}>Vueltas</th><th ${thS}>Tipo</th><th ${thS}>Peso</th>
-            </tr>
-        </thead>
-        <tbody>${b2rows}</tbody>
-    </table>`;
+        let fueraPeso;
+        if (legacy) {
+            const tot = numP(s.fp_tot), baj = numP(s.fp_baj), sob = numP(s.fp_sob);
+            const fuer = baj + sob, pct = tot > 0 ? ((fuer/tot)*100).toFixed(1)+'%' : '—';
+            fueraPeso = `<p style="font-size:11px;color:#888;font-style:italic;margin:0 0 4px;">Formato anterior — fuera de peso solo por Serie.</p>
+                <p style="font-size:11px;color:#555;margin:0 0 14px;">Ganado fuera de peso (Art. 242) — Total animales: <strong>${tot||'—'}</strong> &nbsp;|&nbsp; Bajo peso: <strong>${baj||'—'}</strong> &nbsp;|&nbsp; Sobre peso: <strong>${sob||'—'}</strong> &nbsp;|&nbsp; Total fuera de peso: <strong ${fuer>0?'':'style="color:#ccc;"'}>${fuer>0?fuer:'—'}</strong> &nbsp;|&nbsp; %: <strong>${pct}</strong></p>`;
+        } else {
+            let tot = 0, fuer = 0;
+            [1,2,3,4].forEach(n => { tot += numP(s['c'+n+'g']); fuer += numP(s['f'+n+'c']); });
+            const pct = admCalcularPctFueraPeso(tot, fuer);
+            fueraPeso = `<p style="font-size:11px;color:#555;margin:0 0 14px;">Resumen (suma de los 4 animales) — Total ganado: <strong>${tot||'—'}</strong> &nbsp;|&nbsp; Total fuera de peso: <strong ${fuer>0?'':'style="color:#ccc;"'}>${fuer>0?fuer:'—'}</strong> &nbsp;|&nbsp; %: <strong>${pct!==null?pct.toFixed(1)+'%':'—'}</strong></p>`;
+        }
 
-    const bloqueTitulo = (n, t) => `<div style="font-size:12px;font-weight:700;color:#1a3c6e;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 6px;">${n}. ${t}</div>`;
-    const wrapTbl = (t) => `<div style="overflow-x:auto;margin-bottom:4px;">${t}</div>`;
+        return `<div style="font-size:12px;font-weight:700;color:#1a3c6e;margin:14px 0 6px;">Serie: ${val(s.nombre)}</div>${tabla}${fueraPeso}`;
+    }).join('');
 
     return `<hr style="margin:20px 0 16px;border:none;border-top:2px solid #e0e8f5;">
-        <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:12px;">I. Información de las Series del Rodeo</div>
-        ${bloqueTitulo('1','Colleras participantes y ganado utilizado')}${wrapTbl(tbl1)}
-        ${bloqueTitulo('2','Vueltas en apiñadero, tipo y peso')}${wrapTbl(tbl2)}`;
+        <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:4px;">I. Información de las Series e Informe del Ganado</div>
+        ${bloques}`;
 }
 
 // Reemplazo de Jinetes — se muestra inmediatamente después de Series, tal
@@ -2356,10 +2368,10 @@ function renderFaltasPorSerieModal(rj) {
         </table></div>`;
 }
 
-// Informe general de accidentes (bloque breve entre Sección I y Sección
-// II). El relato es TEXTO LIBRE independiente, leído de
+// Informe general de accidentes (bloque breve dentro de la Sección I
+// unificada). El relato es TEXTO LIBRE independiente, leído de
 // `rj.informe_accidentes_general` — nunca se confunde con el detalle
-// estructurado de "VII. Reporte de accidentes" (`rj.accidentes_informe`:
+// estructurado de "VI. Reporte de accidentes" (`rj.accidentes_informe`:
 // médico, contacto, accidentados). Solo el Sí/No `hubo_accidentes` se
 // comparte entre ambos bloques (misma pregunta).
 function renderAccidentesBreveModal(rj) {
@@ -2371,91 +2383,7 @@ function renderAccidentesBreveModal(rj) {
     return `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:16px 0 8px;">Informe de accidentes</div>
         ${acc ? `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo accidentes en el Rodeo?</strong> ${boolTxt(acc.hubo_accidentes)}</p>` : ''}
         <div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:4px;">${val(textoGeneral)}</div>
-        <p style="font-size:11px;color:#888;margin:0 0 8px;">Detalle formal (médico, contacto y datos del accidentado) en "VII. Reporte de accidentes".</p>`;
-}
-
-// II. Informe del Ganado (calidad + fuera de peso). Misma fuente de datos
-// que la Sección I (`rj.ganado_series`), nunca duplicada.
-function renderGanadoModal(rj) {
-    const series = (rj && Array.isArray(rj.ganado_series) && rj.ganado_series.length > 0) ? rj.ganado_series : null;
-    if (!series) return '';
-
-    const thS = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;"';
-    const thG = 'style="background:#2755a3;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;text-align:center;border:1px solid #14316a;"';
-    const tdS = 'style="padding:4px 7px;font-size:11px;background:#eaf0f8;border:1px solid #dde3ec;white-space:nowrap;"';
-    const tdC = 'style="padding:4px 7px;font-size:11px;text-align:center;border:1px solid #dde3ec;"';
-    const tdK = 'style="padding:4px 7px;font-size:11px;text-align:center;border:1px solid #dde3ec;background:#f0f7ec;font-weight:600;"';
-    const val = (v) => (v !== undefined && v !== null && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>';
-
-    // Bloque 3
-    let b3rows = series.map(s => `<tr>
-        <td ${tdS}>${val(s.nombre)}</td>
-        <td ${tdC}>${val(s.q1c)}</td><td ${tdC}>${val(s.q1r)}</td><td ${tdK}>${val(s.q1k)}</td>
-        <td ${tdC}>${val(s.q2c)}</td><td ${tdC}>${val(s.q2r)}</td><td ${tdK}>${val(s.q2k)}</td>
-        <td ${tdC}>${val(s.q3c)}</td><td ${tdC}>${val(s.q3r)}</td><td ${tdK}>${val(s.q3k)}</td>
-        <td ${tdC}>${val(s.q4c)}</td><td ${tdC}>${val(s.q4r)}</td><td ${tdK}>${val(s.q4k)}</td>
-    </tr>`).join('');
-    const tbl3 = `<table style="border-collapse:collapse;min-width:100%;">
-        <thead>
-            <tr>
-                <th ${thS} rowspan="2">Serie</th>
-                <th ${thG} colspan="3">1er animal</th><th ${thG} colspan="3">2do animal</th>
-                <th ${thG} colspan="3">3er animal</th><th ${thG} colspan="3">4to animal</th>
-            </tr>
-            <tr>
-                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
-                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
-                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
-                <th ${thS}>Corrido</th><th ${thS}>Repetido</th><th ${thS}>Calidad</th>
-            </tr>
-        </thead>
-        <tbody>${b3rows}</tbody>
-    </table>`;
-
-    // Bloque 4
-    const numP = (v) => { const n = parseFloat(v); return (!isNaN(n) && n >= 0) ? n : 0; };
-    let sumTot = 0, sumBaj = 0, sumSob = 0;
-    let b4rows = series.map(s => {
-        const tot = numP(s.fp_tot), baj = numP(s.fp_baj), sob = numP(s.fp_sob);
-        const fuer = baj + sob;
-        const pct  = tot > 0 ? ((fuer / tot) * 100).toFixed(1) + '%' : '—';
-        sumTot += tot; sumBaj += baj; sumSob += sob;
-        return `<tr>
-            <td ${tdS}>${val(s.nombre)}</td>
-            <td ${tdC}>${tot || '<span style="color:#ccc;">—</span>'}</td>
-            <td ${tdC}>${baj || '<span style="color:#ccc;">—</span>'}</td>
-            <td ${tdC}>${sob || '<span style="color:#ccc;">—</span>'}</td>
-            <td ${tdK}>${fuer > 0 ? fuer : '<span style="color:#ccc;">—</span>'}</td>
-            <td ${tdK}>${pct}</td>
-        </tr>`;
-    }).join('');
-    const sumFuer = sumBaj + sumSob;
-    const pctTotal = sumTot > 0 ? ((sumFuer / sumTot) * 100).toFixed(1) + '%' : '—';
-    const thTot = 'style="background:#1a3c6e;color:#fff;padding:5px 8px;font-size:11px;text-align:center;border:1px solid #14316a;"';
-    b4rows += `<tr>
-        <td style="background:#1a3c6e;color:#fff;padding:5px 8px;font-size:11px;font-weight:700;border:1px solid #14316a;">TOTAL</td>
-        <td ${thTot}>${sumTot || '—'}</td><td ${thTot}>${sumBaj || '—'}</td><td ${thTot}>${sumSob || '—'}</td>
-        <td style="background:#14a348;color:#fff;padding:5px 8px;font-size:11px;font-weight:700;text-align:center;border:1px solid #0d8a3c;">${sumFuer || '—'}</td>
-        <td style="background:#14a348;color:#fff;padding:5px 8px;font-size:11px;font-weight:700;text-align:center;border:1px solid #0d8a3c;">${pctTotal}</td>
-    </tr>`;
-    const tbl4 = `<table style="border-collapse:collapse;min-width:100%;">
-        <thead>
-            <tr>
-                <th ${thS}>Serie</th>
-                <th ${thS}>Total animales</th><th ${thS}>Bajo peso</th><th ${thS}>Sobre peso</th>
-                <th ${thS}>Total fuera peso</th><th ${thS}>% fuera peso</th>
-            </tr>
-        </thead>
-        <tbody>${b4rows}</tbody>
-    </table>`;
-
-    const bloqueTitulo = (n, t) => `<div style="font-size:12px;font-weight:700;color:#1a3c6e;text-transform:uppercase;letter-spacing:.3px;margin:16px 0 6px;">${n}. ${t}</div>`;
-    const wrapTbl = (t) => `<div style="overflow-x:auto;margin-bottom:4px;">${t}</div>`;
-
-    return `<hr style="margin:20px 0 16px;border:none;border-top:2px solid #e0e8f5;">
-        <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:12px;">II. Informe del Ganado</div>
-        ${bloqueTitulo('1','Calidad del ganado')}${wrapTbl(tbl3)}
-        ${bloqueTitulo('2','Ganado fuera de peso')}${wrapTbl(tbl4)}`;
+        <p style="font-size:11px;color:#888;margin:0 0 8px;">Detalle formal (médico, contacto y datos del accidentado) en "VI. Reporte de accidentes".</p>`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2481,13 +2409,13 @@ function renderEtapa3Modal(rj) {
 
     let out = '<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">';
 
-    // ── III. Desempeño del Jurado ─────────────────────────────────────────
+    // ── II. Desempeño del Jurado ──────────────────────────────────────────
     // Nuevo formato 2026-2027: exactamente 4 aspectos (1.0-7.0) + Nota
     // Promedio automática, que alimenta rodeo_notas_secundarias.nota_delegado.
     // Cartillas antiguas (formato previo: evaluación sí/no + lista de
     // jurados) se siguen mostrando tal cual para no perder ese historial.
     if (dj) {
-        out += bloqueTitulo('III. Informe sobre el desempeño del Jurado');
+        out += bloqueTitulo('II. Informe sobre el desempeño del Jurado');
         const ASPECTOS_ADMIN = [
             { key:'aspecto_1', label:'1. Sanciona correctamente las faltas en el apiñadero.' },
             { key:'aspecto_2', label:'2. Sanciona correctamente las faltas en la cancha (incluye zona de postura).' },
@@ -2533,9 +2461,9 @@ function renderEtapa3Modal(rj) {
         }
     }
 
-    // ── IV. Disciplina ────────────────────────────────────────────────────
+    // ── III. Disciplina ───────────────────────────────────────────────────
     if (disc) {
-        out += bloqueTitulo('IV. Informe de disciplina');
+        out += bloqueTitulo('III. Informe de disciplina');
         out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo informe de disciplina?</strong> ${boolTxt(disc.hubo_informe)}</p>`;
         if (Array.isArray(disc.situaciones) && disc.situaciones.length > 0) {
             disc.situaciones.forEach((s, i) => {
@@ -2560,7 +2488,7 @@ function renderEtapa3Modal(rj) {
         }
     }
 
-    // ── V. Recinto Deportivo ─────────────────────────────────────────────
+    // ── IV. Recinto Deportivo ────────────────────────────────────────────
     // Nuevo formato 2026-2027: exactamente 5 campos (Cancha, Iluminación,
     // Instalaciones públicas, Casetas de jurados, Otros). Las cartillas
     // ANTIGUAS que ya tengan datos en los 18 aspectos del formato anterior
@@ -2595,7 +2523,7 @@ function renderEtapa3Modal(rj) {
         ];
         const esLegacy = ASPECTOS_LEGACY.some(a => recinto[a.key+'_estado'] || recinto[a.key+'_obs']);
         const ASPECTOS = esLegacy ? ASPECTOS_LEGACY : ASPECTOS_NUEVO;
-        out += bloqueTitulo('V. Informe sobre el estado del recinto deportivo');
+        out += bloqueTitulo('IV. Informe sobre el estado del recinto deportivo');
         if (esLegacy) {
             out += `<p style="font-size:11px;color:#888;font-style:italic;margin:-4px 0 8px;">Formato anterior (18 aspectos) — cartilla registrada antes del nuevo formato oficial.</p>`;
         }
@@ -2615,9 +2543,9 @@ function renderEtapa3Modal(rj) {
         }
     }
 
-    // ── VI. Colleras Invitadas ────────────────────────────────────────────
+    // ── V. Colleras Invitadas ─────────────────────────────────────────────
     if (col) {
-        out += bloqueTitulo('VI. Colleras invitadas');
+        out += bloqueTitulo('V. Colleras invitadas');
         if (col.no_hubo) {
             out += `<p style="font-size:12px;color:#555;">No hubo colleras invitadas en este rodeo.</p>`;
         } else if (Array.isArray(col.items) && col.items.length > 0) {
@@ -2671,9 +2599,9 @@ function renderEtapa4Modal(rj) {
 
     let out = '';
 
-    // ── VII. Accidentes ───────────────────────────────────────────────────
+    // ── VI. Accidentes ────────────────────────────────────────────────────
     if (acc) {
-        out += bloqueTitulo('VII. Reporte de accidentes');
+        out += bloqueTitulo('VI. Reporte de accidentes');
         out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
             <tr><td ${tdH}>¿Hubo accidentes?</td><td ${tdC}>${boolTxt(acc.hubo_accidentes)}</td>
                 <td ${tdH}>¿Se revisó protocolo de rescate?</td><td ${tdC}>${boolTxt(acc.reviso_protocolo)}</td></tr>
@@ -2704,9 +2632,9 @@ function renderEtapa4Modal(rj) {
         }
     }
 
-    // ── VIII. Bienestar Animal (Anexo 01) ─────────────────────────────────
+    // ── VII. Bienestar Animal (Anexo 01) ───────────────────────────────────
     if (ba) {
-        out += bloqueTitulo('VIII. Anexo 01 — Informe condiciones de Bienestar Animal');
+        out += bloqueTitulo('VII. Anexo 01 — Informe condiciones de Bienestar Animal');
         const baRows = BA_LABELS.map(function(f){ return `<tr>
             <td ${tdH}>${sanitizar(f.label)}</td>
             <td ${tdC} style="text-align:center;">${boolTxt(ba[f.key])}</td>
@@ -2726,9 +2654,9 @@ function renderEtapa4Modal(rj) {
         if (ba.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(ba.observaciones)}</div>`;
     }
 
-    // ── IX. Veterinario (Anexo 02, independiente del Anexo 01) ────────────
+    // ── VIII. Veterinario (Anexo 02, independiente del Anexo 01) ──────────
     if (vet) {
-        out += bloqueTitulo('IX. Anexo 02 — Informe del veterinario del Rodeo');
+        out += bloqueTitulo('VIII. Anexo 02 — Informe del veterinario del Rodeo');
         out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
             <tr><td ${tdH}>Nombre</td><td ${tdC}>${val(vet.nombre)}</td>
                 <td ${tdH}>Teléfono</td><td ${tdC}>${val(vet.telefono)}</td></tr>
@@ -2749,21 +2677,21 @@ function renderEtapa4Modal(rj) {
         if (vet.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Observaciones:</strong> ${sanitizar(vet.observaciones)}</div>`;
     }
 
-    // ── X. Anexo 03 — Comentarios generales ────────────────────────────────
+    // ── IX. Anexo 03 — Comentarios generales ───────────────────────────────
     if (com && com.texto) {
-        out += bloqueTitulo('X. Anexo 03 — Comentarios generales');
+        out += bloqueTitulo('IX. Anexo 03 — Comentarios generales');
         out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;">${sanitizar(com.texto)}</div>`;
     }
 
-    // ── XI. Anexo 04 — Antecedentes disciplinarios complementarios ────────
+    // ── X. Anexo 04 — Antecedentes disciplinarios complementarios ─────────
     if (ant && ant.texto) {
-        out += bloqueTitulo('XI. Anexo 04 — Antecedentes disciplinarios complementarios');
+        out += bloqueTitulo('X. Anexo 04 — Antecedentes disciplinarios complementarios');
         out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;">${sanitizar(ant.texto)}</div>`;
     }
 
-    // ── XII. Reclamos o sugerencias ───────────────────────────────────────
+    // ── XI. Reclamos o sugerencias ─────────────────────────────────────────
     if (recs) {
-        out += bloqueTitulo('XII. Reclamos o sugerencias');
+        out += bloqueTitulo('XI. Reclamos o sugerencias');
         out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo reclamos?</strong> ${boolTxt(recs.hubo_reclamos)}</p>`;
         if (Array.isArray(recs.items) && recs.items.length > 0) {
             recs.items.forEach(function(r, i) {

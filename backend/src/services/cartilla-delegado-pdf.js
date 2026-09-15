@@ -1,4 +1,5 @@
 const PDFDocument = require('pdfkit');
+const { calcularPorcentajeFueraPeso } = require('./cartillaDelegadoGanado');
 
 /**
  * Genera el PDF de una cartilla del delegado y retorna un Buffer.
@@ -35,11 +36,18 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
         doc.moveDown(0.5);
 
         // ── I. Identificación del Rodeo ────────────────────────────
+        // Temporada y Tipo de Rodeo — 100% AUTOMÁTICOS (4ª revisión): EN
+        // VIVO desde `rodeo`, misma fuente que el formulario del Delegado y
+        // la vista Administrador (nunca se leen del snapshot de la
+        // cartilla, aunque esa columna se conserve por compatibilidad).
+        // Tipo y Categoría son conceptos DISTINTOS en el sistema (5ª
+        // revisión, punto 7) — nunca se concatenan en un solo campo.
         seccion(doc, 'I. IDENTIFICACIÓN DEL RODEO', AZUL);
         campo(doc, 'Club / Asociación', [rodeo?.club, rodeo?.asociacion].filter(Boolean).join(' — ') || cartilla.club_asociacion_organizador || '—');
         campo(doc, 'Fecha del Rodeo',   cartilla.fecha_rodeo ? fmtFecha(cartilla.fecha_rodeo) : '—');
-        campo(doc, 'Temporada',         cartilla.temporada || '—');
-        campo(doc, 'Tipo de Rodeo',     cartilla.tipo_rodeo || '—');
+        campo(doc, 'Temporada',         rodeo?.temporadas?.nombre || (rodeo?.fecha ? String(rodeo.fecha).slice(0, 4) : '—'));
+        campo(doc, 'Tipo de Rodeo',     rodeo?.tipo_rodeo_nombre || '—');
+        if (rodeo?.categoria_rodeo_nombre) campo(doc, 'Categoría de Rodeo', rodeo.categoria_rodeo_nombre);
         campo(doc, 'Delegado Oficial',  cartilla.delegado_nombre || '—');
         campo(doc, 'Teléfono',          cartilla.delegado_telefono || '—');
         campo(doc, 'Secretario del Jurado', cartilla.secretario_jurado || '—');
@@ -59,18 +67,51 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
         campo(doc, 'Proyecto de vinculación con la comunidad', yn(cartilla.certificacion_vinculacion_comunidad));
         doc.moveDown(0.5);
 
-        // ── I. Información de las Series del Rodeo ──────────────────
-        // (colleras participantes por serie — misma fuente `rj.ganado_series`
-        // que "II. Informe del Ganado", nunca duplicada).
+        // ── I. Información de las Series e Informe del Ganado (UNIFICADA,
+        // 4ª revisión) ───────────────────────────────────────────────
+        // Antes eran dos secciones separadas ("I. Series" + "II. Ganado")
+        // que repetían la misma Serie dos veces. Ahora se presenta UNA sola
+        // vez por Serie, con sus 4 animales y toda su información (colleras,
+        // vueltas, tipo, peso, corrido, repetido, calidad) + fuera de peso
+        // reglamentario — misma fuente `rj.ganado_series`, nunca duplicada.
         const series = Array.isArray(rj.ganado_series) ? rj.ganado_series : [];
         if (series.length > 0) {
-            seccion(doc, 'I. INFORMACIÓN DE LAS SERIES DEL RODEO', AZUL);
+            seccion(doc, 'I. INFORMACIÓN DE LAS SERIES E INFORME DEL GANADO', AZUL);
+            const numP = (v) => { const n = parseFloat(v); return (!isNaN(n) && n >= 0) ? n : 0; };
+            const nombresAnimal = ['1er animal', '2do animal', '3er animal', '4to animal'];
+            // Ganado bajo/sobrepeso reglamentario — 5ª revisión, punto 2: por
+            // cada animal (Art. 242), no solo total de la Serie. Detección
+            // por presencia de datos (f1c..f4c) vs formato anterior
+            // (fp_tot/fp_baj/fp_sob, solo por Serie) — sin bandera de
+            // versión ni migración, igual que en el formulario del Delegado.
             series.forEach((s, i) => {
-                const colleras = [s.c1n, s.c2n, s.c3n, s.c4n].filter(Boolean).join(', ');
-                doc.fontSize(9).font('Helvetica').fillColor('#333')
-                   .text(`  Serie ${i + 1}: ${s.nombre || '—'}${colleras ? ` — Colleras: ${colleras}` : ''}`);
+                const legacy = !!(s.fp_tot || s.fp_baj || s.fp_sob) && !(s.f1c || s.f2c || s.f3c || s.f4c);
+                doc.fontSize(10).fillColor(AZUL).font('Helvetica-Bold').text(`  Serie ${i + 1}: ${s.nombre || '—'}`);
+                doc.font('Helvetica').fillColor('#333');
+                [1, 2, 3, 4].forEach(n => {
+                    let linea = `    ${nombresAnimal[n-1]} — N° colleras: ${s['c'+n+'n'] || '—'} | # Ganado: ${s['c'+n+'g'] || '—'} | Vueltas: ${s['v'+n+'v'] || '—'} | Tipo: ${s['v'+n+'t'] || '—'} | Peso: ${s['v'+n+'p'] || '—'} kg | Corrido: ${s['q'+n+'c'] || '—'} | Repetido: ${s['q'+n+'r'] || '—'} | Calidad: ${s['q'+n+'k'] || '—'}`;
+                    if (!legacy) {
+                        const pct = calcularPorcentajeFueraPeso(s['c'+n+'g'], s['f'+n+'c']);
+                        linea += ` | Bajo/sobrepeso: ${s['f'+n+'c'] || '—'} | %: ${pct !== null ? pct.toFixed(1) + '%' : '—'}`;
+                    }
+                    doc.fontSize(8.5).fillColor('#333').font('Helvetica').text(linea);
+                });
+                if (legacy) {
+                    const tot = numP(s.fp_tot), baj = numP(s.fp_baj), sob = numP(s.fp_sob);
+                    const fuer = baj + sob, pct = tot > 0 ? ((fuer / tot) * 100).toFixed(1) + '%' : '—';
+                    doc.fontSize(8.5).fillColor('#555').font('Helvetica-Oblique')
+                       .text(`    Fuera de peso (Art. 242, formato anterior por Serie) — Total: ${tot || '—'} | Bajo peso: ${baj || '—'} | Sobre peso: ${sob || '—'} | Total fuera de peso: ${fuer > 0 ? fuer : '—'} | %: ${pct}`);
+                } else {
+                    let totGanado = 0, totFuera = 0;
+                    [1, 2, 3, 4].forEach(n => { totGanado += numP(s['c'+n+'g']); totFuera += numP(s['f'+n+'c']); });
+                    const pctResumen = calcularPorcentajeFueraPeso(totGanado, totFuera);
+                    doc.fontSize(8.5).fillColor('#555').font('Helvetica-Oblique')
+                       .text(`    Resumen fuera de peso (suma de los 4 animales) — Total ganado: ${totGanado || '—'} | Total fuera de peso: ${totFuera > 0 ? totFuera : '—'} | %: ${pctResumen !== null ? pctResumen.toFixed(1) + '%' : '—'}`);
+                }
+                doc.font('Helvetica').fillColor('#333');
+                doc.moveDown(0.3);
             });
-            doc.moveDown(0.4);
+            doc.moveDown(0.3);
         }
 
         // ── Reemplazo de Jinetes (sin numeral romano propio) ────────
@@ -104,7 +145,7 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
         // ── Informe general de accidentes (breve) ─────────────────────
         // El relato es TEXTO LIBRE INDEPENDIENTE, leído de
         // `rj.informe_accidentes_general` — nunca se confunde ni se
-        // sustituye por el detalle estructurado de "VII. Reporte de
+        // sustituye por el detalle estructurado de "VI. Reporte de
         // accidentes" (`rj.accidentes_informe`: médico, contacto,
         // accidentados). Solo el Sí/No `hubo_accidentes` se comparte entre
         // ambos bloques (misma pregunta).
@@ -117,30 +158,15 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             }
             doc.fontSize(10).fillColor('#333').font('Helvetica').text(textoAccGeneral || '—');
             doc.fontSize(8).fillColor(GRIS).font('Helvetica-Oblique')
-               .text('Detalle formal (médico, contacto y datos del accidentado) en Sección VII — Reporte de accidentes.');
+               .text('Detalle formal (médico, contacto y datos del accidentado) en Sección VI — Reporte de accidentes.');
             doc.font('Helvetica').fillColor('#333');
             doc.moveDown(0.5);
         }
 
-        // ── II. Informe del Ganado ────────────────────────────────────
-        if (series.length > 0) {
-            seccion(doc, 'II. INFORME DEL GANADO', AZUL);
-            series.forEach((s, i) => {
-                doc.fontSize(10).fillColor(AZUL).font('Helvetica-Bold').text(`  Serie ${i + 1}: ${s.nombre || '—'}`);
-                doc.font('Helvetica').fillColor('#333');
-                if (s.fp_baj || s.fp_sob) {
-                    campo(doc, '  Ganado bajo peso', s.fp_baj || '0');
-                    campo(doc, '  Ganado sobre peso', s.fp_sob || '0');
-                }
-                doc.moveDown(0.2);
-            });
-            doc.moveDown(0.3);
-        }
-
-        // ── III. Desempeño del Jurado (nuevo formato 2026-2027) ────────
+        // ── II. Desempeño del Jurado (nuevo formato 2026-2027) ─────────
         const dj = rj.desempeno_jurado;
         if (dj) {
-            seccion(doc, 'III. DESEMPEÑO DEL JURADO', AZUL);
+            seccion(doc, 'II. DESEMPEÑO DEL JURADO', AZUL);
             const ASPECTOS_PDF = [
                 { key: 'aspecto_1', label: '1. Faltas en el apiñadero' },
                 { key: 'aspecto_2', label: '2. Faltas en la cancha (incl. postura)' },
@@ -171,10 +197,10 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── IV. Disciplina ─────────────────────────────────────────
+        // ── III. Disciplina ────────────────────────────────────────
         const disc = rj.disciplina_informe;
         if (disc) {
-            seccion(doc, 'IV. INFORME DE DISCIPLINA', AZUL);
+            seccion(doc, 'III. INFORME DE DISCIPLINA', AZUL);
             campo(doc, 'Hubo informe disciplinario', yn(disc.hubo_informe));
             if (disc.hubo_informe === 'si' && Array.isArray(disc.situaciones) && disc.situaciones.length > 0) {
                 doc.fontSize(10).fillColor(AZUL).font('Helvetica-Bold').text('Situaciones disciplinarias:');
@@ -187,7 +213,7 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── V. Recinto Deportivo ───────────────────────────────────
+        // ── IV. Recinto Deportivo ──────────────────────────────────
         // Nuevo formato 2026-2027: 5 campos (Cancha, Iluminación,
         // Instalaciones públicas, Casetas de jurados, Otros). Cartillas
         // antiguas con datos en los 18 aspectos del formato previo se
@@ -212,7 +238,7 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             ];
             const esLegacy = ASPECTOS_RECINTO_LEGACY.some(a => rec[a.key + '_estado'] || rec[a.key + '_obs']);
             const aspectosRecinto = esLegacy ? ASPECTOS_RECINTO_LEGACY : ASPECTOS_RECINTO_NUEVO;
-            seccion(doc, 'V. INFORME SOBRE EL ESTADO DEL RECINTO DEPORTIVO', AZUL);
+            seccion(doc, 'IV. INFORME SOBRE EL ESTADO DEL RECINTO DEPORTIVO', AZUL);
             if (esLegacy) {
                 doc.fontSize(8).fillColor(GRIS).font('Helvetica-Oblique')
                    .text('Formato anterior (18 aspectos) — cartilla registrada antes del nuevo formato oficial.');
@@ -228,10 +254,10 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── VI. Colleras Invitadas ─────────────────────────────────
+        // ── V. Colleras Invitadas ──────────────────────────────────
         const col = rj.colleras_invitadas;
         if (col) {
-            seccion(doc, 'VI. COLLERAS INVITADAS', AZUL);
+            seccion(doc, 'V. COLLERAS INVITADAS', AZUL);
             campo(doc, 'Sin colleras invitadas', yn(col.no_hubo));
             if (!col.no_hubo && Array.isArray(col.items) && col.items.length > 0) {
                 col.items.forEach((c2, i) => {
@@ -242,10 +268,10 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── VII. Accidentes ─────────────────────────────────────────
+        // ── VI. Accidentes ──────────────────────────────────────────
         const acc = rj.accidentes_informe;
         if (acc) {
-            seccion(doc, 'VII. REPORTE DE ACCIDENTES', AZUL);
+            seccion(doc, 'VI. REPORTE DE ACCIDENTES', AZUL);
             campo(doc, 'Hubo accidentes', yn(acc.hubo_accidentes));
             campo(doc, 'Se revisó protocolo de emergencia', yn(acc.reviso_protocolo));
             if (acc.medico_nombre) campo(doc, 'Médico de turno', acc.medico_nombre);
@@ -262,7 +288,7 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── VIII. Bienestar Animal (Anexo 01) ──────────────────────
+        // ── VII. Bienestar Animal (Anexo 01) ───────────────────────
         const CAMPOS_BIENESTAR = [
             { key: 'sombra_ganado',  label: 'Sombra para ganado' },
             { key: 'sombra_equinos', label: 'Sombra para equinos' },
@@ -273,7 +299,7 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
         ];
         const ba = rj.bienestar_animal;
         if (ba) {
-            seccion(doc, 'VIII. ANEXO 01 — BIENESTAR ANIMAL', AZUL);
+            seccion(doc, 'VII. ANEXO 01 — BIENESTAR ANIMAL', AZUL);
             CAMPOS_BIENESTAR.forEach(c3 => {
                 if (ba[c3.key] != null) {
                     const obs = ba[c3.key + '_obs'] ? ` (${ba[c3.key + '_obs']})` : '';
@@ -289,10 +315,10 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── IX. Veterinario (Anexo 02, independiente del Anexo 01) ──
+        // ── VIII. Veterinario (Anexo 02, independiente del Anexo 01) ─
         const vet = rj.informe_veterinario;
         if (vet && (vet.nombre || vet.preparacion)) {
-            seccion(doc, 'IX. ANEXO 02 — INFORME DEL VETERINARIO', AZUL);
+            seccion(doc, 'VIII. ANEXO 02 — INFORME DEL VETERINARIO', AZUL);
             campo(doc, 'Nombre', vet.nombre || '—');
             campo(doc, 'Teléfono', vet.telefono || '—');
             campo(doc, 'Preparación', vet.preparacion || '—');
@@ -310,26 +336,26 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
             doc.moveDown(0.5);
         }
 
-        // ── X. Anexo 03 — Comentarios generales ─────────────────────
+        // ── IX. Anexo 03 — Comentarios generales ────────────────────
         const com = rj.comentarios_generales;
         if (com && com.texto) {
-            seccion(doc, 'X. ANEXO 03 — COMENTARIOS GENERALES', AZUL);
+            seccion(doc, 'IX. ANEXO 03 — COMENTARIOS GENERALES', AZUL);
             doc.fontSize(10).fillColor('#333').font('Helvetica').text(com.texto);
             doc.moveDown(0.5);
         }
 
-        // ── XI. Anexo 04 — Antecedentes disciplinarios complementarios ─
+        // ── X. Anexo 04 — Antecedentes disciplinarios complementarios ─
         const ant = rj.antecedentes_disciplinarios;
         if (ant && ant.texto) {
-            seccion(doc, 'XI. ANEXO 04 — ANTECEDENTES DISCIPLINARIOS COMPLEMENTARIOS', AZUL);
+            seccion(doc, 'X. ANEXO 04 — ANTECEDENTES DISCIPLINARIOS COMPLEMENTARIOS', AZUL);
             doc.fontSize(10).fillColor('#333').font('Helvetica').text(ant.texto);
             doc.moveDown(0.5);
         }
 
-        // ── XII. Reclamos o Sugerencias ─────────────────────────────
+        // ── XI. Reclamos o Sugerencias ───────────────────────────────
         const recs = rj.reclamos_sugerencias;
         if (recs) {
-            seccion(doc, 'XII. RECLAMOS O SUGERENCIAS', AZUL);
+            seccion(doc, 'XI. RECLAMOS O SUGERENCIAS', AZUL);
             campo(doc, 'Hubo reclamos', yn(recs.hubo_reclamos));
             if (recs.hubo_reclamos === 'si' && Array.isArray(recs.items) && recs.items.length > 0) {
                 recs.items.forEach((r3, i) => {

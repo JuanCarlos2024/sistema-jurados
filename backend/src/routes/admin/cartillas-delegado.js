@@ -153,7 +153,8 @@ router.get('/:id/pdf', async (req, res) => {
             .select(`
                 *,
                 rodeo:rodeos!cartillas_delegado_rodeo_id_fkey(
-                    id, club, asociacion, fecha, tipo_rodeo_nombre
+                    id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre,
+                    temporada_id, temporadas(nombre)
                 )
             `)
             .eq('id', req.params.id)

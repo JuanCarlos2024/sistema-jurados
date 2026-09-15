@@ -114,7 +114,7 @@ describe('POST /rodeo/:rodeo_id — creación: temporada real, SIN duplicar asoc
         const insertPayload = llamadas.cartillas_delegado.inserts[0];
         expect(insertPayload.temporada).toBe('2026-2027');
         expect(insertPayload.delegado_nombre).toBe('DELEGADO X'); // Caso A: nombre del Delegado Rentado real, no manual
-        expect(insertPayload.club_asociacion_organizador).toBe('EL VALLE — CURICÓ');
+        expect(insertPayload.tipo_rodeo).toBe('Provincial');
     });
 
     test('gate segunda revisión — el INSERT nunca incluye asociacion_organizadora/club_organizador/delegado_email (no son columnas de la tabla)', async () => {
@@ -132,6 +132,38 @@ describe('POST /rodeo/:rodeo_id — creación: temporada real, SIN duplicar asoc
         expect(insertPayload).not.toHaveProperty('asociacion_organizadora');
         expect(insertPayload).not.toHaveProperty('club_organizador');
         expect(insertPayload).not.toHaveProperty('delegado_email');
+    });
+
+    test('gate cuarta revisión — el INSERT ya NO incluye club_asociacion_organizador (redundante con Asociación/Club en vivo)', async () => {
+        const llamadas = crearSupabaseMock({
+            asignaciones: { data: ASIG_ACTIVA, error: null },
+            cartillas_delegado: [
+                { data: null, error: null },
+                { data: { id: 'cart-1' }, error: null }
+            ],
+            rodeos: { data: { club: 'EL VALLE', asociacion: 'CURICÓ', fecha: '2026-09-05', tipo_rodeo_nombre: 'Provincial', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            usuarios_pagados: { data: { nombre_completo: 'DELEGADO X', telefono: '+56911111111' }, error: null }
+        });
+        await llamarRuta({ method: 'POST', url: '/rodeo/r1' });
+        expect(llamadas.cartillas_delegado.inserts[0]).not.toHaveProperty('club_asociacion_organizador');
+    });
+
+    test('GET /rodeo/:rodeo_id devuelve asociacion/club/tipo_rodeo_nombre del rodeo tal cual (fuente única, sin transformar)', async () => {
+        crearSupabaseMock({
+            asignaciones: [
+                { data: ASIG_ACTIVA, error: null },
+                { data: [], error: null }
+            ],
+            rodeos: { data: { id: 'r1', club: 'FEDERACION', asociacion: 'FEDERACION', fecha: '2026-09-26', tipo_rodeo_nombre: 'Provincial', categoria_rodeo_nombre: '3 series', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            usuarios_pagados: { data: { nombre_completo: 'DELEGADO FEDERACION PRUEBA', telefono: '+56911111111' }, error: null },
+            cartillas_delegado: { data: null, error: null }
+        });
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/rodeo/r1' });
+        expect(status).toBe(200);
+        expect(body.rodeo.asociacion).toBe('FEDERACION');
+        expect(body.rodeo.club).toBe('FEDERACION');
+        expect(body.rodeo.tipo_rodeo_nombre).toBe('Provincial');
+        expect(body.rodeo.categoria_rodeo_nombre).toBe('3 series');
     });
 
     test('rodeo sin temporada_id asignado -> cae al año de la fecha como respaldo (nunca falla)', async () => {
@@ -213,6 +245,241 @@ describe('PATCH /:id — validación 1.0-7.0 de las notas del desempeño del jur
         crearSupabaseMock({ cartillas_delegado: { data: { id: 'cart-1', estado: 'enviada', delegado_id: 'delegado-1' }, error: null } });
         const { status } = await llamarRuta({ method: 'PATCH', url: '/cart-1', body: { temporada: '2026-2027' } });
         expect(status).toBe(409);
+    });
+});
+
+describe('Temporada / Tipo de Rodeo — 100% automáticos (4ª revisión, puntos 1 y 3)', () => {
+    test('PATCH con temporada/tipo_rodeo/club_asociacion_organizador en el body NUNCA los aplica (ya no son editables)', async () => {
+        const llamadas = crearSupabaseMock({
+            cartillas_delegado: [
+                { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },
+                { data: { id: 'cart-1' }, error: null }
+            ]
+        });
+        const { status } = await llamarRuta({
+            method: 'PATCH', url: '/cart-1',
+            body: { temporada: 'HACKEADA', tipo_rodeo: 'HACKEADO', club_asociacion_organizador: 'HACKEADO', secretario_jurado: 'PEDRO' }
+        });
+        expect(status).toBe(200);
+        const update = llamadas.cartillas_delegado.updates[0];
+        expect(update).not.toHaveProperty('temporada');
+        expect(update).not.toHaveProperty('tipo_rodeo');
+        expect(update).not.toHaveProperty('club_asociacion_organizador');
+        expect(update.secretario_jurado).toBe('PEDRO'); // el resto de los campos editables sigue funcionando
+    });
+
+    test('POST /:id/enviar — NO exige club_asociacion_organizador (ya no se auto-completa, quedaría siempre vacío en cartillas nuevas)', async () => {
+        const llamadas = crearSupabaseMock({
+            cartillas_delegado: [
+                {
+                    data: {
+                        id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1',
+                        temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D',
+                        tipo_rodeo: 'Provincial', historial_observaciones: []
+                        // sin club_asociacion_organizador — ya no se auto-completa (4ª revisión)
+                    }, error: null
+                },
+                { data: { id: 'cart-1', estado: 'enviada' }, error: null }
+            ]
+        });
+        const { status } = await llamarRuta({ method: 'POST', url: '/cart-1/enviar', body: {} });
+        expect(status).toBe(200);
+        expect(llamadas.cartillas_delegado.updates[0].estado).toBe('enviada');
+    });
+
+    test('POST /:id/enviar — SIGUE exigiendo temporada/tipo_rodeo (garantizados por el auto-cálculo de creación, nunca por el Delegado)', async () => {
+        crearSupabaseMock({
+            cartillas_delegado: {
+                data: {
+                    id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1',
+                    temporada: null, fecha_rodeo: '2026-09-05', delegado_nombre: 'D',
+                    tipo_rodeo: null, historial_observaciones: []
+                }, error: null
+            }
+        });
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/cart-1/enviar', body: {} });
+        expect(status).toBe(422);
+        expect(body.faltantes).toEqual(expect.arrayContaining(['temporada', 'tipo_rodeo']));
+    });
+});
+
+describe('Fecha del Rodeo — 100% automática (5ª revisión, punto 1: mismo problema y misma corrección que Temporada)', () => {
+    test('GET /rodeo/:rodeo_id devuelve rodeo.fecha tal cual, disponible aunque NO exista cartilla guardada todavía', async () => {
+        crearSupabaseMock({
+            asignaciones: [
+                { data: ASIG_ACTIVA, error: null },
+                { data: [], error: null }
+            ],
+            rodeos: { data: { id: 'r1', club: 'FEDERACION', asociacion: 'FEDERACION', fecha: '2026-09-26', tipo_rodeo_nombre: 'Provincial 3 series', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            usuarios_pagados: { data: { nombre_completo: 'DELEGADO FEDERACION PRUEBA', telefono: '+56911111111' }, error: null },
+            cartillas_delegado: { data: null, error: null } // sin cartilla creada todavía
+        });
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/rodeo/r1' });
+        expect(status).toBe(200);
+        expect(body.cartilla).toBeNull();
+        expect(body.rodeo.fecha).toBe('2026-09-26'); // disponible aunque no exista cartilla
+    });
+
+    test('PATCH con fecha_rodeo en el body NUNCA la aplica (ya no es editable, igual que temporada/tipo_rodeo)', async () => {
+        const llamadas = crearSupabaseMock({
+            cartillas_delegado: [
+                { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },
+                { data: { id: 'cart-1' }, error: null }
+            ]
+        });
+        const { status } = await llamarRuta({
+            method: 'PATCH', url: '/cart-1',
+            body: { fecha_rodeo: '1999-01-01', secretario_jurado: 'PEDRO' }
+        });
+        expect(status).toBe(200);
+        const update = llamadas.cartillas_delegado.updates[0];
+        expect(update).not.toHaveProperty('fecha_rodeo');
+        expect(update.secretario_jurado).toBe('PEDRO');
+    });
+
+    test('POST /:id/enviar — sigue exigiendo fecha_rodeo (garantizada por el auto-cálculo de creación, nunca por el Delegado)', async () => {
+        crearSupabaseMock({
+            cartillas_delegado: {
+                data: {
+                    id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1',
+                    temporada: '2026-2027', fecha_rodeo: null, delegado_nombre: 'D',
+                    tipo_rodeo: 'Provincial', historial_observaciones: []
+                }, error: null
+            }
+        });
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/cart-1/enviar', body: {} });
+        expect(status).toBe(422);
+        expect(body.faltantes).toContain('fecha_rodeo');
+    });
+});
+
+describe('Tipo de Rodeo — no debe concatenar Categoría (5ª revisión, punto 7)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const leer = (rutaRelativa) => fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', rutaRelativa), 'utf8');
+
+    test('el patrón de concatenación tipo_rodeo_nombre + categoria_rodeo_nombre NO existe en el formulario del Delegado', () => {
+        const html = leer('frontend/usuario/cartilla-delegado.html');
+        expect(html).not.toMatch(/tipo_rodeo_nombre,\s*rodeo\?\.categoria_rodeo_nombre/);
+    });
+
+    test('el patrón de concatenación NO existe en la vista Administrador', () => {
+        const html = leer('frontend/admin/rodeos.html');
+        expect(html).not.toMatch(/tipo_rodeo_nombre,\s*c\.rodeo\?\.categoria_rodeo_nombre/);
+    });
+
+    test('el patrón de concatenación NO existe en el PDF', () => {
+        const js = leer('backend/src/services/cartilla-delegado-pdf.js');
+        expect(js).not.toMatch(/tipo_rodeo_nombre,\s*rodeo\?\.categoria_rodeo_nombre/);
+    });
+});
+
+describe('Series + Ganado unificados (4ª revisión) — un solo objeto por Serie dentro de respuestas_json.ganado_series', () => {
+    test('un mismo objeto de serie guarda a la vez campos de colleras/vueltas (antes "Sección I") y de calidad/fuera de peso (antes "Sección II"), sin dividirse en estructuras separadas', async () => {
+        const llamadas = crearSupabaseMock({
+            cartillas_delegado: [
+                { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },
+                { data: { id: 'cart-1' }, error: null }
+            ]
+        });
+        const serieUnificada = {
+            nombre: '1ra. Libre A',
+            c1n: '5', c1g: 'A123', v1v: '3', v1t: 'Overo', v1p: '420',
+            q1c: '2', q1r: '1', q1k: 'Bueno',
+            fp_tot: '4', fp_baj: '1', fp_sob: '0',
+            falta_hubo: 'si', falta_articulo: '242', falta_obs: 'Falta leve'
+        };
+        const { status } = await llamarRuta({
+            method: 'PATCH', url: '/cart-1',
+            body: { respuestas_json: { ganado_series: [serieUnificada] } }
+        });
+        expect(status).toBe(200);
+        const guardada = llamadas.cartillas_delegado.updates[0].respuestas_json.ganado_series[0];
+        // colleras/vueltas (antes "I. Series")
+        expect(guardada.c1n).toBe('5');
+        expect(guardada.v1t).toBe('Overo');
+        // calidad/fuera de peso (antes "II. Ganado")
+        expect(guardada.q1k).toBe('Bueno');
+        expect(guardada.fp_baj).toBe('1');
+        // faltas por serie — reutiliza el mismo objeto, no una selección de serie aparte
+        expect(guardada.falta_articulo).toBe('242');
+        expect(Object.keys(llamadas.cartillas_delegado.updates[0].respuestas_json)).toEqual(['ganado_series']); // ninguna estructura paralela nueva
+    });
+
+    test('cartilla antigua con series en formato previo (sin falta_hubo/falta_articulo/falta_obs) se recupera intacta, sin completarse artificialmente', async () => {
+        crearSupabaseMock({
+            asignaciones: [
+                { data: ASIG_ACTIVA, error: null },
+                { data: [], error: null }
+            ],
+            rodeos: { data: { id: 'r1', club: 'EL VALLE', asociacion: 'CURICÓ', fecha: '2026-09-05', tipo_rodeo_nombre: 'Provincial', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            usuarios_pagados: { data: { nombre_completo: 'DELEGADO X', telefono: '+56911111111' }, error: null },
+            cartillas_delegado: {
+                data: { id: 'cart-antigua', respuestas_json: { ganado_series: [{ nombre: 'Serie apertura', c1n: '4', v1t: 'Colorado', q1k: 'Regular' }] } },
+                error: null
+            }
+        });
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/rodeo/r1' });
+        expect(status).toBe(200);
+        const serie = body.cartilla.respuestas_json.ganado_series[0];
+        expect(serie.nombre).toBe('Serie apertura'); // nombre histórico fuera del catálogo nuevo, se conserva
+        expect(serie.c1n).toBe('4');
+        expect(serie.v1t).toBe('Colorado');
+        expect(serie.q1k).toBe('Regular');
+        expect(serie.falta_hubo).toBeUndefined(); // no se inventa el dato nuevo
+    });
+});
+
+describe('Ganado bajo/sobrepeso reglamentario POR ANIMAL (5ª revisión, puntos 2-5) — extensión ADITIVA f1c..f4c, sin tocar fp_tot/fp_baj/fp_sob', () => {
+    test('cada animal guarda su propia cantidad bajo/sobrepeso de forma independiente, dentro del mismo objeto de serie', async () => {
+        const llamadas = crearSupabaseMock({
+            cartillas_delegado: [
+                { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },
+                { data: { id: 'cart-1' }, error: null }
+            ]
+        });
+        const serie = {
+            nombre: '1ra. Libre A',
+            c1g: '25', f1c: '2',   // 1er animal: 25 cabezas, 2 fuera de peso
+            c2g: '30', f2c: '0',   // 2do animal: 30 cabezas, 0 fuera de peso
+            c3g: '20', f3c: '5',   // 3er animal: 20 cabezas, 5 fuera de peso
+            c4g: '',   f4c: ''     // 4to animal: sin datos
+        };
+        const { status } = await llamarRuta({
+            method: 'PATCH', url: '/cart-1',
+            body: { respuestas_json: { ganado_series: [serie] } }
+        });
+        expect(status).toBe(200);
+        const guardada = llamadas.cartillas_delegado.updates[0].respuestas_json.ganado_series[0];
+        expect(guardada.f1c).toBe('2');
+        expect(guardada.f2c).toBe('0');
+        expect(guardada.f3c).toBe('5');
+        expect(guardada.f4c).toBe('');
+        // cada animal es independiente: cambiar uno no afecta a los demás
+        expect(guardada.c1g).toBe('25');
+        expect(guardada.c3g).toBe('20');
+    });
+
+    test('cartilla histórica con fp_tot/fp_baj/fp_sob (formato anterior, por Serie) se recupera intacta, sin transformarse a formato por animal', async () => {
+        crearSupabaseMock({
+            asignaciones: [
+                { data: ASIG_ACTIVA, error: null },
+                { data: [], error: null }
+            ],
+            rodeos: { data: { id: 'r1', club: 'EL VALLE', asociacion: 'CURICÓ', fecha: '2026-09-05', tipo_rodeo_nombre: 'Provincial', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            usuarios_pagados: { data: { nombre_completo: 'DELEGADO X', telefono: '+56911111111' }, error: null },
+            cartillas_delegado: {
+                data: { id: 'cart-antigua', respuestas_json: { ganado_series: [{ nombre: 'Serie apertura', fp_tot: '12', fp_baj: '2', fp_sob: '1' }] } },
+                error: null
+            }
+        });
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/rodeo/r1' });
+        expect(status).toBe(200);
+        const serie = body.cartilla.respuestas_json.ganado_series[0];
+        expect(serie.fp_tot).toBe('12');
+        expect(serie.fp_baj).toBe('2');
+        expect(serie.fp_sob).toBe('1');
+        expect(serie.f1c).toBeUndefined(); // no se inventa el formato nuevo por animal
     });
 });
 

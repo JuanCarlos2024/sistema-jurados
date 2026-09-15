@@ -64,6 +64,21 @@
         .btn-quitar-serie:hover { background:#fdecea; }
         .btn-agregar-serie { margin-top:8px; font-size:12px; padding:5px 14px; }
         .aviso-ganado-bajo-peso { background:#fff8e1; border:1px solid #ffc107; border-radius:6px; padding:8px 12px; font-size:12px; color:#795800; margin-bottom:10px; display:none; }
+        /* Serie unificada (Series + Ganado, 4ª revisión) — una Serie = un solo registro */
+        .serie-card { border:1px solid #ddd; border-radius:8px; margin-bottom:16px; overflow:hidden; }
+        .serie-card-header { background:#0f2347; color:#fff; padding:10px 14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+        .serie-card-header label { font-size:12px; font-weight:600; }
+        .serie-card-header select { padding:5px 8px; border-radius:4px; border:1px solid #ccc; font-size:13px; min-width:180px; }
+        .serie-card-body { padding:14px; background:#fafcff; }
+        .animales-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(230px,1fr)); gap:12px; margin-bottom:14px; }
+        .animal-card { border:1px solid #e0e8f5; border-radius:6px; background:#fff; overflow:hidden; }
+        .animal-card-header { background:#2755a3; color:#fff; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:6px 10px; }
+        .animal-card-body { padding:10px; display:flex; flex-direction:column; gap:7px; }
+        .animal-field label { display:block; font-size:11px; font-weight:600; color:#555; margin-bottom:2px; }
+        .animal-field input, .animal-field select { width:100%; padding:5px 7px; font-size:12px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; }
+        .animal-field input:disabled, .animal-field select:disabled { background:#f2f2f2; color:#555; }
+        .serie-fuera-peso { border-top:2px solid #e0e8f5; padding-top:10px; margin-top:4px; }
+        .serie-fuera-peso .campo-grid { margin-bottom:8px; }
 
         /* ── ETAPA 3 ─────────────────────────────────────────────────────────── */
         .sec-sub { font-size:12px; font-weight:700; color:#1a3c6e; text-transform:uppercase; letter-spacing:.3px; margin:14px 0 8px; padding-bottom:5px; border-bottom:1px solid #e0e8f5; }
@@ -157,17 +172,6 @@
     </div>
 </div>
 
-<datalist id="series-sugeridas">
-    <option value="Primera libre A">
-    <option value="Primera libre B">
-    <option value="Primera libre C">
-    <option value="Serie criaderos">
-    <option value="Serie yeguas">
-    <option value="Serie caballos jóvenes">
-    <option value="Serie campeones">
-    <option value="Serie apertura">
-</datalist>
-
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -187,6 +191,7 @@ let _cartillaId    = null;
 let _estado        = null;
 let _guardando     = false;
 let _jurados       = []; // Jurado(s) real(es) asignados al rodeo — SOLO LECTURA (nuevo formato 2026-2027)
+let _rodeoActual    = null; // rodeo cargado — fuente EN VIVO de Temporada/Tipo de Rodeo/Asociación/Club (4ª revisión)
 
 // ── Globals ETAPA 2 ──────────────────────────────────────────────────────────
 let _seriesGanado   = [];
@@ -198,10 +203,11 @@ let _disc    = {};  // disciplina
 let _recinto = {};  // recinto deportivo
 let _col     = {};  // colleras invitadas
 let _ree     = {};  // reemplazo jinetes
-// Informe general de accidentes (bloque breve entre Sección I y Sección II,
-// documento oficial 2026-2027): TEXTO LIBRE independiente del detalle
-// estructurado de "VII. Reporte de accidentes" (`_acc`). Comparte solo el
-// Sí/No `_acc.hubo_accidentes` (misma pregunta), pero el relato es propio.
+// Informe general de accidentes (bloque breve, dentro de la Sección I
+// unificada, documento oficial 2026-2027): TEXTO LIBRE independiente del
+// detalle estructurado de "VI. Reporte de accidentes" (`_acc`). Comparte
+// solo el Sí/No `_acc.hubo_accidentes` (misma pregunta), pero el relato
+// es propio.
 let _accGeneral = '';
 
 // ── Globals ETAPA 4 ──────────────────────────────────────────────────────────
@@ -235,6 +241,7 @@ async function init() {
 function renderCartilla(r) {
     const { rodeo, perfil, cartilla, jurados } = r;
     _jurados = Array.isArray(jurados) ? jurados : [];
+    _rodeoActual = rodeo || null;
     _estado     = cartilla ? cartilla.estado : 'nueva';
     _cartillaId = cartilla ? cartilla.id     : null;
     const ya    = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
@@ -335,14 +342,25 @@ function renderCartilla(r) {
     html += `<div class="bloque">
         <div class="bloque-header">I. Identificación del Rodeo</div>
         <div class="bloque-body">
+            <!-- Temporada — 100% AUTOMÁTICA (4ª revisión, punto 1): EN VIVO desde
+                 rodeos.temporada_id -> temporadas.nombre (mismo fallback que ya usa
+                 el backend al crear la cartilla: año de la fecha si el rodeo no
+                 tiene temporada asignada). Nunca editable por el Delegado; no se
+                 pide una segunda copia — se lee directo del objeto rodeo,
+                 disponible desde el primer GET aunque la cartilla todavía no exista. -->
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
-                    <label class="form-label">Temporada <span class="req">*</span></label>
-                    <input type="text" id="f-temporada" class="form-control" placeholder="Ej: 2026" value="${sanitizar(fld('temporada'))}" ${ya ? 'readonly' : ''}>
+                    <label class="form-label">Temporada</label>
+                    <input type="text" class="form-control" readonly disabled value="${sanitizar(rodeo?.temporadas?.nombre || (rodeo?.fecha ? rodeo.fecha.slice(0,4) : '—'))}">
                 </div>
+                <!-- Fecha del Rodeo — 100% AUTOMÁTICA (5ª revisión, punto 1): mismo
+                     problema y misma corrección que Temporada — se leía desde
+                     cartilla.fecha_rodeo (vacía hasta el primer guardado) en vez de
+                     rodeo.fecha (disponible desde el primer GET). Nunca editable por
+                     el Delegado; no se pide una segunda copia. -->
                 <div>
-                    <label class="form-label">Fecha del Rodeo <span class="req">*</span></label>
-                    <input type="date" id="f-fecha_rodeo" class="form-control" value="${fld('fecha_rodeo')}" ${ya ? 'readonly' : ''}>
+                    <label class="form-label">Fecha del Rodeo</label>
+                    <input type="text" class="form-control" readonly disabled value="${rodeo?.fecha ? new Date(rodeo.fecha + 'T12:00:00').toLocaleDateString('es-CL') : '—'}">
                 </div>
             </div>
             <div class="campo-grid" style="margin-bottom:14px;">
@@ -385,14 +403,23 @@ function renderCartilla(r) {
                     <input type="text" class="form-control" readonly disabled value="${sanitizar(rodeo?.club || '—')}">
                 </div>
             </div>
-            <div style="margin-bottom:14px;">
-                <label class="form-label">Club y/o Asociación Organizador(a) del Rodeo <span class="req">*</span></label>
-                <input type="text" id="f-club_asociacion_organizador" class="form-control" value="${sanitizar(fld('club_asociacion_organizador'))}" ${ya ? 'readonly' : ''}>
-            </div>
+            <!-- "Club y/o Asociación Organizador(a) del Rodeo" (campo manual) se
+                 ELIMINÓ del formulario nuevo (4ª revisión, punto 2): ya se muestra
+                 arriba, en vivo, Asociación organizadora + Club organizador. La
+                 columna club_asociacion_organizador NO se elimina ni se borra su
+                 valor histórico — simplemente deja de capturarse/mostrarse acá; ver
+                 vista Administrador y PDF para cómo se preserva en cartillas
+                 antiguas que ya tengan ese dato guardado. -->
+            <!-- Tipo de Rodeo — 100% AUTOMÁTICO (4ª revisión, punto 3): EN VIVO
+                 desde rodeo.tipo_rodeo_nombre ÚNICAMENTE (5ª revisión, punto 7:
+                 Tipo y Categoría son conceptos distintos en el sistema — NO se
+                 concatena categoria_rodeo_nombre acá; esa ya se muestra por
+                 separado en la tarjeta superior de la cartilla). Nunca editable
+                 por el Delegado; no se duplica en cartillas_delegado. -->
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
-                    <label class="form-label">Tipo de Rodeo <span class="req">*</span></label>
-                    <input type="text" id="f-tipo_rodeo" class="form-control" placeholder="Ej: Regional, Nacional" value="${sanitizar(fld('tipo_rodeo'))}" ${ya ? 'readonly' : ''}>
+                    <label class="form-label">Tipo de Rodeo</label>
+                    <input type="text" class="form-control" readonly disabled value="${sanitizar(rodeo?.tipo_rodeo_nombre || '—')}">
                 </div>
                 <div>
                     <label class="form-label">Público</label>
@@ -400,7 +427,7 @@ function renderCartilla(r) {
                 </div>
             </div>
             <!-- Veterinario/técnico — vista previa de solo lectura de los
-                 mismos datos que se completan en la Sección IX (Anexo 02):
+                 mismos datos que se completan en la Sección VIII (Anexo 02):
                  objeto _vet, con nombre/telefono/correo. No se duplica la
                  captura del dato (única edición posible es en la Sección
                  IX), solo se muestra tempranamente en el encabezado. -->
@@ -417,7 +444,7 @@ function renderCartilla(r) {
             <div style="margin-bottom:14px;">
                 <label class="form-label">Correo veterinario/técnico</label>
                 <input type="text" id="hdr-vet-correo" class="form-control" readonly disabled value="${sanitizar(_vet.correo || '—')}">
-                <p style="font-size:11px;color:#888;margin:4px 0 0;">Complete o corrija estos datos en <a href="#sec-veterinario" onclick="document.getElementById('sec-veterinario')?.scrollIntoView({behavior:'smooth'});return false;">Sección IX — Anexo 02 (Informe del veterinario del Rodeo)</a>.</p>
+                <p style="font-size:11px;color:#888;margin:4px 0 0;">Complete o corrija estos datos en <a href="#sec-veterinario" onclick="document.getElementById('sec-veterinario')?.scrollIntoView({behavior:'smooth'});return false;">Sección VIII — Anexo 02 (Informe del veterinario del Rodeo)</a>.</p>
             </div>
             <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
             <div style="margin-bottom:14px;">
@@ -465,19 +492,23 @@ function renderCartilla(r) {
     </div>`;
 
     // ═══ ORDEN DEFINITIVO (2ª revisión, nuevo formato 2026-2027) — I.Series,
-    // Reemplazo de Jinetes, II.Ganado, III.Desempeño, IV.Disciplina,
-    // V.Recinto, VI.Colleras, VII.Accidentes, VIII.Anexo01, IX.Anexo02,
-    // X.Anexo03, XI.Anexo04, XII.Reclamos. Mismas estructuras/datos de
-    // siempre — solo cambia el ORDEN VISUAL y, en Series/Ganado, se separan
-    // en dos bloques que ya existían mezclados en uno (misma tabla de datos
-    // `_seriesGanado`, nunca duplicada). ═══
+    // Reemplazo de Jinetes, Faltas por serie, Informe de accidentes,
+    // II.Desempeño, III.Disciplina, IV.Recinto, V.Colleras, VI.Accidentes,
+    // VII.Anexo01, VIII.Anexo02, IX.Anexo03, X.Anexo04, XI.Reclamos.
+    // ═══ 4ª REVISIÓN: Se UNIFICA "I. Series" + "II. Ganado" en una sola
+    // sección (misma fuente `_seriesGanado`, sin cambiar el formato de
+    // almacenamiento) para que el Delegado seleccione cada Serie UNA sola
+    // vez y complete colleras/vueltas/ganado desde el mismo lugar. Se
+    // renumeran las secciones posteriores en consecuencia. ═══
 
-    // ─── SECCIÓN I — Información de las Series del Rodeo ─────────────────────
-    // (colleras + vueltas en apiñadero, por serie y por animal — antes vivía
-    // mezclada dentro del mismo bloque que "Informe del Ganado").
+    // ─── SECCIÓN I — Información de las Series e Informe del Ganado
+    // (UNIFICADA, 4ª revisión) — una Serie = un solo registro con la
+    // información completa de sus 4 animales (colleras, vueltas, tipo,
+    // peso, corrido, repetido, calidad) + fuera de peso reglamentario de
+    // la serie. Misma fuente `_seriesGanado`, nunca duplicada. ──────────
     html += `<div class="bloque" id="bloque-series">
-        <div class="bloque-header">I. Información de las Series del Rodeo</div>
-        <div class="bloque-body" id="series-cuerpo"></div>
+        <div class="bloque-header">I. Información de las Series e Informe del Ganado</div>
+        <div class="bloque-body" id="series-ganado-cuerpo"></div>
     </div>`;
 
     // ─── Reemplazo de Jinetes — inmediatamente después de Series (sin
@@ -489,11 +520,11 @@ function renderCartilla(r) {
 
     // ─── Faltas o sanciones disciplinarias en cada serie — bloque breve,
     // por serie (señale el artículo correspondiente). Reutiliza los mismos
-    // objetos de `_seriesGanado` (Sección I), agregando 3 propiedades por
-    // serie (`falta_hubo`/`falta_articulo`/`falta_obs`) — no es una
-    // estructura nueva independiente, solo se extiende la ya existente.
-    // NO reemplaza ni se confunde con "IV. Informe de disciplina", que
-    // registra el detalle completo de los hechos con los infractores.
+    // objetos de `_seriesGanado` (Sección I unificada), agregando 3
+    // propiedades por serie (`falta_hubo`/`falta_articulo`/`falta_obs`) —
+    // no es una estructura nueva independiente ni pide elegir la serie de
+    // nuevo. NO reemplaza ni se confunde con "III. Informe de disciplina",
+    // que registra el detalle completo de los hechos con los infractores.
     html += `<div class="bloque">
         <div class="bloque-header">Faltas o sanciones disciplinarias en cada serie</div>
         <div class="bloque-body" id="sec-faltas-serie"></div>
@@ -501,79 +532,71 @@ function renderCartilla(r) {
 
     // ─── Informe de accidentes (mención general) — bloque breve que
     // reutiliza los mismos campos `hubo_accidentes`/`observaciones_generales`
-    // del objeto `_acc` (Sección VII), sin duplicar la información. El
+    // del objeto `_acc` (Sección VI), sin duplicar la información. El
     // detalle completo (médico, contacto, accidentados) permanece
-    // exclusivamente en "VII. Reporte de accidentes".
+    // exclusivamente en "VI. Reporte de accidentes".
     html += `<div class="bloque">
         <div class="bloque-header">Informe de accidentes</div>
         <div class="bloque-body" id="sec-accidentes-breve"></div>
     </div>`;
 
-    // ─── SECCIÓN II — Informe del Ganado ──────────────────────────────────────
-    // (calidad + fuera de peso, por serie y por animal — misma fuente
-    // `_seriesGanado` que la Sección I, nunca se pide reescribir el nombre).
-    html += `<div class="bloque" id="bloque-ganado">
-        <div class="bloque-header">II. Informe del Ganado</div>
-        <div class="bloque-body" id="ganado-cuerpo"></div>
-    </div>`;
-
-    // ─── SECCIÓN III — Desempeño del Jurado ───────────────────────────────────
+    // ─── SECCIÓN II — Desempeño del Jurado ───────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">III. Informe sobre el desempeño del Jurado</div>
+        <div class="bloque-header">II. Informe sobre el desempeño del Jurado</div>
         <div class="bloque-body" id="sec-desempeno"></div>
     </div>`;
 
-    // ─── SECCIÓN IV — Disciplina ───────────────────────────────────────────────
+    // ─── SECCIÓN III — Disciplina ───────────────────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">IV. Informe de disciplina</div>
+        <div class="bloque-header">III. Informe de disciplina</div>
         <div class="bloque-body" id="sec-disciplina"></div>
     </div>`;
 
-    // ─── SECCIÓN V — Recinto Deportivo (5 campos del documento nuevo) ────────
+    // ─── SECCIÓN IV — Recinto Deportivo (5 campos del documento nuevo) ────────
     html += `<div class="bloque">
-        <div class="bloque-header">V. Informe sobre el estado del recinto deportivo</div>
+        <div class="bloque-header">IV. Informe sobre el estado del recinto deportivo</div>
         <div class="bloque-body" id="sec-recinto"></div>
     </div>`;
 
-    // ─── SECCIÓN VI — Colleras Invitadas ───────────────────────────────────────
+    // ─── SECCIÓN V — Colleras Invitadas ───────────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VI. Informe de colleras invitadas</div>
+        <div class="bloque-header">V. Informe de colleras invitadas</div>
         <div class="bloque-body" id="sec-colleras"></div>
     </div>`;
 
-    // ─── SECCIÓN VII — Reporte de Accidentes ──────────────────────────────────
+    // ─── SECCIÓN VI — Reporte de Accidentes ──────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VII. Reporte de accidentes</div>
+        <div class="bloque-header">VI. Reporte de accidentes</div>
         <div class="bloque-body" id="sec-accidentes"></div>
     </div>`;
 
-    // ─── SECCIÓN VIII — Anexo 01: Bienestar Animal ────────────────────────────
+    // ─── SECCIÓN VII — Anexo 01: Bienestar Animal ────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VIII. Anexo 01 — Informe condiciones de Bienestar Animal</div>
+        <div class="bloque-header">VII. Anexo 01 — Informe condiciones de Bienestar Animal</div>
         <div class="bloque-body" id="sec-bienestar"></div>
     </div>`;
 
-    // ─── SECCIÓN IX — Anexo 02: Veterinario del Rodeo ─────────────────────────
+    // ─── SECCIÓN VIII — Anexo 02: Veterinario del Rodeo ─────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">IX. Anexo 02 — Informe del veterinario del Rodeo</div>
+        <div class="bloque-header">VIII. Anexo 02 — Informe del veterinario del Rodeo</div>
         <div class="bloque-body" id="sec-veterinario"></div>
     </div>`;
 
-    // ─── SECCIÓN X — Anexo 03: Comentarios generales ──────────────────────────
+    // ─── SECCIÓN IX — Anexo 03: Comentarios generales ──────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">X. Anexo 03 — Comentarios generales</div>
+        <div class="bloque-header">IX. Anexo 03 — Comentarios generales</div>
         <div class="bloque-body" id="sec-comentarios"></div>
     </div>`;
 
-    // ─── SECCIÓN XI — Anexo 04: Antecedentes disciplinarios complementarios ──
+    // ─── SECCIÓN X — Anexo 04: Antecedentes disciplinarios complementarios ──
     html += `<div class="bloque">
-        <div class="bloque-header">XI. Anexo 04 — Antecedentes disciplinarios complementarios</div>
+        <div class="bloque-header">X. Anexo 04 — Antecedentes disciplinarios complementarios</div>
         <div class="bloque-body" id="sec-antecedentes"></div>
     </div>`;
 
-    // ─── SECCIÓN XII — Reclamos o sugerencias ─────────────────────────────────
+    // ─── SECCIÓN XI — Reclamos o sugerencias ─────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">XII. Reclamos o sugerencias</div>
+        <div class="bloque-header">XI. Reclamos o sugerencias</div>
         <div class="bloque-body" id="sec-reclamos"></div>
     </div>`;
 
@@ -586,8 +609,7 @@ function renderCartilla(r) {
     document.getElementById('cuerpo-cartilla').innerHTML = html;
 
     // Renderizar secciones dinámicas
-    renderBloqueSeries(ya);
-    renderBloqueGanado(ya);
+    renderSeriesGanadoUnificado(ya);
     _initSecciones3(cartilla);
     _initSecciones4(cartilla);
 
@@ -603,185 +625,288 @@ function renderCartilla(r) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN I — SERIES DEL RODEO  /  SECCIÓN II — GANADO
-// (misma fuente de datos `_seriesGanado`; se muestran en dos bloques
-// separados por pedido explícito de la 2ª revisión — antes vivían juntos
-// bajo un solo encabezado sin distinguir "Series" de "Ganado")
+// SECCIÓN I — INFORMACIÓN DE LAS SERIES E INFORME DEL GANADO (UNIFICADA)
+// 4ª revisión: se unifican "I. Series" + "II. Ganado" en una sola sección —
+// misma fuente de datos `_seriesGanado`, SIN cambiar el formato de
+// almacenamiento (mismas claves c{n}n/c{n}g/v{n}v/v{n}t/v{n}p/q{n}c/q{n}r/
+// q{n}k/fp_tot/fp_baj/fp_sob por serie, n=1..4). El Delegado selecciona la
+// Serie UNA sola vez y completa colleras/vueltas/ganado desde el mismo
+// lugar — ya no hay que volver a elegir la misma Serie en otra tabla.
 // ═════════════════════════════════════════════════════════════════════════════
 
-function renderBloqueSeries(ya) {
-    const cont = document.getElementById('series-cuerpo');
+// Catálogo oficial de Series — específico de Cartilla de Delegado (no es un
+// catálogo global del sistema; no se tocó ningún catálogo compartido con
+// otros módulos). Lista EXACTA pedida en la 4ª revisión.
+const CATALOGO_SERIES_DELEGADO = [
+    '10a. Libre', '1ra. Libre', '1ra. Libre A', '1ra. Libre B',
+    '2a. Libre', '2a. Libre A', '2a. Libre B',
+    '3ra. Libre', '3ra. Libre A', '3ra. Libre B',
+    '4a. Libre', '5a. Libre', '6a. Libre', '7a. Libre', '8a. Libre', '9a. Libre',
+    'Caballos', 'Criaderos', 'Expositores', 'Menores', 'Mixta', 'Mixta-Criaderos', 'Potros', 'Yeguas'
+];
+
+// Los 8 campos base por animal (n = 1..4), mismas claves ya usadas en
+// `_seriesGanado` desde el formato anterior — no se agrega ni renombra
+// ningún campo del JSON. El "Ganado bajo/sobrepeso reglamentario" y su "%"
+// (5ª revisión, punto 2) se agregan APARTE en renderSerieCard, porque el
+// porcentaje es un valor CALCULADO de solo lectura, no un campo editable
+// más de esta lista genérica.
+function camposAnimal(n) {
+    return [
+        { key: `c${n}n`, label: 'N° colleras', type: 'number' },
+        { key: `c${n}g`, label: '# Ganado', type: 'text' },
+        { key: `v${n}v`, label: 'N° vueltas apiñadero', type: 'number' },
+        { key: `v${n}t`, label: 'Tipo de ganado', type: 'text' },
+        { key: `v${n}p`, label: 'Peso del ganado (kg)', type: 'number' },
+        { key: `q${n}c`, label: 'Ganado corrido', type: 'number' },
+        { key: `q${n}r`, label: 'Ganado repetido', type: 'number' },
+        { key: `q${n}k`, label: 'Calidad del ganado', type: 'select', opts: ['Bueno', 'Regular', 'Malo'] }
+    ];
+}
+
+// Ganado bajo/sobrepeso reglamentario — 5ª revisión, punto 2: el documento
+// oficial lo pide POR CADA ANIMAL (Art. 242), no solo como total de la
+// Serie. Se agrega de forma ADITIVA (`f1c`..`f4c`, nuevas claves dentro del
+// mismo objeto de serie, mismo patrón c{n}n/v{n}v/q{n}c ya usado) SIN tocar
+// ni renombrar los campos históricos `fp_tot`/`fp_baj`/`fp_sob` (que eran
+// SOLO por Serie, ver punto 3). El "% bajo/sobrepeso reglamentario" NUNCA
+// se guarda — se calcula siempre desde "# Ganado" (c{n}g) y esta cantidad,
+// con la MISMA fórmula probada en cartillaDelegadoGanado.test.js (backend).
+function calcularPctFueraPesoAnimal(cantidadGanado, cantidadFueraPeso) {
+    const ganado = parseFloat(cantidadGanado);
+    if (isNaN(ganado) || ganado <= 0) return null; // evita división por cero — nunca 0% falso
+    const fuera = parseFloat(cantidadFueraPeso);
+    const fueraValida = (!isNaN(fuera) && fuera >= 0) ? fuera : 0;
+    return Math.round((fueraValida / ganado) * 1000) / 10;
+}
+
+// Una Serie usa el formato ANTIGUO (fuera de peso solo a nivel de Serie,
+// campos fp_tot/fp_baj/fp_sob) si ya tiene datos guardados ahí Y todavía no
+// tiene ningún dato en el formato nuevo por animal (f1c..f4c) — detección
+// por presencia de datos, igual que Recinto Deportivo, sin bandera de
+// versión ni migración. Una Serie nueva (sin datos) usa el formato nuevo.
+function esFueraPesoLegacy(s) {
+    const tieneLegacy = !!(s.fp_tot || s.fp_baj || s.fp_sob);
+    const tieneNuevo  = !!(s.f1c || s.f2c || s.f3c || s.f4c);
+    return tieneLegacy && !tieneNuevo;
+}
+
+// Total de "# Ganado" y total "fuera de peso" de una Serie, sin importar el
+// formato (legacy o por animal) — usado para el resumen por Serie y para
+// el total general de la sección.
+function totalFueraPesoSerie(s) {
+    if (esFueraPesoLegacy(s)) {
+        return { tot: numPos(s.fp_tot), fuera: numPos(s.fp_baj) + numPos(s.fp_sob) };
+    }
+    let tot = 0, fuera = 0;
+    [1, 2, 3, 4].forEach(n => { tot += numPos(s['c' + n + 'g']); fuera += numPos(s['f' + n + 'c']); });
+    return { tot, fuera };
+}
+
+// Refresca el "%" de solo lectura de un animal apenas cambia "# Ganado" o
+// "Ganado bajo/sobrepeso reglamentario" — actualización puntual (no
+// re-renderiza toda la tarjeta) para no perder el foco mientras se escribe.
+function actualizarPctAnimal(i, n) {
+    const s = _seriesGanado[i];
+    if (!s) return;
+    const pct = calcularPctFueraPesoAnimal(s['c' + n + 'g'], s['f' + n + 'c']);
+    const el = document.getElementById('pct_animal_' + i + '_' + n);
+    if (el) el.value = pct !== null ? pct.toFixed(1) + '%' : '—';
+    actualizarAvisoFueraPeso();
+}
+
+function renderSeriesGanadoUnificado(ya) {
+    const cont = document.getElementById('series-ganado-cuerpo');
     if (!cont) return;
     const haySeries = _seriesGanado.length > 0;
-    const btnAgregar = ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSerie()">+ Agregar serie</button>`;
     let html = '';
     if (!haySeries && !ya) {
         html += `<div class="alerta alerta-info" style="font-size:13px;margin-bottom:12px;">No hay series registradas. Haga clic en <strong>+ Agregar serie</strong> para comenzar.</div>`;
     }
-    html += `<div class="sub-titulo-ganado">1. Colleras participantes y ganado utilizado</div>`;
-    html += `<div class="tabla-wrap-ganado">${renderTablaColleras(ya)}</div>`;
-    html += `<div class="sub-titulo-ganado">2. Vueltas en apiñadero, tipo y peso del ganado</div>`;
-    html += `<div class="tabla-wrap-ganado">${renderTablaVueltas(ya)}</div>`;
-    html += btnAgregar;
-    cont.innerHTML = html;
-}
-
-function renderBloqueGanado(ya) {
-    const cont = document.getElementById('ganado-cuerpo');
-    if (!cont) return;
-    let html = '';
-    html += `<div class="sub-titulo-ganado">1. Calidad del ganado</div>`;
-    html += `<div class="tabla-wrap-ganado">${renderTablaCalidad(ya)}</div>`;
-    html += `<div class="sub-titulo-ganado">2. Ganado fuera de peso</div>`;
-    html += `<p style="font-size:12px;color:#666;margin:-4px 0 10px;">En caso de existir ganado fuera de peso en cualquier serie, indique la cantidad y el porcentaje (Art. 242).</p>`;
     html += `<div id="aviso-ganado-bajo-peso" class="aviso-ganado-bajo-peso">⚠ Ha ingresado datos de ganado fuera de peso. Se recomienda marcar "Sí" en "¿Incluye informe de ganado bajo peso?" (Sección I).</div>`;
-    html += `<div class="tabla-wrap-ganado">${renderTablaFueraPeso(ya)}</div>`;
+    html += _seriesGanado.map((s, i) => renderSerieCard(s, i, ya)).join('');
+    if (!ya) {
+        html += `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSerie()">+ Agregar serie</button>`;
+    }
+    if (haySeries) {
+        html += renderResumenFueraPeso();
+    }
     cont.innerHTML = html;
-    calcTotalesB4();
+    actualizarAvisoFueraPeso();
 }
 
-function renderTablaColleras(ya) {
-    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
-    const dis = ya ? 'disabled' : '';
-    let rows = _seriesGanado.map(function(s, i) {
-        return `<tr>
-            <td class="td-serie"><input list="series-sugeridas" class="inp-ganado inp-ganado-serie" value="${esc(s.nombre||'')}" ${dis} oninput="setCelda(${i},'nombre',this.value)" placeholder="Nombre serie"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c1n||'')}" ${dis} oninput="setCelda(${i},'c1n',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.c1g||'')}" ${dis} oninput="setCelda(${i},'c1g',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c2n||'')}" ${dis} oninput="setCelda(${i},'c2n',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.c2g||'')}" ${dis} oninput="setCelda(${i},'c2g',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c3n||'')}" ${dis} oninput="setCelda(${i},'c3n',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.c3g||'')}" ${dis} oninput="setCelda(${i},'c3g',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.c4n||'')}" ${dis} oninput="setCelda(${i},'c4n',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.c4g||'')}" ${dis} oninput="setCelda(${i},'c4g',this.value)" placeholder="Tipo"></td>
-            ${ya ? '' : `<td style="text-align:center;"><button class="btn-quitar-serie" onclick="quitarSerie(${i})" title="Quitar serie">✕</button></td>`}
-        </tr>`;
+function optsSerieSelect(idxActual) {
+    const usadas = new Set(_seriesGanado.filter((s, j) => j !== idxActual).map(s => s.nombre).filter(Boolean));
+    const valorActual = _seriesGanado[idxActual]?.nombre || '';
+    let opts = `<option value="">— Seleccionar serie —</option>`;
+    // Valor histórico que ya no está en el catálogo oficial (cartilla
+    // antigua) — se conserva visible y seleccionado, nunca se pierde.
+    if (valorActual && !CATALOGO_SERIES_DELEGADO.includes(valorActual)) {
+        opts += `<option value="${esc(valorActual)}" selected>${esc(valorActual)} (histórica)</option>`;
+    }
+    opts += CATALOGO_SERIES_DELEGADO.map(v => {
+        const usada = usadas.has(v) && v !== valorActual;
+        return `<option value="${esc(v)}" ${v === valorActual ? 'selected' : ''} ${usada ? 'disabled' : ''}>${esc(v)}${usada ? ' (ya agregada)' : ''}</option>`;
     }).join('');
-    return `<table class="tbl-ganado"><thead><tr>
-        <th class="th-serie" rowspan="2">Serie</th>
-        <th class="th-grupo" colspan="2">1er animal</th><th class="th-grupo" colspan="2">2do animal</th>
-        <th class="th-grupo" colspan="2">3er animal</th><th class="th-grupo" colspan="2">4to animal</th>
-        ${ya ? '' : '<th rowspan="2" style="background:#0f2347;width:36px;"></th>'}
-    </tr><tr>
-        <th>N° colleras</th><th>Ganado</th><th>N° colleras</th><th>Ganado</th>
-        <th>N° colleras</th><th>Ganado</th><th>N° colleras</th><th>Ganado</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    return opts;
 }
 
-function renderTablaVueltas(ya) {
-    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
+function renderSerieCard(s, i, ya) {
     const dis = ya ? 'disabled' : '';
-    let rows = _seriesGanado.map(function(s, i) {
-        return `<tr>
-            <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v1v||'')}" ${dis} oninput="setCelda(${i},'v1v',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.v1t||'')}" ${dis} oninput="setCelda(${i},'v1t',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v1p||'')}" ${dis} oninput="setCelda(${i},'v1p',this.value)" placeholder="kg"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v2v||'')}" ${dis} oninput="setCelda(${i},'v2v',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.v2t||'')}" ${dis} oninput="setCelda(${i},'v2t',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v2p||'')}" ${dis} oninput="setCelda(${i},'v2p',this.value)" placeholder="kg"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v3v||'')}" ${dis} oninput="setCelda(${i},'v3v',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.v3t||'')}" ${dis} oninput="setCelda(${i},'v3t',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v3p||'')}" ${dis} oninput="setCelda(${i},'v3p',this.value)" placeholder="kg"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v4v||'')}" ${dis} oninput="setCelda(${i},'v4v',this.value)"></td>
-            <td><input class="inp-ganado" value="${esc(s.v4t||'')}" ${dis} oninput="setCelda(${i},'v4t',this.value)" placeholder="Tipo"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.v4p||'')}" ${dis} oninput="setCelda(${i},'v4p',this.value)" placeholder="kg"></td>
-        </tr>`;
+    const legacy = esFueraPesoLegacy(s);
+    const animales = [1, 2, 3, 4].map(n => {
+        const campos = camposAnimal(n).map(c => {
+            const val = esc(s[c.key] || '');
+            const esNumeroGanado = c.key === `c${n}g`;
+            const refrescoExtra = esNumeroGanado ? `;actualizarPctAnimal(${i},${n})` : '';
+            if (c.type === 'select') {
+                const opts = c.opts.map(o => `<option value="${o}" ${s[c.key] === o ? 'selected' : ''}>${o}</option>`).join('');
+                return `<div class="animal-field"><label>${c.label}</label><select ${dis} onchange="setCelda(${i},'${c.key}',this.value)${refrescoExtra}"><option value="">—</option>${opts}</select></div>`;
+            }
+            const tipoInput = c.type === 'number' ? 'type="number" min="0"' : 'type="text"';
+            return `<div class="animal-field"><label>${c.label}</label><input ${tipoInput} value="${val}" ${dis} oninput="setCelda(${i},'${c.key}',this.value)${refrescoExtra}"></div>`;
+        }).join('');
+
+        // Ganado bajo/sobrepeso reglamentario + "%" — SOLO en formato nuevo
+        // (5ª revisión, punto 2): por cada animal, no solo total de la
+        // Serie. En formato legacy no se muestra acá (esos datos viven a
+        // nivel de Serie, ver bloque `bloqueFueraPesoSerie` más abajo).
+        let bloqueFueraPesoAnimal = '';
+        if (!legacy) {
+            const pct = calcularPctFueraPesoAnimal(s['c' + n + 'g'], s['f' + n + 'c']);
+            bloqueFueraPesoAnimal = `
+            <div class="animal-field"><label>Ganado bajo/sobrepeso reglamentario</label><input type="number" min="0" value="${esc(s['f' + n + 'c'] || '')}" ${dis} oninput="setCelda(${i},'f${n}c',this.value);actualizarPctAnimal(${i},${n})"></div>
+            <div class="animal-field"><label>% bajo/sobrepeso reglamentario</label><input type="text" readonly disabled id="pct_animal_${i}_${n}" value="${pct !== null ? pct.toFixed(1) + '%' : '—'}"></div>`;
+        }
+
+        const nombreAnimal = ['1er Animal', '2do Animal', '3er Animal', '4to Animal'][n - 1];
+        return `<div class="animal-card">
+            <div class="animal-card-header">${nombreAnimal}</div>
+            <div class="animal-card-body">${campos}${bloqueFueraPesoAnimal}</div>
+        </div>`;
     }).join('');
-    return `<table class="tbl-ganado"><thead><tr>
-        <th class="th-serie" rowspan="2">Serie</th>
-        <th class="th-grupo" colspan="3">1er animal</th><th class="th-grupo" colspan="3">2do animal</th>
-        <th class="th-grupo" colspan="3">3er animal</th><th class="th-grupo" colspan="3">4to animal</th>
-    </tr><tr>
-        <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th><th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
-        <th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th><th>Vueltas</th><th>Tipo</th><th>Peso (kg)</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
-}
 
-function renderTablaCalidad(ya) {
-    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
-    const dis = ya ? 'disabled' : '';
-    const optsCal = (v) => ['Bueno','Regular','Malo'].map(o => `<option value="${o}" ${v === o ? 'selected' : ''}>${o}</option>`).join('');
-    let rows = _seriesGanado.map(function(s, i) {
-        return `<tr>
-            <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q1c||'')}" ${dis} oninput="setCelda(${i},'q1c',this.value)"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q1r||'')}" ${dis} oninput="setCelda(${i},'q1r',this.value)"></td>
-            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q1k',this.value)"><option value="">—</option>${optsCal(s.q1k)}</select></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q2c||'')}" ${dis} oninput="setCelda(${i},'q2c',this.value)"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q2r||'')}" ${dis} oninput="setCelda(${i},'q2r',this.value)"></td>
-            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q2k',this.value)"><option value="">—</option>${optsCal(s.q2k)}</select></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q3c||'')}" ${dis} oninput="setCelda(${i},'q3c',this.value)"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q3r||'')}" ${dis} oninput="setCelda(${i},'q3r',this.value)"></td>
-            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q3k',this.value)"><option value="">—</option>${optsCal(s.q3k)}</select></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q4c||'')}" ${dis} oninput="setCelda(${i},'q4c',this.value)"></td>
-            <td><input type="number" min="0" class="inp-ganado" value="${esc(s.q4r||'')}" ${dis} oninput="setCelda(${i},'q4r',this.value)"></td>
-            <td><select class="sel-ganado" ${dis} onchange="setCelda(${i},'q4k',this.value)"><option value="">—</option>${optsCal(s.q4k)}</select></td>
-        </tr>`;
-    }).join('');
-    return `<table class="tbl-ganado"><thead><tr>
-        <th class="th-serie" rowspan="2">Serie</th>
-        <th class="th-grupo" colspan="3">1er animal</th><th class="th-grupo" colspan="3">2do animal</th>
-        <th class="th-grupo" colspan="3">3er animal</th><th class="th-grupo" colspan="3">4to animal</th>
-    </tr><tr>
-        <th>Corrido</th><th>Repetido</th><th>Calidad</th><th>Corrido</th><th>Repetido</th><th>Calidad</th>
-        <th>Corrido</th><th>Repetido</th><th>Calidad</th><th>Corrido</th><th>Repetido</th><th>Calidad</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-function renderTablaFueraPeso(ya) {
-    if (_seriesGanado.length === 0) return '<p style="font-size:12px;color:#888;font-style:italic;">Sin series registradas.</p>';
-    const dis = ya ? 'disabled' : '';
-    let rows = _seriesGanado.map(function(s, i) {
+    // Bloque de fuera de peso a nivel de Serie: formato ANTIGUO (editable,
+    // 3 campos compartidos) se conserva intacto para cartillas que ya lo
+    // usaban; formato NUEVO muestra un RESUMEN de solo lectura (suma de los
+    // 4 animales) — nunca sustituye los datos individuales por animal.
+    let bloqueFueraPesoSerie;
+    if (legacy) {
         const tot = numPos(s.fp_tot), baj = numPos(s.fp_baj), sob = numPos(s.fp_sob);
-        const fuer = baj + sob, pct = tot > 0 ? ((fuer/tot)*100).toFixed(1) : '—';
-        return `<tr>
-            <td class="td-serie" style="font-size:12px;padding:4px 8px;background:#eaf0f8;">${esc(s.nombre||'—')}</td>
-            <td><input type="number" min="0" class="inp-ganado" id="fp_tot_${i}" value="${esc(s.fp_tot||'')}" ${dis} oninput="setCelda(${i},'fp_tot',this.value);calcTotalesB4()"></td>
-            <td><input type="number" min="0" class="inp-ganado" id="fp_baj_${i}" value="${esc(s.fp_baj||'')}" ${dis} oninput="setCelda(${i},'fp_baj',this.value);calcTotalesB4()"></td>
-            <td><input type="number" min="0" class="inp-ganado" id="fp_sob_${i}" value="${esc(s.fp_sob||'')}" ${dis} oninput="setCelda(${i},'fp_sob',this.value);calcTotalesB4()"></td>
-            <td class="td-calc" id="fp_fuer_${i}">${fuer > 0 ? fuer : '—'}</td>
-            <td class="td-calc" id="fp_pct_${i}">${pct !== '—' ? pct+'%' : '—'}</td>
-        </tr>`;
-    }).join('');
-    return `<table class="tbl-ganado"><thead><tr>
-        <th class="th-serie">Serie</th><th>Total animales utilizados</th><th>Ganado bajo peso</th>
-        <th>Ganado sobre peso</th><th>Total fuera de peso</th><th>% fuera de peso</th>
-    </tr></thead><tbody>${rows}</tbody>
-    <tfoot><tr>
-        <td class="td-total">TOTAL</td>
-        <td class="td-total" id="fp-total-tot">—</td><td class="td-total" id="fp-total-baj">—</td>
-        <td class="td-total" id="fp-total-sob">—</td><td class="td-total" id="fp-total-fuer">—</td>
-        <td class="td-total-calc" id="fp-total-pct">—</td>
-    </tr></tfoot></table>`;
+        const fuer = baj + sob, pct = tot > 0 ? ((fuer / tot) * 100).toFixed(1) : null;
+        bloqueFueraPesoSerie = `<div class="serie-fuera-peso">
+                <div class="sub-titulo-ganado">Ganado fuera de peso reglamentario (Art. 242) — formato anterior, por Serie</div>
+                <p style="font-size:11px;color:#888;font-style:italic;margin:0 0 8px;">Esta Serie fue registrada con el formato anterior (total por Serie). Las Series nuevas registran el fuera de peso por cada animal.</p>
+                <div class="campo-grid">
+                    <div><label class="form-label">Total animales utilizados</label><input type="number" min="0" class="form-control" id="fp_tot_${i}" value="${esc(s.fp_tot||'')}" ${dis} oninput="setCelda(${i},'fp_tot',this.value);actualizarAvisoFueraPeso()"></div>
+                    <div><label class="form-label">Ganado bajo peso</label><input type="number" min="0" class="form-control" id="fp_baj_${i}" value="${esc(s.fp_baj||'')}" ${dis} oninput="setCelda(${i},'fp_baj',this.value);actualizarAvisoFueraPeso()"></div>
+                    <div><label class="form-label">Ganado sobre peso</label><input type="number" min="0" class="form-control" id="fp_sob_${i}" value="${esc(s.fp_sob||'')}" ${dis} oninput="setCelda(${i},'fp_sob',this.value);actualizarAvisoFueraPeso()"></div>
+                </div>
+                <p style="font-size:12px;color:#555;margin:0;">Total fuera de peso: <strong id="fp_fuer_${i}">${fuer > 0 ? fuer : '—'}</strong> &nbsp;|&nbsp; % fuera de peso: <strong id="fp_pct_${i}">${pct !== null ? pct + '%' : '—'}</strong></p>
+            </div>`;
+    } else {
+        const { tot, fuera } = totalFueraPesoSerie(s);
+        const pct = calcularPctFueraPesoAnimal(tot, fuera);
+        bloqueFueraPesoSerie = `<div class="serie-fuera-peso">
+                <div class="sub-titulo-ganado">Resumen — Ganado fuera de peso reglamentario (suma de los 4 animales)</div>
+                <p id="resumen_fp_serie_${i}" style="font-size:12px;color:#555;margin:0;">Total ganado: <strong>${tot || '—'}</strong> &nbsp;|&nbsp; Total fuera de peso: <strong>${fuera > 0 ? fuera : '—'}</strong> &nbsp;|&nbsp; % fuera de peso: <strong>${pct !== null ? pct.toFixed(1) + '%' : '—'}</strong></p>
+            </div>`;
+    }
+
+    return `<div class="serie-card">
+        <div class="serie-card-header">
+            <label>Serie</label>
+            <select ${dis} onchange="setSerieNombre(${i},this.value)">${optsSerieSelect(i)}</select>
+            ${ya ? '' : `<button class="btn-quitar-serie" style="color:#fff;" onclick="quitarSerie(${i})" title="Quitar serie">✕ Quitar serie</button>`}
+        </div>
+        <div class="serie-card-body">
+            <div class="animales-grid">${animales}</div>
+            ${bloqueFueraPesoSerie}
+        </div>
+    </div>`;
 }
 
-function calcTotalesB4() {
-    let sumTot=0, sumBaj=0, sumSob=0, hayDatos=false;
-    _seriesGanado.forEach(function(s,i){
-        const tot=numPos(s.fp_tot), baj=numPos(s.fp_baj), sob=numPos(s.fp_sob), fuer=baj+sob;
-        const pct=tot>0?((fuer/tot)*100).toFixed(1):null;
-        sumTot+=tot; sumBaj+=baj; sumSob+=sob;
-        if(tot>0||baj>0||sob>0) hayDatos=true;
-        const elFuer=document.getElementById('fp_fuer_'+i), elPct=document.getElementById('fp_pct_'+i);
-        if(elFuer) elFuer.textContent = fuer>0?fuer:'—';
-        if(elPct)  elPct.textContent  = pct!==null?pct+'%':'—';
+function renderResumenFueraPeso() {
+    return `<div class="serie-card"><div class="serie-card-body" style="background:#fff;">
+        <div class="sub-titulo-ganado">Totales generales de la sección (todas las series)</div>
+        <p style="font-size:13px;color:#333;margin:0;">
+            Total ganado: <strong id="fp-total-tot">—</strong> &nbsp;|&nbsp;
+            Total fuera de peso (bajo/sobrepeso): <strong id="fp-total-fuer">—</strong> &nbsp;|&nbsp;
+            % fuera de peso: <strong id="fp-total-pct">—</strong>
+        </p>
+    </div></div>`;
+}
+
+function actualizarAvisoFueraPeso() {
+    let sumTot = 0, sumFuera = 0, hayDatos = false;
+    _seriesGanado.forEach(function(s, i) {
+        const { tot, fuera } = totalFueraPesoSerie(s);
+        sumTot += tot; sumFuera += fuera;
+        if (tot > 0 || fuera > 0) hayDatos = true;
+        if (esFueraPesoLegacy(s)) {
+            const pct = tot > 0 ? ((fuera / tot) * 100).toFixed(1) : null;
+            const elFuer = document.getElementById('fp_fuer_' + i), elPct = document.getElementById('fp_pct_' + i);
+            if (elFuer) elFuer.textContent = fuera > 0 ? fuera : '—';
+            if (elPct)  elPct.textContent  = pct !== null ? pct + '%' : '—';
+        } else {
+            const elResumen = document.getElementById('resumen_fp_serie_' + i);
+            if (elResumen) {
+                const pct = calcularPctFueraPesoAnimal(tot, fuera);
+                elResumen.innerHTML = `Total ganado: <strong>${tot || '—'}</strong> &nbsp;|&nbsp; Total fuera de peso: <strong>${fuera > 0 ? fuera : '—'}</strong> &nbsp;|&nbsp; % fuera de peso: <strong>${pct !== null ? pct.toFixed(1) + '%' : '—'}</strong>`;
+            }
+        }
     });
-    const sumFuer=sumBaj+sumSob, pctTotal=sumTot>0?((sumFuer/sumTot)*100).toFixed(1):null;
-    setText('fp-total-tot', hayDatos?sumTot:'—');
-    setText('fp-total-baj', hayDatos?sumBaj:'—');
-    setText('fp-total-sob', hayDatos?sumSob:'—');
-    setText('fp-total-fuer',hayDatos?sumFuer:'—');
-    setText('fp-total-pct', pctTotal!==null?pctTotal+'%':'—');
+    const pctTotal = calcularPctFueraPesoAnimal(sumTot, sumFuera);
+    setText('fp-total-tot', hayDatos ? sumTot : '—');
+    setText('fp-total-fuer', hayDatos ? sumFuera : '—');
+    setText('fp-total-pct', pctTotal !== null ? pctTotal.toFixed(1) + '%' : '—');
     const aviso=document.getElementById('aviso-ganado-bajo-peso');
-    if(aviso){ const radioSi=document.getElementById('r-ganado-bajo-si'); aviso.style.display=((sumBaj>0||sumSob>0)&&!(radioSi&&radioSi.checked))?'block':'none'; }
+    if(aviso){ const radioSi=document.getElementById('r-ganado-bajo-si'); aviso.style.display=(sumFuera>0&&!(radioSi&&radioSi.checked))?'block':'none'; }
 }
 
 function setText(id,val){ const el=document.getElementById(id); if(el) el.textContent=val; }
 function numPos(v){ const n=parseFloat(v); return(!isNaN(n)&&n>=0)?n:0; }
 function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function agregarSerie(){ _seriesGanado.push({nombre:''}); renderBloqueSeries(false); renderBloqueGanado(false); }
-function quitarSerie(idx){ if(!confirm('¿Quitar esta serie de todas las tablas?')) return; _seriesGanado.splice(idx,1); renderBloqueSeries(false); renderBloqueGanado(false); }
+
+function agregarSerie(){
+    _seriesGanado.push({nombre:''});
+    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    renderSeriesGanadoUnificado(ya);
+    renderFaltasPorSerie(ya);
+}
+
+// Evita series duplicadas (punto 11 de la 4ª revisión): las opciones ya
+// usadas por OTRA serie quedan `disabled` en el <select> (ver
+// optsSerieSelect), y esta validación es una segunda barrera defensiva.
+function setSerieNombre(idx, valor) {
+    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    if (valor && _seriesGanado.some((s, j) => j !== idx && s.nombre === valor)) {
+        alert('Esta serie ya fue agregada a la cartilla. Seleccione una serie distinta.');
+        renderSeriesGanadoUnificado(ya); // revierte el <select> a su valor anterior
+        return;
+    }
+    if (_seriesGanado[idx]) _seriesGanado[idx].nombre = valor;
+    renderSeriesGanadoUnificado(ya); // refresca disabled= de las demás series
+    renderFaltasPorSerie(ya);
+}
+
+function serieTieneDatos(s) {
+    return Object.keys(s).some(k => k !== 'nombre' && s[k] !== '' && s[k] !== null && s[k] !== undefined);
+}
+
+function quitarSerie(idx){
+    const s = _seriesGanado[idx];
+    if (!s) return;
+    const msg = serieTieneDatos(s)
+        ? 'Esta serie contiene información. ¿Seguro que deseas eliminarla?'
+        : '¿Quitar esta serie?';
+    if (!confirm(msg)) return;
+    _seriesGanado.splice(idx, 1);
+    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    renderSeriesGanadoUnificado(ya);
+    renderFaltasPorSerie(ya);
+}
+
 function setCelda(idx,campo,valor){ if(_seriesGanado[idx]) _seriesGanado[idx][campo]=valor; }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1221,7 +1346,7 @@ function quitarReemplazo(idx) {
 // Sección I y Sección II). Reutiliza los mismos objetos de `_seriesGanado`
 // (Sección I), agregando por serie `falta_hubo`/`falta_articulo`/`falta_obs`
 // — no crea una estructura nueva independiente. NO reemplaza ni se confunde
-// con "IV. Informe de disciplina" (`_disc`), que registra el detalle
+// con "III. Informe de disciplina" (`_disc`), que registra el detalle
 // completo de los hechos e individualiza a los infractores.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1381,11 +1506,12 @@ function renderSeccionAccidentes(ya) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// INFORME GENERAL DE ACCIDENTES (bloque breve entre Sección I y Sección II).
-// El relato ("Informe de accidentes") es TEXTO LIBRE INDEPENDIENTE, guardado
-// en `respuestas_json.informe_accidentes_general` — nunca se confunde ni se
-// sustituye por el detalle estructurado de "VII. Reporte de accidentes"
-// (`_acc`: médico, contacto, accidentados). Solo el Sí/No `hubo_accidentes`
+// INFORME GENERAL DE ACCIDENTES (bloque breve dentro de la Sección I
+// unificada). El relato ("Informe de accidentes") es TEXTO LIBRE
+// INDEPENDIENTE, guardado en `respuestas_json.informe_accidentes_general`
+// — nunca se confunde ni se sustituye por el detalle estructurado de
+// "VI. Reporte de accidentes" (`_acc`: médico, contacto, accidentados).
+// Solo el Sí/No `hubo_accidentes`
 // se comparte con esa sección (misma pregunta), sincronizado en ambos
 // sentidos al cambiar cualquiera de los dos toggles.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1409,7 +1535,7 @@ function renderAccidentesBreve(ya) {
     <div style="margin-bottom:6px;">
         <label class="form-label">Informe de accidentes</label>
         <textarea class="form-control" rows="5" ${ro} oninput="setAccGeneralTexto(this.value)" placeholder="Relate los accidentes ocurridos durante el Rodeo (leves o graves)...">${esc(_accGeneral)}</textarea>
-        <p style="font-size:11px;color:#888;margin:4px 0 0;">El detalle formal (médico, contacto y datos del accidentado) se registra en la Sección VII — Reporte de accidentes.</p>
+        <p style="font-size:11px;color:#888;margin:4px 0 0;">El detalle formal (médico, contacto y datos del accidentado) se registra en la Sección VI — Reporte de accidentes.</p>
     </div>`;
 }
 
@@ -1715,7 +1841,7 @@ function setVetCampo(campo, valor) { _vet[campo] = valor; }
 
 // Refresca la vista previa de solo lectura del encabezado (Sección I) con
 // los valores actuales de _vet.nombre/telefono/correo, apenas se editan en
-// la Sección IX — Anexo 02 (única fuente de captura, sin duplicar datos).
+// la Sección VIII — Anexo 02 (única fuente de captura, sin duplicar datos).
 function refrescarVetHeader() {
     const n = document.getElementById('hdr-vet-nombre');
     const t = document.getElementById('hdr-vet-telefono');
@@ -2000,14 +2126,13 @@ function recolectarDatos() {
         reclamos_sugerencias: _recs
     });
     return {
-        temporada:                           document.getElementById('f-temporada')?.value.trim() || null,
-        fecha_rodeo:                         document.getElementById('f-fecha_rodeo')?.value || null,
+        // Temporada / Fecha del Rodeo / Tipo de Rodeo / Club-Asociación
+        // (campo manual antiguo): ya NO se envían — son automáticos/en vivo
+        // desde `rodeo` (4ª y 5ª revisión), no hay input en el DOM que leer.
         delegado_nombre:                     document.getElementById('f-delegado_nombre')?.value.trim() || null,
         delegado_telefono:                   document.getElementById('f-delegado_telefono')?.value.trim() || null,
         secretario_jurado:                   document.getElementById('f-secretario_jurado')?.value.trim() || null,
         secretario_numero_socio:             document.getElementById('f-secretario_numero_socio')?.value.trim() || null,
-        club_asociacion_organizador:         document.getElementById('f-club_asociacion_organizador')?.value.trim() || null,
-        tipo_rodeo:                          document.getElementById('f-tipo_rodeo')?.value.trim() || null,
         publico_serie_campeones:             document.getElementById('f-publico_serie_campeones')?.value ? parseInt(document.getElementById('f-publico_serie_campeones').value) : null,
         serie_campeones_dos_vueltas:         radio('serie_campeones_dos_vueltas'),
         incluye_informe_disciplinario:       radio('incluye_informe_disciplinario'),
@@ -2053,17 +2178,26 @@ async function enviarCartilla() {
 
     const datos = recolectarDatos();
 
-    // Campos obligatorios sección I
+    // Campos obligatorios sección I — Temporada/Fecha del Rodeo/Tipo de
+    // Rodeo ya no se piden acá: son automáticos en vivo desde `rodeo` (4ª y
+    // 5ª revisión); se validan directamente contra `_rodeoActual`, no
+    // contra `datos`.
     const requeridos = {
-        temporada:                   'Temporada',
-        fecha_rodeo:                 'Fecha del Rodeo',
-        delegado_nombre:             'Delegado Oficial',
-        club_asociacion_organizador: 'Club / Asociación organizador',
-        tipo_rodeo:                  'Tipo de Rodeo'
+        delegado_nombre:  'Delegado Oficial'
     };
     const faltantes = Object.entries(requeridos)
         .filter(([k]) => !datos[k] || String(datos[k]).trim() === '')
         .map(([, label]) => label);
+
+    if (!(_rodeoActual?.temporadas?.nombre || _rodeoActual?.fecha)) {
+        faltantes.push('Temporada (revise que el Rodeo tenga temporada asignada)');
+    }
+    if (!_rodeoActual?.fecha) {
+        faltantes.push('Fecha del Rodeo (revise el Rodeo en Administración)');
+    }
+    if (!_rodeoActual?.tipo_rodeo_nombre) {
+        faltantes.push('Tipo de Rodeo (revise el Rodeo en Administración)');
+    }
 
     if (faltantes.length > 0) {
         mostrarToast('Complete los campos obligatorios: ' + faltantes.join(', '), 'advertencia');
