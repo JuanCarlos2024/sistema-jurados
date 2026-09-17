@@ -3,6 +3,7 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const ExcelJS = require('exceljs');
 const { soloNoAnalista, soloNoComisionTecnica } = require('../../middleware/auth');
+const { obtenerMatrizParticipacion } = require('../../services/matrizParticipacion');
 
 /**
  * Obtiene el mes y año actual en zona horaria de Chile (America/Santiago).
@@ -505,157 +506,28 @@ router.get('/desempeno', async (req, res) => {
 });
 
 // GET /api/admin/dashboard/salidas-matriz
-// Devuelve lista de personas con sus rodeos detallados en el período
+// Devuelve lista de personas con sus rodeos detallados en el período, con
+// los 3 indicadores (Casos/Comisión/Delegado) y sus benchmarks. Lógica
+// centralizada en services/matrizParticipacion.js — el endpoint Excel usa
+// exactamente la misma función, para que pantalla y exportación nunca
+// diverjan.
 router.get('/salidas-matriz', async (req, res) => {
     const hoy = fechaChile();
-    const año  = req.query.año  ? parseInt(req.query.año)  : hoy.año;
-    const mes  = req.query.mes  ? parseInt(req.query.mes)  : null;
-    const desdeParam  = req.query.desde     || null;
-    const hastaParam  = req.query.hasta     || null;
-    const tipoFiltro  = req.query.tipo      || null;  // jurado | delegado_rentado
-    const catFiltro   = req.query.categoria || null;  // A | B | C | DR
-    const search      = req.query.search    || null;
-    const order       = req.query.order     || 'salidas_desc';
-
-    const inicio = desdeParam || (mes
-        ? `${año}-${String(mes).padStart(2,'0')}-01`
-        : `${año}-01-01`);
-    const fin = hastaParam || (mes
-        ? new Date(año, mes, 0).toISOString().split('T')[0]
-        : `${año}-12-31`);
+    const año = req.query.año ? parseInt(req.query.año) : hoy.año;
+    const mes = req.query.mes ? parseInt(req.query.mes) : null;
 
     try {
-        // Asignaciones del período con datos completos del rodeo
-        let qAsigs = supabase
-            .from('asignaciones')
-            .select('id, usuario_pagado_id, tipo_persona, estado_designacion, rodeos!inner(id, fecha, club, asociacion, tipo_rodeo_nombre)')
-            .eq('estado', 'activo')
-            .gte('rodeos.fecha', inicio)
-            .lte('rodeos.fecha', fin);
-
-        if (tipoFiltro) qAsigs = qAsigs.eq('tipo_persona', tipoFiltro);
-
-        const { data: asigs, error: errAsigs } = await qAsigs;
-        if (errAsigs) throw new Error('asignaciones: ' + errAsigs.message);
-
-        const todasAsigs = asigs || [];
-        const asigIds    = todasAsigs.map(a => a.id);
-
-        // Usuarios activos
-        let qUsuarios = supabase
-            .from('usuarios_pagados')
-            .select('id, nombre_completo, categoria, tipo_persona')
-            .eq('activo', true);
-        if (tipoFiltro) qUsuarios = qUsuarios.eq('tipo_persona', tipoFiltro);
-        const { data: usuarios } = await qUsuarios;
-
-        const usuariosMap = {};
-        (usuarios || []).forEach(u => { usuariosMap[u.id] = u; });
-
-        // Notas por asignación
-        const notasMap = {};
-        if (asigIds.length > 0) {
-            const { data: notas } = await supabase
-                .from('notas_rodeo')
-                .select('asignacion_id, nota')
-                .in('asignacion_id', asigIds);
-            (notas || []).forEach(n => { notasMap[n.asignacion_id] = parseFloat(n.nota); });
-        }
-
-        // Agrupar salidas por usuario
-        const perUser = {};
-        todasAsigs.forEach(a => {
-            if (a.estado_designacion === 'rechazado') return;
-            const u = usuariosMap[a.usuario_pagado_id];
-            if (!u) return;
-            const uid = a.usuario_pagado_id;
-            const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-            if (catFiltro && cat !== catFiltro) return;
-            if (!perUser[uid]) {
-                perUser[uid] = { usuario_pagado_id: uid, nombre: u.nombre_completo, tipo_persona: u.tipo_persona, categoria: cat, rodeos: [], _notas: [] };
-            }
-            const rodeo = a.rodeos || {};
-            const nota  = notasMap[a.id] ?? null;
-            perUser[uid].rodeos.push({
-                rodeo_id:     rodeo.id,
-                asignacion_id: a.id,
-                fecha:        rodeo.fecha,
-                club:         rodeo.club,
-                asociacion:   rodeo.asociacion,
-                tipo_rodeo:   rodeo.tipo_rodeo_nombre,
-                nota
-            });
-            if (nota !== null) perUser[uid]._notas.push(nota);
+        const resultado = await obtenerMatrizParticipacion({
+            año, mes,
+            desde: req.query.desde || null,
+            hasta: req.query.hasta || null,
+            tipo:  req.query.tipo  || null,
+            categoria: req.query.categoria || null,
+            search: req.query.search || null,
+            order: req.query.order || 'salidas_desc',
+            incluirSinSalidas: req.query.incluir_sin_salidas !== '0'
         });
-
-        // Construir array de personas
-        let personas = Object.values(perUser).map(p => {
-            const notas_count    = p._notas.length;
-            const sin_nota_count = p.rodeos.length - notas_count;
-            const promedio_nota  = notas_count > 0
-                ? Math.round((p._notas.reduce((s, n) => s + n, 0) / notas_count) * 100) / 100
-                : null;
-            p.rodeos.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
-            const ultima_salida = p.rodeos.length > 0 ? p.rodeos[p.rodeos.length - 1].fecha : null;
-            return {
-                usuario_pagado_id: p.usuario_pagado_id,
-                nombre:           p.nombre,
-                tipo_persona:     p.tipo_persona,
-                categoria:        p.categoria,
-                total_salidas:    p.rodeos.length,
-                promedio_nota,
-                notas_count,
-                sin_nota_count,
-                ultima_salida,
-                rodeos: p.rodeos
-            };
-        });
-
-        // Filtro por nombre
-        if (search) {
-            const s = search.toLowerCase();
-            personas = personas.filter(p => p.nombre.toLowerCase().includes(s));
-        }
-
-        // Incluir personas sin salidas en el período (activado por defecto)
-        const incluirSinSalidas = req.query.incluir_sin_salidas !== '0';
-        if (incluirSinSalidas) {
-            const usersConSalida = new Set(Object.keys(perUser));
-            Object.values(usuariosMap).forEach(u => {
-                if (usersConSalida.has(String(u.id))) return;
-                const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-                if (catFiltro && cat !== catFiltro) return;
-                if (search && !u.nombre_completo.toLowerCase().includes(search.toLowerCase())) return;
-                personas.push({
-                    usuario_pagado_id: u.id,
-                    nombre:           u.nombre_completo,
-                    tipo_persona:     u.tipo_persona,
-                    categoria:        cat,
-                    total_salidas:    0,
-                    promedio_nota:    null,
-                    notas_count:      0,
-                    sin_nota_count:   0,
-                    ultima_salida:    null,
-                    rodeos:           [],
-                    sin_salidas:      true
-                });
-            });
-        }
-
-        // Ordenamiento
-        const ORDERS = {
-            salidas_desc:  (a, b) => b.total_salidas - a.total_salidas,
-            salidas_asc:   (a, b) => a.total_salidas - b.total_salidas,
-            nota_desc:     (a, b) => (b.promedio_nota ?? -1)  - (a.promedio_nota ?? -1),
-            nota_asc:      (a, b) => (a.promedio_nota ?? 999) - (b.promedio_nota ?? 999),
-            nombre_az:     (a, b) => a.nombre.localeCompare(b.nombre),
-            cat_az:        (a, b) => a.categoria.localeCompare(b.categoria),
-            ultima_desc:   (a, b) => (b.ultima_salida || '').localeCompare(a.ultima_salida || ''),
-            ultima_asc:    (a, b) => (a.ultima_salida || '').localeCompare(b.ultima_salida || '')
-        };
-        personas.sort(ORDERS[order] || ORDERS.salidas_desc);
-
-        res.json({ periodo: { año, mes, inicio, fin }, personas });
+        res.json(resultado);
 
     } catch (err) {
         console.error('[DASHBOARD/SALIDAS-MATRIZ]', err.message);
@@ -664,136 +536,55 @@ router.get('/salidas-matriz', async (req, res) => {
 });
 
 // GET /api/admin/dashboard/salidas-matriz/excel
-// Genera archivo .xlsx de la matriz de salidas (formato largo: una fila por persona×rodeo)
+// Genera archivo .xlsx de la matriz de salidas (formato largo: una fila por
+// persona×rodeo). Usa la MISMA lógica que el endpoint JSON (ver
+// services/matrizParticipacion.js) — nunca calcula nada por su cuenta, para
+// que la pantalla y la exportación jamás diverjan.
 router.get('/salidas-matriz/excel', async (req, res) => {
     const hoy = fechaChile();
-    const año  = req.query.año  ? parseInt(req.query.año)  : hoy.año;
-    const mes  = req.query.mes  ? parseInt(req.query.mes)  : null;
-    const desdeParam  = req.query.desde     || null;
-    const hastaParam  = req.query.hasta     || null;
-    const tipoFiltro  = req.query.tipo      || null;
-    const catFiltro   = req.query.categoria || null;
-    const search      = req.query.search    || null;
-    const order       = req.query.order     || 'salidas_desc';
-    const incluirSinSalidas = req.query.incluir_sin_salidas !== '0';
-
-    const inicio = desdeParam || (mes
-        ? `${año}-${String(mes).padStart(2,'0')}-01`
-        : `${año}-01-01`);
-    const fin = hastaParam || (mes
-        ? new Date(año, mes, 0).toISOString().split('T')[0]
-        : `${año}-12-31`);
+    const año = req.query.año ? parseInt(req.query.año) : hoy.año;
+    const mes = req.query.mes ? parseInt(req.query.mes) : null;
 
     try {
-        // Asignaciones del período
-        let qAsigs = supabase
-            .from('asignaciones')
-            .select('id, usuario_pagado_id, tipo_persona, estado_designacion, rodeos!inner(id, fecha, club, asociacion, tipo_rodeo_nombre)')
-            .eq('estado', 'activo')
-            .gte('rodeos.fecha', inicio)
-            .lte('rodeos.fecha', fin);
-        if (tipoFiltro) qAsigs = qAsigs.eq('tipo_persona', tipoFiltro);
-        const { data: asigs } = await qAsigs;
-        const todasAsigs = asigs || [];
-        const asigIds    = todasAsigs.map(a => a.id);
-
-        // Usuarios activos (incluye rut para el Excel)
-        let qUsuarios = supabase
-            .from('usuarios_pagados')
-            .select('id, nombre_completo, rut, categoria, tipo_persona')
-            .eq('activo', true);
-        if (tipoFiltro) qUsuarios = qUsuarios.eq('tipo_persona', tipoFiltro);
-        const { data: usuarios } = await qUsuarios;
-        const usuariosMap = {};
-        (usuarios || []).forEach(u => { usuariosMap[u.id] = u; });
-
-        // Notas por asignación
-        const notasMap = {};
-        if (asigIds.length > 0) {
-            const { data: notas } = await supabase
-                .from('notas_rodeo')
-                .select('asignacion_id, nota')
-                .in('asignacion_id', asigIds);
-            (notas || []).forEach(n => { notasMap[n.asignacion_id] = parseFloat(n.nota); });
-        }
-
-        // Agrupar salidas por usuario
-        const perUser = {};
-        todasAsigs.forEach(a => {
-            if (a.estado_designacion === 'rechazado') return;
-            const u = usuariosMap[a.usuario_pagado_id];
-            if (!u) return;
-            const uid = a.usuario_pagado_id;
-            const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-            if (catFiltro && cat !== catFiltro) return;
-            if (!perUser[uid]) {
-                perUser[uid] = { nombre: u.nombre_completo, rut: u.rut || '', tipo_persona: u.tipo_persona, categoria: cat, rodeos: [], _notas: [] };
-            }
-            const rodeo = a.rodeos || {};
-            const nota  = notasMap[a.id] ?? null;
-            perUser[uid].rodeos.push({ fecha: rodeo.fecha, club: rodeo.club, asociacion: rodeo.asociacion, tipo_rodeo: rodeo.tipo_rodeo_nombre, nota });
-            if (nota !== null) perUser[uid]._notas.push(nota);
+        const { periodo, personas } = await obtenerMatrizParticipacion({
+            año, mes,
+            desde: req.query.desde || null,
+            hasta: req.query.hasta || null,
+            tipo:  req.query.tipo  || null,
+            categoria: req.query.categoria || null,
+            search: req.query.search || null,
+            order: req.query.order || 'salidas_desc',
+            incluirSinSalidas: req.query.incluir_sin_salidas !== '0',
+            incluirRut: true
         });
-
-        // Construir personas con salidas
-        let personas = Object.values(perUser).map(p => {
-            const notas_count   = p._notas.length;
-            const promedio_nota = notas_count > 0
-                ? Math.round((p._notas.reduce((s, n) => s + n, 0) / notas_count) * 100) / 100
-                : null;
-            p.rodeos.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
-            return { nombre: p.nombre, rut: p.rut, tipo_persona: p.tipo_persona, categoria: p.categoria, total_salidas: p.rodeos.length, promedio_nota, rodeos: p.rodeos };
-        });
-
-        if (search) {
-            const s = search.toLowerCase();
-            personas = personas.filter(p => p.nombre.toLowerCase().includes(s));
-        }
-
-        // Sin salidas
-        if (incluirSinSalidas) {
-            const usersConSalida = new Set(Object.keys(perUser));
-            Object.values(usuariosMap).forEach(u => {
-                if (usersConSalida.has(String(u.id))) return;
-                const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-                if (catFiltro && cat !== catFiltro) return;
-                if (search && !u.nombre_completo.toLowerCase().includes(search.toLowerCase())) return;
-                personas.push({ nombre: u.nombre_completo, rut: u.rut || '', tipo_persona: u.tipo_persona, categoria: cat, total_salidas: 0, promedio_nota: null, rodeos: [] });
-            });
-        }
-
-        // Ordenamiento
-        const ORDERS = {
-            salidas_desc: (a, b) => b.total_salidas - a.total_salidas,
-            salidas_asc:  (a, b) => a.total_salidas - b.total_salidas,
-            nota_desc:    (a, b) => (b.promedio_nota ?? -1)  - (a.promedio_nota ?? -1),
-            nota_asc:     (a, b) => (a.promedio_nota ?? 999) - (b.promedio_nota ?? 999),
-            nombre_az:    (a, b) => a.nombre.localeCompare(b.nombre),
-            cat_az:       (a, b) => a.categoria.localeCompare(b.categoria)
-        };
-        personas.sort(ORDERS[order] || ORDERS.salidas_desc);
 
         // Generar Excel
         const TIPO_LBL = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
         const fmtFecha = f => f ? f.slice(8,10)+'/'+f.slice(5,7)+'/'+f.slice(0,4) : '';
+        const fmtProm  = (v, conNota, salidas) => v !== null ? `${v} (${conNota}/${salidas})` : 'Sin nota';
+        const fmtNota  = v => v !== null && v !== undefined ? v : '—';
 
         const workbook = new ExcelJS.Workbook();
         workbook.creator = 'Sistema de Jurados';
         const ws = workbook.addWorksheet('Matriz Salidas');
 
         ws.columns = [
-            { header: 'Persona',        key: 'persona',        width: 35 },
-            { header: 'RUT',            key: 'rut',            width: 14 },
-            { header: 'Tipo persona',   key: 'tipo',           width: 20 },
-            { header: 'Categoría',      key: 'categoria',      width: 12 },
-            { header: 'Total salidas',  key: 'total_salidas',  width: 14 },
-            { header: 'Promedio nota',  key: 'promedio_nota',  width: 15 },
-            { header: 'Fecha rodeo',    key: 'fecha',          width: 14 },
-            { header: 'Club',           key: 'club',           width: 28 },
-            { header: 'Asociación',     key: 'asociacion',     width: 28 },
-            { header: 'Tipo rodeo',     key: 'tipo_rodeo',     width: 28 },
-            { header: 'Nota',           key: 'nota',           width: 8  },
-            { header: 'Estado salida',  key: 'estado',         width: 16 },
+            { header: 'Persona',          key: 'persona',        width: 35 },
+            { header: 'RUT',              key: 'rut',            width: 14 },
+            { header: 'Tipo persona',     key: 'tipo',           width: 20 },
+            { header: 'Categoría',        key: 'categoria',      width: 12 },
+            { header: 'Total salidas',    key: 'total_salidas',  width: 14 },
+            { header: 'Prom. Casos',      key: 'prom_casos',     width: 18 },
+            { header: 'Prom. Comisión',   key: 'prom_comision',  width: 18 },
+            { header: 'Prom. Delegado',   key: 'prom_delegado',  width: 18 },
+            { header: 'Fecha rodeo',      key: 'fecha',          width: 14 },
+            { header: 'Club',             key: 'club',           width: 28 },
+            { header: 'Asociación',       key: 'asociacion',     width: 28 },
+            { header: 'Tipo rodeo',       key: 'tipo_rodeo',     width: 28 },
+            { header: 'Nota Casos',       key: 'nota_casos',     width: 12 },
+            { header: 'Nota Comisión',    key: 'nota_comision',  width: 12 },
+            { header: 'Nota Delegado',    key: 'nota_delegado',  width: 12 },
+            { header: 'Estado salida',    key: 'estado',         width: 16 },
         ];
 
         // Estilo encabezado
@@ -805,22 +596,27 @@ router.get('/salidas-matriz/excel', async (req, res) => {
 
         // Filas de datos (formato largo: una fila por persona×rodeo)
         personas.forEach(p => {
-            const tipo    = TIPO_LBL[p.tipo_persona] || p.tipo_persona;
-            const promStr = p.promedio_nota !== null ? p.promedio_nota : 'Sin nota';
+            const tipo = TIPO_LBL[p.tipo_persona] || p.tipo_persona;
+            const promCasos    = fmtProm(p.promedios.casos.promedio,    p.promedios.casos.con_nota,    p.total_salidas);
+            const promComision = fmtProm(p.promedios.comision.promedio, p.promedios.comision.con_nota, p.total_salidas);
+            const promDelegado = fmtProm(p.promedios.delegado.promedio, p.promedios.delegado.con_nota, p.total_salidas);
+
             if (p.rodeos.length === 0) {
                 const row = ws.addRow({
                     persona: p.nombre, rut: p.rut, tipo, categoria: p.categoria,
-                    total_salidas: 0, promedio_nota: 'Sin nota',
-                    fecha: 'Sin salida', club: '—', asociacion: '—', tipo_rodeo: '—', nota: '—', estado: 'Sin salidas'
+                    total_salidas: 0, prom_casos: 'Sin nota', prom_comision: 'Sin nota', prom_delegado: 'Sin nota',
+                    fecha: 'Sin salida', club: '—', asociacion: '—', tipo_rodeo: '—',
+                    nota_casos: '—', nota_comision: '—', nota_delegado: '—', estado: 'Sin salidas'
                 });
                 row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9E7' } };
             } else {
                 p.rodeos.forEach(r => {
                     ws.addRow({
                         persona: p.nombre, rut: p.rut, tipo, categoria: p.categoria,
-                        total_salidas: p.total_salidas, promedio_nota: promStr,
-                        fecha: fmtFecha(r.fecha), club: r.club || '—', asociacion: r.asociacion || '—',
-                        tipo_rodeo: r.tipo_rodeo || '—', nota: r.nota !== null ? r.nota : '—', estado: 'Activo'
+                        total_salidas: p.total_salidas, prom_casos: promCasos, prom_comision: promComision, prom_delegado: promDelegado,
+                        fecha: fmtFecha(r.fecha), club: r.club || '—', asociacion: r.asociacion || '—', tipo_rodeo: r.tipo_rodeo || '—',
+                        nota_casos: fmtNota(r.nota_casos), nota_comision: fmtNota(r.nota_comision), nota_delegado: fmtNota(r.nota_delegado),
+                        estado: 'Activo'
                     });
                 });
             }
@@ -831,7 +627,7 @@ router.get('/salidas-matriz/excel', async (req, res) => {
 
         // Resumen al final
         ws.addRow([]);
-        const resRow = ws.addRow([`Período: ${fmtFecha(inicio)} al ${fmtFecha(fin)} — Total personas: ${personas.length}`]);
+        const resRow = ws.addRow([`Período: ${fmtFecha(periodo.inicio)} al ${fmtFecha(periodo.fin)} — Total personas: ${personas.length}`]);
         resRow.getCell(1).font = { italic: true, color: { argb: 'FF666666' } };
 
         const fechaHoy = new Date().toISOString().slice(0,10).replace(/-/g,'');

@@ -192,8 +192,12 @@
                     <select id="mat-order" class="mat-sel">
                         <option value="salidas_desc">Más salidas primero</option>
                         <option value="salidas_asc">Menos salidas primero</option>
-                        <option value="nota_desc">Mejor promedio nota</option>
-                        <option value="nota_asc">Menor promedio nota</option>
+                        <option value="casos_desc">Mayor Prom. Casos</option>
+                        <option value="casos_asc">Menor Prom. Casos</option>
+                        <option value="comision_desc">Mayor Prom. Comisión</option>
+                        <option value="comision_asc">Menor Prom. Comisión</option>
+                        <option value="delegado_desc">Mayor Prom. Delegado</option>
+                        <option value="delegado_asc">Menor Prom. Delegado</option>
                         <option value="nombre_az">Nombre A-Z</option>
                         <option value="cat_az">Categoría A-B-C</option>
                         <option value="ultima_desc">Última salida más reciente</option>
@@ -366,8 +370,54 @@ function renderMatriz(d) {
         return f ? f.slice(8,10)+'/'+f.slice(5,7)+'/'+f.slice(0,4) : '—';
     }
     function colorNota(n) {
-        if (n === null) return '#aaa';
+        if (n === null || n === undefined) return '#aaa';
         return n >= 6 ? '#27ae60' : n >= 4.5 ? '#e67e22' : '#c0392b';
+    }
+    // Flecha/color/texto de la diferencia contra un benchmark — siempre se
+    // muestra el número junto al color (el color nunca es la única señal).
+    function flechaDiff(d) {
+        if (d === null || d === undefined || d === 0) return '';
+        return d > 0 ? '▲' : '▼';
+    }
+    function colorDiff(d) {
+        if (d === null || d === undefined || d === 0) return '#888';
+        return d > 0 ? '#27ae60' : '#c0392b';
+    }
+    function signoStr(d) {
+        if (d === null || d === undefined) return '';
+        if (d === 0) return '0.00';
+        return (d > 0 ? '+' : '') + d.toFixed(2);
+    }
+
+    // Celda compacta de un promedio (Casos/Comisión/Delegado) con sus dos
+    // comparaciones (Categoría y General). Si la persona no tiene nota
+    // propia para este indicador, se muestra "—" sin líneas de comparación
+    // (nada que comparar contra un valor inexistente).
+    function celdaPromedio(prom, categoriaLabel) {
+        if (prom.promedio === null) {
+            return `<div style="color:#aaa;font-size:12px;font-weight:600;">—</div>
+                <div style="font-size:9px;color:#ccc;">(${prom.con_nota}/${prom.total_salidas})</div>`;
+        }
+        const catLinea = prom.promedio_categoria !== null
+            ? `<div style="font-size:9px;color:${colorDiff(prom.diferencia_categoria)};white-space:nowrap;">Cat.${sanitizar(categoriaLabel)}: ${prom.promedio_categoria.toFixed(2)} ${flechaDiff(prom.diferencia_categoria)} ${signoStr(prom.diferencia_categoria)}</div>`
+            : `<div style="font-size:9px;color:#ccc;">Cat.${sanitizar(categoriaLabel)}: —</div>`;
+        const genLinea = prom.promedio_general !== null
+            ? `<div style="font-size:9px;color:${colorDiff(prom.diferencia_general)};white-space:nowrap;">General: ${prom.promedio_general.toFixed(2)} ${flechaDiff(prom.diferencia_general)} ${signoStr(prom.diferencia_general)}</div>`
+            : `<div style="font-size:9px;color:#ccc;">General: —</div>`;
+        return `<div style="font-weight:700;font-size:13px;color:${colorNota(prom.promedio)};">${prom.promedio.toFixed(2)}</div>
+            <div style="font-size:9px;color:#aaa;margin-bottom:2px;">(${prom.con_nota}/${prom.total_salidas})</div>
+            ${catLinea}
+            ${genLinea}`;
+    }
+
+    // Tres notas compactas dentro de la misma celda de "Notas" del rodeo —
+    // nunca 3 columnas nuevas por rodeo (pedido explícito).
+    function celdaNotasRodeo(r) {
+        const linea = (label, v) => {
+            const txt = (v !== null && v !== undefined) ? v.toFixed(1) : '—';
+            return `<div style="color:${colorNota(v)};white-space:nowrap;">${label} ${txt}</div>`;
+        };
+        return linea('Casos', r.nota_casos) + linea('Com.', r.nota_comision) + linea('Del.', r.nota_delegado);
     }
 
     // Encabezados
@@ -376,7 +426,9 @@ function renderMatriz(d) {
         <th rowspan="2" style="white-space:nowrap;padding:8px 10px;">Tipo</th>
         <th rowspan="2" style="text-align:center;padding:8px 8px;">Cat.</th>
         <th rowspan="2" style="text-align:right;white-space:nowrap;padding:8px 10px;">Salidas</th>
-        <th rowspan="2" style="text-align:right;white-space:nowrap;min-width:90px;padding:8px 10px;">Prom. Nota</th>`;
+        <th rowspan="2" style="text-align:center;white-space:nowrap;min-width:150px;padding:8px 10px;">Prom. Casos</th>
+        <th rowspan="2" style="text-align:center;white-space:nowrap;min-width:150px;padding:8px 10px;border-left:1px solid #d5dae0;">Prom. Comisión</th>
+        <th rowspan="2" style="text-align:center;white-space:nowrap;min-width:150px;padding:8px 10px;border-left:1px solid #d5dae0;">Prom. Delegado</th>`;
     for (let i = 1; i <= maxRodeos; i++) {
         thR1 += `<th colspan="2" style="text-align:center;font-size:10px;background:#edf2f7;color:#555;white-space:nowrap;border-left:1px solid #d5dae0;padding:6px 8px;">Rodeo ${i}</th>`;
     }
@@ -384,16 +436,15 @@ function renderMatriz(d) {
     let thR2 = '';
     for (let i = 1; i <= maxRodeos; i++) {
         thR2 += `<th style="font-size:10px;min-width:140px;border-left:1px solid #d5dae0;padding:5px 8px;">Detalle</th>
-                 <th style="font-size:10px;text-align:right;min-width:54px;padding:5px 8px;">Nota</th>`;
+                 <th style="font-size:10px;text-align:left;min-width:72px;padding:5px 8px;">Notas</th>`;
     }
 
     // Filas
     const filas = personas.map(p => {
         const col   = COLORES[p.categoria] || '#aaa';
-        const pNota = p.promedio_nota !== null
-            ? `<span style="font-weight:700;color:${colorNota(p.promedio_nota)};font-size:13px;">${p.promedio_nota.toFixed(2)}</span>`
-              + `<span style="font-size:10px;color:#aaa;"> (${p.notas_count}/${p.total_salidas})</span>`
-            : '<span style="color:#aaa;font-size:11px;">Sin nota</span>';
+        const prCasos    = celdaPromedio(p.promedios.casos, p.categoria);
+        const prComision = celdaPromedio(p.promedios.comision, p.categoria);
+        const prDelegado = celdaPromedio(p.promedios.delegado, p.categoria);
 
         let celdas = '';
         if (p.total_salidas === 0 && maxRodeos > 0) {
@@ -404,7 +455,6 @@ function renderMatriz(d) {
                 if (!r) {
                     celdas += `<td style="border-left:1px solid #e8ecf0;"></td><td></td>`;
                 } else {
-                    const notaStr = r.nota !== null ? r.nota.toFixed(1) : 'Sin nota';
                     celdas += `
                     <td style="font-size:10px;line-height:1.45;vertical-align:top;border-left:1px solid #e8ecf0;padding:5px 8px;min-width:140px;">
                         <div style="font-weight:600;color:#222;">${sanitizar(r.club || '—')}</div>
@@ -412,7 +462,7 @@ function renderMatriz(d) {
                         <div style="color:#999;font-size:9px;">${sanitizar(r.tipo_rodeo || '—')}</div>
                         <div style="color:#bbb;font-size:9px;">${fmtFechaCorta(r.fecha)}</div>
                     </td>
-                    <td style="font-size:11px;font-weight:700;color:${colorNota(r.nota)};text-align:right;vertical-align:top;padding:5px 8px;white-space:nowrap;">${notaStr}</td>`;
+                    <td style="font-size:10px;font-weight:700;vertical-align:top;padding:5px 8px;white-space:nowrap;">${celdaNotasRodeo(r)}</td>`;
                 }
             }
         }
@@ -427,7 +477,9 @@ function renderMatriz(d) {
                 <span style="background:${col}22;color:${col};border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">${p.categoria}</span>
             </td>
             <td style="text-align:right;font-weight:700;font-size:14px;color:var(--primario);padding:7px 10px;">${p.total_salidas}</td>
-            <td style="text-align:right;padding:7px 10px;">${pNota}</td>
+            <td style="text-align:center;line-height:1.5;padding:7px 10px;">${prCasos}</td>
+            <td style="text-align:center;line-height:1.5;padding:7px 10px;border-left:1px solid #f0f0f0;">${prComision}</td>
+            <td style="text-align:center;line-height:1.5;padding:7px 10px;border-left:1px solid #f0f0f0;">${prDelegado}</td>
             ${celdas}
         </tr>`;
     }).join('');
@@ -478,20 +530,27 @@ function exportarCSV() {
     const { personas, periodo } = _matrizData;
     const TIPO_LBL = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
     const fmt = f => f ? f.slice(8,10)+'/'+f.slice(5,7)+'/'+f.slice(0,4) : '';
+    const fmtProm = (prom) => prom.promedio !== null ? `${prom.promedio} (${prom.con_nota}/${prom.total_salidas})` : 'Sin nota';
 
-    const header = ['Persona','Tipo','Categoría','Total Salidas','Promedio Nota',
-                    'Notas Registradas','Sin Nota','Fecha Rodeo','Club','Asociación','Tipo Rodeo','Nota'];
+    const header = ['Persona','Tipo','Categoría','Total Salidas',
+                    'Prom. Casos','Prom. Comisión','Prom. Delegado',
+                    'Fecha Rodeo','Club','Asociación','Tipo Rodeo',
+                    'Nota Casos','Nota Comisión','Nota Delegado'];
     const rows = [header];
 
     personas.forEach(p => {
         const tipo = TIPO_LBL[p.tipo_persona] || p.tipo_persona;
+        const promCasos    = fmtProm(p.promedios.casos);
+        const promComision = fmtProm(p.promedios.comision);
+        const promDelegado = fmtProm(p.promedios.delegado);
         if (p.rodeos.length === 0) {
-            rows.push([p.nombre, tipo, p.categoria, 0, '', 0, 0, 'Sin salida', '—', '—', '—', '—']);
+            rows.push([p.nombre, tipo, p.categoria, 0, promCasos, promComision, promDelegado,
+                'Sin salida', '—', '—', '—', '—', '—', '—']);
         } else {
             p.rodeos.forEach(r => {
-                rows.push([p.nombre, tipo, p.categoria, p.total_salidas, p.promedio_nota ?? '',
-                    p.notas_count, p.sin_nota_count,
-                    fmt(r.fecha), r.club || '—', r.asociacion || '—', r.tipo_rodeo || '—', r.nota ?? '—']);
+                rows.push([p.nombre, tipo, p.categoria, p.total_salidas, promCasos, promComision, promDelegado,
+                    fmt(r.fecha), r.club || '—', r.asociacion || '—', r.tipo_rodeo || '—',
+                    r.nota_casos ?? '—', r.nota_comision ?? '—', r.nota_delegado ?? '—']);
             });
         }
     });
