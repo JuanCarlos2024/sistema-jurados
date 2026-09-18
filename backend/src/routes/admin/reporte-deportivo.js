@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
 const ExcelJS = require('exceljs');
+const { obtenerCollerasCompletas } = require('../../services/colleras-completas');
 
 const HEADER_STYLE = {
     font: { bold: true, color: { argb: 'FFFFFFFF' } },
@@ -805,6 +806,191 @@ router.get('/export-detalle', async (req, res) => {
         const fecha = new Date().toISOString().slice(0, 10);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="reporte_deportivo_detalle_${fecha}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Reporte Directorio — Hoja 1 "Reporte Deportivo" (20 columnas) + Hoja 2
+// "Colleras completas" (fuente externa en vivo). Endpoint independiente:
+// no modifica /export ni /export-detalle. Reutiliza obtenerDatos(), sin
+// queries nuevas para la Hoja 1. ────────────────────────────────────────
+const ROJO_FONT = { color: { argb: 'FFC0392B' }, bold: true };
+
+router.get('/export-directorio', async (req, res) => {
+    try {
+        // 1. Colleras Completas ANTES de construir el workbook: si la fuente
+        // externa falla, no se genera ningún archivo (nunca solo Hoja 1).
+        let colleras;
+        try {
+            colleras = await obtenerCollerasCompletas();
+        } catch (e) {
+            return res.status(502).json({
+                error: `No fue posible generar el Reporte Directorio porque la fuente externa de Colleras Completas no está disponible. (${e.message})`
+            });
+        }
+
+        const { data: filas } = await obtenerDatos(req.query, false);
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Sistema Jurados - Rodeo Chileno';
+        wb.created = new Date();
+
+        // ── Hoja 1: Reporte Deportivo (versión Directorio, 20 columnas) ──
+        const ws1 = wb.addWorksheet('Reporte Deportivo');
+        ws1.columns = [
+            { header: 'Fecha',                                      key: 'fecha',            width: 13 },
+            { header: 'Club',                                       key: 'club',             width: 26 },
+            { header: 'Asociación',                                 key: 'asociacion',       width: 20 },
+            { header: 'Tipo Rodeo',                                 key: 'tipo_rodeo',       width: 20 },
+            { header: 'Jurado(s)',                                  key: 'jurados',          width: 28 },
+            { header: 'Oficial 1er Lugar',                          key: 'oficial_1er',      width: 14, style: { numFmt: '@' } },
+            { header: 'Oficial 2do Lugar',                          key: 'oficial_2do',      width: 14, style: { numFmt: '@' } },
+            { header: 'Oficial 3er Lugar',                          key: 'oficial_3er',      width: 14, style: { numFmt: '@' } },
+            { header: 'Revisado 1er Lugar',                         key: 'revisado_1er',     width: 14, style: { numFmt: '@' } },
+            { header: 'Revisado 2do Lugar',                         key: 'revisado_2do',     width: 14, style: { numFmt: '@' } },
+            { header: 'Revisado 3er Lugar',                         key: 'revisado_3er',     width: 14, style: { numFmt: '@' } },
+            { header: 'Resultado Alterado',                         key: 'resultado_alterado', width: 15 },
+            { header: 'Descripción de lo observado',                key: 'descripcion_observado', width: 44 },
+            { header: 'Total Situaciones',                          key: 'total_situaciones', width: 15 },
+            { header: 'Serie Campeones - 2 Vueltas',                 key: 'serie_campeones',  width: 20 },
+            { header: 'Caseta Jurado',                               key: 'caseta_jurado',    width: 16 },
+            { header: 'Faltas Disciplinarias/Reglamentarias',        key: 'faltas',           width: 24 },
+            { header: 'Ganado Fuera del Peso Reglamentario',         key: 'ganado_fuera_peso', width: 24 },
+            { header: 'Movimiento a la Rienda',                      key: 'movimiento_rienda', width: 18 },
+            { header: 'Acciones Área Deportiva',                     key: 'acciones_area_deportiva', width: 44 },
+        ];
+
+        ws1.getRow(1).eachCell(cell => {
+            cell.font      = HEADER_STYLE.font;
+            cell.fill      = HEADER_STYLE.fill;
+            cell.alignment = HEADER_STYLE.alignment;
+            cell.border    = HEADER_STYLE.border;
+        });
+        ws1.getRow(1).height = 26;
+        ws1.views = [{ state: 'frozen', ySplit: 1 }];
+        ws1.autoFilter = { from: 'A1', to: 'T1' };
+
+        const WRAP_COLS = new Set(['descripcion_observado', 'acciones_area_deportiva']);
+
+        for (const f of filas) {
+            const casetaTxt = f.cartilla_caseta_adecuada === 'Sí' ? 'Cumple'
+                : f.cartilla_caseta_adecuada === 'No' ? 'No cumple' : '—';
+            const accionesTxt = (f.obs_admin || '').trim() || 'No aplica';
+
+            const row = ws1.addRow({
+                fecha:            fmtFecha(f.fecha),
+                club:             f.club,
+                asociacion:       f.asociacion,
+                tipo_rodeo:       f.tipo_rodeo,
+                jurados:          f.jurados,
+                oficial_1er:  f.puntaje_oficial_1er  ?? '',
+                oficial_2do:  f.puntaje_oficial_2do  ?? '',
+                oficial_3er:  f.puntaje_oficial_3er  ?? '',
+                revisado_1er: f.puntaje_analista_1er ?? '',
+                revisado_2do: f.puntaje_analista_2do ?? '',
+                revisado_3er: f.puntaje_analista_3er ?? '',
+                resultado_alterado: f.resultados_alterados ? 'Sí' : 'No',
+                descripcion_observado: f.comentario_resultados_alterados?.trim() || '—',
+                total_situaciones: f.c1_total + f.c2_total,
+                serie_campeones:   f.cartilla_serie_campeones_2_vueltas || '—',
+                caseta_jurado:     casetaTxt,
+                faltas:            f.cartilla_hubo_faltas || '—',
+                ganado_fuera_peso: f.cartilla_hubo_ganado_fuera_peso || '—',
+                movimiento_rienda: f.cartilla_hubo_movimiento_rienda || '—',
+                acciones_area_deportiva: accionesTxt,
+            });
+
+            row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+                const colKey = ws1.columns[colNum - 1]?.key;
+                cell.alignment = { vertical: 'top', wrapText: WRAP_COLS.has(colKey) };
+            });
+            row.height = 28;
+
+            // Reglas de color OBLIGATORIAS — solo la celda correspondiente,
+            // nunca la fila completa.
+            if (casetaTxt === 'No cumple')            row.getCell('caseta_jurado').font = ROJO_FONT;
+            if (f.cartilla_hubo_faltas === 'Sí')            row.getCell('faltas').font = ROJO_FONT;
+            if (f.cartilla_hubo_ganado_fuera_peso === 'Sí') row.getCell('ganado_fuera_peso').font = ROJO_FONT;
+        }
+
+        // ── Hoja 2: Colleras completas (fuente externa, en vivo, sin filtros) ──
+        const ws2 = wb.addWorksheet('Colleras completas');
+        ws2.columns = [
+            { width: 24 }, { width: 24 }, { width: 16 }, { width: 7 }, { width: 6 }, { width: 6 },
+            { width: 40 }, { width: 12 }, { width: 22 }, { width: 16 }
+        ];
+
+        const totalReal = colleras.filas.length;
+        const fechaHoy = fmtFecha(new Date().toISOString());
+        ws2.mergeCells(1, 1, 1, 10);
+        const tituloCell = ws2.getCell(1, 1);
+        tituloCell.value = `${totalReal} COLLERAS COMPLETAS AL ${fechaHoy}`;
+        tituloCell.font = { bold: true, size: 14, color: { argb: 'FF1e3a5f' } };
+        tituloCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        ws2.getRow(1).height = 26;
+
+        let r = 3;
+        const addResumenRow = (pares) => {
+            let col = 1;
+            for (const [label, val] of pares) {
+                const cLabel = ws2.getCell(r, col);
+                cLabel.value = label;
+                cLabel.font = { bold: true };
+                const cVal = ws2.getCell(r, col + 1);
+                cVal.value = (val !== null && val !== undefined) ? val : '—';
+                col += 2;
+            }
+            r++;
+        };
+        addResumenRow([['Total colleras completas:', colleras.resumen.totalCompletas]]);
+        addResumenRow([['Total zona norte:', colleras.resumen.zonaNorte], ['Colleras centro norte:', colleras.resumen.centroNorte]]);
+        addResumenRow([['Total zona centro:', colleras.resumen.zonaCentro], ['Colleras centro sur:', colleras.resumen.centroSur]]);
+        addResumenRow([['Total zona sur:', colleras.resumen.zonaSur]]);
+        r++; // fila en blanco
+
+        const headerRowNum = r;
+        const HEADERS_CC = ['CABALLO 1', 'CABALLO 2', 'SEXO (CRIADERO)', 'PTJ', 'R', 'C', 'JINETES', 'ZONA', 'ASOCIACIÓN', 'ZONA CLASIF.'];
+        HEADERS_CC.forEach((h, i) => { ws2.getCell(headerRowNum, i + 1).value = h; });
+        ws2.getRow(headerRowNum).eachCell(cell => {
+            cell.font      = HEADER_STYLE.font;
+            cell.fill      = HEADER_STYLE.fill;
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border    = HEADER_STYLE.border;
+        });
+        ws2.getRow(headerRowNum).height = 26;
+        ws2.views = [{ state: 'frozen', ySplit: headerRowNum }];
+        ws2.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: headerRowNum, column: 10 } };
+
+        const CELL_BORDER_CC = {
+            top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
+        };
+
+        r++;
+        for (const c of colleras.filas) {
+            const valores = [c.caballo1, c.caballo2, c.sexoCriadero, c.ptj, c.r, c.c, c.jinetes, c.zona, c.asociacion, c.zonaClasif];
+            const row = ws2.getRow(r);
+            row.values = valores;
+            row.eachCell({ includeEmpty: true }, cell => {
+                cell.alignment = { wrapText: true, vertical: 'top' };
+                cell.border = CELL_BORDER_CC;
+            });
+            const maxLineas = valores.reduce((max, v) => {
+                const n = (String(v ?? '').match(/\n/g) || []).length + 1;
+                return Math.max(max, n);
+            }, 1);
+            row.height = Math.max(15, maxLineas * 14);
+            r++;
+        }
+
+        const fecha = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="reporte_directorio_${fecha}.xlsx"`);
         await wb.xlsx.write(res);
         res.end();
     } catch (e) {

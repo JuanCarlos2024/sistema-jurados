@@ -95,7 +95,8 @@
                     <option value="no">Resultados alterados: No</option>
                 </select>
                 <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
-                <button class="btn btn-success btn-pequeño" onclick="exportarExcel()" id="btn-exportar" style="margin-left:auto;">Exportar Excel</button>
+                <button class="btn btn-outline btn-pequeño" onclick="exportarDirectorio()" id="btn-exportar-directorio" style="margin-left:auto;">Reporte Directorio</button>
+                <button class="btn btn-success btn-pequeño" onclick="exportarExcel()" id="btn-exportar">Exportar Excel</button>
                 <button class="btn btn-primario btn-pequeño" onclick="exportarExcelDetallado()" id="btn-exportar-det">Exportar Excel Detallado</button>
             </div>
 
@@ -326,6 +327,20 @@ function renderPaginacion(page, total, limit) {
     items.push(`<span style="font-size:13px;color:var(--gris);">Pág. ${page} de ${totalPag}</span>`);
     if (page < totalPag) items.push(`<button class="btn btn-secundario btn-pequeño" onclick="cargar(${page+1})">Siguiente →</button>`);
     el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;">${items.join('')}</div>`;
+}
+
+async function exportarDirectorio() {
+    const btn = document.getElementById('btn-exportar-directorio');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        const params = buildParams(1);
+        params.delete('page'); params.delete('limit');
+        await api.descargar('/admin/reporte-deportivo/export-directorio?' + params.toString(), `reporte_directorio_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar Reporte Directorio', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Reporte Directorio';
+    }
 }
 
 async function exportarExcel() {

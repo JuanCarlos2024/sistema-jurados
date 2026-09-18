@@ -868,8 +868,8 @@ function htmlDetalle(r) {
             <textarea id="dm-monitor" class="form-control" rows="3" placeholder="Comentario del monitor del rodeo...">${sanitizar(dm.comentario_monitor || '')}</textarea>
         </div>
         ${(esMonitor || esComisionRodeos) ? '' : `<div class="form-grupo" style="margin-bottom:14px;">
-            <label class="form-label">Obs. Jefe Deportivo</label>
-            <textarea id="dm-obs" class="form-control" rows="2" placeholder="Observación general del rodeo...">${sanitizar(r.observacion || '')}</textarea>
+            <label class="form-label">Obs. Jefe Deportivo / Acciones Área Deportiva</label>
+            <textarea id="dm-obs" class="form-control" rows="2" placeholder="Observaciones, gestiones o acciones realizadas por el Área Deportiva...">${sanitizar(r.observacion || '')}</textarea>
         </div>`}
         <button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarDatosMonitor('${r.id}')">Guardar datos del monitor</button>`;
     })()}
