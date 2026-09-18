@@ -813,11 +813,14 @@ router.get('/export-detalle', async (req, res) => {
     }
 });
 
-// ── Reporte Directorio — Hoja 1 "Reporte Deportivo" (20 columnas) + Hoja 2
+// ── Reporte Directorio — Hoja 1 "Reporte Deportivo" (14 columnas) + Hoja 2
 // "Colleras completas" (fuente externa en vivo). Endpoint independiente:
 // no modifica /export ni /export-detalle. Reutiliza obtenerDatos(), sin
 // queries nuevas para la Hoja 1. ────────────────────────────────────────
 const ROJO_FONT = { color: { argb: 'FFC0392B' }, bold: true };
+// Mismo tono ya usado en /export para resultados_alterados (ROJO_FILL) —
+// aquí se aplica a la fila completa del Reporte Directorio.
+const FILA_ALTERADA_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBD0' } };
 
 router.get('/export-directorio', async (req, res) => {
     try {
@@ -838,7 +841,7 @@ router.get('/export-directorio', async (req, res) => {
         wb.creator = 'Sistema Jurados - Rodeo Chileno';
         wb.created = new Date();
 
-        // ── Hoja 1: Reporte Deportivo (versión Directorio, 20 columnas) ──
+        // ── Hoja 1: Reporte Deportivo (versión Directorio, 14 columnas) ──
         const ws1 = wb.addWorksheet('Reporte Deportivo');
         ws1.columns = [
             { header: 'Fecha',                                      key: 'fecha',            width: 13 },
@@ -846,12 +849,6 @@ router.get('/export-directorio', async (req, res) => {
             { header: 'Asociación',                                 key: 'asociacion',       width: 20 },
             { header: 'Tipo Rodeo',                                 key: 'tipo_rodeo',       width: 20 },
             { header: 'Jurado(s)',                                  key: 'jurados',          width: 28 },
-            { header: 'Oficial 1er Lugar',                          key: 'oficial_1er',      width: 14, style: { numFmt: '@' } },
-            { header: 'Oficial 2do Lugar',                          key: 'oficial_2do',      width: 14, style: { numFmt: '@' } },
-            { header: 'Oficial 3er Lugar',                          key: 'oficial_3er',      width: 14, style: { numFmt: '@' } },
-            { header: 'Revisado 1er Lugar',                         key: 'revisado_1er',     width: 14, style: { numFmt: '@' } },
-            { header: 'Revisado 2do Lugar',                         key: 'revisado_2do',     width: 14, style: { numFmt: '@' } },
-            { header: 'Revisado 3er Lugar',                         key: 'revisado_3er',     width: 14, style: { numFmt: '@' } },
             { header: 'Resultado Alterado',                         key: 'resultado_alterado', width: 15 },
             { header: 'Descripción de lo observado',                key: 'descripcion_observado', width: 44 },
             { header: 'Total Situaciones',                          key: 'total_situaciones', width: 15 },
@@ -871,7 +868,7 @@ router.get('/export-directorio', async (req, res) => {
         });
         ws1.getRow(1).height = 26;
         ws1.views = [{ state: 'frozen', ySplit: 1 }];
-        ws1.autoFilter = { from: 'A1', to: 'T1' };
+        ws1.autoFilter = { from: 'A1', to: 'N1' };
 
         const WRAP_COLS = new Set(['descripcion_observado', 'acciones_area_deportiva']);
 
@@ -886,12 +883,6 @@ router.get('/export-directorio', async (req, res) => {
                 asociacion:       f.asociacion,
                 tipo_rodeo:       f.tipo_rodeo,
                 jurados:          f.jurados,
-                oficial_1er:  f.puntaje_oficial_1er  ?? '',
-                oficial_2do:  f.puntaje_oficial_2do  ?? '',
-                oficial_3er:  f.puntaje_oficial_3er  ?? '',
-                revisado_1er: f.puntaje_analista_1er ?? '',
-                revisado_2do: f.puntaje_analista_2do ?? '',
-                revisado_3er: f.puntaje_analista_3er ?? '',
                 resultado_alterado: f.resultados_alterados ? 'Sí' : 'No',
                 descripcion_observado: f.comentario_resultados_alterados?.trim() || '—',
                 total_situaciones: f.c1_total + f.c2_total,
@@ -906,12 +897,18 @@ router.get('/export-directorio', async (req, res) => {
             row.eachCell({ includeEmpty: true }, (cell, colNum) => {
                 const colKey = ws1.columns[colNum - 1]?.key;
                 cell.alignment = { vertical: 'top', wrapText: WRAP_COLS.has(colKey) };
+                // Resaltado de fila completa cuando el resultado fue alterado
+                // — se aplica primero (solo fondo); las reglas de celda de
+                // abajo pisan encima el font (rojo/negrita) sin perder este
+                // fondo, ya que fill y font son propiedades independientes.
+                if (f.resultados_alterados) cell.fill = FILA_ALTERADA_FILL;
             });
             row.height = 28;
 
-            // Reglas de color OBLIGATORIAS — solo la celda correspondiente,
-            // nunca la fila completa.
-            if (casetaTxt === 'No cumple')            row.getCell('caseta_jurado').font = ROJO_FONT;
+            // Reglas de color OBLIGATORIAS — rojo + negrita en la celda
+            // correspondiente (conviven con el fondo de fila de arriba).
+            if (f.resultados_alterados)                     row.getCell('resultado_alterado').font = ROJO_FONT;
+            if (casetaTxt === 'No cumple')                  row.getCell('caseta_jurado').font = ROJO_FONT;
             if (f.cartilla_hubo_faltas === 'Sí')            row.getCell('faltas').font = ROJO_FONT;
             if (f.cartilla_hubo_ganado_fuera_peso === 'Sí') row.getCell('ganado_fuera_peso').font = ROJO_FONT;
         }
