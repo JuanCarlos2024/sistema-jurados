@@ -268,6 +268,23 @@ describe('Temporada / Tipo de Rodeo — 100% automáticos (4ª revisión, puntos
         expect(update.secretario_jurado).toBe('PEDRO'); // el resto de los campos editables sigue funcionando
     });
 
+    test('auditoría versión final — PATCH con publico_serie_campeones en el body NUNCA lo aplica (retirado del formulario de nuevas cartillas)', async () => {
+        const llamadas = crearSupabaseMock({
+            cartillas_delegado: [
+                { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },
+                { data: { id: 'cart-1' }, error: null }
+            ]
+        });
+        const { status } = await llamarRuta({
+            method: 'PATCH', url: '/cart-1',
+            body: { publico_serie_campeones: 999, secretario_jurado: 'PEDRO' }
+        });
+        expect(status).toBe(200);
+        const update = llamadas.cartillas_delegado.updates[0];
+        expect(update).not.toHaveProperty('publico_serie_campeones');
+        expect(update.secretario_jurado).toBe('PEDRO'); // el resto de los campos editables sigue funcionando
+    });
+
     test('POST /:id/enviar — NO exige club_asociacion_organizador (ya no se auto-completa, quedaría siempre vacío en cartillas nuevas)', async () => {
         const llamadas = crearSupabaseMock({
             cartillas_delegado: [

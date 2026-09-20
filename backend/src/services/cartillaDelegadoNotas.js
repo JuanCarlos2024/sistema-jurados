@@ -23,7 +23,7 @@ const ASPECTOS_DESEMPENO_JURADO = [
     { key: 'aspecto_1', label: 'Sanciona correctamente las faltas en el apiñadero.' },
     { key: 'aspecto_2', label: 'Sanciona correctamente las faltas en la cancha (incluye zona de postura).' },
     { key: 'aspecto_3', label: 'Identifica correctamente atajadas válidas (0-2-3-4). Justifica correctamente las atajadas no válidas. Sanciona correctamente las faltas que se producen en la atajada.' },
-    { key: 'aspecto_4', label: 'Sanciona correctamente las faltas que se producen en la cuarta carrera (entrega del novillo).' }
+    { key: 'aspecto_4', label: 'Sanciona correctamente las faltas que se producen en la entrega del novillo.' }
 ];
 
 const NOTA_MIN = 1.0;

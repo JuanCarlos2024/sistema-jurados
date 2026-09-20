@@ -40,10 +40,16 @@ router.use((req, res, next) => {
 // mismo problema que `temporada` (el frontend la leía desde `cartilla`, que
 // no existe hasta el primer guardado). Se retira de CAMPOS_EDITABLES; el
 // frontend la muestra en vivo desde `rodeo.fecha`, nunca desde esta columna.
+//
+// Auditoría versión final 2026-2027: `publico_serie_campeones` ("Público")
+// se retira también — el encabezado del documento final aprobado ya no lo
+// pide. Mismo tratamiento que los campos anteriores: se deja de
+// escribir/aceptar como defensa en profundidad, pero la columna y
+// cualquier valor histórico existente se conservan intactos (Administrador
+// y PDF lo siguen mostrando si una cartilla anterior ya lo tenía).
 const CAMPOS_EDITABLES = [
     'delegado_nombre', 'delegado_telefono',
     'secretario_jurado', 'secretario_numero_socio',
-    'publico_serie_campeones',
     'serie_campeones_dos_vueltas', 'incluye_informe_disciplinario', 'incluye_informe_ganado_bajo_peso',
     'certificacion_medialuna_comuna', 'certificacion_mas_200_personas',
     'certificacion_mas_250_personas', 'certificacion_vinculacion_comunidad',

@@ -209,6 +209,14 @@ let _ree     = {};  // reemplazo jinetes
 // solo el Sí/No `_acc.hubo_accidentes` (misma pregunta), pero el relato
 // es propio.
 let _accGeneral = '';
+// Secretario (nombre, rut y N° socio, teléfono y correo de contacto) —
+// versión final aprobada 2026-2027: reemplaza los 2 campos aislados
+// anteriores (secretario_jurado/secretario_numero_socio, que se conservan
+// como columnas para compatibilidad histórica, ver recolectarDatos()).
+let _sec = {};
+// Situaciones a revisar (máximo 3, solo referente al jurado) — sección
+// nueva del documento final, independiente de "Informe de disciplina".
+let _sitRev = { items: [] };
 
 // ── Globals ETAPA 4 ──────────────────────────────────────────────────────────
 let _acc  = {};  // accidentes
@@ -251,11 +259,15 @@ function renderCartilla(r) {
         ? _respuestasJson.ganado_series.map(s => ({ ...s }))
         : [];
     // `_vet` se inicializa acá (además de en _initSecciones4, misma fuente)
-    // para que el encabezado (Sección I) pueda mostrar el nombre/teléfono/
-    // correo del veterinario apenas se pinta la cartilla, sin esperar a que
-    // se rendericen las secciones dinámicas más abajo.
+    // para que el encabezado (Sección I) pueda mostrar el nombre/rut del
+    // veterinario apenas se pinta la cartilla, sin esperar a que se
+    // rendericen las secciones dinámicas más abajo. `rut` es un campo nuevo
+    // ADITIVO (versión final 2026-2027: encabezado pide "nombre y rut"); el
+    // resto (telefono/correo/preparación/bienestar) se conserva para lectura
+    // de cartillas históricas aunque ya no tenga una sección propia editable
+    // (ver Sección IX unificada).
     _vet = Object.assign({
-        nombre: '', telefono: '', correo: '',
+        nombre: '', rut: '', telefono: '', correo: '',
         preparacion: '', especifica_tecnico: '', especifica_otro: '',
         sombra_ganado: null, sombra_ganado_obs: '',
         sombra_equinos: null, sombra_equinos_obs: '',
@@ -266,6 +278,18 @@ function renderCartilla(r) {
         observaciones: '',
         detalle_lesiones_equinos: '', detalle_lesiones_bovinos: ''
     }, _respuestasJson.informe_veterinario || {});
+
+    // Secretario (nombre, rut, N° socio, teléfono, correo) — versión final.
+    // Compatibilidad: si la cartilla es histórica y NO tiene
+    // `respuestas_json.secretario` pero sí las columnas antiguas
+    // (secretario_jurado/secretario_numero_socio), se usan como respaldo
+    // inicial — nunca se pierden ni se transforman, solo se reflejan acá.
+    _sec = Object.assign({
+        nombre: cartilla?.secretario_jurado || '',
+        rut: '',
+        n_socio: cartilla?.secretario_numero_socio || '',
+        telefono: '', correo: ''
+    }, _respuestasJson.secretario || {});
 
     const fechaRodeo = rodeo?.fecha
         ? new Date(rodeo.fecha + 'T12:00:00').toLocaleDateString('es-CL', { weekday:'long', year:'numeric', month:'long', day:'numeric' })
@@ -375,13 +399,27 @@ function renderCartilla(r) {
             </div>
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
-                    <label class="form-label">Secretario del Jurado</label>
-                    <input type="text" id="f-secretario_jurado" class="form-control" placeholder="Nombre completo" value="${sanitizar(fld('secretario_jurado'))}" ${ya ? 'readonly' : ''}>
+                    <label class="form-label">Secretario — Nombre</label>
+                    <input type="text" id="f-sec-nombre" class="form-control" placeholder="Nombre completo" value="${sanitizar(_sec.nombre)}" ${ya ? 'readonly' : ''} oninput="setSecCampo('nombre',this.value)">
                 </div>
                 <div>
-                    <label class="form-label">N° de Socio (Secretario)</label>
-                    <input type="text" id="f-secretario_numero_socio" class="form-control" placeholder="Ej: 12345" value="${sanitizar(fld('secretario_numero_socio'))}" ${ya ? 'readonly' : ''}>
+                    <label class="form-label">Secretario — RUT</label>
+                    <input type="text" id="f-sec-rut" class="form-control" placeholder="Ej: 9.492.569-K" value="${sanitizar(_sec.rut)}" ${ya ? 'readonly' : ''} oninput="setSecCampo('rut',this.value)">
                 </div>
+            </div>
+            <div class="campo-grid" style="margin-bottom:14px;">
+                <div>
+                    <label class="form-label">Secretario — N° de socio</label>
+                    <input type="text" id="f-sec-n_socio" class="form-control" placeholder="Ej: 12345" value="${sanitizar(_sec.n_socio)}" ${ya ? 'readonly' : ''} oninput="setSecCampo('n_socio',this.value)">
+                </div>
+                <div>
+                    <label class="form-label">Secretario — Teléfono de contacto</label>
+                    <input type="tel" id="f-sec-telefono" class="form-control" placeholder="+56 9 ..." value="${sanitizar(_sec.telefono)}" ${ya ? 'readonly' : ''} oninput="setSecCampo('telefono',this.value)">
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label class="form-label">Secretario — Correo de contacto</label>
+                <input type="email" id="f-sec-correo" class="form-control" placeholder="correo@ejemplo.cl" value="${sanitizar(_sec.correo)}" ${ya ? 'readonly' : ''} oninput="setSecCampo('correo',this.value)">
             </div>
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
@@ -416,39 +454,36 @@ function renderCartilla(r) {
                  concatena categoria_rodeo_nombre acá; esa ya se muestra por
                  separado en la tarjeta superior de la cartilla). Nunca editable
                  por el Delegado; no se duplica en cartillas_delegado. -->
+            <!-- "Público" (publico_serie_campeones) retirado del formulario de
+                 NUEVAS cartillas (auditoría versión final 2026-2027: no aparece
+                 en el encabezado del documento oficial). La columna y cualquier
+                 valor histórico existente se conservan intactos — ver vista
+                 Administrador y PDF, que siguen mostrándolo como dato histórico
+                 si una cartilla anterior ya lo tenía. -->
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
                     <label class="form-label">Tipo de Rodeo</label>
                     <input type="text" class="form-control" readonly disabled value="${sanitizar(rodeo?.tipo_rodeo_nombre || '—')}">
                 </div>
-                <div>
-                    <label class="form-label">Público</label>
-                    <input type="number" id="f-publico_serie_campeones" class="form-control" min="0" placeholder="Ej: 350" value="${fld('publico_serie_campeones')}" ${ya ? 'readonly' : ''}>
-                </div>
             </div>
-            <!-- Veterinario/técnico — vista previa de solo lectura de los
-                 mismos datos que se completan en la Sección VIII (Anexo 02):
-                 objeto _vet, con nombre/telefono/correo. No se duplica la
-                 captura del dato (única edición posible es en la Sección
-                 IX), solo se muestra tempranamente en el encabezado. -->
-            <div class="campo-grid" style="margin-bottom:6px;">
+            <!-- Veterinario, Técnico u otro (nombre y rut) — versión final
+                 2026-2027: campo de identificación del encabezado, editable
+                 directamente acá (ya no depende de una sección aparte, que
+                 se unificó en "IX. Informe delegado / veterinario
+                 condiciones de Bienestar Animal"). -->
+            <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
-                    <label class="form-label">Nombre veterinario, técnico u otro</label>
-                    <input type="text" id="hdr-vet-nombre" class="form-control" readonly disabled value="${sanitizar(_vet.nombre || '—')}">
+                    <label class="form-label">Veterinario, Técnico u otro — Nombre</label>
+                    <input type="text" id="hdr-vet-nombre" class="form-control" placeholder="Nombre completo" value="${sanitizar(_vet.nombre)}" ${ya ? 'readonly' : ''} oninput="setVetCampo('nombre',this.value)">
                 </div>
                 <div>
-                    <label class="form-label">Teléfono veterinario/técnico</label>
-                    <input type="text" id="hdr-vet-telefono" class="form-control" readonly disabled value="${sanitizar(_vet.telefono || '—')}">
+                    <label class="form-label">Veterinario, Técnico u otro — RUT</label>
+                    <input type="text" id="hdr-vet-rut" class="form-control" placeholder="Ej: 12.345.678-9" value="${sanitizar(_vet.rut)}" ${ya ? 'readonly' : ''} oninput="setVetCampo('rut',this.value)">
                 </div>
-            </div>
-            <div style="margin-bottom:14px;">
-                <label class="form-label">Correo veterinario/técnico</label>
-                <input type="text" id="hdr-vet-correo" class="form-control" readonly disabled value="${sanitizar(_vet.correo || '—')}">
-                <p style="font-size:11px;color:#888;margin:4px 0 0;">Complete o corrija estos datos en <a href="#sec-veterinario" onclick="document.getElementById('sec-veterinario')?.scrollIntoView({behavior:'smooth'});return false;">Sección VIII — Anexo 02 (Informe del veterinario del Rodeo)</a>.</p>
             </div>
             <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
             <div style="margin-bottom:14px;">
-                <label class="form-label">¿Serie de Campeones corrida toda a 2 vueltas en el apiñadero (exceptuando desempates)?</label>
+                <label class="form-label">¿Final de rodeo se corrió a dos vueltas en el apiñadero?</label>
                 <div class="radio-grupo">
                     <label><input type="radio" name="serie_campeones_dos_vueltas" value="si" ${bool2radio('serie_campeones_dos_vueltas') === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''}> Sí</label>
                     <label><input type="radio" name="serie_campeones_dos_vueltas" value="no" ${bool2radio('serie_campeones_dos_vueltas') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
@@ -491,30 +526,31 @@ function renderCartilla(r) {
         </div>
     </div>`;
 
-    // ═══ ORDEN DEFINITIVO (2ª revisión, nuevo formato 2026-2027) — I.Series,
-    // Reemplazo de Jinetes, Faltas por serie, Informe de accidentes,
-    // II.Desempeño, III.Disciplina, IV.Recinto, V.Colleras, VI.Accidentes,
-    // VII.Anexo01, VIII.Anexo02, IX.Anexo03, X.Anexo04, XI.Reclamos.
-    // ═══ 4ª REVISIÓN: Se UNIFICA "I. Series" + "II. Ganado" en una sola
-    // sección (misma fuente `_seriesGanado`, sin cambiar el formato de
-    // almacenamiento) para que el Delegado seleccione cada Serie UNA sola
-    // vez y complete colleras/vueltas/ganado desde el mismo lugar. Se
-    // renumeran las secciones posteriores en consecuencia. ═══
+    // ═══ ORDEN DEFINITIVO — versión final aprobada por jefatura 2026-2027
+    // (documento "CARTILLA DELEGADOS AJUSTADA 2026-2027 v1_con ejemplo"):
+    // I.Series+Ganado (UNIFICADA, se conserva la mejora digital), Reemplazo
+    // de Jinetes, Faltas por serie (bonus, sin numeral propio), III.Informe
+    // de accidentes (unificado: mención breve + detalle médico/items en una
+    // sola sección), IV.Desempeño del Jurado, V.Situaciones a revisar
+    // (nueva), VI.Disciplina + Antecedentes complementarios (unificado),
+    // VII.Recinto, VIII.Colleras invitadas, IX.Bienestar Animal delegado/
+    // veterinario (unificado), X.Reclamos, XI.Comentarios generales. ═══
 
     // ─── SECCIÓN I — Información de las Series e Informe del Ganado
-    // (UNIFICADA, 4ª revisión) — una Serie = un solo registro con la
-    // información completa de sus 4 animales (colleras, vueltas, tipo,
-    // peso, corrido, repetido, calidad) + fuera de peso reglamentario de
-    // la serie. Misma fuente `_seriesGanado`, nunca duplicada. ──────────
+    // (UNIFICADA) — una Serie = un solo registro con la información
+    // completa de sus 4 animales (colleras, vueltas, tipo, peso, corrido,
+    // repetido, calidad) + fuera de peso reglamentario de la serie. Misma
+    // fuente `_seriesGanado`, nunca duplicada. Se mantiene la unificación
+    // digital ya aprobada — el documento base trae "Series" y "Ganado"
+    // como dos bloques separados, pero esa separación NO se reintroduce. ──
     html += `<div class="bloque" id="bloque-series">
         <div class="bloque-header">I. Información de las Series e Informe del Ganado</div>
         <div class="bloque-body" id="series-ganado-cuerpo"></div>
     </div>`;
 
-    // ─── Reemplazo de Jinetes — inmediatamente después de Series (sin
-    // numeral romano, tal como el pedido lo distingue con "1." en vez de "I."). ─
+    // ─── SECCIÓN II — Reemplazo de Jinetes ───────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">Reemplazo de Jinetes</div>
+        <div class="bloque-header">II. Informe si hubo reemplazo de jinetes</div>
         <div class="bloque-body" id="sec-reemplazo"></div>
     </div>`;
 
@@ -523,81 +559,82 @@ function renderCartilla(r) {
     // objetos de `_seriesGanado` (Sección I unificada), agregando 3
     // propiedades por serie (`falta_hubo`/`falta_articulo`/`falta_obs`) —
     // no es una estructura nueva independiente ni pide elegir la serie de
-    // nuevo. NO reemplaza ni se confunde con "III. Informe de disciplina",
+    // nuevo. NO reemplaza ni se confunde con "VI. Informe de disciplina",
     // que registra el detalle completo de los hechos con los infractores.
+    // Funcionalidad adicional del sistema, sin numeral propio en el
+    // documento oficial — se conserva tal como está.
     html += `<div class="bloque">
         <div class="bloque-header">Faltas o sanciones disciplinarias en cada serie</div>
         <div class="bloque-body" id="sec-faltas-serie"></div>
     </div>`;
 
-    // ─── Informe de accidentes (mención general) — bloque breve que
-    // reutiliza los mismos campos `hubo_accidentes`/`observaciones_generales`
-    // del objeto `_acc` (Sección VI), sin duplicar la información. El
-    // detalle completo (médico, contacto, accidentados) permanece
-    // exclusivamente en "VI. Reporte de accidentes".
+    // ─── SECCIÓN III — Informe de accidentes (UNIFICADA) — combina la
+    // mención breve (hubo_accidentes + relato) y el detalle estructurado
+    // (médico/paramédico, contacto, tabla de accidentados) en una sola
+    // sección, tal como la versión final la presenta como un único
+    // apartado (antes eran dos: la mención de la Sección I + "VI. Reporte
+    // de accidentes"). ─────────────────────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">Informe de accidentes</div>
-        <div class="bloque-body" id="sec-accidentes-breve"></div>
-    </div>`;
-
-    // ─── SECCIÓN II — Desempeño del Jurado ───────────────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">II. Informe sobre el desempeño del Jurado</div>
-        <div class="bloque-body" id="sec-desempeno"></div>
-    </div>`;
-
-    // ─── SECCIÓN III — Disciplina ───────────────────────────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">III. Informe de disciplina</div>
-        <div class="bloque-body" id="sec-disciplina"></div>
-    </div>`;
-
-    // ─── SECCIÓN IV — Recinto Deportivo (5 campos del documento nuevo) ────────
-    html += `<div class="bloque">
-        <div class="bloque-header">IV. Informe sobre el estado del recinto deportivo</div>
-        <div class="bloque-body" id="sec-recinto"></div>
-    </div>`;
-
-    // ─── SECCIÓN V — Colleras Invitadas ───────────────────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">V. Informe de colleras invitadas</div>
-        <div class="bloque-body" id="sec-colleras"></div>
-    </div>`;
-
-    // ─── SECCIÓN VI — Reporte de Accidentes ──────────────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">VI. Reporte de accidentes</div>
+        <div class="bloque-header">III. Informe de accidentes</div>
         <div class="bloque-body" id="sec-accidentes"></div>
     </div>`;
 
-    // ─── SECCIÓN VII — Anexo 01: Bienestar Animal ────────────────────────────
+    // ─── SECCIÓN IV — Desempeño del Jurado ───────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VII. Anexo 01 — Informe condiciones de Bienestar Animal</div>
+        <div class="bloque-header">IV. Informe sobre el desempeño del Jurado</div>
+        <div class="bloque-body" id="sec-desempeno"></div>
+    </div>`;
+
+    // ─── SECCIÓN V — Situaciones a revisar (NUEVA, versión final) ───────────
+    html += `<div class="bloque">
+        <div class="bloque-header">V. Situaciones a revisar (máximo 3)</div>
+        <div class="bloque-body" id="sec-situaciones-revisar"></div>
+    </div>`;
+
+    // ─── SECCIÓN VI — Informe de disciplina y antecedentes disciplinarios
+    // complementarios (UNIFICADA) — combina las situaciones disciplinarias
+    // estructuradas (antes "III. Informe de disciplina") y el campo libre
+    // de antecedentes complementarios (antes "X. Anexo 04") en una sola
+    // sección, tal como la versión final. ────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">VI. Informe de disciplina y antecedentes disciplinarios complementarios</div>
+        <div class="bloque-body" id="sec-disciplina"></div>
+    </div>`;
+
+    // ─── SECCIÓN VII — Recinto Deportivo (5 campos del documento nuevo) ────────
+    html += `<div class="bloque">
+        <div class="bloque-header">VII. Informe sobre el estado del recinto deportivo</div>
+        <div class="bloque-body" id="sec-recinto"></div>
+    </div>`;
+
+    // ─── SECCIÓN VIII — Colleras Invitadas ───────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">VIII. Informe de colleras invitadas</div>
+        <div class="bloque-body" id="sec-colleras"></div>
+    </div>`;
+
+    // ─── SECCIÓN IX — Informe delegado / veterinario condiciones de
+    // Bienestar Animal (UNIFICADA) — combina "VII. Anexo 01" (delegado) y
+    // "VIII. Anexo 02" (veterinario), que hacían las mismas 6 preguntas dos
+    // veces. Se edita UN solo set de respuestas (_ba); los datos históricos
+    // de `_vet` (cartillas que ya respondieron dos veces) NO se pierden ni
+    // se tocan, solo dejan de tener una sección propia editable — ver
+    // vista Administrador/PDF para cómo se preservan. ───────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">IX. Informe delegado / veterinario condiciones de Bienestar Animal</div>
         <div class="bloque-body" id="sec-bienestar"></div>
     </div>`;
 
-    // ─── SECCIÓN VIII — Anexo 02: Veterinario del Rodeo ─────────────────────────
+    // ─── SECCIÓN X — Reclamos o sugerencias ─────────────────────────────────
     html += `<div class="bloque">
-        <div class="bloque-header">VIII. Anexo 02 — Informe del veterinario del Rodeo</div>
-        <div class="bloque-body" id="sec-veterinario"></div>
-    </div>`;
-
-    // ─── SECCIÓN IX — Anexo 03: Comentarios generales ──────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">IX. Anexo 03 — Comentarios generales</div>
-        <div class="bloque-body" id="sec-comentarios"></div>
-    </div>`;
-
-    // ─── SECCIÓN X — Anexo 04: Antecedentes disciplinarios complementarios ──
-    html += `<div class="bloque">
-        <div class="bloque-header">X. Anexo 04 — Antecedentes disciplinarios complementarios</div>
-        <div class="bloque-body" id="sec-antecedentes"></div>
-    </div>`;
-
-    // ─── SECCIÓN XI — Reclamos o sugerencias ─────────────────────────────────
-    html += `<div class="bloque">
-        <div class="bloque-header">XI. Reclamos o sugerencias</div>
+        <div class="bloque-header">X. Reclamos o sugerencias</div>
         <div class="bloque-body" id="sec-reclamos"></div>
+    </div>`;
+
+    // ─── SECCIÓN XI — Comentarios generales ─────────────────────────────────
+    html += `<div class="bloque">
+        <div class="bloque-header">XI. Comentarios generales</div>
+        <div class="bloque-body" id="sec-comentarios"></div>
     </div>`;
 
     // ─── ADJUNTOS (ETAPA 4) ───────────────────────────────────────────────────
@@ -637,12 +674,15 @@ function renderCartilla(r) {
 // Catálogo oficial de Series — específico de Cartilla de Delegado (no es un
 // catálogo global del sistema; no se tocó ningún catálogo compartido con
 // otros módulos). Lista EXACTA pedida en la 4ª revisión.
+// "Campeones" agregada (auditoría versión final 2026-2027) — la cartilla
+// final aprobada la usa expresamente como Serie, con sus 4 animales. Se
+// agrega de forma ADITIVA, sin eliminar ninguna Serie ya aprobada.
 const CATALOGO_SERIES_DELEGADO = [
     '10a. Libre', '1ra. Libre', '1ra. Libre A', '1ra. Libre B',
     '2a. Libre', '2a. Libre A', '2a. Libre B',
     '3ra. Libre', '3ra. Libre A', '3ra. Libre B',
     '4a. Libre', '5a. Libre', '6a. Libre', '7a. Libre', '8a. Libre', '9a. Libre',
-    'Caballos', 'Criaderos', 'Expositores', 'Menores', 'Mixta', 'Mixta-Criaderos', 'Potros', 'Yeguas'
+    'Caballos', 'Campeones', 'Criaderos', 'Expositores', 'Menores', 'Mixta', 'Mixta-Criaderos', 'Potros', 'Yeguas'
 ];
 
 // Los 8 campos base por animal (n = 1..4), mismas claves ya usadas en
@@ -654,13 +694,13 @@ const CATALOGO_SERIES_DELEGADO = [
 function camposAnimal(n) {
     return [
         { key: `c${n}n`, label: 'N° colleras', type: 'number' },
-        { key: `c${n}g`, label: '# Ganado', type: 'text' },
+        { key: `c${n}g`, label: '# Ganado utilizado', type: 'text' },
         { key: `v${n}v`, label: 'N° vueltas apiñadero', type: 'number' },
         { key: `v${n}t`, label: 'Tipo de ganado', type: 'text' },
         { key: `v${n}p`, label: 'Peso del ganado (kg)', type: 'number' },
         { key: `q${n}c`, label: 'Ganado corrido', type: 'number' },
         { key: `q${n}r`, label: 'Ganado repetido', type: 'number' },
-        { key: `q${n}k`, label: 'Calidad del ganado', type: 'select', opts: ['Bueno', 'Regular', 'Malo'] }
+        { key: `q${n}k`, label: 'Calidad del ganado', type: 'select', opts: ['Muy bueno', 'Bueno', 'Regular', 'Malo'] }
     ];
 }
 
@@ -760,7 +800,15 @@ function renderSerieCard(s, i, ya) {
             const esNumeroGanado = c.key === `c${n}g`;
             const refrescoExtra = esNumeroGanado ? `;actualizarPctAnimal(${i},${n})` : '';
             if (c.type === 'select') {
-                const opts = c.opts.map(o => `<option value="${o}" ${s[c.key] === o ? 'selected' : ''}>${o}</option>`).join('');
+                const valorActualSel = s[c.key];
+                // Compatibilidad histórica: si el valor guardado no calza EXACTO
+                // con ninguna opción vigente (ej. mayúsculas/minúsculas distintas
+                // de una cartilla antigua), se agrega como opción adicional
+                // seleccionada — nunca se pierde ni se reemplaza silenciosamente
+                // el dato ya guardado. Mismo patrón ya usado en el selector de Serie.
+                const esHistoricoSel = valorActualSel && !c.opts.includes(valorActualSel);
+                const opts = (esHistoricoSel ? [valorActualSel] : []).concat(c.opts)
+                    .map(o => `<option value="${esc(o)}" ${valorActualSel === o ? 'selected' : ''}>${esc(o)}${esHistoricoSel && o === valorActualSel ? ' (histórico)' : ''}</option>`).join('');
                 return `<div class="animal-field"><label>${c.label}</label><select ${dis} onchange="setCelda(${i},'${c.key}',this.value)${refrescoExtra}"><option value="">—</option>${opts}</select></div>`;
             }
             const tipoInput = c.type === 'number' ? 'type="number" min="0"' : 'type="text"';
@@ -868,6 +916,25 @@ function setText(id,val){ const el=document.getElementById(id); if(el) el.textCo
 function numPos(v){ const n=parseFloat(v); return(!isNaN(n)&&n>=0)?n:0; }
 function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+// ── "Ver ejemplo" — ayuda visual desplegable, oculta por defecto (versión
+// final 2026-2027). El contenido es texto de referencia tomado del
+// documento oficial, NUNCA se guarda como dato del informe — no participa
+// en recolectarDatos() ni en ningún objeto _xxx.
+function bloqueEjemplo(id, contenidoHtml) {
+    return `<div style="margin:8px 0 14px;">
+        <button type="button" class="btn btn-outline btn-pequeño" onclick="toggleEjemplo('${id}')" id="btn-${id}">Ver ejemplo</button>
+        <div id="${id}" style="display:none;margin-top:8px;background:#fffbea;border:1px solid #f0d878;border-radius:6px;padding:10px 14px;font-size:12px;color:#5c4a00;line-height:1.5;">${contenidoHtml}</div>
+    </div>`;
+}
+function toggleEjemplo(id) {
+    const el = document.getElementById(id);
+    const btn = document.getElementById('btn-' + id);
+    if (!el) return;
+    const oculto = el.style.display === 'none';
+    el.style.display = oculto ? 'block' : 'none';
+    if (btn) btn.textContent = oculto ? 'Ocultar ejemplo' : 'Ver ejemplo';
+}
+
 function agregarSerie(){
     _seriesGanado.push({nombre:''});
     const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
@@ -925,9 +992,16 @@ function _initSecciones3(cartilla) {
     _recinto = Object.assign({}, rj.recinto_deportivo || {});
     _col     = Object.assign({ no_hubo:false, items:[] }, rj.colleras_invitadas || {});
     _ree     = Object.assign({ hubo:null, items:[] }, rj.reemplazo_jinetes || {});
+    // Antecedentes disciplinarios complementarios — se edita ahora DENTRO de
+    // la Sección VI unificada (ver renderSeccionDisciplina), no en un bloque
+    // aparte. Se inicializa acá para estar disponible antes de ese render.
+    _ant     = Object.assign({ texto: '' }, rj.antecedentes_disciplinarios || {});
+    // Situaciones a revisar (máximo 3, solo referente al jurado) — Sección V.
+    _sitRev  = Object.assign({ items: [] }, rj.situaciones_revisar || {});
 
     const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
     renderSeccionDesempeno(ya);
+    renderSeccionSituacionesRevisar(ya);
     renderSeccionDisciplina(ya);
     renderSeccionRecinto(ya);
     renderSeccionColleras(ya);
@@ -948,7 +1022,7 @@ const ASPECTOS_DESEMPENO_UI = [
     { key:'aspecto_1', label:'1. Sanciona correctamente las faltas en el apiñadero.' },
     { key:'aspecto_2', label:'2. Sanciona correctamente las faltas en la cancha (incluye zona de postura).' },
     { key:'aspecto_3', label:'3. Identifica correctamente atajadas válidas (0-2-3-4). Justifica correctamente las atajadas no válidas. Sanciona correctamente las faltas que se producen en la atajada.' },
-    { key:'aspecto_4', label:'4. Sanciona correctamente las faltas que se producen en la cuarta carrera (entrega del novillo).' }
+    { key:'aspecto_4', label:'4. Sanciona correctamente las faltas que se producen en la entrega del novillo.' }
 ];
 
 function calcularPromedioDesempenoUI() {
@@ -1006,7 +1080,88 @@ function setAspectoDesemp(key, valor) {
 function setCampoDesemp(campo, valor) { _dj[campo] = valor; }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN IV — DISCIPLINA
+// SECCIÓN V — SITUACIONES A REVISAR (máximo 3, solo referente al jurado,
+// con detalle de la Serie, Animal, Collera). Sección nueva de la versión
+// final aprobada — distinta de la evaluación numérica del desempeño y del
+// informe de disciplina. Reutiliza el mismo patrón de bloque repetible ya
+// usado en Disciplina/Reclamos, con un límite duro de 3 elementos.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const EJEMPLOS_SITUACIONES_REVISAR = `<strong>1ª Situación:</strong> Serie Criaderos, collera 8, 1º animal, última atajada de la mano de adelante, no se computa el corte de línea de sentencia.
+<br><br>
+<strong>2ª Situación:</strong> 2ª Serie Libre, collera 11, 2º animal, 2ª atajada de la mano de adelante: Se castiga una mala entrega en circunstancias que novillo había caído. Luego se defiende un tijera y el novillo va con puerta.
+<br><br>
+<strong>3ª Situación:</strong> Serie Campeones, collera 23, 4º animal, atajada de la mano de atrás: Se pagan 4 puntos por la atajada que era no definida.`;
+
+const MAX_SITUACIONES_REVISAR = 3;
+
+function renderSeccionSituacionesRevisar(ya) {
+    const cont = document.getElementById('sec-situaciones-revisar');
+    if (!cont) return;
+    cont.innerHTML = `
+    <p style="font-size:13px;color:#555;margin:0 0 10px;">Registre hasta 3 situaciones a revisar, referentes exclusivamente al jurado, indicando Serie, Animal y Collera.</p>
+    ${bloqueEjemplo('ej-situaciones', EJEMPLOS_SITUACIONES_REVISAR)}
+    <div id="sitrev-cont"></div>
+    ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" id="btn-agregar-sitrev" onclick="agregarSituacionRevisar()">+ Agregar situación</button>`}`;
+    renderSituacionesRevisar(ya);
+}
+
+function renderSituacionesRevisar(ya) {
+    const cont = document.getElementById('sitrev-cont');
+    if (!cont) return;
+    const ro = ya ? 'readonly' : '';
+    if (!_sitRev.items || _sitRev.items.length === 0) {
+        cont.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin situaciones registradas.</p>';
+    } else {
+        cont.innerHTML = _sitRev.items.map((s, i) => `
+        <div class="sit-card">
+            <div class="sit-card-hdr">
+                Situación ${i + 1}
+                ${ya ? '' : `<button class="btn-q" onclick="quitarSituacionRevisar(${i})">✕ Eliminar</button>`}
+            </div>
+            <div class="sit-card-body">
+                <div class="campo-form-sm">
+                    <label>Serie</label>
+                    <input type="text" value="${esc(s.serie||'')}" ${ro} oninput="setSituacionRevisar(${i},'serie',this.value)" placeholder="Ej: Serie Criaderos">
+                </div>
+                <div class="campo-form-sm">
+                    <label>Animal</label>
+                    <input type="text" value="${esc(s.animal||'')}" ${ro} oninput="setSituacionRevisar(${i},'animal',this.value)" placeholder="Ej: 1er animal">
+                </div>
+                <div class="campo-form-sm">
+                    <label>Collera</label>
+                    <input type="text" value="${esc(s.collera||'')}" ${ro} oninput="setSituacionRevisar(${i},'collera',this.value)" placeholder="Ej: 8">
+                </div>
+                <div class="campo-form-sm sit-card-full">
+                    <label>Descripción / detalle</label>
+                    <textarea rows="3" ${ro} oninput="setSituacionRevisar(${i},'detalle',this.value)" placeholder="Describa la situación a revisar...">${esc(s.detalle||'')}</textarea>
+                </div>
+            </div>
+        </div>`).join('');
+    }
+    const btn = document.getElementById('btn-agregar-sitrev');
+    if (btn) btn.style.display = (_sitRev.items.length >= MAX_SITUACIONES_REVISAR) ? 'none' : '';
+}
+
+function setSituacionRevisar(idx, campo, valor) { if (_sitRev.items[idx]) _sitRev.items[idx][campo] = valor; }
+
+function agregarSituacionRevisar() {
+    if (_sitRev.items.length >= MAX_SITUACIONES_REVISAR) {
+        mostrarToast('Solo se permiten hasta 3 situaciones a revisar.', 'advertencia');
+        return;
+    }
+    _sitRev.items.push({ serie:'', animal:'', collera:'', detalle:'' });
+    renderSituacionesRevisar(false);
+}
+
+function quitarSituacionRevisar(idx) {
+    if (!confirm('¿Eliminar esta situación?')) return;
+    _sitRev.items.splice(idx, 1);
+    renderSituacionesRevisar(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SECCIÓN VI — DISCIPLINA Y ANTECEDENTES DISCIPLINARIOS COMPLEMENTARIOS
 // ═════════════════════════════════════════════════════════════════════════════
 
 function renderSeccionDisciplina(ya) {
@@ -1035,6 +1190,10 @@ function renderSeccionDisciplina(ya) {
         <div class="sec-sub">Situaciones disciplinarias</div>
         <div id="disc-situaciones-cont"></div>
         ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarSituacion()">+ Agregar situación</button>`}
+    </div>
+    <div style="margin-top:16px;">
+        <label class="form-label">Antecedentes disciplinarios complementarios</label>
+        <textarea class="form-control" rows="4" ${ya?'readonly':''} oninput="setAntecedentesDisciplinarios(this.value)" placeholder="Antecedentes disciplinarios complementarios (si corresponde)...">${esc(_ant.texto||'')}</textarea>
     </div>`;
 
     renderTablaDisciplina(ya);
@@ -1269,6 +1428,8 @@ function quitarColleraInvitada(idx) {
 // SECCIÓN VII — REEMPLAZO DE JINETES
 // ═════════════════════════════════════════════════════════════════════════════
 
+const EJEMPLO_REEMPLAZO = `<strong>Ejemplo 1.-</strong> En la serie de campeones se autoriza el cambio de jinete de la collera N°1 para el segundo toro de don Patricio Andrade, Rut: 9.311.411-6, N° Socio: 98221, de la asociación Malleco, por el jinete Eduardo Casado, Rut: 15.978.339-1, N° Socio: 156043, también de la asociación Malleco, debido a que finalizado el primer animal de la serie de campeones, don Patricio Andrade ya antes individualizado se me acerca con un fuerte dolor en su pierna derecha lo cual le imposibilitaba seguir participando, dolor ocasionado por una caída en el mismo rodeo el día sábado en la Serie Caballos, por lo cual le pido que me acompañara a la ambulancia para ser revisado por el funcionario de salud don Alejandro Soto Benites (Técnico en enfermería nivel superior TENS), el cual después de revisar al jinete, me comenta que hay un posible desgarro Muscular Derecho y Lumbago Post Traumático, por lo cual autorizo el cambio de jinete.`;
+
 function renderSeccionReemplazo(ya) {
     const cont = document.getElementById('sec-reemplazo');
     if (!cont) return;
@@ -1277,7 +1438,8 @@ function renderSeccionReemplazo(ya) {
     const huboSi = _ree.hubo === 'si';
 
     cont.innerHTML = `
-    <p style="font-size:13px;color:#555;margin:0 0 14px;">Informe si hubo reemplazo de jinetes por accidente o fuerza mayor e individualice a los corredores involucrados.</p>
+    <p style="font-size:13px;color:#555;margin:0 0 10px;">Informe si hubo reemplazo de jinetes por accidente o fuerza mayor e individualice a los corredores involucrados (nombre, rut, número de socio).</p>
+    ${bloqueEjemplo('ej-reemplazo', EJEMPLO_REEMPLAZO)}
     <div style="margin-bottom:14px;">
         <label class="form-label">¿Hubo reemplazo de jinetes durante el Rodeo?</label>
         <div class="radio-grupo">
@@ -1428,25 +1590,37 @@ function _initSecciones4(cartilla) {
         hubo_reclamos: null, sugerencias: '',
         observaciones_generales: '', items: []
     }, rj.reclamos_sugerencias || {});
-    // Anexo 03 — Comentarios generales / Anexo 04 — Antecedentes
-    // disciplinarios complementarios (nuevo formato 2026-2027).
+    // Comentarios generales (Sección XI, nuevo formato 2026-2027).
     _com  = Object.assign({ texto: '' }, rj.comentarios_generales || {});
-    _ant  = Object.assign({ texto: '' }, rj.antecedentes_disciplinarios || {});
+
+    // Informe de accidentes (Sección III, UNIFICADA): si la cartilla trae
+    // el relato breve histórico (`informe_accidentes_general`) pero el
+    // detalle estructurado todavía no tiene observaciones generales
+    // propias, se usa como valor inicial editable — nunca se pierde el
+    // texto, solo se continúa editando desde un único campo. Si ambos
+    // existen, el detalle estructurado manda (ya es el dato "vivo").
+    if (!_acc.observaciones_generales && _accGeneral) {
+        _acc.observaciones_generales = _accGeneral;
+    }
 
     const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
     renderSeccionAccidentes(ya);
-    renderAccidentesBreve(ya);
     renderSeccionBienestar(ya);
-    renderSeccionVeterinario(ya);
     renderSeccionComentarios(ya);
-    renderSeccionAntecedentes(ya);
     renderSeccionReclamos(ya);
     renderSeccionAdjuntos(ya);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN VIII — ACCIDENTES
+// SECCIÓN III — INFORME DE ACCIDENTES (UNIFICADA, versión final 2026-2027)
+// Combina en una sola sección: ¿hubo accidentes?, datos del médico/
+// paramédico y un cuadro repetible de accidentados — antes dividido entre
+// una mención breve (Sección I) y "VI. Reporte de accidentes" aparte.
 // ═════════════════════════════════════════════════════════════════════════════
+
+const EJEMPLO_ACCIDENTES = `<strong>Ejemplo 1.-</strong> Serie Criaderos, 1° Animal, collera N°9, Jinete Jose Pablo Molina Valenzuela, RUT: 23.088.073-5, N° Socio: 49699-5, Asoc. Concepción, Club Florida, sufre un accidente en la tercera atajada, sin consecuencias graves, sigue participando.
+<br><br>
+<strong>Ejemplo 2.-</strong> Segunda serie libre, 2° Animal, collera N°37, Jinete Juan Luis Gutierrez Ramirez, RUT: 16.982.036-8, N° Socio: 34475-3, Asoc. Concepción, Club Aguas del Laja, sufre un accidente en la segunda atajada, impactando con la puerta del apiñadero por tratar de salvar un fuera de zona; el jinete, producto del golpe y luego de la revisión del paramédico, no pudo seguir participando de la serie.`;
 
 function renderSeccionAccidentes(ya) {
     const cont = document.getElementById('sec-accidentes');
@@ -1457,14 +1631,15 @@ function renderSeccionAccidentes(ya) {
     const huboSi = _acc.hubo_accidentes === 'si';
 
     cont.innerHTML = `
-    <p style="font-size:13px;color:#555;margin:0 0 14px;">Debe informar todos los casos, ya sean leves o graves. Se recuerda que previo al inicio del Rodeo, el delegado debe revisar el protocolo de rescate en presencia del Presidente del Club y del médico o personal de salud del evento.</p>
+    <p style="font-size:13px;color:#555;margin:0 0 10px;">Debe informar todos los casos, ya sean leves o graves. Se recuerda que previo al inicio del Rodeo, el delegado debe revisar el protocolo de rescate en presencia del Presidente del Club y del médico o personal de salud del evento.</p>
+    ${bloqueEjemplo('ej-accidentes', EJEMPLO_ACCIDENTES)}
 
     <div class="campo-grid" style="margin-bottom:12px;">
         <div>
             <label class="form-label">¿Hubo accidentes en este Rodeo?</label>
             <div class="radio-grupo">
-                <label><input type="radio" name="acc_hubo" value="si" ${chk('hubo_accidentes','si')} ${dis} onchange="setAccCampo('hubo_accidentes','si');toggleAccTabla();refrescarAccBreve()"> Sí</label>
-                <label><input type="radio" name="acc_hubo" value="no" ${chk('hubo_accidentes','no')} ${dis} onchange="setAccCampo('hubo_accidentes','no');toggleAccTabla();refrescarAccBreve()"> No</label>
+                <label><input type="radio" name="acc_hubo" value="si" ${chk('hubo_accidentes','si')} ${dis} onchange="setAccCampo('hubo_accidentes','si');toggleAccTabla()"> Sí</label>
+                <label><input type="radio" name="acc_hubo" value="no" ${chk('hubo_accidentes','no')} ${dis} onchange="setAccCampo('hubo_accidentes','no');toggleAccTabla()"> No</label>
             </div>
         </div>
         <div>
@@ -1476,28 +1651,28 @@ function renderSeccionAccidentes(ya) {
         </div>
     </div>
 
-    <div class="sec-sub">Médico o paramédico del evento</div>
+    <div class="sec-sub">Nombre del médico o paramédico</div>
     <div class="campo-grid" style="margin-bottom:12px;">
         <div>
             <label class="form-label">Nombre</label>
             <input type="text" class="form-control" value="${esc(_acc.medico_nombre||'')}" ${ro} oninput="setAccCampo('medico_nombre',this.value)" placeholder="Nombre completo">
         </div>
         <div>
-            <label class="form-label">Teléfono</label>
+            <label class="form-label">Teléfono de contacto</label>
             <input type="tel" class="form-control" value="${esc(_acc.medico_telefono||'')}" ${ro} oninput="setAccCampo('medico_telefono',this.value)" placeholder="+56 9 ...">
         </div>
     </div>
     <div style="margin-bottom:12px;">
-        <label class="form-label">Correo</label>
+        <label class="form-label">Correo de contacto</label>
         <input type="email" class="form-control" value="${esc(_acc.medico_email||'')}" ${ro} oninput="setAccCampo('medico_email',this.value)" placeholder="correo@ejemplo.cl">
     </div>
     <div style="margin-bottom:14px;">
         <label class="form-label">Observaciones generales</label>
-        <textarea class="form-control" rows="3" ${ro} oninput="setAccCampo('observaciones_generales',this.value)" placeholder="Observaciones generales...">${esc(_acc.observaciones_generales||'')}</textarea>
+        <textarea class="form-control" rows="4" ${ro} oninput="setAccCampo('observaciones_generales',this.value)" placeholder="Relate los accidentes ocurridos durante el Rodeo (leves o graves)...">${esc(_acc.observaciones_generales||'')}</textarea>
     </div>
 
     <div id="acc-tabla-wrap" style="display:${huboSi?'block':'none'};">
-        <div class="sec-sub">Accidentes registrados</div>
+        <div class="sec-sub">Accidentados (indique nombre completo, RUT y N° de socio)</div>
         <div id="acc-items-cont"></div>
         ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarAccidente()">+ Agregar accidente</button>`}
     </div>`;
@@ -1505,51 +1680,16 @@ function renderSeccionAccidentes(ya) {
     renderAccidentesItems(ya);
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// INFORME GENERAL DE ACCIDENTES (bloque breve dentro de la Sección I
-// unificada). El relato ("Informe de accidentes") es TEXTO LIBRE
-// INDEPENDIENTE, guardado en `respuestas_json.informe_accidentes_general`
-// — nunca se confunde ni se sustituye por el detalle estructurado de
-// "VI. Reporte de accidentes" (`_acc`: médico, contacto, accidentados).
-// Solo el Sí/No `hubo_accidentes`
-// se comparte con esa sección (misma pregunta), sincronizado en ambos
-// sentidos al cambiar cualquiera de los dos toggles.
-// ═════════════════════════════════════════════════════════════════════════════
-
-function renderAccidentesBreve(ya) {
-    const cont = document.getElementById('sec-accidentes-breve');
-    if (!cont) return;
-    const dis = ya ? 'disabled' : '';
-    const ro  = ya ? 'readonly' : '';
-    const chk = (val) => _acc.hubo_accidentes === val ? 'checked' : '';
-
-    cont.innerHTML = `
-    <p style="font-size:13px;color:#555;margin:0 0 12px;">Informe de accidentes. Debe informar todos los casos, ya sean leves o graves, ocurridos durante el Rodeo.</p>
-    <div style="margin-bottom:10px;">
-        <label class="form-label">¿Hubo accidentes en este Rodeo?</label>
-        <div class="radio-grupo">
-            <label><input type="radio" name="acc_hubo_breve" value="si" ${chk('si')} ${dis} onchange="setAccHuboBreve('si')"> Sí</label>
-            <label><input type="radio" name="acc_hubo_breve" value="no" ${chk('no')} ${dis} onchange="setAccHuboBreve('no')"> No</label>
-        </div>
-    </div>
-    <div style="margin-bottom:6px;">
-        <label class="form-label">Informe de accidentes</label>
-        <textarea class="form-control" rows="5" ${ro} oninput="setAccGeneralTexto(this.value)" placeholder="Relate los accidentes ocurridos durante el Rodeo (leves o graves)...">${esc(_accGeneral)}</textarea>
-        <p style="font-size:11px;color:#888;margin:4px 0 0;">El detalle formal (médico, contacto y datos del accidentado) se registra en la Sección VI — Reporte de accidentes.</p>
-    </div>`;
-}
-
-function setAccGeneralTexto(valor) { _accGeneral = valor; }
-
-function setAccHuboBreve(val) {
-    setAccCampo('hubo_accidentes', val);
-    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
-    renderAccidentesBreve(ya);
-    renderSeccionAccidentes(ya);
-}
-
-function refrescarAccBreve() {
-    renderAccidentesBreve(['enviada', 'reenviada', 'aprobada'].includes(_estado));
+// Un accidente es "formato anterior" si tiene datos en las claves EXCLUSIVAS
+// del formato previo (tipo/persona/categoria/descripcion/atencion) y no
+// tiene ninguna de las claves nuevas (serie/animal/collera/accidentado) —
+// detección por presencia de datos, mismo patrón ya usado en Series/Ganado
+// y Recinto Deportivo. Los accidentes NUEVOS (agregados desde ahora) usan
+// siempre el formato nuevo.
+function esAccidenteLegacy(a) {
+    const tieneLegacy = !!(a.tipo || a.persona || a.categoria || a.descripcion || a.atencion);
+    const tieneNuevo  = !!(a.serie || a.animal || a.collera || a.accidentado);
+    return tieneLegacy && !tieneNuevo;
 }
 
 function renderAccidentesItems(ya) {
@@ -1561,10 +1701,32 @@ function renderAccidentesItems(ya) {
     }
     const dis = ya ? 'disabled' : '';
     const ro  = ya ? 'readonly' : '';
-    const optsT = (v) => ['Leve','Grave','Otro'].map(t => `<option value="${t}" ${v===t?'selected':''}>${t}</option>`).join('');
-    const optsC = (v) => ['Jinete','Petisero','Público','Personal','Otro'].map(c => `<option value="${c}" ${v===c?'selected':''}>${c}</option>`).join('');
 
-    cont.innerHTML = _acc.items.map(function(a,i){ return `
+    cont.innerHTML = _acc.items.map(function(a,i){
+        if (esAccidenteLegacy(a)) {
+            // Formato anterior — se conserva editable tal como estaba, sin
+            // transformarlo al formato nuevo (compatibilidad histórica).
+            return `
+    <div class="sit-card" style="margin-bottom:10px;">
+        <div class="sit-card-hdr">
+            Accidente N° ${i+1} <span style="font-weight:400;font-size:11px;opacity:.8;">(formato anterior)</span>
+            ${ya ? '' : `<button class="btn-q" onclick="quitarAccidente(${i})">✕ Eliminar</button>`}
+        </div>
+        <div class="sit-card-body">
+            <div class="campo-form-sm"><label>Tipo</label><input type="text" value="${esc(a.tipo||'')}" ${ro} oninput="setAccItem(${i},'tipo',this.value)"></div>
+            <div class="campo-form-sm"><label>Fecha y hora aproximada</label><input type="datetime-local" value="${esc(a.fecha_hora||'')}" ${ro} oninput="setAccItem(${i},'fecha_hora',this.value)"></div>
+            <div class="campo-form-sm"><label>Persona involucrada</label><input type="text" value="${esc(a.persona||'')}" ${ro} oninput="setAccItem(${i},'persona',this.value)"></div>
+            <div class="campo-form-sm"><label>RUT o N° de socio</label><input type="text" value="${esc(a.rut||'')}" ${ro} oninput="setAccItem(${i},'rut',this.value)"></div>
+            <div class="campo-form-sm"><label>Categoría</label><input type="text" value="${esc(a.categoria||'')}" ${ro} oninput="setAccItem(${i},'categoria',this.value)"></div>
+            <div class="campo-form-sm"><label>Derivado a centro asistencial</label><input type="text" value="${esc(a.derivado||'')}" ${ro} oninput="setAccItem(${i},'derivado',this.value)" placeholder="si / no"></div>
+            <div class="campo-form-sm sit-card-full"><label>Centro asistencial</label><input type="text" value="${esc(a.centro_asistencial||'')}" ${ro} oninput="setAccItem(${i},'centro_asistencial',this.value)"></div>
+            <div class="campo-form-sm sit-card-full"><label>Descripción</label><textarea rows="2" ${ro} oninput="setAccItem(${i},'descripcion',this.value)">${esc(a.descripcion||'')}</textarea></div>
+            <div class="campo-form-sm sit-card-full"><label>Atención realizada</label><textarea rows="2" ${ro} oninput="setAccItem(${i},'atencion',this.value)">${esc(a.atencion||'')}</textarea></div>
+            <div class="campo-form-sm sit-card-full"><label>Observaciones</label><textarea rows="2" ${ro} oninput="setAccItem(${i},'observaciones',this.value)">${esc(a.observaciones||'')}</textarea></div>
+        </div>
+    </div>`;
+        }
+        return `
     <div class="sit-card" style="margin-bottom:10px;">
         <div class="sit-card-hdr">
             Accidente N° ${i+1}
@@ -1572,50 +1734,40 @@ function renderAccidentesItems(ya) {
         </div>
         <div class="sit-card-body">
             <div class="campo-form-sm">
-                <label>Tipo</label>
-                <select ${dis} onchange="setAccItem(${i},'tipo',this.value)"><option value="">—</option>${optsT(a.tipo)}</select>
+                <label>Serie</label>
+                <input type="text" value="${esc(a.serie||'')}" ${ro} oninput="setAccItem(${i},'serie',this.value)" placeholder="Ej: Serie Criaderos">
             </div>
             <div class="campo-form-sm">
-                <label>Fecha y hora aproximada</label>
-                <input type="datetime-local" value="${esc(a.fecha_hora||'')}" ${ro} oninput="setAccItem(${i},'fecha_hora',this.value)">
+                <label>Animal</label>
+                <input type="text" value="${esc(a.animal||'')}" ${ro} oninput="setAccItem(${i},'animal',this.value)" placeholder="Ej: 1er Animal">
             </div>
             <div class="campo-form-sm">
-                <label>Persona involucrada</label>
-                <input type="text" value="${esc(a.persona||'')}" ${ro} oninput="setAccItem(${i},'persona',this.value)" placeholder="Nombre">
+                <label>Collera</label>
+                <input type="text" value="${esc(a.collera||'')}" ${ro} oninput="setAccItem(${i},'collera',this.value)" placeholder="Ej: N°9">
             </div>
             <div class="campo-form-sm">
-                <label>RUT o N° de socio</label>
-                <input type="text" value="${esc(a.rut||'')}" ${ro} oninput="setAccItem(${i},'rut',this.value)" placeholder="Si se conoce">
+                <label>Accidentado</label>
+                <input type="text" value="${esc(a.accidentado||'')}" ${ro} oninput="setAccItem(${i},'accidentado',this.value)" placeholder="Nombre completo">
             </div>
             <div class="campo-form-sm">
-                <label>Categoría</label>
-                <select ${dis} onchange="setAccItem(${i},'categoria',this.value)"><option value="">—</option>${optsC(a.categoria)}</select>
+                <label>RUT / N° socio</label>
+                <input type="text" value="${esc(a.rut_socio||'')}" ${ro} oninput="setAccItem(${i},'rut_socio',this.value)" placeholder="Ej: 23.088.073-5, N° Socio: 49699-5">
             </div>
             <div class="campo-form-sm">
-                <label>¿Derivado a centro asistencial?</label>
-                <div class="radio-grupo" style="margin-top:4px;">
-                    <label><input type="radio" name="acc_der_${i}" value="si" ${a.derivado==='si'?'checked':''} ${dis} onchange="setAccItem(${i},'derivado','si');toggleCentro(${i})"> Sí</label>
-                    <label><input type="radio" name="acc_der_${i}" value="no" ${a.derivado==='no'?'checked':''} ${dis} onchange="setAccItem(${i},'derivado','no');toggleCentro(${i})"> No</label>
-                </div>
-            </div>
-            <div class="campo-form-sm sit-card-full" id="acc-centro-${i}" style="display:${a.derivado==='si'?'block':'none'};">
-                <label>Nombre del centro asistencial</label>
-                <input type="text" value="${esc(a.centro_asistencial||'')}" ${ro} oninput="setAccItem(${i},'centro_asistencial',this.value)" placeholder="Hospital, clínica, etc.">
+                <label>Asociación / Club</label>
+                <input type="text" value="${esc(a.asociacion_club||'')}" ${ro} oninput="setAccItem(${i},'asociacion_club',this.value)" placeholder="Ej: Asoc. Concepción, Club Florida">
             </div>
             <div class="campo-form-sm sit-card-full">
-                <label>Descripción del accidente</label>
-                <textarea rows="2" ${ro} oninput="setAccItem(${i},'descripcion',this.value)">${esc(a.descripcion||'')}</textarea>
+                <label>Detalle de los hechos</label>
+                <textarea rows="3" ${ro} oninput="setAccItem(${i},'detalle_hechos',this.value)" placeholder="Describa cómo ocurrió el accidente...">${esc(a.detalle_hechos||'')}</textarea>
             </div>
             <div class="campo-form-sm sit-card-full">
-                <label>Atención realizada</label>
-                <textarea rows="2" ${ro} oninput="setAccItem(${i},'atencion',this.value)">${esc(a.atencion||'')}</textarea>
-            </div>
-            <div class="campo-form-sm sit-card-full">
-                <label>Observaciones</label>
-                <textarea rows="2" ${ro} oninput="setAccItem(${i},'observaciones',this.value)">${esc(a.observaciones||'')}</textarea>
+                <label>Consecuencia / observación</label>
+                <textarea rows="2" ${ro} oninput="setAccItem(${i},'consecuencia',this.value)" placeholder="Ej: Sin consecuencias graves, sigue participando / No pudo seguir participando...">${esc(a.consecuencia||'')}</textarea>
             </div>
         </div>
-    </div>`; }).join('');
+    </div>`;
+    }).join('');
 }
 
 function toggleAccTabla() {
@@ -1623,16 +1775,11 @@ function toggleAccTabla() {
     if (w) w.style.display = _acc.hubo_accidentes === 'si' ? 'block' : 'none';
 }
 
-function toggleCentro(idx) {
-    const w = document.getElementById('acc-centro-' + idx);
-    if (w) w.style.display = (_acc.items[idx] && _acc.items[idx].derivado === 'si') ? 'block' : 'none';
-}
-
 function setAccCampo(campo, valor) { _acc[campo] = valor; }
 function setAccItem(idx, campo, valor) { if (_acc.items[idx]) _acc.items[idx][campo] = valor; }
 
 function agregarAccidente() {
-    _acc.items.push({ tipo:'', fecha_hora:'', persona:'', rut:'', categoria:'', derivado:'', centro_asistencial:'', descripcion:'', atencion:'', observaciones:'' });
+    _acc.items.push({ serie:'', animal:'', collera:'', accidentado:'', rut_socio:'', asociacion_club:'', detalle_hechos:'', consecuencia:'' });
     renderAccidentesItems(false);
 }
 
@@ -1643,7 +1790,13 @@ function quitarAccidente(idx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN IX — BIENESTAR ANIMAL
+// SECCIÓN IX — INFORME DELEGADO / VETERINARIO CONDICIONES DE BIENESTAR
+// ANIMAL (UNIFICADA, versión final 2026-2027). Antes eran dos anexos
+// separados (Anexo 01 delegado + Anexo 02 veterinario) con las mismas 6
+// preguntas respondidas dos veces; ahora se responde UNA sola vez, sobre
+// `_ba` (bienestar_animal). Los datos históricos de `_vet` (cartillas que
+// ya respondieron el Anexo 02 por separado) no se pierden — ver comentario
+// junto a `setVetCampo` más abajo.
 // ═════════════════════════════════════════════════════════════════════════════
 
 const BA_CAMPOS = [
@@ -1655,12 +1808,9 @@ const BA_CAMPOS = [
     { key:'comida_equinos', label:'Comida para equinos' },
 ];
 
-// ─── Tabla Pregunta/SI/NO/Observaciones reutilizada por Bienestar Animal
-// (Anexo 01) Y Veterinario (Anexo 02) — mismas 6 preguntas, pero cada anexo
-// guarda sus respuestas en su PROPIO objeto (_ba/_vet), nunca compartido
-// (gate explícito del pedido: "NO utilizar los mismos campos... son dos
-// informes diferentes"). `objetivo` y `setterCampo`/`setterObs` son el
-// nombre de las funciones globales que corresponden a cada anexo.
+// ─── Tabla Pregunta/SI/NO/Observaciones — usada por la Sección IX
+// unificada (objeto `_ba`). `setterCampo`/`setterObs` son el nombre de las
+// funciones globales correspondientes.
 function renderTablaBienestarSiNoObs(obj, prefijo, dis, setterCampo, setterObs) {
     return BA_CAMPOS.map(function(f) {
         const chk = (v) => obj[f.key] === v ? 'checked' : '';
@@ -1749,110 +1899,20 @@ function toggleBaDetalle() {
 
 function setBaCampo(campo, valor) { _ba[campo] = valor; }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// SECCIÓN X — VETERINARIO
-// ═════════════════════════════════════════════════════════════════════════════
-
-function renderSeccionVeterinario(ya) {
-    const cont = document.getElementById('sec-veterinario');
-    if (!cont) return;
-    const dis  = ya ? 'disabled' : '';
-    const ro   = ya ? 'readonly' : '';
-    const prep = _vet.preparacion || '';
-
-    const filasSiNo = renderTablaBienestarSiNoObs(_vet, 'vet', dis, 'setVetCampo', 'setVetObs');
-
-    cont.innerHTML = `
-    <div class="sec-sub">Datos del veterinario o personal a cargo</div>
-    <div class="campo-grid" style="margin-bottom:12px;">
-        <div>
-            <label class="form-label">Nombre</label>
-            <input type="text" class="form-control" value="${esc(_vet.nombre||'')}" ${ro} oninput="setVetCampo('nombre',this.value);refrescarVetHeader()" placeholder="Nombre completo">
-        </div>
-        <div>
-            <label class="form-label">Teléfono</label>
-            <input type="tel" class="form-control" value="${esc(_vet.telefono||'')}" ${ro} oninput="setVetCampo('telefono',this.value);refrescarVetHeader()" placeholder="+56 9 ...">
-        </div>
-    </div>
-    <div style="margin-bottom:14px;">
-        <label class="form-label">Correo (opcional)</label>
-        <input type="email" class="form-control" value="${esc(_vet.correo||'')}" ${ro} oninput="setVetCampo('correo',this.value);refrescarVetHeader()" placeholder="correo@ejemplo.cl">
-    </div>
-
-    <div class="sec-sub">Preparación del personal</div>
-    <div style="margin-bottom:10px;">
-        <label class="form-label">Tipo de preparación</label>
-        <select class="form-control" ${dis} onchange="setVetPrep(this.value)" id="vet-prep-sel">
-            <option value="">— Seleccione —</option>
-            <option value="veterinario" ${prep==='veterinario'?'selected':''}>Veterinario</option>
-            <option value="tecnico"     ${prep==='tecnico'    ?'selected':''}>Técnico</option>
-            <option value="otro"        ${prep==='otro'       ?'selected':''}>Otro</option>
-        </select>
-    </div>
-    <div id="vet-tec-w" style="display:${prep==='tecnico'?'block':'none'};margin-bottom:10px;">
-        <label class="form-label">Especifique técnico</label>
-        <input type="text" class="form-control" value="${esc(_vet.especifica_tecnico||'')}" ${ro} oninput="setVetCampo('especifica_tecnico',this.value)" placeholder="Ej: Técnico veterinario, Paramédico">
-    </div>
-    <div id="vet-otro-w" style="display:${prep==='otro'?'block':'none'};margin-bottom:10px;">
-        <label class="form-label">Especifique otro</label>
-        <input type="text" class="form-control" value="${esc(_vet.especifica_otro||'')}" ${ro} oninput="setVetCampo('especifica_otro',this.value)" placeholder="Especifique qué tipo de personal">
-    </div>
-
-    <div class="sec-sub">Verificación condiciones de bienestar animal (por veterinario) — Anexo 02, informe independiente del Anexo 01</div>
-    <div style="overflow-x:auto;margin-bottom:14px;">
-        <table style="border-collapse:collapse;width:100%;">
-            <thead><tr>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Pregunta</th>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:center;border:1px solid #14316a;width:150px;">SI / NO</th>
-                <th style="background:#1a3c6e;color:#fff;padding:7px 10px;font-size:12px;text-align:left;border:1px solid #14316a;">Observaciones</th>
-            </tr></thead>
-            <tbody>${filasSiNo}</tbody>
-        </table>
-    </div>
-
-    <div class="sec-sub" style="margin-top:0;">Observaciones de lesiones (señale si hubo lesiones tanto en equinos como en bovinos)</div>
-    <div class="campo-grid" style="margin-bottom:12px;">
-        <div>
-            <label class="form-label">Equinos</label>
-            <textarea class="form-control" rows="3" ${ro} oninput="setVetCampo('detalle_lesiones_equinos',this.value)" placeholder="Describa lesiones en equinos...">${esc(_vet.detalle_lesiones_equinos||'')}</textarea>
-        </div>
-        <div>
-            <label class="form-label">Bovinos</label>
-            <textarea class="form-control" rows="3" ${ro} oninput="setVetCampo('detalle_lesiones_bovinos',this.value)" placeholder="Describa lesiones en bovinos...">${esc(_vet.detalle_lesiones_bovinos||'')}</textarea>
-        </div>
-    </div>
-    <div>
-        <label class="form-label">Observaciones generales del veterinario</label>
-        <textarea class="form-control" rows="3" ${ro} oninput="setVetCampo('observaciones',this.value)" placeholder="Observaciones generales...">${esc(_vet.observaciones||'')}</textarea>
-    </div>`;
-}
-
-function setVetObs(campo, valor) { _vet[campo + '_obs'] = valor; }
-
-function setVetPrep(val) {
-    _vet.preparacion = val;
-    const wT = document.getElementById('vet-tec-w');
-    const wO = document.getElementById('vet-otro-w');
-    if (wT) wT.style.display = val === 'tecnico' ? 'block' : 'none';
-    if (wO) wO.style.display = val === 'otro'    ? 'block' : 'none';
-}
-
+// Nota — Veterinario/Anexo 02 (histórico): la versión final unificó las
+// preguntas de bienestar animal del delegado y del veterinario en una sola
+// sección (arriba, "IX. Informe delegado / veterinario..."), por lo que
+// esta sección dejó de tener un bloque propio editable. `_vet` conserva su
+// nombre/rut (encabezado) y, para cartillas antiguas, cualquier dato que ya
+// tuviera guardado (teléfono, correo, preparación, respuestas de bienestar,
+// lesiones) permanece intacto en `respuestas_json.informe_veterinario` —
+// nunca se borra ni se transforma, solo deja de mostrarse como formulario
+// aparte (se sigue viendo en Administrador/PDF si existe).
 function setVetCampo(campo, valor) { _vet[campo] = valor; }
-
-// Refresca la vista previa de solo lectura del encabezado (Sección I) con
-// los valores actuales de _vet.nombre/telefono/correo, apenas se editan en
-// la Sección VIII — Anexo 02 (única fuente de captura, sin duplicar datos).
-function refrescarVetHeader() {
-    const n = document.getElementById('hdr-vet-nombre');
-    const t = document.getElementById('hdr-vet-telefono');
-    const c = document.getElementById('hdr-vet-correo');
-    if (n) n.value = _vet.nombre || '—';
-    if (t) t.value = _vet.telefono || '—';
-    if (c) c.value = _vet.correo || '—';
-}
+function setSecCampo(campo, valor) { _sec[campo] = valor; }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ANEXO 03 — COMENTARIOS GENERALES (nuevo formato 2026-2027)
+// SECCIÓN XI — COMENTARIOS GENERALES (versión final 2026-2027)
 // ═════════════════════════════════════════════════════════════════════════════
 
 function renderSeccionComentarios(ya) {
@@ -1865,19 +1925,6 @@ function renderSeccionComentarios(ya) {
 }
 
 function setComentariosGenerales(valor) { _com.texto = valor; }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// ANEXO 04 — ANTECEDENTES DISCIPLINARIOS COMPLEMENTARIOS (nuevo formato 2026-2027)
-// ═════════════════════════════════════════════════════════════════════════════
-
-function renderSeccionAntecedentes(ya) {
-    const cont = document.getElementById('sec-antecedentes');
-    if (!cont) return;
-    const ro = ya ? 'readonly' : '';
-    cont.innerHTML = `
-    <label class="form-label">Antecedentes disciplinarios complementarios</label>
-    <textarea class="form-control" rows="4" ${ro} oninput="setAntecedentesDisciplinarios(this.value)" placeholder="Antecedentes disciplinarios complementarios (si corresponde)...">${esc(_ant.texto||'')}</textarea>`;
-}
 
 function setAntecedentesDisciplinarios(valor) { _ant.texto = valor; }
 
@@ -2118,12 +2165,13 @@ function recolectarDatos() {
         colleras_invitadas:   _col,
         reemplazo_jinetes:    _ree,
         accidentes_informe:   _acc,
-        informe_accidentes_general: _accGeneral,
         bienestar_animal:     _ba,
         informe_veterinario:  _vet,
         comentarios_generales:      _com,
         antecedentes_disciplinarios: _ant,
-        reclamos_sugerencias: _recs
+        reclamos_sugerencias: _recs,
+        secretario:           _sec,
+        situaciones_revisar:  _sitRev
     });
     return {
         // Temporada / Fecha del Rodeo / Tipo de Rodeo / Club-Asociación
@@ -2131,9 +2179,17 @@ function recolectarDatos() {
         // desde `rodeo` (4ª y 5ª revisión), no hay input en el DOM que leer.
         delegado_nombre:                     document.getElementById('f-delegado_nombre')?.value.trim() || null,
         delegado_telefono:                   document.getElementById('f-delegado_telefono')?.value.trim() || null,
-        secretario_jurado:                   document.getElementById('f-secretario_jurado')?.value.trim() || null,
-        secretario_numero_socio:             document.getElementById('f-secretario_numero_socio')?.value.trim() || null,
-        publico_serie_campeones:             document.getElementById('f-publico_serie_campeones')?.value ? parseInt(document.getElementById('f-publico_serie_campeones').value) : null,
+        // Columnas antiguas (secretario_jurado/secretario_numero_socio) se
+        // conservan escribiéndose en paralelo desde el objeto `_sec` nuevo
+        // — compatibilidad con cualquier lectura existente de esas 2
+        // columnas; la fuente completa (rut/teléfono/correo incluidos)
+        // queda en respuestas_json.secretario.
+        secretario_jurado:                   (_sec.nombre || '').trim() || null,
+        secretario_numero_socio:             (_sec.n_socio || '').trim() || null,
+        // publico_serie_campeones: ya NO se envía — el campo "Público" se
+        // retiró del formulario (auditoría versión final). Omitir la key
+        // por completo (en vez de enviar null) preserva intacto cualquier
+        // valor histórico ya guardado, igual que temporada/tipo_rodeo.
         serie_campeones_dos_vueltas:         radio('serie_campeones_dos_vueltas'),
         incluye_informe_disciplinario:       radio('incluye_informe_disciplinario'),
         incluye_informe_ganado_bajo_peso:    radio('incluye_informe_ganado_bajo_peso'),
@@ -2233,6 +2289,13 @@ async function enviarCartilla() {
     // Validación ETAPA 3 — reemplazo de jinetes
     if (_ree.hubo === 'si' && (!_ree.items || _ree.items.length === 0)) {
         mostrarToast('Ha indicado que hubo reemplazo de jinetes. Debe agregar al menos un registro.', 'advertencia');
+        return;
+    }
+
+    // Validación Sección V — Situaciones a revisar (máximo 3, defensa en
+    // profundidad; la UI ya impide agregar una 4ª situación).
+    if (_sitRev.items && _sitRev.items.length > MAX_SITUACIONES_REVISAR) {
+        mostrarToast('Situaciones a revisar admite un máximo de 3 registros.', 'advertencia');
         return;
     }
 

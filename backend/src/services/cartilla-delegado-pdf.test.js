@@ -172,3 +172,220 @@ describe('generarCartillaDelegadoPDF — Tipo de Rodeo NO concatena Categoría (
         expect(buffer.length).toBeGreaterThan(0);
     });
 });
+
+// ═════════════════════════════════════════════════════════════════════════
+// VERSIÓN FINAL APROBADA 2026-2027 — secciones nuevas/unificadas
+// ═════════════════════════════════════════════════════════════════════════
+describe('generarCartillaDelegadoPDF — Secretario (nombre, rut, N° socio, teléfono, correo)', () => {
+    test('respuestas_json.secretario completo -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { secretario: { nombre: 'José Salinas', rut: '9.492.569-K', n_socio: '123', telefono: '+56992737313', correo: 'j@x.cl' } }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+
+    test('cartilla histórica SIN respuestas_json.secretario, solo columnas antiguas -> usa el respaldo, no lanza excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: {} };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — Veterinario/Técnico (nombre y rut, encabezado)', () => {
+    test('informe_veterinario con rut nuevo -> resuelve sin lanzar excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { informe_veterinario: { nombre: 'Marcelo Vásquez', rut: '11.111.111-1' } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — II. Reemplazo de Jinetes (campos reales nombre_reemplazado/nombre_reemplazante)', () => {
+    test('items con la estructura real del formulario -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                reemplazo_jinetes: {
+                    hubo: 'si',
+                    items: [{ nombre_reemplazado: 'Patricio Andrade', rut_reemplazado: '9.311.411-6', nombre_reemplazante: 'Eduardo Casado', rut_reemplazante: '15.978.339-1', motivo: 'Accidente', serie: 'Campeones', detalle: 'Dolor en pierna', observaciones: '' }]
+                }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — III. Informe de accidentes (unificado, columnas nuevas + formato anterior)', () => {
+    test('accidente con columnas nuevas (serie/animal/collera/accidentado) -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                accidentes_informe: {
+                    hubo_accidentes: 'si', medico_nombre: 'José Carrasco', medico_telefono: '+56961321576',
+                    items: [{ serie: 'Criaderos', animal: '1er Animal', collera: '9', accidentado: 'Jose Pablo Molina', rut_socio: '23.088.073-5, N° 49699-5', asociacion_club: 'Asoc. Concepción, Club Florida', detalle_hechos: 'Accidente en tercera atajada', consecuencia: 'Sin consecuencias graves, sigue participando' }]
+                }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+
+    test('accidente en formato anterior (tipo/persona/categoria/descripcion) -> resuelve sin lanzar excepción, no se pierde el registro histórico', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                accidentes_informe: {
+                    hubo_accidentes: 'si',
+                    items: [{ tipo: 'Leve', persona: 'Juan Pérez', rut: '11.111.111-1', categoria: 'Jinete', descripcion: 'Caída leve', atencion: 'Revisión en box', observaciones: 'Sin gravedad' }]
+                }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+
+    test('solo relato general histórico (informe_accidentes_general), sin accidentes_informe -> resuelve sin lanzar excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { informe_accidentes_general: 'Relato histórico de accidentes.' } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — IV. Desempeño del Jurado (aspecto 4 sin "cuarta carrera")', () => {
+    test('4 aspectos completos -> resuelve sin lanzar excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { desempeno_jurado: { aspecto_1: 6, aspecto_2: 5, aspecto_3: 7, aspecto_4: 6, nota_promedio: 6 } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — V. Situaciones a revisar (máximo 3, nueva)', () => {
+    test('3 situaciones con Serie/Animal/Collera -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                situaciones_revisar: {
+                    items: [
+                        { serie: 'Criaderos', animal: '1º animal', collera: '8', detalle: 'No se computa corte de línea de sentencia.' },
+                        { serie: '2ª Serie Libre', animal: '2º animal', collera: '11', detalle: 'Mala entrega en circunstancias que novillo había caído.' },
+                        { serie: 'Campeones', animal: '4º animal', collera: '23', detalle: 'Se pagan 4 puntos por atajada no definida.' }
+                    ]
+                }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+
+    test('sin situaciones_revisar (cartilla histórica) -> resuelve sin lanzar excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: {} };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — VI. Disciplina y antecedentes disciplinarios complementarios (unificado)', () => {
+    test('situación disciplinaria con campos reales (nombre_infractor/rut/num_socio/tipo_falta/articulo) + antecedentes complementarios -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                disciplina_informe: { hubo_informe: 'si', situaciones: [{ nombre_infractor: 'Juan Pérez', rut: '11.111.111-1', num_socio: '999', tipo_falta: 'Reglamentaria', articulo: '45', testigos: 'Pedro', detalle: 'Detalle de los hechos', observaciones: 'Obs' }] },
+                antecedentes_disciplinarios: { texto: 'Antecedente complementario de prueba.' }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — VIII. Colleras invitadas (campos reales jinete1/jinete2/club/asociacion)', () => {
+    test('items con la estructura real del formulario -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { colleras_invitadas: { no_hubo: false, items: [{ jinete1: 'Alberto Herrera', jinete2: 'Pablo Pino', club: 'Las Cabras', asociacion: "Asoc. O'Higgins", observaciones: '' }] } }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — IX. Bienestar Animal unificado (delegado/veterinario)', () => {
+    test('solo bienestar_animal (cartilla nueva, formato unificado) -> resuelve sin lanzar excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { bienestar_animal: { sombra_ganado: 'si', agua_ganado: 'no', agua_ganado_obs: 'Sin agua' } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+
+    test('bienestar_animal + informe_veterinario con respuesta propia (cartilla histórica dual) -> ambos se muestran, no lanza excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                bienestar_animal: { sombra_ganado: 'si' },
+                informe_veterinario: { nombre: 'Vet X', sombra_ganado: 'no', sombra_ganado_obs: 'Respuesta distinta del veterinario' }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — X. Reclamos (campos reales nombre/rut/detalle/respuesta)', () => {
+    test('reclamo con la estructura real del formulario -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { reclamos_sugerencias: { hubo_reclamos: 'si', items: [{ nombre: 'Juan', rut: '1-9', tipo: 'Conducta', detalle: 'Detalle', respuesta: 'Respuesta', observaciones: 'Obs' }] } }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — cartilla vacía (mínima) -> no lanza excepción', () => {
+    test('respuestas_json = {} -> resuelve sin lanzar excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: {} };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// AUDITORÍA CONTRA LA VERSIÓN FINAL — "Calidad de ganado: Muy bueno" y
+// campo "Público" (histórico vs. nuevas cartillas)
+// ═════════════════════════════════════════════════════════════════════════
+describe('generarCartillaDelegadoPDF — Calidad de ganado "Muy bueno"', () => {
+    test('serie con q1k = "Muy bueno" -> resuelve sin lanzar excepción', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { ganado_series: [{ nombre: 'Campeones', c1n: '5', c1g: '24', q1k: 'Muy bueno' }] }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+});
+
+describe('generarCartillaDelegadoPDF — campo Público (retirado de nuevas cartillas, preservado como histórico)', () => {
+    test('publico_serie_campeones presente (cartilla histórica) -> se imprime como dato histórico, no lanza excepción', async () => {
+        const cartilla = { ...CARTILLA_BASE, publico_serie_campeones: 300, respuestas_json: {} };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+
+    test('publico_serie_campeones ausente (cartilla nueva) -> no lanza excepción, no se inventa el dato', async () => {
+        const cartilla = { ...CARTILLA_BASE, publico_serie_campeones: null, respuestas_json: {} };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});

@@ -22,16 +22,19 @@ function extraerCatalogoSeries() {
     return eval('[' + match[1] + ']');
 }
 
+// "Campeones" agregada en la auditoría contra la versión final 2026-2027
+// (la cartilla final aprobada la usa expresamente como Serie) — adición,
+// ninguna Serie previamente aprobada fue eliminada.
 const LISTA_OFICIAL = [
     '10a. Libre', '1ra. Libre', '1ra. Libre A', '1ra. Libre B',
     '2a. Libre', '2a. Libre A', '2a. Libre B',
     '3ra. Libre', '3ra. Libre A', '3ra. Libre B',
     '4a. Libre', '5a. Libre', '6a. Libre', '7a. Libre', '8a. Libre', '9a. Libre',
-    'Caballos', 'Criaderos', 'Expositores', 'Menores', 'Mixta', 'Mixta-Criaderos', 'Potros', 'Yeguas'
+    'Caballos', 'Campeones', 'Criaderos', 'Expositores', 'Menores', 'Mixta', 'Mixta-Criaderos', 'Potros', 'Yeguas'
 ];
 
-describe('CATALOGO_SERIES_DELEGADO — lista oficial exacta (4ª revisión, punto 4)', () => {
-    test('contiene EXACTAMENTE los 24 valores pedidos, en el mismo orden, sin agregar "Primera libre A/B/C" ni otros nombres antiguos', () => {
+describe('CATALOGO_SERIES_DELEGADO — lista oficial exacta (4ª revisión + auditoría versión final, agrega "Campeones")', () => {
+    test('contiene EXACTAMENTE los 25 valores pedidos, en el mismo orden, sin agregar "Primera libre A/B/C" ni otros nombres antiguos', () => {
         const catalogo = extraerCatalogoSeries();
         expect(catalogo).toEqual(LISTA_OFICIAL);
     });

@@ -2176,17 +2176,22 @@ async function verCartillaDelegadoDigital(cartillaId) {
                 ${fila('Fecha del Rodeo', c.fecha_rodeo ? new Date(c.fecha_rodeo + 'T12:00:00').toLocaleDateString('es-CL') : '—')}
                 ${fila('Delegado Oficial', fld(c.delegado_nombre))}
                 ${fila('Teléfono', fld(c.delegado_telefono))}
-                ${fila('Secretario del Jurado', fld(c.secretario_jurado))}
-                ${fila('N° de Socio (Secretario)', fld(c.secretario_numero_socio))}
+                ${fila('Veterinario, Técnico u otro', fld(c.respuestas_json?.informe_veterinario?.nombre))}
+                ${fila('RUT (Veterinario/Técnico)', fld(c.respuestas_json?.informe_veterinario?.rut))}
+                ${fila('Secretario', fld(c.respuestas_json?.secretario?.nombre || c.secretario_jurado))}
+                ${fila('RUT (Secretario)', fld(c.respuestas_json?.secretario?.rut))}
+                ${fila('N° de Socio (Secretario)', fld(c.respuestas_json?.secretario?.n_socio || c.secretario_numero_socio))}
+                ${fila('Teléfono (Secretario)', fld(c.respuestas_json?.secretario?.telefono))}
+                ${fila('Correo (Secretario)', fld(c.respuestas_json?.secretario?.correo))}
                 ${fila('Asociación organizadora', fld(c.rodeo?.asociacion))}
                 ${fila('Club organizador', fld(c.rodeo?.club))}
                 ${c.club_asociacion_organizador ? fila('Club / Asociación Organizador (dato histórico)', fld(c.club_asociacion_organizador)) : ''}
                 ${fila('Tipo de Rodeo', fld(c.rodeo?.tipo_rodeo_nombre))}
                 ${c.rodeo?.categoria_rodeo_nombre ? fila('Categoría de Rodeo', fld(c.rodeo.categoria_rodeo_nombre)) : ''}
-                ${fila('Público', fld(c.publico_serie_campeones))}
+                ${c.publico_serie_campeones != null ? fila('Público (dato histórico)', fld(c.publico_serie_campeones)) : ''}
             </table>
             <table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:#fafafa;border-radius:6px;overflow:hidden;border:1px solid #eee;">
-                ${fila('Serie Campeones a 2 vueltas', bool2txt(c.serie_campeones_dos_vueltas))}
+                ${fila('¿Final de rodeo se corrió a dos vueltas en el apiñadero?', bool2txt(c.serie_campeones_dos_vueltas))}
                 ${fila('Incluye informe disciplinario', bool2txt(c.incluye_informe_disciplinario))}
                 ${fila('Incluye informe ganado bajo peso', bool2txt(c.incluye_informe_ganado_bajo_peso))}
             </table>
@@ -2200,7 +2205,7 @@ async function verCartillaDelegadoDigital(cartillaId) {
             ${renderSeriesGanadoModal(c.respuestas_json)}
             ${renderReemplazoModal(c.respuestas_json)}
             ${renderFaltasPorSerieModal(c.respuestas_json)}
-            ${renderAccidentesBreveModal(c.respuestas_json)}
+            ${renderAccidentesModal(c.respuestas_json)}
             ${renderEtapa3Modal(c.respuestas_json)}
             ${renderEtapa4Modal(c.respuestas_json)}
             <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
@@ -2302,8 +2307,7 @@ function renderSeriesGanadoModal(rj) {
         ${bloques}`;
 }
 
-// Reemplazo de Jinetes — se muestra inmediatamente después de Series, tal
-// como lo pide el orden oficial (sin numeral romano propio).
+// II. Reemplazo de Jinetes — se muestra inmediatamente después de Series.
 function renderReemplazoModal(rj) {
     const ree = rj && rj.reemplazo_jinetes ? rj.reemplazo_jinetes : null;
     if (!ree) return '';
@@ -2314,7 +2318,7 @@ function renderReemplazoModal(rj) {
     const boolTxt = (v) => v === 'si' || v === true ? 'Sí' : v === 'no' || v === false ? 'No' : '—';
     const wrapTbl = (t) => `<div style="overflow-x:auto;margin-bottom:8px;">${t}</div>`;
 
-    let out = `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:16px 0 8px;">Reemplazo de Jinetes</div>`;
+    let out = `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:16px 0 8px;">II. Informe si hubo reemplazo de jinetes</div>`;
     out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo reemplazo de jinetes?</strong> ${boolTxt(ree.hubo)}</p>`;
     if (Array.isArray(ree.items) && ree.items.length > 0) {
         const rRows = ree.items.map(re => `<tr>
@@ -2368,22 +2372,66 @@ function renderFaltasPorSerieModal(rj) {
         </table></div>`;
 }
 
-// Informe general de accidentes (bloque breve dentro de la Sección I
-// unificada). El relato es TEXTO LIBRE independiente, leído de
-// `rj.informe_accidentes_general` — nunca se confunde con el detalle
-// estructurado de "VI. Reporte de accidentes" (`rj.accidentes_informe`:
-// médico, contacto, accidentados). Solo el Sí/No `hubo_accidentes` se
-// comparte entre ambos bloques (misma pregunta).
-function renderAccidentesBreveModal(rj) {
+// III. Informe de accidentes (UNIFICADO, versión final 2026-2027) —
+// combina la mención breve (relato libre histórico, `rj.informe_accidentes_
+// general`) y el detalle estructurado (médico, contacto, accidentados,
+// `rj.accidentes_informe`) en una sola sección. Los accidentes NUEVOS usan
+// columnas Serie/Animal/Collera/Accidentado/RUT-socio/Asociación-Club/
+// Detalle/Consecuencia; los históricos (formato anterior) se detectan por
+// presencia de datos y se muestran con sus campos originales, sin perderlos.
+function esAccidenteLegacyModal(a) {
+    const tieneLegacy = !!(a.tipo || a.persona || a.categoria || a.descripcion || a.atencion);
+    const tieneNuevo  = !!(a.serie || a.animal || a.collera || a.accidentado);
+    return tieneLegacy && !tieneNuevo;
+}
+function renderAccidentesModal(rj) {
     const acc = rj && rj.accidentes_informe ? rj.accidentes_informe : null;
     const textoGeneral = (rj && typeof rj.informe_accidentes_general === 'string') ? rj.informe_accidentes_general : '';
     if ((!acc || acc.hubo_accidentes == null) && !textoGeneral) return '';
-    const boolTxt = (v) => v === 'si' ? 'Sí' : v === 'no' ? 'No' : '—';
-    const val = (v) => (v && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>';
-    return `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:16px 0 8px;">Informe de accidentes</div>
-        ${acc ? `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo accidentes en el Rodeo?</strong> ${boolTxt(acc.hubo_accidentes)}</p>` : ''}
-        <div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:4px;">${val(textoGeneral)}</div>
-        <p style="font-size:11px;color:#888;margin:0 0 8px;">Detalle formal (médico, contacto y datos del accidentado) en "VI. Reporte de accidentes".</p>`;
+
+    const thS = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
+    const tdC = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;"';
+    const tdH = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;background:#eaf0f8;font-weight:700;white-space:nowrap;"';
+    const val = (v) => (v !== undefined && v !== null && String(v).trim() !== '') ? sanitizar(String(v)) : '<span style="color:#ccc;">—</span>';
+    const boolTxt = (v) => v === 'si' || v === true ? 'Sí' : v === 'no' || v === false ? 'No' : '—';
+    const wrapTbl = (t) => `<div style="overflow-x:auto;margin-bottom:8px;">${t}</div>`;
+
+    let out = `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin:16px 0 8px;">III. Informe de accidentes</div>`;
+    if (acc) out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo accidentes en el Rodeo?</strong> ${boolTxt(acc.hubo_accidentes)}</p>`;
+    if (textoGeneral) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px;"><em>Relato general (dato histórico):</em> ${val(textoGeneral)}</div>`;
+    if (acc) {
+        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
+            <tr><td ${tdH}>Médico / paramédico</td><td ${tdC}>${val(acc.medico_nombre)}</td>
+                <td ${tdH}>Teléfono</td><td ${tdC}>${val(acc.medico_telefono)}</td></tr>
+        </table>`;
+        if (acc.medico_email) out += `<p style="font-size:12px;margin:0 0 4px;"><strong>Correo:</strong> ${sanitizar(acc.medico_email)}</p>`;
+        if (acc.observaciones_generales) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px;"><strong>Observaciones generales:</strong> ${sanitizar(acc.observaciones_generales)}</div>`;
+        if (Array.isArray(acc.items) && acc.items.length > 0) {
+            const hayLegacy = acc.items.some(esAccidenteLegacyModal);
+            const hayNuevo  = acc.items.some(a => !esAccidenteLegacyModal(a));
+            if (hayNuevo) {
+                out += wrapTbl(`<table style="border-collapse:collapse;min-width:100%;font-size:12px;">
+                    <thead><tr><th ${thS}>Serie</th><th ${thS}>Animal</th><th ${thS}>Collera</th><th ${thS}>Accidentado</th><th ${thS}>RUT/N° socio</th><th ${thS}>Asociación/Club</th><th ${thS}>Detalle de los hechos</th><th ${thS}>Consecuencia/observación</th></tr></thead>
+                    <tbody>${acc.items.filter(a=>!esAccidenteLegacyModal(a)).map(a=>`<tr>
+                        <td ${tdC}>${val(a.serie)}</td><td ${tdC}>${val(a.animal)}</td><td ${tdC}>${val(a.collera)}</td>
+                        <td ${tdC}>${val(a.accidentado)}</td><td ${tdC}>${val(a.rut_socio)}</td><td ${tdC}>${val(a.asociacion_club)}</td>
+                        <td ${tdC}>${val(a.detalle_hechos)}</td><td ${tdC}>${val(a.consecuencia)}</td>
+                    </tr>`).join('')}</tbody>
+                </table>`);
+            }
+            if (hayLegacy) {
+                out += `<p style="font-size:11px;color:#888;font-style:italic;margin:4px 0;">Accidentes en formato anterior:</p>`;
+                out += wrapTbl(`<table style="border-collapse:collapse;min-width:100%;font-size:12px;">
+                    <thead><tr><th ${thS}>Tipo</th><th ${thS}>Persona</th><th ${thS}>RUT</th><th ${thS}>Categoría</th><th ${thS}>Descripción</th><th ${thS}>Atención/Obs.</th></tr></thead>
+                    <tbody>${acc.items.filter(esAccidenteLegacyModal).map(a=>`<tr>
+                        <td ${tdC}>${val(a.tipo)}</td><td ${tdC}>${val(a.persona)}</td><td ${tdC}>${val(a.rut)}</td>
+                        <td ${tdC}>${val(a.categoria)}</td><td ${tdC}>${val(a.descripcion)}</td><td ${tdC}>${val(a.atencion || a.observaciones)}</td>
+                    </tr>`).join('')}</tbody>
+                </table>`);
+            }
+        }
+    }
+    return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2393,10 +2441,12 @@ function renderEtapa3Modal(rj) {
     if (!rj) return '';
     const dj      = rj.desempeno_jurado   || null;
     const disc    = rj.disciplina_informe  || null;
+    const ant     = rj.antecedentes_disciplinarios || null;
+    const sitRev  = rj.situaciones_revisar || null;
     const recinto = rj.recinto_deportivo   || null;
     const col     = rj.colleras_invitadas  || null;
 
-    if (!dj && !disc && !recinto && !col) return '';
+    if (!dj && !disc && !ant && !sitRev && !recinto && !col) return '';
 
     const thS  = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
     const tdC  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;"';
@@ -2409,18 +2459,18 @@ function renderEtapa3Modal(rj) {
 
     let out = '<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">';
 
-    // ── II. Desempeño del Jurado ──────────────────────────────────────────
-    // Nuevo formato 2026-2027: exactamente 4 aspectos (1.0-7.0) + Nota
-    // Promedio automática, que alimenta rodeo_notas_secundarias.nota_delegado.
-    // Cartillas antiguas (formato previo: evaluación sí/no + lista de
-    // jurados) se siguen mostrando tal cual para no perder ese historial.
+    // ── IV. Desempeño del Jurado ──────────────────────────────────────────
+    // Exactamente 4 aspectos (1.0-7.0) + Nota Promedio automática, que
+    // alimenta rodeo_notas_secundarias.nota_delegado. Cartillas antiguas
+    // (formato previo: evaluación sí/no + lista de jurados) se siguen
+    // mostrando tal cual para no perder ese historial.
     if (dj) {
-        out += bloqueTitulo('II. Informe sobre el desempeño del Jurado');
+        out += bloqueTitulo('IV. Informe sobre el desempeño del Jurado');
         const ASPECTOS_ADMIN = [
             { key:'aspecto_1', label:'1. Sanciona correctamente las faltas en el apiñadero.' },
             { key:'aspecto_2', label:'2. Sanciona correctamente las faltas en la cancha (incluye zona de postura).' },
             { key:'aspecto_3', label:'3. Identifica correctamente atajadas válidas. Justifica atajadas no válidas. Sanciona faltas en la atajada.' },
-            { key:'aspecto_4', label:'4. Sanciona correctamente las faltas de la cuarta carrera (entrega del novillo).' }
+            { key:'aspecto_4', label:'4. Sanciona correctamente las faltas que se producen en la entrega del novillo.' }
         ];
         const esFormatoNuevo = ASPECTOS_ADMIN.some(a => dj[a.key] !== undefined && dj[a.key] !== null);
         if (esFormatoNuevo) {
@@ -2461,34 +2511,55 @@ function renderEtapa3Modal(rj) {
         }
     }
 
-    // ── III. Disciplina ───────────────────────────────────────────────────
-    if (disc) {
-        out += bloqueTitulo('III. Informe de disciplina');
-        out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo informe de disciplina?</strong> ${boolTxt(disc.hubo_informe)}</p>`;
-        if (Array.isArray(disc.situaciones) && disc.situaciones.length > 0) {
-            disc.situaciones.forEach((s, i) => {
-                out += `<div style="border:1px solid #dde3ec;border-radius:6px;margin-bottom:8px;overflow:hidden;">
-                    <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Situación N° ${i+1}</div>
-                    <div style="padding:10px 12px;">
-                    <table style="border-collapse:collapse;width:100%;font-size:12px;">
-                        <tr><td ${tdH}>Nombre del infractor</td><td ${tdC}>${val(s.nombre_infractor)}</td>
-                            <td ${tdH}>RUT</td><td ${tdC}>${val(s.rut)}</td></tr>
-                        <tr><td ${tdH}>N° de socio</td><td ${tdC}>${val(s.num_socio)}</td>
-                            <td ${tdH}>Tipo de falta</td><td ${tdC}>${val(s.tipo_falta)}</td></tr>
-                        <tr><td ${tdH}>Artículo reglamentario</td><td ${tdC}>${val(s.articulo)}</td>
-                            <td ${tdH}>Testigos</td><td ${tdC}>${val(s.testigos)}</td></tr>
-                    </table>
-                    ${s.detalle ? `<div style="margin-top:6px;font-size:12px;"><strong>Detalle:</strong> ${sanitizar(s.detalle)}</div>` : ''}
-                    ${s.observaciones ? `<div style="margin-top:4px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(s.observaciones)}</div>` : ''}
-                    </div>
-                </div>`;
-            });
-        } else if (disc.hubo_informe === 'si') {
-            out += `<p style="font-size:12px;color:#888;font-style:italic;">Sin situaciones registradas.</p>`;
+    // ── V. Situaciones a revisar (máximo 3, NUEVA) ────────────────────────
+    if (sitRev && Array.isArray(sitRev.items) && sitRev.items.length > 0) {
+        out += bloqueTitulo('V. Situaciones a revisar');
+        const sRows = sitRev.items.map((s, i) => `<tr>
+            <td ${tdH}>Situación ${i+1}</td><td ${tdC}>${val(s.serie)}</td>
+            <td ${tdC}>${val(s.animal)}</td><td ${tdC}>${val(s.collera)}</td><td ${tdC}>${val(s.detalle)}</td>
+        </tr>`).join('');
+        out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+            <thead><tr><th ${thS}></th><th ${thS}>Serie</th><th ${thS}>Animal</th><th ${thS}>Collera</th><th ${thS}>Descripción / detalle</th></tr></thead>
+            <tbody>${sRows}</tbody>
+        </table>`);
+    }
+
+    // ── VI. Disciplina y antecedentes disciplinarios complementarios
+    // (UNIFICADA) — combina las situaciones estructuradas (antes "III.
+    // Informe de disciplina") y el campo libre de antecedentes
+    // complementarios (antes "X. Anexo 04"). ──────────────────────────────
+    if (disc || ant) {
+        out += bloqueTitulo('VI. Informe de disciplina y antecedentes disciplinarios complementarios');
+        if (disc) {
+            out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo informe de disciplina?</strong> ${boolTxt(disc.hubo_informe)}</p>`;
+            if (Array.isArray(disc.situaciones) && disc.situaciones.length > 0) {
+                disc.situaciones.forEach((s, i) => {
+                    out += `<div style="border:1px solid #dde3ec;border-radius:6px;margin-bottom:8px;overflow:hidden;">
+                        <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Situación N° ${i+1}</div>
+                        <div style="padding:10px 12px;">
+                        <table style="border-collapse:collapse;width:100%;font-size:12px;">
+                            <tr><td ${tdH}>Nombre del infractor</td><td ${tdC}>${val(s.nombre_infractor)}</td>
+                                <td ${tdH}>RUT</td><td ${tdC}>${val(s.rut)}</td></tr>
+                            <tr><td ${tdH}>N° de socio</td><td ${tdC}>${val(s.num_socio)}</td>
+                                <td ${tdH}>Tipo de falta</td><td ${tdC}>${val(s.tipo_falta)}</td></tr>
+                            <tr><td ${tdH}>Artículo reglamentario</td><td ${tdC}>${val(s.articulo)}</td>
+                                <td ${tdH}>Testigos</td><td ${tdC}>${val(s.testigos)}</td></tr>
+                        </table>
+                        ${s.detalle ? `<div style="margin-top:6px;font-size:12px;"><strong>Detalle:</strong> ${sanitizar(s.detalle)}</div>` : ''}
+                        ${s.observaciones ? `<div style="margin-top:4px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(s.observaciones)}</div>` : ''}
+                        </div>
+                    </div>`;
+                });
+            } else if (disc.hubo_informe === 'si') {
+                out += `<p style="font-size:12px;color:#888;font-style:italic;">Sin situaciones registradas.</p>`;
+            }
+        }
+        if (ant && ant.texto) {
+            out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:8px;"><strong>Antecedentes disciplinarios complementarios:</strong> ${sanitizar(ant.texto)}</div>`;
         }
     }
 
-    // ── IV. Recinto Deportivo ────────────────────────────────────────────
+    // ── VII. Recinto Deportivo ────────────────────────────────────────────
     // Nuevo formato 2026-2027: exactamente 5 campos (Cancha, Iluminación,
     // Instalaciones públicas, Casetas de jurados, Otros). Las cartillas
     // ANTIGUAS que ya tengan datos en los 18 aspectos del formato anterior
@@ -2523,7 +2594,7 @@ function renderEtapa3Modal(rj) {
         ];
         const esLegacy = ASPECTOS_LEGACY.some(a => recinto[a.key+'_estado'] || recinto[a.key+'_obs']);
         const ASPECTOS = esLegacy ? ASPECTOS_LEGACY : ASPECTOS_NUEVO;
-        out += bloqueTitulo('IV. Informe sobre el estado del recinto deportivo');
+        out += bloqueTitulo('VII. Informe sobre el estado del recinto deportivo');
         if (esLegacy) {
             out += `<p style="font-size:11px;color:#888;font-style:italic;margin:-4px 0 8px;">Formato anterior (18 aspectos) — cartilla registrada antes del nuevo formato oficial.</p>`;
         }
@@ -2543,9 +2614,9 @@ function renderEtapa3Modal(rj) {
         }
     }
 
-    // ── V. Colleras Invitadas ─────────────────────────────────────────────
+    // ── VIII. Colleras Invitadas ───────────────────────────────────────────
     if (col) {
-        out += bloqueTitulo('V. Colleras invitadas');
+        out += bloqueTitulo('VIII. Informe de colleras invitadas');
         if (col.no_hubo) {
             out += `<p style="font-size:12px;color:#555;">No hubo colleras invitadas en este rodeo.</p>`;
         } else if (Array.isArray(col.items) && col.items.length > 0) {
@@ -2573,13 +2644,14 @@ function renderEtapa3Modal(rj) {
 // ═══════════════════════════════════════════════════════════════════
 function renderEtapa4Modal(rj) {
     if (!rj) return '';
-    const acc  = rj.accidentes_informe   || null;
+    // `acc` (accidentes) y `ant` (antecedentes disciplinarios) ya se
+    // muestran en renderAccidentesModal() y renderEtapa3Modal() respectivamente
+    // (versión final unificada) — no se repiten acá.
     const ba   = rj.bienestar_animal      || null;
     const vet  = rj.informe_veterinario   || null;
     const recs = rj.reclamos_sugerencias  || null;
     const com  = rj.comentarios_generales || null;
-    const ant  = rj.antecedentes_disciplinarios || null;
-    if (!acc && !ba && !vet && !recs && !com && !ant) return '';
+    if (!ba && !vet && !recs && !com) return '';
 
     const thS  = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
     const tdC  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;"';
@@ -2599,99 +2671,54 @@ function renderEtapa4Modal(rj) {
 
     let out = '';
 
-    // ── VI. Accidentes ────────────────────────────────────────────────────
-    if (acc) {
-        out += bloqueTitulo('VI. Reporte de accidentes');
-        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
-            <tr><td ${tdH}>¿Hubo accidentes?</td><td ${tdC}>${boolTxt(acc.hubo_accidentes)}</td>
-                <td ${tdH}>¿Se revisó protocolo de rescate?</td><td ${tdC}>${boolTxt(acc.reviso_protocolo)}</td></tr>
-            <tr><td ${tdH}>Médico / paramédico</td><td ${tdC}>${val(acc.medico_nombre)}</td>
-                <td ${tdH}>Teléfono médico</td><td ${tdC}>${val(acc.medico_telefono)}</td></tr>
-        </table>`;
-        if (acc.medico_email) out += `<p style="font-size:12px;margin:0 0 4px;"><strong>Correo médico:</strong> ${sanitizar(acc.medico_email)}</p>`;
-        if (acc.observaciones_generales) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:8px;"><strong>Observaciones:</strong> ${sanitizar(acc.observaciones_generales)}</div>`;
-        if (Array.isArray(acc.items) && acc.items.length > 0) {
-            acc.items.forEach(function(a, i) {
-                out += `<div style="border:1px solid #dde3ec;border-radius:6px;margin-bottom:8px;overflow:hidden;">
-                    <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Accidente N° ${i+1}</div>
-                    <div style="padding:10px 12px;">
-                    <table style="border-collapse:collapse;width:100%;font-size:12px;">
-                        <tr><td ${tdH}>Tipo</td><td ${tdC}>${val(a.tipo)}</td>
-                            <td ${tdH}>Fecha/hora</td><td ${tdC}>${val(a.fecha_hora)}</td></tr>
-                        <tr><td ${tdH}>Persona</td><td ${tdC}>${val(a.persona)}</td>
-                            <td ${tdH}>RUT/Socio</td><td ${tdC}>${val(a.rut)}</td></tr>
-                        <tr><td ${tdH}>Categoría</td><td ${tdC}>${val(a.categoria)}</td>
-                            <td ${tdH}>Derivado a centro</td><td ${tdC}>${boolTxt(a.derivado)}</td></tr>
-                        ${a.derivado === 'si' ? `<tr><td ${tdH}>Centro asistencial</td><td ${tdC} colspan="3">${val(a.centro_asistencial)}</td></tr>` : ''}
-                    </table>
-                    ${a.descripcion ? `<div style="margin-top:5px;font-size:12px;"><strong>Descripción:</strong> ${sanitizar(a.descripcion)}</div>` : ''}
-                    ${a.atencion   ? `<div style="margin-top:3px;font-size:12px;"><strong>Atención:</strong> ${sanitizar(a.atencion)}</div>` : ''}
-                    ${a.observaciones ? `<div style="margin-top:3px;font-size:12px;"><strong>Obs:</strong> ${sanitizar(a.observaciones)}</div>` : ''}
-                    </div></div>`;
-            });
+    // ── IX. Informe delegado / veterinario condiciones de Bienestar Animal
+    // (UNIFICADA, versión final) — se responde una sola vez, sobre `ba`.
+    // Si la cartilla es histórica y el veterinario respondió el Anexo 02 por
+    // separado (dato en `vet`), se muestra COMO BLOQUE ADICIONAL de solo
+    // lectura, claramente marcado como histórico — nunca se pierde ni se
+    // mezcla silenciosamente con la respuesta unificada.
+    const vetTieneBienestarPropio = !!(vet && BA_LABELS.some(f => vet[f.key] != null));
+    if (ba || vet) {
+        out += bloqueTitulo('IX. Informe delegado / veterinario condiciones de Bienestar Animal');
+        if (ba) {
+            const baRows = BA_LABELS.map(function(f){ return `<tr>
+                <td ${tdH}>${sanitizar(f.label)}</td>
+                <td ${tdC} style="text-align:center;">${boolTxt(ba[f.key])}</td>
+                <td ${tdC}>${val(ba[f.key+'_obs'])}</td>
+            </tr>`; }).join('');
+            out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+                <thead><tr><th ${thS}>Pregunta</th><th ${thS} style="width:70px;">SI/NO</th><th ${thS}>Observaciones</th></tr></thead>
+                <tbody>${baRows}</tbody>
+            </table>`);
+            out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:4px;margin-bottom:6px;">
+                <tr><td ${tdH}>¿Lesiones en equinos?</td><td ${tdC}>${boolTxt(ba.hubo_lesiones_equinos)}</td>
+                    <td ${tdH}>¿Lesiones en bovinos?</td><td ${tdC}>${boolTxt(ba.hubo_lesiones_bovinos)}</td></tr>
+            </table>`;
+            if (ba.detalle_lesiones_equinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Lesiones equinos:</strong> ${sanitizar(ba.detalle_lesiones_equinos)}</div>`;
+            if (ba.detalle_lesiones_bovinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Lesiones bovinos:</strong> ${sanitizar(ba.detalle_lesiones_bovinos)}</div>`;
+            if (ba.detalle_lesiones) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Detalle de lesiones (formato anterior):</strong> ${sanitizar(ba.detalle_lesiones)}</div>`;
+            if (ba.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(ba.observaciones)}</div>`;
+        }
+        if (vetTieneBienestarPropio) {
+            out += `<p style="font-size:11px;color:#888;font-style:italic;margin:12px 0 6px;">Respuesta adicional del veterinario (Anexo 02, dato histórico — cartilla registrada antes de la unificación):</p>`;
+            const vetRows = BA_LABELS.map(function(f){ return `<tr>
+                <td ${tdH}>${sanitizar(f.label)}</td>
+                <td ${tdC} style="text-align:center;">${boolTxt(vet[f.key])}</td>
+                <td ${tdC}>${val(vet[f.key+'_obs'])}</td>
+            </tr>`; }).join('');
+            out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+                <thead><tr><th ${thS}>Pregunta</th><th ${thS} style="width:70px;">SI/NO</th><th ${thS}>Observaciones</th></tr></thead>
+                <tbody>${vetRows}</tbody>
+            </table>`);
+            if (vet.detalle_lesiones_equinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Lesiones equinos:</strong> ${sanitizar(vet.detalle_lesiones_equinos)}</div>`;
+            if (vet.detalle_lesiones_bovinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Lesiones bovinos:</strong> ${sanitizar(vet.detalle_lesiones_bovinos)}</div>`;
+            if (vet.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Observaciones:</strong> ${sanitizar(vet.observaciones)}</div>`;
         }
     }
 
-    // ── VII. Bienestar Animal (Anexo 01) ───────────────────────────────────
-    if (ba) {
-        out += bloqueTitulo('VII. Anexo 01 — Informe condiciones de Bienestar Animal');
-        const baRows = BA_LABELS.map(function(f){ return `<tr>
-            <td ${tdH}>${sanitizar(f.label)}</td>
-            <td ${tdC} style="text-align:center;">${boolTxt(ba[f.key])}</td>
-            <td ${tdC}>${val(ba[f.key+'_obs'])}</td>
-        </tr>`; }).join('');
-        out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
-            <thead><tr><th ${thS}>Pregunta</th><th ${thS} style="width:70px;">SI/NO</th><th ${thS}>Observaciones</th></tr></thead>
-            <tbody>${baRows}</tbody>
-        </table>`);
-        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:4px;margin-bottom:6px;">
-            <tr><td ${tdH}>¿Lesiones en equinos?</td><td ${tdC}>${boolTxt(ba.hubo_lesiones_equinos)}</td>
-                <td ${tdH}>¿Lesiones en bovinos?</td><td ${tdC}>${boolTxt(ba.hubo_lesiones_bovinos)}</td></tr>
-        </table>`;
-        if (ba.detalle_lesiones_equinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Lesiones equinos:</strong> ${sanitizar(ba.detalle_lesiones_equinos)}</div>`;
-        if (ba.detalle_lesiones_bovinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Lesiones bovinos:</strong> ${sanitizar(ba.detalle_lesiones_bovinos)}</div>`;
-        if (ba.detalle_lesiones) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:6px;"><strong>Detalle de lesiones (formato anterior):</strong> ${sanitizar(ba.detalle_lesiones)}</div>`;
-        if (ba.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(ba.observaciones)}</div>`;
-    }
-
-    // ── VIII. Veterinario (Anexo 02, independiente del Anexo 01) ──────────
-    if (vet) {
-        out += bloqueTitulo('VIII. Anexo 02 — Informe del veterinario del Rodeo');
-        out += `<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:8px;">
-            <tr><td ${tdH}>Nombre</td><td ${tdC}>${val(vet.nombre)}</td>
-                <td ${tdH}>Teléfono</td><td ${tdC}>${val(vet.telefono)}</td></tr>
-            <tr><td ${tdH}>Correo</td><td ${tdC}>${val(vet.correo)}</td>
-                <td ${tdH}>Preparación</td><td ${tdC}>${val(vet.preparacion)}${vet.especifica_tecnico?' — '+sanitizar(vet.especifica_tecnico):''}${vet.especifica_otro?' — '+sanitizar(vet.especifica_otro):''}</td></tr>
-        </table>`;
-        const vetRows = BA_LABELS.map(function(f){ return `<tr>
-            <td ${tdH}>${sanitizar(f.label)}</td>
-            <td ${tdC} style="text-align:center;">${boolTxt(vet[f.key])}</td>
-            <td ${tdC}>${val(vet[f.key+'_obs'])}</td>
-        </tr>`; }).join('');
-        out += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
-            <thead><tr><th ${thS}>Pregunta</th><th ${thS} style="width:70px;">SI/NO</th><th ${thS}>Observaciones</th></tr></thead>
-            <tbody>${vetRows}</tbody>
-        </table>`);
-        if (vet.detalle_lesiones_equinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Lesiones equinos:</strong> ${sanitizar(vet.detalle_lesiones_equinos)}</div>`;
-        if (vet.detalle_lesiones_bovinos) out += `<div style="background:#fff8e1;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Lesiones bovinos:</strong> ${sanitizar(vet.detalle_lesiones_bovinos)}</div>`;
-        if (vet.observaciones) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Observaciones:</strong> ${sanitizar(vet.observaciones)}</div>`;
-    }
-
-    // ── IX. Anexo 03 — Comentarios generales ───────────────────────────────
-    if (com && com.texto) {
-        out += bloqueTitulo('IX. Anexo 03 — Comentarios generales');
-        out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;">${sanitizar(com.texto)}</div>`;
-    }
-
-    // ── X. Anexo 04 — Antecedentes disciplinarios complementarios ─────────
-    if (ant && ant.texto) {
-        out += bloqueTitulo('X. Anexo 04 — Antecedentes disciplinarios complementarios');
-        out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;">${sanitizar(ant.texto)}</div>`;
-    }
-
-    // ── XI. Reclamos o sugerencias ─────────────────────────────────────────
+    // ── X. Reclamos o sugerencias ────────────────────────────────────────
     if (recs) {
-        out += bloqueTitulo('XI. Reclamos o sugerencias');
+        out += bloqueTitulo('X. Reclamos o sugerencias');
         out += `<p style="font-size:12px;margin:0 0 8px;"><strong>¿Hubo reclamos?</strong> ${boolTxt(recs.hubo_reclamos)}</p>`;
         if (Array.isArray(recs.items) && recs.items.length > 0) {
             recs.items.forEach(function(r, i) {
@@ -2711,6 +2738,12 @@ function renderEtapa4Modal(rj) {
         }
         if (recs.sugerencias) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Sugerencias del delegado:</strong> ${sanitizar(recs.sugerencias)}</div>`;
         if (recs.observaciones_generales) out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;margin-top:6px;"><strong>Observaciones:</strong> ${sanitizar(recs.observaciones_generales)}</div>`;
+    }
+
+    // ── XI. Comentarios generales ────────────────────────────────────────
+    if (com && com.texto) {
+        out += bloqueTitulo('XI. Comentarios generales');
+        out += `<div style="background:#f7f9fc;border:1px solid #e0e8f5;border-radius:6px;padding:8px 12px;font-size:12px;">${sanitizar(com.texto)}</div>`;
     }
 
     return out;
