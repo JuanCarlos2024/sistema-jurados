@@ -852,15 +852,15 @@ function htmlDetalle(r) {
         return `<div class="form-fila" style="margin-bottom:12px;">
             <div class="form-grupo">
                 <label class="form-label">Puntaje oficial 1er lugar</label>
-                <input type="text" id="dm-p1" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_1er))}" placeholder="Ej: 36 o 30+5">
+                <input type="text" id="dm-p1" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_1er))}" placeholder="Ej: 36, 30+5 o 23-2">
             </div>
             <div class="form-grupo">
                 <label class="form-label">Puntaje oficial 2do lugar</label>
-                <input type="text" id="dm-p2" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_2do))}" placeholder="Ej: 33 o 30+5">
+                <input type="text" id="dm-p2" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_2do))}" placeholder="Ej: 33, 30+5 o 23-2">
             </div>
             <div class="form-grupo">
                 <label class="form-label">Puntaje oficial 3er lugar</label>
-                <input type="text" id="dm-p3" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_3er))}" placeholder="Ej: 27 o 30+1">
+                <input type="text" id="dm-p3" class="form-control" value="${sanitizar(fv(dm.puntaje_oficial_3er))}" placeholder="Ej: 27, 30+1 o 23-2">
             </div>
         </div>
         <div class="form-grupo" style="margin-bottom:12px;">
@@ -1025,7 +1025,7 @@ async function guardarRodeo(e, confirmarFueraRango = false) {
 }
 
 async function guardarDatosMonitor(rodeoId) {
-    const REGEX_PUNTAJE = /^\d+(\s*\+\s*\d+)?$/;
+    const REGEX_PUNTAJE = /^\d+(\s*[+-]\s*\d+)?$/;
     const getTextPuntaje = (id) => {
         const v = document.getElementById(id)?.value.trim();
         return (!v || v === '') ? null : v;
@@ -1037,7 +1037,7 @@ async function guardarDatosMonitor(rodeoId) {
         .filter(([, v]) => v !== null && !REGEX_PUNTAJE.test(v))
         .map(([label]) => label);
     if (invalidos.length > 0) {
-        mostrarToast(`El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 (${invalidos.join(', ')})`, 'error');
+        mostrarToast(`El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 o 23-2 (${invalidos.join(', ')})`, 'error');
         return;
     }
     const body = {
