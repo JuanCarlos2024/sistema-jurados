@@ -121,6 +121,10 @@
                                 <th rowspan="2" style="min-width:130px;">Puntaje Oficial</th>
                                 <th rowspan="2" style="min-width:130px;">Puntaje Revisado</th>
                                 <th rowspan="2" style="min-width:80px;">Res. Alterado</th>
+                                <th rowspan="2" style="min-width:70px;">Serie<br>Campeones<br>2 Vueltas</th>
+                                <th rowspan="2" style="min-width:70px;">Caseta<br>Jurado</th>
+                                <th rowspan="2" style="min-width:70px;">Faltas<br>Discip./Regl.</th>
+                                <th rowspan="2" style="min-width:70px;">Ganado<br>Fuera Peso</th>
                                 <th colspan="2" class="grupo-label">Situaciones</th>
                                 <th rowspan="2">Total Desc.</th>
                                 <th colspan="3" class="grupo-label">Tipo de falta</th>
@@ -140,7 +144,7 @@
                             </tr>
                         </thead>
                         <tbody id="tbody-reporte">
-                            <tr><td colspan="26" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                            <tr><td colspan="30" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -191,6 +195,23 @@ const CARTILLA_LABEL = { enviada: 'Enviada', reabierta: 'Reabierta', borrador: '
 
 function fmtNum(v) { return (v !== null && v !== undefined && v !== '') ? v : '—'; }
 function fmtP(v)   { return (v !== null && v !== undefined) ? v : '—'; }
+
+// Campos operativos de la cartilla del jurado (mismos 4 antecedentes que ya
+// muestra Exportar Excel: cartilla_serie_campeones_2_vueltas/
+// cartilla_caseta_adecuada/cartilla_hubo_faltas/cartilla_hubo_ganado_fuera_peso,
+// valores 'Sí'/'No'/null calculados por el backend). Solo transforman el
+// TEXTO visible en esta tabla — nunca el dato ni el Excel. null (dato no
+// informado) se muestra como "—", nunca como "NO".
+function fmtSiNoCartilla(v) {
+    if (v === 'Sí') return 'SI';
+    if (v === 'No') return 'NO';
+    return '<span style="color:var(--gris);">—</span>';
+}
+function fmtCasetaCartilla(v) {
+    if (v === 'Sí') return 'CUMPLE';
+    if (v === 'No') return 'NO CUMPLE';
+    return '<span style="color:var(--gris);">—</span>';
+}
 
 async function verPdfCartilla(cartillaId) {
     try {
@@ -281,6 +302,10 @@ function renderFila(f) {
         <td style="font-size:11px;white-space:nowrap;">${ofi}</td>
         <td style="font-size:11px;white-space:nowrap;">${rev}</td>
         <td style="text-align:center;">${altBadge}</td>
+        <td style="text-align:center;font-size:11px;">${fmtSiNoCartilla(f.cartilla_serie_campeones_2_vueltas)}</td>
+        <td style="text-align:center;font-size:11px;">${fmtCasetaCartilla(f.cartilla_caseta_adecuada)}</td>
+        <td style="text-align:center;font-size:11px;">${fmtSiNoCartilla(f.cartilla_hubo_faltas)}</td>
+        <td style="text-align:center;font-size:11px;">${fmtSiNoCartilla(f.cartilla_hubo_ganado_fuera_peso)}</td>
         <td class="num-col">${renderCicloCell(f, 1)}</td>
         <td class="num-col">${renderCicloCell(f, 2)}</td>
         <td class="num-col">${totalDescCell}</td>
@@ -299,7 +324,7 @@ function renderFila(f) {
 
 async function cargar(page) {
     const tbody = document.getElementById('tbody-reporte');
-    tbody.innerHTML = '<tr><td colspan="26" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="30" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
     document.getElementById('lbl-total').textContent = 'Cargando...';
     try {
         const res = await api.get('/admin/reporte-deportivo?' + buildParams(page).toString());
@@ -307,13 +332,13 @@ async function cargar(page) {
         const total = res.total || 0;
         document.getElementById('lbl-total').textContent = `${total} rodeo(s) encontrado(s)`;
         if (filas.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="26" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="30" class="texto-centrado texto-gris" style="padding:20px;">Sin resultados para los filtros seleccionados.</td></tr>';
         } else {
             tbody.innerHTML = filas.map(renderFila).join('');
         }
         renderPaginacion(page, total, 50);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="26"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="30"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
         document.getElementById('lbl-total').textContent = '';
     }
 }
