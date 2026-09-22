@@ -1115,6 +1115,81 @@ router.get('/propuestas/:id', async (req, res) => {
     });
 });
 
+// ─── DELETE /propuestas/:id — elimina un borrador y su detalle ────────────
+// Eliminación FÍSICA real (nunca "anulado"/estado): la propuesta y sus filas
+// de propuestas_designacion_detalle desaparecen de la base de datos. Solo
+// permitido si estado === 'BORRADOR' — validado en backend, nunca solo en
+// frontend (aunque alguien invoque el endpoint directamente, una propuesta
+// CONFIRMADA/DESCARTADA no puede eliminarse por esta vía).
+//
+// Atomicidad: UN solo DELETE sobre propuestas_designacion — el CASCADE de la
+// FK propuesta_id en propuestas_designacion_detalle (migración 047) elimina
+// sus filas de detalle dentro de la MISMA sentencia a nivel de Postgres, sin
+// necesidad de un segundo DELETE explícito ni de coordinar una transacción
+// manual. Ninguna otra tabla se ve afectada: todas las demás FKs de ambas
+// tablas (rodeo_id, jurado_id_propuesto/seleccionado, temporada_id,
+// configuracion_version_id, creado_por) apuntan HACIA AFUERA — eliminar la
+// propuesta nunca puede cascadear hacia rodeos/jurados/temporada/configuración.
+//
+// Idempotencia: el propio DELETE lleva `.eq('estado', 'BORRADOR')` además de
+// `.eq('id', ...)` — un segundo intento (doble clic, o una propuesta que
+// cambió de estado entre el SELECT y el DELETE) no borra nada (0 filas
+// afectadas) y responde 404 "ya fue eliminada", nunca toca otra propuesta.
+router.delete('/propuestas/:id', async (req, res) => {
+    const { data: propuesta, error: errGet } = await supabase
+        .from('propuestas_designacion')
+        .select('id, estado, temporada_id, temporadas(nombre)')
+        .eq('id', req.params.id)
+        .maybeSingle();
+
+    if (errGet) return res.status(500).json({ error: errGet.message });
+    if (!propuesta) return res.status(404).json({ error: 'La propuesta no existe o ya fue eliminada.' });
+
+    if (propuesta.estado !== 'BORRADOR') {
+        return res.status(409).json({ error: 'Solo las propuestas en estado borrador pueden eliminarse.' });
+    }
+
+    // Resumen del detalle ANTES de borrar — únicamente para dejarlo en la
+    // auditoría (datos_anteriores); no se usa para decidir nada.
+    const { data: detallesPrevios } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('estado_revision')
+        .eq('propuesta_id', req.params.id);
+    const resumenPrevio = resumenPropuesta(detallesPrevios || []);
+
+    const { data: eliminadas, error: errDel } = await supabase
+        .from('propuestas_designacion')
+        .delete()
+        .eq('id', req.params.id)
+        .eq('estado', 'BORRADOR')
+        .select('id');
+
+    if (errDel) return res.status(500).json({ error: errDel.message });
+    if (!eliminadas || eliminadas.length === 0) {
+        // Ya fue eliminada o cambió de estado entre el SELECT y el DELETE —
+        // mismo mensaje que "no existe", nunca un error confuso.
+        return res.status(404).json({ error: 'La propuesta no existe o ya fue eliminada.' });
+    }
+
+    await auditoria.registrar({
+        tabla: 'propuestas_designacion',
+        registro_id: req.params.id,
+        accion: 'eliminar_fisico',
+        datos_anteriores: {
+            temporada_id: propuesta.temporada_id,
+            temporada: propuesta.temporadas?.nombre || null,
+            cantidad_detalles: (detallesPrevios || []).length,
+            resumen: resumenPrevio
+        },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Propuesta borrador eliminada (temporada ${propuesta.temporadas?.nombre || '—'}, ${(detallesPrevios || []).length} rodeo(s) en el detalle)`,
+        ip_address: req.ip
+    });
+
+    res.json({ mensaje: 'Borrador eliminado correctamente.' });
+});
+
 // ─── Enriquece filas crudas con bloque de fechas real (helper compartido) ─
 // Misma forma para el camino PERSISTIDO (filas de propuestas_designacion_
 // detalle) y para el camino PREVIEW (filas construidas a partir del

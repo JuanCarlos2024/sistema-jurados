@@ -1227,7 +1227,46 @@ function renderVistaPropuesta() {
         <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
             <button class="btn btn-primario" disabled title="Disponible en la siguiente etapa">Confirmar propuesta — Disponible en siguiente etapa</button>
         </div>
+        ${propuesta.estado === 'BORRADOR' ? `
+        <div style="margin-top:20px; border-top:1px solid var(--gris-borde); padding-top:14px; display:flex; justify-content:flex-end;">
+            <button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminarBorrador()">Eliminar borrador</button>
+        </div>` : ''}
     </div>`;
+}
+
+// ─── Eliminar borrador — acción destructiva de la propuesta completa,
+// distinta de Aceptar/Modificar/Revertir (que son por fila). Reutiliza el
+// modal simple confirmar() ya usado en esta misma pantalla para "Guardar
+// como propuesta" — el proyecto no usa doble confirmación para propuestas
+// (ese patrón más estricto solo existe en casos.js cuando hay datos de
+// terceros en riesgo, que no es el caso: un borrador nunca es visible para
+// jurados/delegados). El backend vuelve a validar estado === 'BORRADOR'
+// independientemente de este chequeo en pantalla.
+async function confirmarEliminarBorrador() {
+    if (!propuestaAbierta) return;
+    const { propuesta, resumen } = propuestaAbierta;
+    const mensaje = `<strong style="font-size:16px;">Eliminar borrador</strong>
+        <div style="text-align:left; margin-top:10px; font-size:14px; line-height:1.8;">
+            Está a punto de eliminar esta propuesta de designación.<br>
+            Temporada: <strong>${sanitizar(propuesta.temporada || '—')}</strong><br>
+            Creada: <strong>${new Date(propuesta.created_at).toLocaleString('es-CL')}</strong><br><br>
+            Rodeos incluidos: <strong>${resumen.total_rodeos}</strong><br>
+            Aceptados: <strong>${resumen.aceptados}</strong> &nbsp; Modificados: <strong>${resumen.modificados}</strong><br>
+            Pendientes: <strong>${resumen.pendientes}</strong> &nbsp; Sin propuesta: <strong>${resumen.sin_propuesta}</strong><br><br>
+            Esta acción eliminará únicamente este borrador y su detalle.<br>
+            <strong>No eliminará rodeos, jurados ni designaciones reales.</strong>
+        </div>`;
+    const ok = await confirmar(mensaje);
+    if (!ok) return;
+
+    try {
+        await api.delete('/admin/propuesta-designacion/propuestas/' + propuesta.id);
+        mostrarToast('Borrador eliminado correctamente.', 'success');
+        cerrarVistaPropuesta();
+        await cargarListaPropuestas();
+    } catch (err) {
+        mostrarError(err);
+    }
 }
 
 // Mejora "Métricas de Rendimiento" — bloque SOLO INFORMATIVO de la tarjeta

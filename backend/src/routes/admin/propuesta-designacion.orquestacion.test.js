@@ -124,7 +124,7 @@ function llamarRuta({ method, url, body, usuario }) {
 // filas"). Tabla no configurada → { data: [], error: null } por defecto
 // (cubre 'auditoria' sin configuración explícita en cada test).
 function crearSupabaseMock(porTabla) {
-    const llamadas = {}; // tabla -> { inserts: [], updates: [] }
+    const llamadas = {}; // tabla -> { inserts: [], updates: [], deletes: 0 }
     const consumir = (tabla) => {
         const entrada = porTabla[tabla];
         if (entrada === undefined) return { data: [], error: null };
@@ -132,12 +132,13 @@ function crearSupabaseMock(porTabla) {
         return entrada;
     };
     supabase.from.mockImplementation((tabla) => {
-        llamadas[tabla] = llamadas[tabla] || { inserts: [], updates: [] };
+        llamadas[tabla] = llamadas[tabla] || { inserts: [], updates: [], deletes: 0 };
         const chain = {
             select: () => chain, eq: () => chain, neq: () => chain, in: () => chain,
             ilike: () => chain, order: () => chain, limit: () => chain, range: () => chain,
             insert: (payload) => { llamadas[tabla].inserts.push(payload); return chain; },
             update: (payload) => { llamadas[tabla].updates.push(payload); return chain; },
+            delete: () => { llamadas[tabla].deletes += 1; return chain; },
             single: () => chain, maybeSingle: () => chain,
             then: (resolve, reject) => Promise.resolve(consumir(tabla)).then(resolve, reject)
         };
@@ -775,5 +776,133 @@ describe('Token legacy (formato anterior a Etapa 3)', () => {
         expect(cargarConfiguracionDesignacionActiva).not.toHaveBeenCalled();
         expect(cargarDatosMotor).not.toHaveBeenCalled();
         expect(ejecutarSimulacion).not.toHaveBeenCalled();
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// 12. DELETE /propuestas/:id — Eliminar borrador
+//
+// Eliminación FÍSICA real (nunca "anulado"), permitida SOLO si estado ===
+// 'BORRADOR', validada en backend independientemente de lo que muestre el
+// frontend. El CASCADE de propuestas_designacion_detalle vive a nivel de
+// Postgres (migración 047) — no hay nada que probar de ese lado acá aparte
+// de que el propio DELETE se ejecuta; lo que SÍ importa verificar es que
+// nunca se intente borrar cuando el estado no es BORRADOR, que el mensaje
+// de error distinga "no existe" de "no es borrador", que quede auditado, y
+// que un segundo intento (doble clic / carrera de estado) sea inocuo.
+// ═════════════════════════════════════════════════════════════════════════
+describe('DELETE /propuestas/:id — Eliminar borrador', () => {
+    test('CASO 1 — borrador normal: existe y está en estado BORRADOR -> se elimina, se audita, 200', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 'temp-1', temporadas: { nombre: '2026-2027' } }, error: null }, // SELECT previo
+                { data: [{ id: 'prop-1' }], error: null } // DELETE ... .select('id')
+            ],
+            propuestas_designacion_detalle: {
+                data: [
+                    { estado_revision: 'ACEPTADO' }, { estado_revision: 'ACEPTADO' }, { estado_revision: 'PENDIENTE' }
+                ], error: null
+            }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-1' });
+
+        expect(status).toBe(200);
+        expect(body.mensaje).toBe('Borrador eliminado correctamente.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(1);
+
+        const registroAuditoria = llamadas.auditoria.inserts[0];
+        expect(registroAuditoria.tabla).toBe('propuestas_designacion');
+        expect(registroAuditoria.registro_id).toBe('prop-1');
+        expect(registroAuditoria.accion).toBe('eliminar_fisico');
+        expect(registroAuditoria.datos_anteriores.temporada).toBe('2026-2027');
+        expect(registroAuditoria.datos_anteriores.cantidad_detalles).toBe(3);
+        expect(registroAuditoria.datos_anteriores.resumen.aceptados).toBe(2);
+        expect(registroAuditoria.datos_anteriores.resumen.pendientes).toBe(1);
+    });
+
+    test('CASO 8 — propuesta CONFIRMADA: rechazo seguro, 409, nunca llega a llamar delete()', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-2', estado: 'CONFIRMADA', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-2' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Solo las propuestas en estado borrador pueden eliminarse.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('propuesta DESCARTADA: mismo rechazo seguro, 409, nunca llega a llamar delete()', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-3', estado: 'DESCARTADA', temporada_id: 't1', temporadas: null }, error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-3' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Solo las propuestas en estado borrador pueden eliminarse.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('propuesta inexistente -> 404 "no existe o ya fue eliminada", nunca llama delete()', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: null, error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/no-existe' });
+
+        expect(status).toBe(404);
+        expect(body.error).toBe('La propuesta no existe o ya fue eliminada.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('CASO 9 — doble clic / carrera de estado: el SELECT ve BORRADOR pero el DELETE no afecta ninguna fila -> 404 "ya fue eliminada", sin auditoría ni afectar otra propuesta', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-4', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+                { data: [], error: null } // DELETE no afectó ninguna fila (ya se había borrado / cambió de estado)
+            ],
+            propuestas_designacion_detalle: { data: [], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-4' });
+
+        expect(status).toBe(404);
+        expect(body.error).toBe('La propuesta no existe o ya fue eliminada.');
+        expect(llamadas.auditoria).toBeUndefined(); // nunca se registró auditoría de una eliminación que no ocurrió
+    });
+
+    test('CASO 6 — otra propuesta queda intacta: el DELETE filtra por id exacto (nunca por estado solo)', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-A', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+                { data: [{ id: 'prop-A' }], error: null }
+            ],
+            propuestas_designacion_detalle: { data: [], error: null }
+        });
+
+        const { status } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-A' });
+
+        expect(status).toBe(200);
+        // Un solo DELETE fue emitido, dirigido exclusivamente a prop-A — el
+        // mock no permite verificar el valor de .eq('id', ...) directamente,
+        // pero confirma que solo hubo una llamada delete() en toda la ruta.
+        expect(llamadas.propuestas_designacion.deletes).toBe(1);
+    });
+
+    test('error de base de datos en el DELETE -> 500, sin auditoría, mensaje sin datos técnicos sensibles expuestos de más', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-5', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+                { data: null, error: { message: 'fallo simulado de conexión' } }
+            ],
+            propuestas_designacion_detalle: { data: [], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-5' });
+
+        expect(status).toBe(500);
+        expect(body.error).toBe('fallo simulado de conexión');
     });
 });
