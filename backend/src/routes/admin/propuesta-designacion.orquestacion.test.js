@@ -906,3 +906,384 @@ describe('DELETE /propuestas/:id — Eliminar borrador', () => {
         expect(body.error).toBe('fallo simulado de conexión');
     });
 });
+
+// ═════════════════════════════════════════════════════════════════════════
+// DELETE /propuestas/:id — protección contra eliminar propuestas ya
+// aplicadas a Rodeos (total o parcialmente). Usa calcularAplicacionReal(),
+// la MISMA función (batch) que usa GET /propuestas (listado) y GET
+// /propuestas/:id — nunca una definición aparte.
+//
+// Fuente ESTRUCTURAL (migración 055), NUNCA auditoría: `asignaciones.
+// propuesta_detalle_id` — se escribe en la MISMA sentencia INSERT que crea
+// la asignación (POST /propuestas/:id/aplicar). Se consulta SIN filtrar por
+// `estado` — "fue aplicada" es un hecho histórico, no depende de si la
+// asignación sigue activa hoy (CASO 9). Orden de tablas: propuestas_
+// designacion (SELECT) -> propuestas_designacion_detalle (SELECT) ->
+// [si hay aplicables] asignaciones (por propuesta_detalle_id) ->
+// propuestas_designacion (DELETE, solo si no bloqueada) -> auditoria
+// (registro de la eliminación, best-effort, ya no decide nada).
+// ═════════════════════════════════════════════════════════════════════════
+describe('DELETE /propuestas/:id — protección contra eliminar propuestas ya aplicadas', () => {
+    test('CASO 11 / CASO 1/7/10 — BORRADOR nunca aplicado, ninguna asignación con propuesta_detalle_id -> se puede eliminar, 200', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+                { data: [{ id: 'prop-1' }], error: null } // DELETE
+            ],
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            asignaciones: { data: [], error: null } // ninguna asignación referencia d1
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-1' });
+
+        expect(status).toBe(200);
+        expect(body.mensaje).toBe('Borrador eliminado correctamente.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(1);
+    });
+
+    test('CASO 4 / CASO 2 — aplicada mediante el endpoint de propuesta (propuesta_detalle_id presente en ambas filas) -> 409, no se elimina', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-2', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            propuestas_designacion_detalle: {
+                data: [
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' },
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO' }
+                ], error: null
+            },
+            asignaciones: { data: [{ propuesta_detalle_id: 'd1' }, { propuesta_detalle_id: 'd2' }], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-2' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Esta propuesta ya fue aplicada total o parcialmente a Rodeos y no puede eliminarse como borrador.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('CASO 5 / CASO 3 — aplicación PARCIAL real (solo d1 tiene asignación con propuesta_detalle_id) -> 409, no se elimina', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-3', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            propuestas_designacion_detalle: {
+                data: [
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }, // aplicado de verdad
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_seleccionado: 'j2', estado_revision: 'ACEPTADO' }  // quedó sin aplicar (conflicto)
+                ], error: null
+            },
+            asignaciones: { data: [{ propuesta_detalle_id: 'd1' }], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-3' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Esta propuesta ya fue aplicada total o parcialmente a Rodeos y no puede eliminarse como borrador.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('CASO 6 / CASO 4 — solo 1 de 20 detalles tiene asignación real -> igual 409, no se elimina', async () => {
+        const detalles = Array.from({ length: 20 }, (_, i) => ({ id: `d${i}`, rodeo_id: `r${i}`, jurado_id_seleccionado: `j${i}`, estado_revision: 'ACEPTADO' }));
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-4', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            propuestas_designacion_detalle: { data: detalles, error: null },
+            asignaciones: { data: [{ propuesta_detalle_id: 'd7' }], error: null } // solo una, en medio del resto
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-4' });
+
+        expect(status).toBe(409);
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('CASO 7 — mismo rodeo, designación MANUAL de OTRO jurado (propuesta_detalle_id NULL, nunca devuelta por el filtro real) -> NO se considera aplicación, se puede eliminar', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-7', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+                { data: [{ id: 'prop-7' }], error: null }
+            ],
+            // la propuesta proponía Jurado X (j-x) para r1 vía el detalle d1, nunca se aplicó
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j-x', estado_revision: 'ACEPTADO' }], error: null },
+            // r1 SÍ tiene una asignación activa real (manual, de Jurado Y) — pero su
+            // propuesta_detalle_id es NULL, así que un `.in('propuesta_detalle_id', ['d1'])`
+            // real NUNCA la devolvería.
+            asignaciones: { data: [], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-7' });
+
+        expect(status).toBe(200);
+        expect(body.mensaje).toBe('Borrador eliminado correctamente.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(1);
+    });
+
+    test('CASO 8 — mismo rodeo, designación MANUAL del MISMO jurado propuesto (propuesta_detalle_id igualmente NULL) -> tampoco se considera aplicación', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: [
+                { data: { id: 'prop-8', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+                { data: [{ id: 'prop-8' }], error: null }
+            ],
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j-x', estado_revision: 'ACEPTADO' }], error: null },
+            // coincidencia rodeo+jurado, pero creada por asignaciones.js (manual) ->
+            // propuesta_detalle_id NULL, jamás matchea el detalle 'd1'.
+            asignaciones: { data: [], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-8' });
+
+        expect(status).toBe(200);
+        expect(body.mensaje).toBe('Borrador eliminado correctamente.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(1);
+    });
+
+    test('CASO 9 — la asignación generada por la propuesta fue ANULADA después; sigue conservando propuesta_detalle_id -> la propuesta SIGUE protegida (histórico, no depende del estado actual)', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-9', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            // la consulta real NO filtra por estado — se incluye aquí una fila
+            // 'anulado' a propósito para demostrar que igual cuenta.
+            asignaciones: { data: [{ propuesta_detalle_id: 'd1', estado: 'anulado' }], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-9' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Esta propuesta ya fue aplicada total o parcialmente a Rodeos y no puede eliminarse como borrador.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('CASO 3 (brecha original) — INSERT de asignación exitoso pero auditoría hubiera fallado: la protección YA NO depende de auditoria, sigue funcionando solo con propuesta_detalle_id', async () => {
+        // Simula el estado post-aplicación SIN ninguna fila de auditoria
+        // configurada (tabla no incluida en el mock -> default {data:[],error:null}
+        // para cualquier consulta que la tocara) — y aun así la protección debe
+        // funcionar, porque ya no consulta esa tabla para decidir nada.
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-brecha', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            asignaciones: { data: [{ propuesta_detalle_id: 'd1' }], error: null }
+            // 'auditoria' deliberadamente NO configurada
+        });
+
+        const { status, body } = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-brecha' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Esta propuesta ya fue aplicada total o parcialmente a Rodeos y no puede eliminarse como borrador.');
+        expect(llamadas.propuestas_designacion.deletes).toBe(0);
+    });
+
+    test('doble intento de DELETE sobre propuesta aplicada: ambas veces 409, nunca se elimina', async () => {
+        const config = {
+            propuestas_designacion: { data: { id: 'prop-6', estado: 'BORRADOR', temporada_id: 't1', temporadas: { nombre: '2026-2027' } }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            asignaciones: { data: [{ propuesta_detalle_id: 'd1' }], error: null }
+        };
+
+        const llamadas1 = crearSupabaseMock(config);
+        const primero = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-6' });
+        expect(primero.status).toBe(409);
+        expect(llamadas1.propuestas_designacion.deletes).toBe(0);
+
+        const llamadas2 = crearSupabaseMock(config); // estado de la BD no cambió entre intentos
+        const segundo = await llamarRuta({ method: 'DELETE', url: '/propuestas/prop-6' });
+        expect(segundo.status).toBe(409);
+        expect(llamadas2.propuestas_designacion.deletes).toBe(0);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// GET /propuestas — listado: bloqueada_para_eliminar por fila (mismo cálculo
+// batch que usa DELETE, sin N+1 — una sola consulta a `asignaciones` para
+// TODA la lista, no una por propuesta).
+// ═════════════════════════════════════════════════════════════════════════
+describe('GET /propuestas — listado expone bloqueada_para_eliminar (botón Eliminar)', () => {
+    test('BORRADOR nunca aplicado -> bloqueada_para_eliminar:false (el listado puede mostrar "Eliminar")', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: { data: [{ id: 'prop-1', estado: 'BORRADOR', created_at: '2026-01-01', updated_at: '2026-01-01', temporadas: { nombre: '2026-2027' } }], error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', propuesta_id: 'prop-1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            asignaciones: { data: [], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/propuestas' });
+
+        expect(status).toBe(200);
+        expect(body.propuestas[0].bloqueada_para_eliminar).toBe(false);
+    });
+
+    test('propuesta realmente aplicada (propuesta_detalle_id presente) -> bloqueada_para_eliminar:true (el listado NO debe permitir eliminar)', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: { data: [{ id: 'prop-2', estado: 'BORRADOR', created_at: '2026-01-01', updated_at: '2026-01-01', temporadas: { nombre: '2026-2027' } }], error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', propuesta_id: 'prop-2', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            asignaciones: { data: [{ propuesta_detalle_id: 'd1' }], error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'GET', url: '/propuestas' });
+
+        expect(status).toBe(200);
+        expect(body.propuestas[0].bloqueada_para_eliminar).toBe(true);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos
+//
+// Orden real de tablas consultadas por la ruta (relevante para armar las
+// secuencias del mock): propuestas_designacion (SELECT) -> propuestas_
+// designacion_detalle (SELECT) -> rodeos -> usuarios_pagados -> asignaciones
+// (SELECT ya-designados) -> disponibilidad_usuarios -> asignaciones (SELECT
+// otras fechas) -> configuracion_tarifas (vía obtenerTarifas real) -> por
+// cada fila aplicable: asignaciones (INSERT) + auditoria (INSERT) -> al
+// final, un auditoria (INSERT) de resumen.
+// ═════════════════════════════════════════════════════════════════════════
+describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
+    const TARIFAS = [{ categoria: 'A', valor_diario: 100000 }, { categoria: 'B', valor_diario: 90000 }];
+
+    test('CASO 1/2/9 — aplica ACEPTADO y MODIFICADO válidos: crea 2 asignaciones con el jurado_id_seleccionado exacto (no recalcula), publicado:false, propuesta_detalle_id en la MISMA sentencia, audita cada una + un resumen', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: {
+                data: [
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' },
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO' }
+                ], error: null
+            },
+            rodeos: {
+                data: [
+                    { id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' },
+                    { id: 'r2', club: 'Club B', fecha: '2026-05-10', duracion_dias: 1, estado: 'activo' }
+                ], error: null
+            },
+            usuarios_pagados: {
+                data: [
+                    { id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true },
+                    { id: 'j2', nombre_completo: 'Pedro Gomez', categoria: 'B', tipo_persona: 'jurado', activo: true }
+                ], error: null
+            },
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }, { usuario_pagado_id: 'j2', fecha: '2026-05-10' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [], error: null }, // SELECT ya-designados
+                { data: [], error: null }, // SELECT otras fechas del jurado
+                { data: { id: 'asig-1' }, error: null }, // INSERT fila 1
+                { data: { id: 'asig-2' }, error: null }  // INSERT fila 2
+            ]
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-1/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 2, conflictos: 0 });
+        expect(llamadas.asignaciones.inserts.length).toBe(2);
+        expect(llamadas.asignaciones.inserts[0]).toMatchObject({
+            rodeo_id: 'r1', usuario_pagado_id: 'j1', tipo_persona: 'jurado',
+            estado: 'activo', estado_designacion: 'pendiente', publicado: false,
+            propuesta_detalle_id: 'd1' // trazabilidad ESTRUCTURAL, misma sentencia (migración 055)
+        });
+        // MODIFICADO: se aplica jurado_id_seleccionado ('j2'), nunca un candidato recalculado.
+        expect(llamadas.asignaciones.inserts[1]).toMatchObject({ rodeo_id: 'r2', usuario_pagado_id: 'j2', publicado: false, propuesta_detalle_id: 'd2' });
+
+        const auditsAsig = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
+        expect(auditsAsig.length).toBe(2);
+        expect(auditsAsig[0].accion).toBe('crear');
+        expect(auditsAsig[0].datos_nuevos.propuesta_id).toBe('prop-1');
+        expect(auditsAsig[0].datos_nuevos.detalle_id).toBe('d1');
+
+        const auditResumen = llamadas.auditoria.inserts.find(a => a.tabla === 'propuestas_designacion');
+        expect(auditResumen.accion).toBe('aplicar');
+        expect(auditResumen.datos_nuevos).toEqual({ aplicadas: 2, conflictos: 0 });
+    });
+
+    test('propuesta no BORRADOR (CONFIRMADA) -> 409, no se consulta ni rodeos ni asignaciones', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-2', estado: 'CONFIRMADA', temporada_id: 't1' }, error: null }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-2/aplicar' });
+
+        expect(status).toBe(409);
+        expect(body.error).toBe('Solo las propuestas en estado borrador pueden aplicarse a Rodeos.');
+        expect(llamadas.asignaciones).toBeUndefined();
+    });
+
+    test('propuesta inexistente -> 404', async () => {
+        crearSupabaseMock({ propuestas_designacion: { data: null, error: null } });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/no-existe/aplicar' });
+
+        expect(status).toBe(404);
+        expect(body.error).toBe('La propuesta no existe.');
+    });
+
+    test('CASO 7/8 — sin filas ACEPTADO/MODIFICADO (todo PENDIENTE/SIN_PROPUESTA) -> 200 sin crear nada, no toca asignaciones', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-3', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [], error: null } // la query real ya filtra por estado_revision IN (...)
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-3/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 0 });
+        expect(llamadas.asignaciones).toBeUndefined();
+    });
+
+    test('CASO 6 — rodeo que ya tiene jurado designado (incluye doble aplicación de la misma propuesta): conflicto, NO sobrescribe, NO inserta', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-4', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            rodeos: { data: [{ id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' }], error: null },
+            usuarios_pagados: { data: [{ id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true }], error: null },
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [{ id: 'asig-existente', rodeo_id: 'r1' }], error: null }, // ya hay un jurado en r1
+                { data: [], error: null }
+            ]
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-4/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
+        expect(body.conflictos[0].motivo).toBe('Este rodeo ya tiene un jurado designado.');
+        expect(llamadas.asignaciones.inserts.length).toBe(0);
+        expect(llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones').length).toBe(0);
+    });
+
+    test('jurado sin disponibilidad declarada para la fecha del rodeo -> conflicto, no inserta', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-5', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            rodeos: { data: [{ id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' }], error: null },
+            usuarios_pagados: { data: [{ id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true }], error: null },
+            disponibilidad_usuarios: { data: [], error: null }, // sin disponibilidad declarada
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [{ data: [], error: null }, { data: [], error: null }]
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-5/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
+        expect(body.conflictos[0].motivo).toBe('El jurado ya no tiene disponibilidad declarada para estas fechas.');
+        expect(llamadas.asignaciones.inserts.length).toBe(0);
+    });
+
+    test('cruce de fechas con otra asignación activa del mismo jurado -> conflicto, no inserta', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-6', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            rodeos: { data: [{ id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' }], error: null },
+            usuarios_pagados: { data: [{ id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true }], error: null },
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [], error: null }, // sin designación previa en r1
+                { data: [{ id: 'asig-otro', usuario_pagado_id: 'j1', rodeo_id: 'r-otro', rodeos: { fecha: '2026-05-01', duracion_dias: 1, club: 'Club Z' } }], error: null }
+            ]
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-6/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
+        expect(body.conflictos[0].motivo).toBe('El jurado ya está asignado a otro rodeo en fechas que se cruzan.');
+        expect(llamadas.asignaciones.inserts.length).toBe(0);
+    });
+});

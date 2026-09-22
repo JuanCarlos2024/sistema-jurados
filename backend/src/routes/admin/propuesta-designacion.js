@@ -45,6 +45,10 @@ const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorI
 // distancia + orden de criterios) para que la UI muestre un indicador de
 // versión y checks/explicaciones dinámicos — nunca hardcodeados a V1.
 const { construirResumenParaUI } = require('../../services/configuracionDesignacion');
+// "Aplicar propuesta a Rodeos" (más abajo, POST /propuestas/:id/aplicar):
+// reutiliza el MISMO cálculo de pago que usa la designación manual (POST
+// /api/admin/asignaciones) — única función de cálculo real, nunca reimplementada.
+const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
 
 // ─── Respuesta uniforme cuando la configuración de designación no se pudo
 // resolver o resultó inválida — NUNCA se ejecuta el motor en ese caso
@@ -948,7 +952,7 @@ router.get('/propuestas', async (req, res) => {
     const ids = propuestas.map(p => p.id);
     const { data: detalles, error: errD } = await supabase
         .from('propuestas_designacion_detalle')
-        .select('propuesta_id, estado_revision')
+        .select('id, propuesta_id, rodeo_id, jurado_id_seleccionado, estado_revision')
         .in('propuesta_id', ids);
     if (errD) return res.status(500).json({ error: errD.message });
 
@@ -958,6 +962,12 @@ router.get('/propuestas', async (req, res) => {
         porPropuesta[d.propuesta_id].push(d);
     }
 
+    // Mismo cálculo batch que usa GET /propuestas/:id y DELETE /propuestas/:id
+    // (calcularAplicacionReal) — así "Eliminar" en el listado usa EXACTAMENTE
+    // el mismo criterio de procedencia real (vía auditoría), sin duplicar
+    // lógica ni generar una consulta por fila (N+1).
+    const aplicacionPorPropuesta = await calcularAplicacionReal(porPropuesta);
+
     res.json({
         propuestas: propuestas.map(p => ({
             id: p.id,
@@ -965,10 +975,85 @@ router.get('/propuestas', async (req, res) => {
             estado: p.estado,
             created_at: p.created_at,
             updated_at: p.updated_at,
-            resumen: resumenPropuesta(porPropuesta[p.id] || [])
+            resumen: resumenPropuesta(porPropuesta[p.id] || []),
+            bloqueada_para_eliminar: aplicacionPorPropuesta.get(p.id)?.algunaAplicada || false
         }))
     });
 });
+
+// ─── Detecta asignaciones REALMENTE generadas por una propuesta ──────────
+// FUENTE ÚNICA DE VERDAD para "¿esta propuesta fue aplicada a Rodeos?" —
+// usada por GET /propuestas (listado), GET /propuestas/:id (indicador
+// "Aplicada a Rodeos") y DELETE /propuestas/:id (protección contra eliminar
+// una propuesta que ya generó designaciones reales, total o parcialmente).
+//
+// FUENTE ESTRUCTURAL (migración 055), YA NO auditoría: `asignaciones.
+// propuesta_detalle_id` referencia directamente propuestas_designacion_
+// detalle(id) y se escribe en la MISMA sentencia INSERT que crea la
+// asignación (POST /propuestas/:id/aplicar) — no hay una segunda escritura
+// de la que depender. La designación manual (asignaciones.js POST /, sin
+// cambios) nunca setea esa columna, así que una coincidencia de rodeo — o
+// incluso de rodeo+jurado — nunca puede confundirse con una aplicación real:
+// solo cuenta si la FILA MISMA trae el id exacto del detalle que la originó.
+// La auditoría se sigue registrando (trazabilidad/histórico), pero dejó de
+// ser la fuente de la que depende esta protección — si auditoría fallara,
+// `propuesta_detalle_id` ya quedó persistido junto con la asignación.
+//
+// "Fue aplicada" es un hecho HISTÓRICO: NO se filtra por `estado` de la
+// asignación. Una asignación anulada/reemplazada por el flujo real de
+// Rodeos sigue conservando su propuesta_detalle_id — la propuesta que la
+// originó ya tuvo efectos reales y sigue protegida contra eliminación.
+//
+// Una sola consulta acotada (nunca N+1, sirve para 1 o N propuestas a la vez).
+//
+// @param detallesPorPropuesta { [propuesta_id]: [{ id, rodeo_id, jurado_id_seleccionado, estado_revision }] }
+// @returns Map(propuesta_id -> { aplicables, conAsignacion, todasAplicadas, algunaAplicada })
+async function calcularAplicacionReal(detallesPorPropuesta) {
+    const resultado = new Map();
+    const aplicablesPorPropuesta = {};
+    const detalleIdsGlobalSet = new Set();
+
+    for (const [propuestaId, detalles] of Object.entries(detallesPorPropuesta)) {
+        const aplicables = (detalles || []).filter(d => ['ACEPTADO', 'MODIFICADO'].includes(d.estado_revision) && d.jurado_id_seleccionado);
+        aplicablesPorPropuesta[propuestaId] = aplicables;
+        aplicables.forEach(d => { if (d.id) detalleIdsGlobalSet.add(d.id); });
+    }
+
+    const vacio = () => ({ aplicables: 0, conAsignacion: 0, todasAplicadas: false, algunaAplicada: false });
+    if (detalleIdsGlobalSet.size === 0) {
+        Object.keys(detallesPorPropuesta).forEach(id => resultado.set(id, vacio()));
+        return resultado;
+    }
+
+    const { data: asigConDetalle } = await supabase
+        .from('asignaciones')
+        .select('propuesta_detalle_id')
+        .in('propuesta_detalle_id', [...detalleIdsGlobalSet]);
+
+    const detalleIdsConAsignacion = new Set((asigConDetalle || []).map(a => a.propuesta_detalle_id));
+
+    for (const [propuestaId, aplicables] of Object.entries(aplicablesPorPropuesta)) {
+        const detalleIdsAplicables = [...new Set(aplicables.filter(d => d.id).map(d => d.id))];
+        if (detalleIdsAplicables.length === 0) { resultado.set(propuestaId, vacio()); continue; }
+
+        const conAsignacion = detalleIdsAplicables.filter(id => detalleIdsConAsignacion.has(id)).length;
+
+        resultado.set(propuestaId, {
+            aplicables: detalleIdsAplicables.length,
+            conAsignacion,
+            todasAplicadas: conAsignacion === detalleIdsAplicables.length,
+            algunaAplicada: conAsignacion > 0
+        });
+    }
+
+    return resultado;
+}
+
+// Envoltorio para una sola propuesta (GET /propuestas/:id, DELETE /propuestas/:id).
+async function detectarAplicacionReal(propuestaId, detalles) {
+    const mapa = await calcularAplicacionReal({ [propuestaId]: detalles || [] });
+    return mapa.get(propuestaId);
+}
 
 // ─── GET /propuestas/:id — detalle completo de una propuesta ──────────────
 router.get('/propuestas/:id', async (req, res) => {
@@ -1101,6 +1186,12 @@ router.get('/propuestas/:id', async (req, res) => {
         };
     });
 
+    // Indicador "Aplicada a Rodeos" — CALCULADO, no persistido: no existe
+    // (ni se agrega) un estado nuevo en la CHECK de `propuestas_designacion`.
+    // Misma fuente de verdad que usa DELETE /propuestas/:id para bloquear la
+    // eliminación de una propuesta ya aplicada (ver detectarAplicacionReal).
+    const infoAplicacion = await detectarAplicacionReal(propuesta.id, detalles || []);
+
     res.json({
         propuesta: {
             id: propuesta.id, temporada: propuesta.temporadas?.nombre || null, estado: propuesta.estado,
@@ -1108,7 +1199,13 @@ router.get('/propuestas/:id', async (req, res) => {
             // Etapa 4, sección 41/43/44: solo para el indicador "Configuración:
             // vN" y checks/etiquetas dinámicos — nunca se usa acá para decidir reglas.
             configuracion_numero_version: propuesta.configuracion_designacion_versiones?.numero_version ?? null,
-            configuracion: configuracionResumen
+            configuracion: configuracionResumen,
+            aplicada: infoAplicacion.todasAplicadas,
+            // Usado por el frontend para ocultar/deshabilitar "Eliminar borrador"
+            // sin consultas adicionales: true si hay AL MENOS 1 designación real
+            // creada desde esta propuesta (total o parcial) — mismo criterio
+            // exacto que aplica el backend en DELETE /propuestas/:id.
+            bloqueada_para_eliminar: infoAplicacion.algunaAplicada
         },
         resumen: resumenPropuesta(detalles || []),
         detalle: detalleFinal
@@ -1135,6 +1232,19 @@ router.get('/propuestas/:id', async (req, res) => {
 // `.eq('id', ...)` — un segundo intento (doble clic, o una propuesta que
 // cambió de estado entre el SELECT y el DELETE) no borra nada (0 filas
 // afectadas) y responde 404 "ya fue eliminada", nunca toca otra propuesta.
+//
+// Protección contra eliminar una propuesta ya aplicada (total o parcial):
+// aunque siga en estado BORRADOR (aplicar NO cambia ese estado — ver POST
+// /propuestas/:id/aplicar), si ya generó AL MENOS 1 designación real en
+// `asignaciones`, NO puede eliminarse — se perdería la propuesta que explica
+// el origen de esa designación, aunque la designación en sí quede intacta.
+// Usa detectarAplicacionReal() -> calcularAplicacionReal(), la MISMA función
+// que usa GET /propuestas (listado) y GET /propuestas/:id — nunca se
+// reimplementa el criterio. Fuente ESTRUCTURAL (asignaciones.propuesta_
+// detalle_id, migración 055), nunca la auditoría: esta es la SEGUNDA barrera
+// (backend); la PRIMERA es la propia FK a nivel de Postgres (sin ON DELETE
+// -> RESTRICT por defecto), que impediría igualmente perder la relación
+// aunque este chequeo tuviera un bug.
 router.delete('/propuestas/:id', async (req, res) => {
     const { data: propuesta, error: errGet } = await supabase
         .from('propuestas_designacion')
@@ -1149,13 +1259,18 @@ router.delete('/propuestas/:id', async (req, res) => {
         return res.status(409).json({ error: 'Solo las propuestas en estado borrador pueden eliminarse.' });
     }
 
-    // Resumen del detalle ANTES de borrar — únicamente para dejarlo en la
-    // auditoría (datos_anteriores); no se usa para decidir nada.
+    // Resumen del detalle ANTES de borrar — para la auditoría (datos_anteriores)
+    // y también la fuente para verificar si ya fue aplicada a Rodeos.
     const { data: detallesPrevios } = await supabase
         .from('propuestas_designacion_detalle')
-        .select('estado_revision')
+        .select('id, rodeo_id, jurado_id_seleccionado, estado_revision')
         .eq('propuesta_id', req.params.id);
     const resumenPrevio = resumenPropuesta(detallesPrevios || []);
+
+    const infoAplicacion = await detectarAplicacionReal(req.params.id, detallesPrevios || []);
+    if (infoAplicacion.algunaAplicada) {
+        return res.status(409).json({ error: 'Esta propuesta ya fue aplicada total o parcialmente a Rodeos y no puede eliminarse como borrador.' });
+    }
 
     const { data: eliminadas, error: errDel } = await supabase
         .from('propuestas_designacion')
@@ -1188,6 +1303,235 @@ router.delete('/propuestas/:id', async (req, res) => {
     });
 
     res.json({ mensaje: 'Borrador eliminado correctamente.' });
+});
+
+// ─── POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos ────────────
+// Convierte las filas ACEPTADO/MODIFICADO de un borrador en asignaciones
+// REALES administrativas (misma tabla `asignaciones` que usa la designación
+// manual, POST /api/admin/asignaciones), pero SIN publicar: nacen con
+// publicado=false (igual que cualquier asignación nueva desde la migración
+// 043), así que el jurado NO las ve hasta que el administrador use el flujo
+// YA EXISTENTE "Publicar designaciones" (POST /:id/publicar-designaciones en
+// rodeos.js) — esta acción NUNCA publica nada, nunca las dos cosas juntas.
+//
+// Qué se aplica: SOLO estado_revision IN ('ACEPTADO', 'MODIFICADO') — la
+// única decisión final del administrador (ver comentario de la migración
+// 047). PENDIENTE, SIN_PROPUESTA, NO_EVALUABLE y SIN_JURADO_ACTUAL se dejan
+// intactos, sin generar asignación — el administrador debe resolverlos
+// manualmente, nunca se inventa un candidato para ellos.
+//
+// NO se recalcula nada: el jurado aplicado es exactamente jurado_id_
+// seleccionado ya guardado en el borrador — nunca se vuelve a correr el
+// motor ni se elige otro candidato.
+//
+// Revalidación de conflictos duros contra el estado ACTUAL de la base (mismas
+// reglas que la designación manual — replicadas aquí porque en asignaciones.js
+// viven inline en el router, sin función exportada ni test propio; no se
+// refactoriza ese archivo, sin cobertura automatizada, para esta tarea):
+//   - el rodeo sigue existiendo y activo
+//   - el jurado sigue existiendo y activo
+//   - el rodeo NO tiene ya una asignación activa de un jurado — cubre tanto
+//     "alguien lo designó manualmente mientras tanto" como "esta misma
+//     propuesta ya fue aplicada antes": no existe un flag aparte de
+//     "propuesta aplicada", esta misma verificación ES la protección de
+//     idempotencia (doble clic no duplica nada).
+//   - el jurado tiene disponibilidad declarada para todas las fechas del rodeo
+//   - el jurado no queda con dos rodeos de fechas cruzadas — incluyendo otras
+//     filas de esta misma aplicación, no solo asignaciones ya existentes
+// Ningún conflicto sobrescribe nada — se reporta y se sigue con el resto
+// (mismo patrón parcial/no-transaccional que ya usa POST /api/admin/asignaciones,
+// nunca todo-o-nada).
+router.post('/propuestas/:id/aplicar', async (req, res) => {
+    const { data: propuesta } = await supabase
+        .from('propuestas_designacion')
+        .select('id, estado, temporada_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+    if (!propuesta) return res.status(404).json({ error: 'La propuesta no existe.' });
+    if (propuesta.estado !== 'BORRADOR') {
+        return res.status(409).json({ error: 'Solo las propuestas en estado borrador pueden aplicarse a Rodeos.' });
+    }
+
+    const { data: detalles, error: errDet } = await supabase
+        .from('propuestas_designacion_detalle')
+        .select('id, rodeo_id, jurado_id_seleccionado, estado_revision')
+        .eq('propuesta_id', req.params.id)
+        .in('estado_revision', ['ACEPTADO', 'MODIFICADO']);
+    if (errDet) return res.status(500).json({ error: errDet.message });
+
+    const aplicables = (detalles || []).filter(d => d.jurado_id_seleccionado);
+    if (aplicables.length === 0) {
+        return res.json({
+            mensaje: 'No hay rodeos aceptados o modificados para aplicar.',
+            aplicadas: [], conflictos: [], resumen: { aplicadas: 0, conflictos: 0 }
+        });
+    }
+
+    const rodeoIds = [...new Set(aplicables.map(d => d.rodeo_id))];
+    const juradoIds = [...new Set(aplicables.map(d => d.jurado_id_seleccionado))];
+
+    const { data: rodeos } = await supabase
+        .from('rodeos').select('id, club, fecha, duracion_dias, estado').in('id', rodeoIds);
+    const { data: jurados } = await supabase
+        .from('usuarios_pagados').select('id, nombre_completo, categoria, tipo_persona, activo').in('id', juradoIds);
+    const { data: asigExistentes } = await supabase
+        .from('asignaciones').select('id, rodeo_id').in('rodeo_id', rodeoIds).eq('tipo_persona', 'jurado').neq('estado', 'anulado');
+    const { data: dispRows } = await supabase
+        .from('disponibilidad_usuarios').select('usuario_pagado_id, fecha').in('usuario_pagado_id', juradoIds);
+    const { data: otrasAsig } = await supabase
+        .from('asignaciones').select('id, usuario_pagado_id, rodeo_id, rodeos!inner(fecha, duracion_dias, club)').in('usuario_pagado_id', juradoIds).neq('estado', 'anulado');
+
+    let tarifas;
+    try {
+        tarifas = await obtenerTarifas();
+    } catch (err) {
+        return res.status(500).json({ error: 'No se pudieron obtener las tarifas vigentes: ' + err.message });
+    }
+
+    const rodeoPorId = new Map((rodeos || []).map(r => [r.id, r]));
+    const juradoPorId = new Map((jurados || []).map(j => [j.id, j]));
+    const rodeoYaDesignado = new Set((asigExistentes || []).map(a => a.rodeo_id));
+    const dispPorJurado = new Map();
+    (dispRows || []).forEach(d => {
+        if (!dispPorJurado.has(d.usuario_pagado_id)) dispPorJurado.set(d.usuario_pagado_id, new Set());
+        dispPorJurado.get(d.usuario_pagado_id).add(d.fecha);
+    });
+    // Ocupación por jurado (para detectar cruce de fechas) — arranca con las
+    // asignaciones YA existentes en otros rodeos, y se va completando con
+    // cada fila que esta misma aplicación va insertando con éxito, para
+    // detectar cruces ENTRE filas de esta misma propuesta también.
+    const ocupacionPorJurado = new Map();
+    (otrasAsig || []).forEach(a => {
+        const rf = a.rodeos?.fecha;
+        if (!rf) return;
+        if (!ocupacionPorJurado.has(a.usuario_pagado_id)) ocupacionPorJurado.set(a.usuario_pagado_id, []);
+        ocupacionPorJurado.get(a.usuario_pagado_id).push({ rodeo_id: a.rodeo_id, fecha: rf, duracion_dias: a.rodeos?.duracion_dias || 1 });
+    });
+
+    function rangoFechas(fecha, duracion) {
+        const dias = duracion || 1;
+        const fechas = [];
+        const base = new Date(fecha + 'T00:00:00Z');
+        for (let i = 0; i < dias; i++) {
+            const d = new Date(base);
+            d.setUTCDate(base.getUTCDate() + i);
+            fechas.push(d.toISOString().slice(0, 10));
+        }
+        return fechas;
+    }
+    function seSuperponen(fechaA, diasA, fechaB, diasB) {
+        const finA = rangoFechas(fechaA, diasA).slice(-1)[0];
+        const finB = rangoFechas(fechaB, diasB).slice(-1)[0];
+        return finA >= fechaB && fechaA <= finB;
+    }
+
+    const aplicadas = [];
+    const conflictos = [];
+
+    for (const d of aplicables) {
+        const rodeo = rodeoPorId.get(d.rodeo_id);
+        const jurado = juradoPorId.get(d.jurado_id_seleccionado);
+
+        if (!rodeo || rodeo.estado !== 'activo') {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo?.club || null, fecha: rodeo?.fecha || null, jurado: jurado?.nombre_completo || null, motivo: 'El rodeo ya no existe o fue anulado.' });
+            continue;
+        }
+        if (!jurado || !jurado.activo || jurado.tipo_persona !== 'jurado') {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado?.nombre_completo || null, motivo: 'El jurado ya no existe o está inactivo.' });
+            continue;
+        }
+        if (rodeoYaDesignado.has(d.rodeo_id)) {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, motivo: 'Este rodeo ya tiene un jurado designado.' });
+            continue;
+        }
+
+        const fechasRodeo = rangoFechas(rodeo.fecha, rodeo.duracion_dias);
+        const dispSet = dispPorJurado.get(d.jurado_id_seleccionado) || new Set();
+        const faltaDisp = !fechasRodeo.every(f => dispSet.has(f));
+        if (faltaDisp) {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, motivo: 'El jurado ya no tiene disponibilidad declarada para estas fechas.' });
+            continue;
+        }
+
+        const ocupado = ocupacionPorJurado.get(d.jurado_id_seleccionado) || [];
+        const hayCruce = ocupado.some(o => o.rodeo_id !== d.rodeo_id && seSuperponen(rodeo.fecha, rodeo.duracion_dias, o.fecha, o.duracion_dias));
+        if (hayCruce) {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, motivo: 'El jurado ya está asignado a otro rodeo en fechas que se cruzan.' });
+            continue;
+        }
+
+        let calculo;
+        try {
+            calculo = calcularPagoBase('jurado', jurado.categoria, rodeo.duracion_dias, tarifas);
+        } catch (calcErr) {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, motivo: 'No se pudo calcular el pago (tarifa no configurada).' });
+            continue;
+        }
+
+        const { data: asignacion, error: errIns } = await supabase
+            .from('asignaciones')
+            .insert({
+                rodeo_id: d.rodeo_id,
+                usuario_pagado_id: d.jurado_id_seleccionado,
+                tipo_persona: 'jurado',
+                nombre_importado: jurado.nombre_completo,
+                categoria_aplicada: calculo.categoria_aplicada,
+                valor_diario_aplicado: calculo.valor_diario_aplicado,
+                duracion_dias_aplicada: rodeo.duracion_dias,
+                pago_base_calculado: calculo.pago_base_calculado,
+                estado: 'activo',
+                estado_designacion: 'pendiente',
+                publicado: false,
+                // Trazabilidad ESTRUCTURAL (migración 055) — se escribe en la
+                // MISMA sentencia que crea la asignación, así que no depende
+                // de una segunda escritura (auditoría) que pudiera fallar.
+                propuesta_detalle_id: d.id,
+                created_by: req.usuario.id
+            })
+            .select()
+            .single();
+
+        if (errIns) {
+            conflictos.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, motivo: 'Error al crear la designación: ' + errIns.message });
+            continue;
+        }
+
+        // Marca esta fila como ocupada para las siguientes iteraciones (cruce
+        // de fechas ENTRE filas de esta misma aplicación).
+        if (!ocupacionPorJurado.has(d.jurado_id_seleccionado)) ocupacionPorJurado.set(d.jurado_id_seleccionado, []);
+        ocupacionPorJurado.get(d.jurado_id_seleccionado).push({ rodeo_id: d.rodeo_id, fecha: rodeo.fecha, duracion_dias: rodeo.duracion_dias });
+        rodeoYaDesignado.add(d.rodeo_id);
+
+        aplicadas.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, asignacion_id: asignacion.id });
+
+        await auditoria.registrar({
+            tabla: 'asignaciones',
+            registro_id: asignacion.id,
+            accion: 'crear',
+            datos_nuevos: { rodeo_id: d.rodeo_id, usuario_pagado_id: d.jurado_id_seleccionado, tipo_persona: 'jurado', pago_base_calculado: calculo.pago_base_calculado, origen: 'propuesta_designacion', propuesta_id: propuesta.id, detalle_id: d.id },
+            actor_id: req.usuario.id,
+            actor_tipo: 'administrador',
+            descripcion: `Asignación creada desde propuesta de designación: ${jurado.nombre_completo} a rodeo ${rodeo.club} - ${rodeo.fecha}`,
+            ip_address: req.ip
+        });
+    }
+
+    await auditoria.registrar({
+        tabla: 'propuestas_designacion',
+        registro_id: propuesta.id,
+        accion: 'aplicar',
+        datos_nuevos: { aplicadas: aplicadas.length, conflictos: conflictos.length },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Propuesta aplicada a Rodeos: ${aplicadas.length} designación(es) pendiente(s) de publicación creada(s), ${conflictos.length} conflicto(s)`,
+        ip_address: req.ip
+    });
+
+    res.json({
+        mensaje: `${aplicadas.length} designación(es) creada(s), pendiente(s) de publicación.`,
+        aplicadas, conflictos,
+        resumen: { aplicadas: aplicadas.length, conflictos: conflictos.length }
+    });
 });
 
 // ─── Enriquece filas crudas con bloque de fechas real (helper compartido) ─

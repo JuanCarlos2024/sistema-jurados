@@ -1146,12 +1146,14 @@ const ETIQUETAS_USO_CORTO = {
 };
 
 let propuestaAbierta = null; // { propuesta, resumen, detalle } de la propuesta actualmente abierta en pantalla (BORRADOR ya guardado)
+let ultimaListaPropuestas = []; // última respuesta de GET /propuestas — usada por el botón "Eliminar" del listado
 
 async function cargarListaPropuestas() {
     const cont = document.getElementById('lista-propuestas');
     try {
         const resp = await api.get('/admin/propuesta-designacion/propuestas');
-        renderListaPropuestas(resp.propuestas || []);
+        ultimaListaPropuestas = resp.propuestas || [];
+        renderListaPropuestas(ultimaListaPropuestas);
     } catch (err) {
         cont.innerHTML = `<div class="alerta alerta-error" style="margin:14px;">${sanitizar(err.message)}</div>`;
     }
@@ -1178,7 +1180,12 @@ function renderListaPropuestas(propuestas) {
             <td style="text-align:center;">${p.resumen.sin_propuesta}</td>
             <td style="text-align:center;">${p.resumen.no_evaluables}</td>
             <td><span class="badge-revision ${p.estado === 'BORRADOR' ? 'PENDIENTE' : 'ACEPTADO'}">${sanitizar(p.estado)}</span></td>
-            <td><button class="btn btn-pequeño btn-secundario" onclick="abrirPropuesta('${p.id}')">Abrir</button></td>
+            <td style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button class="btn btn-pequeño btn-secundario" onclick="abrirPropuesta('${p.id}')">Abrir</button>
+                ${p.estado === 'BORRADOR' && !p.bloqueada_para_eliminar
+                    ? `<button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminarBorradorDesdeLista('${p.id}')">Eliminar</button>`
+                    : ''}
+            </td>
         </tr>`).join('')}</tbody>
     </table>`;
 }
@@ -1227,10 +1234,78 @@ function renderVistaPropuesta() {
         <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
             <button class="btn btn-primario" disabled title="Disponible en la siguiente etapa">Confirmar propuesta — Disponible en siguiente etapa</button>
         </div>
-        ${propuesta.estado === 'BORRADOR' ? `
+        ${propuesta.estado === 'BORRADOR' && (resumen.aceptados + resumen.modificados) > 0 ? (
+            propuesta.aplicada
+                ? `<div style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                       <span class="badge-revision ACEPTADO">Aplicada a Rodeos</span>
+                       <span style="font-size:12px; color:var(--gris);">Las designaciones de esta propuesta ya están creadas en Rodeos, pendientes de publicación.</span>
+                       <a href="rodeos.html" class="btn btn-secundario btn-pequeño">Ir a Rodeos</a>
+                   </div>`
+                : `<div style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
+                       <button class="btn btn-primario" onclick="confirmarAplicarPropuesta()">Aplicar propuesta a Rodeos</button>
+                   </div>`
+        ) : ''}
+        ${propuesta.estado === 'BORRADOR' && !propuesta.bloqueada_para_eliminar ? `
         <div style="margin-top:20px; border-top:1px solid var(--gris-borde); padding-top:14px; display:flex; justify-content:flex-end;">
             <button class="btn btn-peligro btn-pequeño" onclick="confirmarEliminarBorrador()">Eliminar borrador</button>
         </div>` : ''}
+        ${propuesta.estado === 'BORRADOR' && propuesta.bloqueada_para_eliminar ? `
+        <div style="margin-top:20px; border-top:1px solid var(--gris-borde); padding-top:14px; display:flex; justify-content:flex-end;">
+            <span style="font-size:12px; color:var(--gris);" title="Esta propuesta ya generó designaciones reales en Rodeos y no puede eliminarse.">Ya aplicada a Rodeos — no se puede eliminar</span>
+        </div>` : ''}
+    </div>`;
+}
+
+// ─── Aplicar propuesta a Rodeos — convierte las filas ACEPTADO/MODIFICADO
+// en asignaciones REALES (tabla `asignaciones`, igual que la designación
+// manual), pero SIN publicarlas: el jurado no las ve hasta que el
+// administrador use "Publicar designaciones" en Rodeos (flujo ya existente,
+// no tocado por esta acción). NUNCA recalcula candidatos — aplica
+// exactamente el jurado ya decidido en el borrador. Un solo confirm()
+// simple, mismo patrón que "Guardar como propuesta" y "Eliminar borrador" —
+// el proyecto no usa doble confirmación para propuestas.
+async function confirmarAplicarPropuesta() {
+    if (!propuestaAbierta) return;
+    const { propuesta, resumen } = propuestaAbierta;
+    const aplicables = resumen.aceptados + resumen.modificados;
+    const noAplicables = resumen.total_rodeos - aplicables;
+    const mensaje = `<strong style="font-size:16px;">Aplicar propuesta a Rodeos</strong>
+        <div style="text-align:left; margin-top:10px; font-size:14px; line-height:1.8;">
+            Se crearán <strong>${aplicables}</strong> designación(es) pendiente(s) de publicación.<br>
+            ${noAplicables > 0 ? `No se aplicarán <strong>${noAplicables}</strong> rodeo(s) sin una decisión final (pendientes, sin propuesta, no evaluables).<br>` : ''}
+            <br>Las designaciones todavía <strong>NO</strong> serán visibles para los jurados hasta que publique desde Rodeos.<br><br>
+            ¿Desea continuar?
+        </div>`;
+    const ok = await confirmar(mensaje);
+    if (!ok) return;
+
+    try {
+        const resp = await api.post('/admin/propuesta-designacion/propuestas/' + propuesta.id + '/aplicar', {});
+        renderResultadoAplicar(resp);
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+function renderResultadoAplicar(resp) {
+    const cont = document.getElementById('vista-propuesta');
+    cont.innerHTML = `<div class="card" style="padding:16px;">
+        <div style="font-weight:700; font-size:15px; margin-bottom:10px;">Propuesta aplicada</div>
+        <div style="font-size:14px; line-height:2;">
+            ✓ ${resp.resumen.aplicadas} designación(es) creada(s)<br>
+            ⚠ ${resp.resumen.conflictos} conflicto(s)
+        </div>
+        ${resp.conflictos && resp.conflictos.length > 0 ? `<div class="alerta alerta-error" style="margin-top:10px;">
+            <strong>No se pudo aplicar ${resp.conflictos.length} designación(es):</strong>
+            <ul style="margin:6px 0 0 18px; font-size:13px;">
+                ${resp.conflictos.map(c => `<li>${sanitizar(c.club || c.rodeo_id)} — ${sanitizar(c.fecha || '')} — ${sanitizar(c.jurado || 'sin jurado')}: ${sanitizar(c.motivo)}</li>`).join('')}
+            </ul>
+        </div>` : ''}
+        <div style="margin-top:14px; font-size:13px; color:var(--gris);">Las designaciones todavía no están publicadas.</div>
+        <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+            <a href="rodeos.html" class="btn btn-primario">Ir a Rodeos</a>
+            <button class="btn btn-secundario" onclick="cerrarVistaPropuesta(); cargarListaPropuestas();">Volver al listado</button>
+        </div>
     </div>`;
 }
 
@@ -1240,29 +1315,56 @@ function renderVistaPropuesta() {
 // como propuesta" — el proyecto no usa doble confirmación para propuestas
 // (ese patrón más estricto solo existe en casos.js cuando hay datos de
 // terceros en riesgo, que no es el caso: un borrador nunca es visible para
-// jurados/delegados). El backend vuelve a validar estado === 'BORRADOR'
-// independientemente de este chequeo en pantalla.
-async function confirmarEliminarBorrador() {
-    if (!propuestaAbierta) return;
-    const { propuesta, resumen } = propuestaAbierta;
-    const mensaje = `<strong style="font-size:16px;">Eliminar borrador</strong>
+// jurados/delegados). El backend vuelve a validar estado === 'BORRADOR' Y
+// que no haya sido aplicada, independientemente de este chequeo en pantalla.
+//
+// Mismo mensaje/mismo endpoint tanto desde la vista interna
+// (confirmarEliminarBorrador) como desde "Propuestas guardadas"
+// (confirmarEliminarBorradorDesdeLista) — una sola función construye el
+// texto de confirmación, nunca dos lógicas paralelas.
+function _mensajeConfirmarEliminarBorrador(temporada, createdAt, resumen) {
+    return `<strong style="font-size:16px;">Eliminar borrador</strong>
         <div style="text-align:left; margin-top:10px; font-size:14px; line-height:1.8;">
             Está a punto de eliminar esta propuesta de designación.<br>
-            Temporada: <strong>${sanitizar(propuesta.temporada || '—')}</strong><br>
-            Creada: <strong>${new Date(propuesta.created_at).toLocaleString('es-CL')}</strong><br><br>
+            Temporada: <strong>${sanitizar(temporada || '—')}</strong><br>
+            Creada: <strong>${new Date(createdAt).toLocaleString('es-CL')}</strong><br><br>
             Rodeos incluidos: <strong>${resumen.total_rodeos}</strong><br>
             Aceptados: <strong>${resumen.aceptados}</strong> &nbsp; Modificados: <strong>${resumen.modificados}</strong><br>
             Pendientes: <strong>${resumen.pendientes}</strong> &nbsp; Sin propuesta: <strong>${resumen.sin_propuesta}</strong><br><br>
             Esta acción eliminará únicamente este borrador y su detalle.<br>
             <strong>No eliminará rodeos, jurados ni designaciones reales.</strong>
         </div>`;
-    const ok = await confirmar(mensaje);
+}
+
+async function confirmarEliminarBorrador() {
+    if (!propuestaAbierta) return;
+    const { propuesta, resumen } = propuestaAbierta;
+    const ok = await confirmar(_mensajeConfirmarEliminarBorrador(propuesta.temporada, propuesta.created_at, resumen));
     if (!ok) return;
 
     try {
         await api.delete('/admin/propuesta-designacion/propuestas/' + propuesta.id);
         mostrarToast('Borrador eliminado correctamente.', 'success');
         cerrarVistaPropuesta();
+        await cargarListaPropuestas();
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+// Misma acción que confirmarEliminarBorrador(), disparada desde una fila de
+// "Propuestas guardadas" en vez de la vista interna — mismo endpoint, mismo
+// mensaje, mismo manejo de errores. Busca los datos de la fila en la última
+// lista cargada (ya vienen de GET /propuestas, sin fetch adicional).
+async function confirmarEliminarBorradorDesdeLista(id) {
+    const p = ultimaListaPropuestas.find(x => x.id === id);
+    if (!p) return;
+    const ok = await confirmar(_mensajeConfirmarEliminarBorrador(p.temporada, p.created_at, p.resumen));
+    if (!ok) return;
+
+    try {
+        await api.delete('/admin/propuesta-designacion/propuestas/' + id);
+        mostrarToast('Borrador eliminado correctamente.', 'success');
         await cargarListaPropuestas();
     } catch (err) {
         mostrarError(err);
