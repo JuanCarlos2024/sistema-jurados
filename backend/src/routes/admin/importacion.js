@@ -53,7 +53,7 @@ router.get('/historial', async (req, res) => {
     const { data, error, count } = await supabase
         .from('importaciones')
         .select(`
-            id, nombre_archivo, total_filas, insertadas, pendientes,
+            id, nombre_archivo, tipo, total_filas, insertadas, pendientes,
             duplicadas, rechazadas, errores, created_at,
             administradores(nombre_completo)
         `, { count: 'exact' })

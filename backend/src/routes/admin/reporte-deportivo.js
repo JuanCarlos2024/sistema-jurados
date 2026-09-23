@@ -858,6 +858,15 @@ router.get('/export-directorio', async (req, res) => {
             { header: 'Ganado Fuera del Peso Reglamentario',         key: 'ganado_fuera_peso', width: 24 },
             { header: 'Movimiento a la Rienda',                      key: 'movimiento_rienda', width: 18 },
             { header: 'Acciones Área Deportiva',                     key: 'acciones_area_deportiva', width: 44 },
+            // Columna técnica 15 (O) — AGREGADA, fuera de las 14 columnas
+            // visibles/autoFilter originales (A:N, sin cambios). UUID real de
+            // rodeos.id, sin transformar ni abreviar, oculta por defecto: es
+            // la entrada que la Importación de Control de Gestión (Excel
+            // CG-1.0 generado por GPT a partir de ESTE mismo Reporte
+            // Directorio) usa para identificar el rodeo de forma 100%
+            // determinística en vez de depender del fallback por
+            // Fecha+Asociación+Club+Jurado.
+            { header: 'Rodeo ID', key: 'rodeo_id', width: 38, hidden: true },
         ];
 
         ws1.getRow(1).eachCell(cell => {
@@ -892,6 +901,7 @@ router.get('/export-directorio', async (req, res) => {
                 ganado_fuera_peso: f.cartilla_hubo_ganado_fuera_peso || '—',
                 movimiento_rienda: f.cartilla_hubo_movimiento_rienda || '—',
                 acciones_area_deportiva: accionesTxt,
+                rodeo_id: f.rodeo_id, // UUID real, sin transformar — ver comentario en ws1.columns
             });
 
             row.eachCell({ includeEmpty: true }, (cell, colNum) => {

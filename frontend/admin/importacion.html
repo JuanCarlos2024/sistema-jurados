@@ -77,6 +77,62 @@
                 </div>
             </div>
 
+            <hr style="margin:32px 0; border:none; border-top:2px solid var(--gris-claro);">
+
+            <!-- ═══════════ Importación de Control de Gestión ═══════════ -->
+            <h1 style="margin-bottom:16px;">Importar Control de Gestión</h1>
+
+            <div class="alerta alerta-info" style="margin-bottom:20px;">
+                <div>
+                    <strong>Excel generado a partir del chat de WhatsApp de los jurados.</strong><br>
+                    Debe tener las hojas "Importación sistema" y "Situaciones detectadas", versión de formato <strong>CG-1.0</strong>.<br>
+                    Solo se consideran filas con <strong>Importar = Sí</strong> y <strong>Estado vinculación = Vinculado al reporte</strong>.
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-titulo">📤 Subir Excel de Control de Gestión</div>
+
+                <div class="drop-zone" id="cg-drop-zone" onclick="document.getElementById('cg-input-archivo').click()">
+                    <div class="icono">📊</div>
+                    <p><strong>Haga clic aquí</strong> o arrastre el archivo</p>
+                    <p style="font-size:12px; margin-top:6px;">Formato: .xlsx — Máximo 10 MB</p>
+                </div>
+                <input type="file" id="cg-input-archivo" accept=".xlsx,.xls" style="display:none" onchange="cgArchivoSeleccionado(this)">
+
+                <div id="cg-archivo-info" class="oculto" style="margin-top:16px;">
+                    <div class="alerta alerta-info">
+                        <div><strong>Archivo:</strong> <span id="cg-nombre-archivo"></span></div>
+                    </div>
+                    <div class="form-acciones">
+                        <button class="btn btn-primario" onclick="cgPrevisualizar()">👁 Previsualizar</button>
+                        <button class="btn btn-secundario" onclick="cgCancelarArchivo()">Cancelar</button>
+                    </div>
+                </div>
+
+                <div id="cg-progreso" class="oculto" style="margin-top:20px; text-align:center;">
+                    <div class="spinner" style="margin:0 auto 12px;"></div>
+                    <p class="texto-gris" id="cg-progreso-texto">Procesando archivo, por favor espere...</p>
+                </div>
+            </div>
+
+            <!-- Previsualización -->
+            <div id="cg-preview" class="oculto card" style="margin-top:20px;">
+                <div class="card-titulo">👁 Previsualización — nada se ha guardado todavía</div>
+                <div id="cg-preview-resumen" style="margin-bottom:14px;"></div>
+                <div id="cg-preview-tabla" class="tabla-wrap"></div>
+                <div class="form-acciones" style="margin-top:14px;">
+                    <button class="btn btn-primario" id="cg-btn-confirmar" onclick="cgConfirmar()">✅ Confirmar importación</button>
+                    <button class="btn btn-secundario" onclick="cgCancelarArchivo()">Cancelar</button>
+                </div>
+            </div>
+
+            <!-- Resultado Control de Gestión -->
+            <div id="cg-resultado" class="oculto card" style="margin-top:20px;">
+                <div class="card-titulo">📊 Resultado de la importación de Control de Gestión</div>
+                <div id="cg-resultado-contenido"></div>
+            </div>
+
             <!-- Registros pendientes -->
             <div class="card" style="margin-top:20px;">
                 <div class="card-titulo flex justify-between items-center">
@@ -565,10 +621,11 @@ async function cargarHistorial() {
         const data = await api.get('/admin/importacion/historial');
         if (!data.data || data.data.length === 0) { wrap.innerHTML = '<p class="tabla-vacia">Sin historial</p>'; return; }
         wrap.innerHTML = `<table>
-            <thead><tr><th>Archivo</th><th>Total</th><th>Insertadas</th><th>Pendientes</th><th>Duplicadas</th><th>Errores</th><th>Por</th><th>Fecha</th></tr></thead>
+            <thead><tr><th>Archivo</th><th>Tipo</th><th>Total</th><th>Insertadas</th><th>Pendientes</th><th>Duplicadas</th><th>Errores</th><th>Por</th><th>Fecha</th></tr></thead>
             <tbody>
             ${data.data.map(i => `<tr>
                 <td style="font-size:13px;">${sanitizar(i.nombre_archivo)}</td>
+                <td><span class="badge">${i.tipo === 'control_gestion' ? 'Control de Gestión' : 'Rodeos'}</span></td>
                 <td style="text-align:center;">${i.total_filas}</td>
                 <td style="text-align:center;"><span class="badge badge-activo">${i.insertadas}</span></td>
                 <td style="text-align:center;">${i.pendientes > 0 ? `<span class="badge badge-pendiente">${i.pendientes}</span>` : '—'}</td>
@@ -604,6 +661,183 @@ async function insertarConOverride(id, usuarioPagadoId, tipoRodeoId, fecha) {
 
 function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
 document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target===this) cerrarModal(); });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Importación de Control de Gestión — flujo independiente del importador
+// de Rodeos de arriba (mismo patrón visual de drop-zone, prefijo "cg" en
+// todos los ids/funciones para no colisionar). Archivo → Previsualizar
+// (no escribe nada) → decidir acción por rodeo → Confirmar (el backend
+// vuelve a parsear el MISMO archivo desde cero, nunca confía en los datos
+// de la previsualización — solo en la decisión elegida por fila).
+// ═══════════════════════════════════════════════════════════════════════
+let cgArchivoActual = null;
+let cgPreviewData = null; // última respuesta de /control-gestion/preview
+
+const cgDropZone = document.getElementById('cg-drop-zone');
+cgDropZone.addEventListener('dragover', e => { e.preventDefault(); cgDropZone.classList.add('drag-over'); });
+cgDropZone.addEventListener('dragleave', () => cgDropZone.classList.remove('drag-over'));
+cgDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    cgDropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) cgProcesarArchivo(file);
+});
+
+function cgArchivoSeleccionado(input) {
+    if (input.files[0]) cgProcesarArchivo(input.files[0]);
+}
+
+function cgProcesarArchivo(file) {
+    if (!file.name.match(/\.xlsx?$/i)) {
+        mostrarToast('Solo se permiten archivos Excel (.xlsx, .xls)', 'error');
+        return;
+    }
+    cgArchivoActual = file;
+    document.getElementById('cg-nombre-archivo').textContent = file.name;
+    document.getElementById('cg-archivo-info').classList.remove('oculto');
+    document.getElementById('cg-preview').classList.add('oculto');
+    document.getElementById('cg-resultado').classList.add('oculto');
+}
+
+function cgCancelarArchivo() {
+    cgArchivoActual = null;
+    cgPreviewData = null;
+    document.getElementById('cg-archivo-info').classList.add('oculto');
+    document.getElementById('cg-preview').classList.add('oculto');
+    document.getElementById('cg-input-archivo').value = '';
+}
+
+const CG_ETIQUETA_ESTADO = {
+    ok: '<span class="badge badge-activo">Listo</span>',
+    advertencia: '<span class="badge badge-pendiente">Advertencia</span>',
+    error: '<span class="badge badge-anulado">Error</span>',
+    omitida_por_filtro: '<span class="badge">Omitida (filtro)</span>'
+};
+
+async function cgPrevisualizar() {
+    if (!cgArchivoActual) return;
+    document.getElementById('cg-archivo-info').classList.add('oculto');
+    document.getElementById('cg-progreso-texto').textContent = 'Analizando archivo, por favor espere...';
+    document.getElementById('cg-progreso').classList.remove('oculto');
+
+    const formData = new FormData();
+    formData.append('archivo', cgArchivoActual);
+    try {
+        cgPreviewData = await api.upload('/admin/control-gestion/preview', formData);
+        cgRenderPreview();
+    } catch (err) {
+        mostrarError(err);
+        document.getElementById('cg-archivo-info').classList.remove('oculto');
+    } finally {
+        document.getElementById('cg-progreso').classList.add('oculto');
+    }
+}
+
+function cgRenderPreview() {
+    const { filas, resumen } = cgPreviewData;
+    document.getElementById('cg-preview-resumen').innerHTML = `
+        <div class="resultado-importacion">
+            <div class="res-item azul"><div class="numero">${resumen.total_filas}</div><div class="texto">Total filas</div></div>
+            <div class="res-item verde"><div class="numero">${resumen.importables}</div><div class="texto">Importables</div></div>
+            <div class="res-item naranja"><div class="numero">${resumen.con_advertencia}</div><div class="texto">Advertencia</div></div>
+            <div class="res-item rojo"><div class="numero">${resumen.con_error}</div><div class="texto">Con error</div></div>
+            <div class="res-item"><div class="numero">${resumen.omitidas_por_filtro}</div><div class="texto">Omitidas (filtro)</div></div>
+        </div>`;
+
+    document.getElementById('cg-preview-tabla').innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Jurado</th><th>Rodeo ID</th>
+            <th>N° sit.</th><th>Categorías</th><th>Comentario actual</th><th>Comentario nuevo</th>
+            <th>Estado</th><th>Acción</th>
+        </tr></thead>
+        <tbody>
+        ${filas.map((f, idx) => {
+            if (f.estado === 'omitida_por_filtro') {
+                return `<tr style="opacity:0.5;">
+                    <td colspan="9" style="font-size:12px;">Fila ${f.fila_index + 1} — Importar/Estado vinculación no cumplen el filtro</td>
+                    <td>${CG_ETIQUETA_ESTADO[f.estado]}</td><td>—</td>
+                </tr>`;
+            }
+            const puedeElegir = f.estado === 'ok';
+            const accionSelect = puedeElegir ? `
+                <select id="cg-accion-${idx}" class="form-control" style="font-size:12px;">
+                    <option value="agregar" ${f.accion_sugerida==='agregar'?'selected':''}>Agregar al existente</option>
+                    <option value="reemplazar" ${f.accion_sugerida==='reemplazar'?'selected':''}>Reemplazar</option>
+                    <option value="omitir">Omitir</option>
+                </select>` : '<span style="color:var(--gris); font-size:12px;">No aplicable</span>';
+            return `<tr>
+                <td style="font-size:12px;">${sanitizar(f.fecha || '—')}</td>
+                <td style="font-size:12px;">${sanitizar(f.club || '—')}</td>
+                <td style="font-size:12px;">${sanitizar(f.asociacion || '—')}</td>
+                <td style="font-size:12px;">${sanitizar(f.jurado || '—')}</td>
+                <td style="font-size:11px; color:var(--gris);" title="${sanitizar(f.rodeo_id_resuelto || f.rodeo_id_excel || '')}">${f.rodeo_id_resuelto ? '✓' : (f.rodeo_id_excel ? '⚠' : '—')}</td>
+                <td style="text-align:center;">${f.n_situaciones ?? '—'}</td>
+                <td style="font-size:11px; max-width:160px;">${(f.categorias||[]).map(c => sanitizar(c)).join(', ')}</td>
+                <td style="font-size:11px; max-width:180px; white-space:pre-line;">${sanitizar(f.comentario_actual || '(sin comentario previo)')}</td>
+                <td style="font-size:11px; max-width:220px; white-space:pre-line;">${sanitizar(f.comentario_nuevo || '—')}</td>
+                <td>${CG_ETIQUETA_ESTADO[f.estado]}${f.errores?.length ? `<div style="font-size:11px; color:#c0392b; margin-top:4px;">${f.errores.map(e=>sanitizar(e)).join('<br>')}</div>` : ''}</td>
+                <td>${accionSelect}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
+
+    document.getElementById('cg-preview').classList.remove('oculto');
+    document.getElementById('cg-preview').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function cgConfirmar() {
+    if (!cgArchivoActual || !cgPreviewData) return;
+    const btn = document.getElementById('cg-btn-confirmar');
+    btn.disabled = true;
+
+    // Los <select id="cg-accion-N"> se generaron en cgRenderPreview() con N =
+    // índice ORIGINAL dentro de cgPreviewData.filas (no del subconjunto
+    // filtrado) — indexOf() recupera exactamente ese mismo índice.
+    const decisiones = cgPreviewData.filas
+        .filter(f => f.estado === 'ok')
+        .map(f => {
+            const idxOriginal = cgPreviewData.filas.indexOf(f);
+            const sel = document.getElementById('cg-accion-' + idxOriginal);
+            return { fila_index: f.fila_index, accion: sel ? sel.value : 'omitir' };
+        });
+
+    document.getElementById('cg-preview').classList.add('oculto');
+    document.getElementById('cg-progreso-texto').textContent = 'Confirmando importación, por favor espere...';
+    document.getElementById('cg-progreso').classList.remove('oculto');
+
+    const formData = new FormData();
+    formData.append('archivo', cgArchivoActual);
+    formData.append('decisiones', JSON.stringify(decisiones));
+
+    try {
+        const data = await api.upload('/admin/control-gestion/confirmar', formData);
+        cgMostrarResultado(data);
+        cargarHistorial();
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        document.getElementById('cg-progreso').classList.add('oculto');
+        btn.disabled = false;
+        cgCancelarArchivo();
+    }
+}
+
+function cgMostrarResultado(data) {
+    document.getElementById('cg-resultado-contenido').innerHTML = `
+        <div class="resultado-importacion">
+            <div class="res-item azul"><div class="numero">${data.procesados}</div><div class="texto">Procesados</div></div>
+            <div class="res-item verde"><div class="numero">${data.exitosos}</div><div class="texto">Exitosos</div></div>
+            <div class="res-item naranja"><div class="numero">${data.omitidos}</div><div class="texto">Omitidos</div></div>
+            <div class="res-item naranja"><div class="numero">${data.duplicados}</div><div class="texto">Situaciones duplicadas</div></div>
+            <div class="res-item rojo"><div class="numero">${data.errores}</div><div class="texto">Errores</div></div>
+        </div>
+        <div class="alerta ${data.errores > 0 ? 'alerta-advertencia' : 'alerta-exito'}" style="margin-top:16px;">
+            ${data.errores > 0 ? `⚠️ ${data.errores} fila(s) con error — revise el detalle y vuelva a intentar.` : '✅ Importación completada correctamente.'}
+        </div>`;
+    document.getElementById('cg-resultado').classList.remove('oculto');
+    document.getElementById('cg-resultado').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
 
 cargarPendientes();
 cargarHistorial();

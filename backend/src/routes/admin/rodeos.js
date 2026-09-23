@@ -93,7 +93,7 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
         delete rodeo.comunas_chile;
     }
 
-    const [{ data: asignaciones }, { data: evaluacion }, { data: datosMonitor }, { data: notasSecundarias }] = await Promise.all([
+    const [{ data: asignaciones }, { data: evaluacion }, { data: datosMonitor }, { data: notasSecundarias }, { count: situacionesCG }] = await Promise.all([
         supabase
             .from('asignaciones')
             .select(`
@@ -120,10 +120,21 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             .from('rodeo_notas_secundarias')
             .select('nota_comision, nota_delegado, actualizado_por, actualizado_en')
             .eq('rodeo_id', req.params.id)
-            .maybeSingle()
+            .maybeSingle(),
+        // Solo el conteo (head:true, sin traer filas) — el detalle completo
+        // se pide aparte, bajo demanda, cuando el usuario abre "Ver detalle"
+        // (GET /admin/control-gestion/rodeo/:id/situaciones).
+        supabase
+            .from('control_gestion_situaciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('rodeo_id', req.params.id)
     ]);
 
-    res.json({ ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null, datos_monitor: datosMonitor || null, notas_secundarias: notasSecundarias || null });
+    res.json({
+        ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null,
+        datos_monitor: datosMonitor || null, notas_secundarias: notasSecundarias || null,
+        situaciones_control_gestion_count: situacionesCG || 0
+    });
 });
 
 // PUT /api/admin/rodeos/:id/datos-monitor — upsert datos del monitor por rodeo_id

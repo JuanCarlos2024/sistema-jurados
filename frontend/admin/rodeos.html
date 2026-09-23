@@ -224,6 +224,17 @@
 </div>
 </div>
 
+<!-- Modal Detalle Control de Gestión — z-index alto para apilarse sobre el modal Rodeo -->
+<div class="modal-overlay oculto" id="modal-cg-overlay" style="z-index:1100;">
+<div class="modal" style="max-width:820px; width:94vw; max-height:88vh; display:flex; flex-direction:column;">
+    <div class="modal-header">
+        <h3 id="modal-cg-titulo">Detalle Control de Gestión</h3>
+        <button class="modal-cerrar" onclick="cerrarDetalleControlGestion()">×</button>
+    </div>
+    <div class="modal-body" id="modal-cg-body" style="overflow-y:auto; flex:1;"></div>
+</div>
+</div>
+
 <!-- Modal Rodeo -->
 <div class="modal-overlay oculto" id="modal-overlay">
 <div class="modal" style="max-width:700px;">
@@ -871,7 +882,10 @@ function htmlDetalle(r) {
             <label class="form-label">Obs. Jefe Deportivo / Acciones Área Deportiva</label>
             <textarea id="dm-obs" class="form-control" rows="2" placeholder="Observaciones, gestiones o acciones realizadas por el Área Deportiva...">${sanitizar(r.observacion || '')}</textarea>
         </div>`}
-        <button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarDatosMonitor('${r.id}')">Guardar datos del monitor</button>`;
+        <div class="flex gap-8" style="margin-bottom:14px; flex-wrap:wrap;">
+            <button class="btn btn-primario btn-pequeño" onclick="guardarDatosMonitor('${r.id}')">Guardar datos del monitor</button>
+            ${(r.situaciones_control_gestion_count > 0) ? `<button class="btn btn-secundario btn-pequeño" onclick="abrirDetalleControlGestion('${r.id}')">📋 Ver detalle (${r.situaciones_control_gestion_count})</button>` : ''}
+        </div>`;
     })()}
     ${(() => {
         const ns = r.notas_secundarias || {};
@@ -2084,6 +2098,70 @@ async function abrirAdjuntosAdmin(rodeoId, clubNombre) {
     document.getElementById('modal-adj-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
     document.getElementById('modal-adj-overlay').classList.remove('oculto');
     await renderAdjuntosAdmin();
+}
+
+// ─── Detalle de Control de Gestión — SOLO LECTURA (Etapa 1). Cada bloque
+// desplegable "Ver evidencia del chat" se cierra por defecto; el resumen
+// compacto de arriba (Comentario del monitor) nunca muestra este detalle.
+async function abrirDetalleControlGestion(rodeoId) {
+    document.getElementById('modal-cg-body').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-cg-overlay').classList.remove('oculto');
+    try {
+        const r = await api.get(`/admin/rodeos/${rodeoId}`);
+        const { situaciones } = await api.get(`/admin/control-gestion/rodeo/${rodeoId}/situaciones`);
+        renderDetalleControlGestion(r, situaciones);
+    } catch (err) {
+        document.getElementById('modal-cg-body').innerHTML =
+            `<div class="alerta alerta-error" style="margin:16px;">${sanitizar(err.message)}</div>`;
+    }
+}
+
+function renderDetalleControlGestion(r, situaciones) {
+    const dm = r.datos_monitor || {};
+    const jurados = (r.asignaciones || []).filter(a => a.tipo_persona === 'jurado')
+        .map(a => a.usuarios_pagados?.nombre_completo || a.nombre_importado || '—').join(', ');
+    const categorias = [...new Set(situaciones.map(s => s.categoria_principal).filter(Boolean))];
+
+    document.getElementById('modal-cg-body').innerHTML = `
+        <div style="background:var(--fondo); border-radius:6px; padding:14px; margin-bottom:16px; font-size:13px; line-height:1.7;">
+            <div><strong>Fecha:</strong> ${formatFecha(r.fecha)}</div>
+            <div><strong>Club:</strong> ${sanitizar(r.club)}</div>
+            <div><strong>Asociación:</strong> ${sanitizar(r.asociacion)}</div>
+            <div><strong>Jurado(s):</strong> ${sanitizar(jurados || '—')}</div>
+            <div><strong>N° situaciones:</strong> ${situaciones.length}</div>
+            <div><strong>Categorías:</strong> ${sanitizar(categorias.join(', ') || '—')}</div>
+        </div>
+        ${situaciones.length === 0 ? '<p class="texto-gris">Sin situaciones importadas para este rodeo.</p>' : situaciones.map(s => `
+        <div class="card" style="margin-bottom:12px; padding:14px;">
+            <div style="font-weight:700; margin-bottom:8px;">Situación ${sanitizar(s.id_situacion_excel || '—')}</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:13px; margin-bottom:10px;">
+                <div><strong>Fecha:</strong> ${sanitizar(s.fecha_situacion ? formatFecha(s.fecha_situacion) : '—')}</div>
+                <div><strong>Hora:</strong> ${sanitizar(s.hora || '—')}</div>
+                <div><strong>Área:</strong> ${sanitizar(s.area || '—')}</div>
+                <div><strong>Categoría:</strong> ${sanitizar(s.categoria_principal || '—')}</div>
+                <div><strong>Subcategoría:</strong> ${sanitizar(s.subcategoria || '—')}</div>
+                <div><strong>Impacto:</strong> ${sanitizar(s.impacto || '—')}</div>
+                <div><strong>Estado/Resultado:</strong> ${sanitizar(s.estado_resultado || '—')}</div>
+                <div><strong>Jurado que informó:</strong> ${sanitizar(s.jurado_chat || '—')}</div>
+                <div><strong>Confianza:</strong> ${sanitizar(s.confianza || '—')}</div>
+                <div><strong>Incluida en comentario:</strong> ${s.incluir_en_comentario === true ? 'Sí' : s.incluir_en_comentario === false ? 'No' : '—'}</div>
+            </div>
+            <div style="font-size:13px; margin-bottom:10px;"><strong>Descripción:</strong><br>${sanitizar(s.descripcion_unificada || '—')}</div>
+            ${(s.lineas_chat || s.evidencia_textual) ? `
+            <details>
+                <summary style="cursor:pointer; font-size:12px; color:var(--primario);">Ver evidencia del chat</summary>
+                <div style="font-size:12px; white-space:pre-line; background:var(--fondo); padding:10px; border-radius:4px; margin-top:8px;">
+                    ${sanitizar(s.lineas_chat || '')}${s.lineas_chat && s.evidencia_textual ? '<br><br>' : ''}${sanitizar(s.evidencia_textual || '')}
+                </div>
+            </details>` : ''}
+        </div>`).join('')}
+        <div class="form-acciones" style="margin-top:14px;">
+            <button class="btn btn-secundario" onclick="cerrarDetalleControlGestion()">Cerrar</button>
+        </div>`;
+}
+
+function cerrarDetalleControlGestion() {
+    document.getElementById('modal-cg-overlay').classList.add('oculto');
 }
 
 let _reabrirCartillaId = null;
