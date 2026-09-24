@@ -1005,4 +1005,192 @@ router.get('/export-directorio', async (req, res) => {
     }
 });
 
+// ── Reporte Fin de Semana — mismo contenido que el Reporte Directorio (mismas
+// 14 columnas A:N vía obtenerDatos(), mismos filtros) + columna visible O
+// "Obs. Monitor" (datos_monitor_rodeo.comentario_monitor tal cual) + columna
+// técnica oculta P "Rodeo ID". Endpoint independiente: /export-directorio NO
+// se modifica (es la base del flujo GPT → Control de Gestión). La Hoja 2 se
+// replica a propósito en vez de refactorizar el endpoint estable. ──────────
+const ANCHO_OBS_MONITOR = 60;
+
+router.get('/export-fin-semana', async (req, res) => {
+    try {
+        let colleras;
+        try {
+            colleras = await obtenerCollerasCompletas();
+        } catch (e) {
+            return res.status(502).json({
+                error: `No fue posible generar el Reporte Fin de Semana porque la fuente externa de Colleras Completas no está disponible. (${e.message})`
+            });
+        }
+
+        const { data: filas } = await obtenerDatos(req.query, false);
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Sistema Jurados - Rodeo Chileno';
+        wb.created = new Date();
+
+        const ws1 = wb.addWorksheet('Reporte Fin de Semana');
+        ws1.columns = [
+            { header: 'Fecha',                                      key: 'fecha',            width: 13 },
+            { header: 'Club',                                       key: 'club',             width: 26 },
+            { header: 'Asociación',                                 key: 'asociacion',       width: 20 },
+            { header: 'Tipo Rodeo',                                 key: 'tipo_rodeo',       width: 20 },
+            { header: 'Jurado(s)',                                  key: 'jurados',          width: 28 },
+            { header: 'Resultado Alterado',                         key: 'resultado_alterado', width: 15 },
+            { header: 'Descripción de lo observado',                key: 'descripcion_observado', width: 44 },
+            { header: 'Total Situaciones',                          key: 'total_situaciones', width: 15 },
+            { header: 'Serie Campeones - 2 Vueltas',                 key: 'serie_campeones',  width: 20 },
+            { header: 'Caseta Jurado',                               key: 'caseta_jurado',    width: 16 },
+            { header: 'Faltas Disciplinarias/Reglamentarias',        key: 'faltas',           width: 24 },
+            { header: 'Ganado Fuera del Peso Reglamentario',         key: 'ganado_fuera_peso', width: 24 },
+            { header: 'Movimiento a la Rienda',                      key: 'movimiento_rienda', width: 18 },
+            { header: 'Acciones Área Deportiva',                     key: 'acciones_area_deportiva', width: 44 },
+            { header: 'Obs. Monitor',                                key: 'obs_monitor',      width: ANCHO_OBS_MONITOR },
+            { header: 'Rodeo ID', key: 'rodeo_id', width: 38, hidden: true },
+        ];
+
+        ws1.getRow(1).eachCell(cell => {
+            cell.font      = HEADER_STYLE.font;
+            cell.fill      = HEADER_STYLE.fill;
+            cell.alignment = HEADER_STYLE.alignment;
+            cell.border    = HEADER_STYLE.border;
+        });
+        ws1.getRow(1).height = 26;
+        ws1.views = [{ state: 'frozen', ySplit: 1 }];
+        ws1.autoFilter = { from: 'A1', to: 'O1' };
+
+        const WRAP_COLS = new Set(['descripcion_observado', 'acciones_area_deportiva', 'obs_monitor']);
+
+        for (const f of filas) {
+            const casetaTxt = f.cartilla_caseta_adecuada === 'Sí' ? 'Cumple'
+                : f.cartilla_caseta_adecuada === 'No' ? 'No cumple' : '—';
+            const accionesTxt = (f.obs_admin || '').trim() || 'No aplica';
+
+            // comentario_monitor íntegro, sin trim ni resumen; vacío/NULL → celda vacía.
+            const obsMonitor = (typeof f.obs_monitor === 'string' && f.obs_monitor.trim() !== '') ? f.obs_monitor : null;
+
+            const row = ws1.addRow({
+                fecha:            fmtFecha(f.fecha),
+                club:             f.club,
+                asociacion:       f.asociacion,
+                tipo_rodeo:       f.tipo_rodeo,
+                jurados:          f.jurados,
+                resultado_alterado: f.resultados_alterados ? 'Sí' : 'No',
+                descripcion_observado: f.comentario_resultados_alterados?.trim() || '—',
+                total_situaciones: f.c1_total + f.c2_total,
+                serie_campeones:   f.cartilla_serie_campeones_2_vueltas || '—',
+                caseta_jurado:     casetaTxt,
+                faltas:            f.cartilla_hubo_faltas || '—',
+                ganado_fuera_peso: f.cartilla_hubo_ganado_fuera_peso || '—',
+                movimiento_rienda: f.cartilla_hubo_movimiento_rienda || '—',
+                acciones_area_deportiva: accionesTxt,
+                obs_monitor:      obsMonitor,
+                rodeo_id: f.rodeo_id,
+            });
+
+            row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+                const colKey = ws1.columns[colNum - 1]?.key;
+                cell.alignment = { vertical: 'top', wrapText: WRAP_COLS.has(colKey) };
+                if (f.resultados_alterados) cell.fill = FILA_ALTERADA_FILL;
+            });
+
+            // Altura explícita (como en el Directorio, mínimo 28) pero crecida
+            // según las líneas de Obs. Monitor para que no quede recortado;
+            // tope 409 = máximo de fila en Excel.
+            let lineasObs = 1;
+            if (obsMonitor) {
+                lineasObs = obsMonitor.split(/\r?\n/)
+                    .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / ANCHO_OBS_MONITOR)), 0);
+            }
+            row.height = Math.min(409, Math.max(28, lineasObs * 14));
+
+            if (f.resultados_alterados)                     row.getCell('resultado_alterado').font = ROJO_FONT;
+            if (casetaTxt === 'No cumple')                  row.getCell('caseta_jurado').font = ROJO_FONT;
+            if (f.cartilla_hubo_faltas === 'Sí')            row.getCell('faltas').font = ROJO_FONT;
+            if (f.cartilla_hubo_ganado_fuera_peso === 'Sí') row.getCell('ganado_fuera_peso').font = ROJO_FONT;
+        }
+
+        // ── Hoja 2: Colleras completas (réplica exacta de /export-directorio) ──
+        const ws2 = wb.addWorksheet('Colleras completas');
+        ws2.columns = [
+            { width: 24 }, { width: 24 }, { width: 16 }, { width: 7 }, { width: 6 }, { width: 6 },
+            { width: 40 }, { width: 12 }, { width: 22 }, { width: 16 }
+        ];
+
+        const totalReal = colleras.filas.length;
+        const fechaHoy = fmtFecha(new Date().toISOString());
+        ws2.mergeCells(1, 1, 1, 10);
+        const tituloCell = ws2.getCell(1, 1);
+        tituloCell.value = `${totalReal} COLLERAS COMPLETAS AL ${fechaHoy}`;
+        tituloCell.font = { bold: true, size: 14, color: { argb: 'FF1e3a5f' } };
+        tituloCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        ws2.getRow(1).height = 26;
+
+        let r = 3;
+        const addResumenRow = (pares) => {
+            let col = 1;
+            for (const [label, val] of pares) {
+                const cLabel = ws2.getCell(r, col);
+                cLabel.value = label;
+                cLabel.font = { bold: true };
+                const cVal = ws2.getCell(r, col + 1);
+                cVal.value = (val !== null && val !== undefined) ? val : '—';
+                col += 2;
+            }
+            r++;
+        };
+        addResumenRow([['Total colleras completas:', colleras.resumen.totalCompletas]]);
+        addResumenRow([['Total zona norte:', colleras.resumen.zonaNorte], ['Colleras centro norte:', colleras.resumen.centroNorte]]);
+        addResumenRow([['Total zona centro:', colleras.resumen.zonaCentro], ['Colleras centro sur:', colleras.resumen.centroSur]]);
+        addResumenRow([['Total zona sur:', colleras.resumen.zonaSur]]);
+        r++;
+
+        const headerRowNum = r;
+        const HEADERS_CC = ['CABALLO 1', 'CABALLO 2', 'SEXO (CRIADERO)', 'PTJ', 'R', 'C', 'JINETES', 'ZONA', 'ASOCIACIÓN', 'ZONA CLASIF.'];
+        HEADERS_CC.forEach((h, i) => { ws2.getCell(headerRowNum, i + 1).value = h; });
+        ws2.getRow(headerRowNum).eachCell(cell => {
+            cell.font      = HEADER_STYLE.font;
+            cell.fill      = HEADER_STYLE.fill;
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border    = HEADER_STYLE.border;
+        });
+        ws2.getRow(headerRowNum).height = 26;
+        ws2.views = [{ state: 'frozen', ySplit: headerRowNum }];
+        ws2.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: headerRowNum, column: 10 } };
+
+        const CELL_BORDER_CC = {
+            top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
+        };
+
+        r++;
+        for (const c of colleras.filas) {
+            const valores = [c.caballo1, c.caballo2, c.sexoCriadero, c.ptj, c.r, c.c, c.jinetes, c.zona, c.asociacion, c.zonaClasif];
+            const row = ws2.getRow(r);
+            row.values = valores;
+            row.eachCell({ includeEmpty: true }, cell => {
+                cell.alignment = { wrapText: true, vertical: 'top' };
+                cell.border = CELL_BORDER_CC;
+            });
+            const maxLineas = valores.reduce((max, v) => {
+                const n = (String(v ?? '').match(/\n/g) || []).length + 1;
+                return Math.max(max, n);
+            }, 1);
+            row.height = Math.max(15, maxLineas * 14);
+            r++;
+        }
+
+        const fecha = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="reporte_fin_semana_${fecha}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 module.exports = router;

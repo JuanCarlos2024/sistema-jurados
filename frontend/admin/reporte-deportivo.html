@@ -96,6 +96,7 @@
                 </select>
                 <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
                 <button class="btn btn-outline btn-pequeño" onclick="exportarDirectorio()" id="btn-exportar-directorio" style="margin-left:auto;">Reporte Directorio</button>
+                <button class="btn btn-outline btn-pequeño" onclick="exportarFinSemana()" id="btn-exportar-fin-semana">Reporte Fin de Semana</button>
                 <button class="btn btn-success btn-pequeño" onclick="exportarExcel()" id="btn-exportar">Exportar Excel</button>
                 <button class="btn btn-primario btn-pequeño" onclick="exportarExcelDetallado()" id="btn-exportar-det">Exportar Excel Detallado</button>
             </div>
@@ -365,6 +366,20 @@ async function exportarDirectorio() {
         mostrarToast(e.message || 'Error al exportar Reporte Directorio', 'error');
     } finally {
         btn.disabled = false; btn.textContent = 'Reporte Directorio';
+    }
+}
+
+async function exportarFinSemana() {
+    const btn = document.getElementById('btn-exportar-fin-semana');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        const params = buildParams(1);
+        params.delete('page'); params.delete('limit');
+        await api.descargar('/admin/reporte-deportivo/export-fin-semana?' + params.toString(), `reporte_fin_semana_${new Date().toISOString().slice(0,10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar Reporte Fin de Semana', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Reporte Fin de Semana';
     }
 }
 
