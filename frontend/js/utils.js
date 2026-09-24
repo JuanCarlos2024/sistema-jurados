@@ -127,6 +127,7 @@ const _PAGINAS_CAPACITADOR = [
 const _PAGINAS_DIRECTOR = [
     '/admin/reporte-deportivo.html',
     '/admin/reporte-cartillas.html',
+    '/admin/informe-gestion.html',
     '/admin/evaluaciones.html',
     '/admin/evaluacion-detalle.html',
     '/admin/evaluacion-dashboard.html',
@@ -165,6 +166,8 @@ function _ajustarMenuPorRol(rol) {
             // Analista y Comisión Técnica: además ocultar el Dashboard principal y Rodeos
             if ((rol === 'analista' || rol === 'comision_tecnica') && href.endsWith('dashboard.html')) a.style.display = 'none';
             if ((rol === 'analista' || rol === 'comision_tecnica') && href.endsWith('rodeos.html')) a.style.display = 'none';
+            // Informe de Gestión: solo admin pleno, director y jefe de área (mismo criterio del backend)
+            if ((rol === 'analista' || rol === 'comision_tecnica') && href.endsWith('informe-gestion.html')) a.style.display = 'none';
         }
     });
     // Ocultar nav-seccion vacías (sin items visibles debajo)
@@ -200,6 +203,9 @@ function _aplicarControlAccesoAdmin(usuario) {
         if (bloqueada) { window.location.href = '/admin/evaluaciones.html'; return; }
         // Analista y Comisión Técnica: además bloquear el Dashboard principal y Rodeos
         if ((rol === 'analista' || rol === 'comision_tecnica') && (path.endsWith('dashboard.html') || path === '/admin/dashboard.html')) {
+            window.location.href = '/admin/evaluaciones.html'; return;
+        }
+        if ((rol === 'analista' || rol === 'comision_tecnica') && path.endsWith('informe-gestion.html')) {
             window.location.href = '/admin/evaluaciones.html'; return;
         }
         if ((rol === 'analista' || rol === 'comision_tecnica') && (path.endsWith('rodeos.html') || path === '/admin/rodeos.html')) {

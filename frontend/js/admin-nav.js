@@ -22,6 +22,7 @@
         { href: '/admin/reporte-cartillas.html',        icon: '📋', label: 'Reporte Cartillas Jurado' },
         { href: '/admin/reporte-movimiento-rienda.html', icon: '🐴', label: 'Reporte Movimiento de Rienda' },
         { href: '/admin/reporte-deportivo.html',        icon: '🏇', label: 'Reporte Deportivo' },
+        { href: '/admin/informe-gestion.html',         icon: '📑', label: 'Informe de Gestión' },
         { s: 'Sistema' },
         { href: '/admin/configuracion.html',       icon: '⚙️',  label: 'Configuración' },
         { href: '/admin/auditoria.html',           icon: '📋', label: 'Auditoría' },

@@ -47,6 +47,7 @@ router.use('/ciclos', require('./ciclos'));
 router.use('/casos', require('./casos'));
 router.use('/respuestas-jurado', require('./respuestas-jurado'));
 router.use('/reporte-deportivo', require('./reporte-deportivo'));
+router.use('/informe-gestion', require('./informe-gestion'));
 router.use('/notificaciones', require('./notificaciones'));
 router.use('/material-complementario', require('./material-complementario'));
 router.use('/propuesta-designacion', require('./propuesta-designacion'));
