@@ -88,6 +88,41 @@ describe('contexto correcto y sin información residual', () => {
     });
 });
 
+describe('historial "Últimos" del candidato: fecha DD-MM-AAAA (solo presentación)', () => {
+    test('A, B, C: 2026-09-12 → 12-09-2026; 2026-10-03 → 03-10-2026; 2027-01-05 → 05-01-2027 (con ceros a la izquierda)', () => {
+        expect(R.rdrFechaDDMMAAAA('2026-09-12')).toBe('12-09-2026');
+        expect(R.rdrFechaDDMMAAAA('2026-10-03')).toBe('03-10-2026');
+        expect(R.rdrFechaDDMMAAAA('2027-01-05')).toBe('05-01-2027');
+        expect(R.rdrFechaDDMMAAAA('2026-09-01')).toBe('01-09-2026');
+    });
+    test('D: la línea completa queda "HUINTIL | CHOAPA | 12-09-2026 | Nota: 4"', () => {
+        expect(R.rdrLineaHistorial({ club: 'HUINTIL', asociacion: 'CHOAPA', fecha: '2026-09-12', nota: 4 })).toBe('· HUINTIL | CHOAPA | 12-09-2026 | Nota: 4');
+    });
+    test('E: con varios registros, todas las fechas salen DD-MM-AAAA (ninguna AAAA-MM-DD)', () => {
+        const hist = [{ club: 'A', asociacion: 'X', fecha: '2026-09-12', nota: 4 }, { club: 'B', asociacion: 'Y', fecha: '2026-08-29', nota: null }, { club: 'C', asociacion: 'Z', fecha: '2027-01-05' }];
+        const lineas = hist.map(h => R.rdrLineaHistorial(h));
+        expect(lineas).toEqual(['· A | X | 12-09-2026 | Nota: 4', '· B | Y | 29-08-2026 | Sin nota', '· C | Z | 05-01-2027 | Sin nota']);
+        expect(lineas.join(' ')).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    });
+    test('sin desfase de zona horaria: transformación de texto (nunca pasa por Date/UTC), estable en cualquier TZ', () => {
+        const fuente = fs.readFileSync(path.join(__dirname, 'rodeoDesignarResumen.js'), 'utf8');
+        const cuerpo = fuente.slice(fuente.indexOf('function rdrFechaDDMMAAAA'), fuente.indexOf('function rdrLineaHistorial'));
+        expect(cuerpo).not.toMatch(/new Date|Date\.|toLocale|getTimezoneOffset/);
+        const tz = process.env.TZ;
+        for (const z of ['America/Santiago', 'UTC', 'Pacific/Auckland', 'America/Los_Angeles']) { process.env.TZ = z; expect(R.rdrFechaDDMMAAAA('2026-09-12')).toBe('12-09-2026'); }
+        process.env.TZ = tz;
+    });
+    test('fecha con hora ISO también se convierte; vacía o inválida → "—" (nunca undefined/null/Invalid Date/NaN)', () => {
+        expect(R.rdrFechaDDMMAAAA('2026-09-12T00:00:00.000Z')).toBe('12-09-2026');
+        for (const v of [null, undefined, '', 'basura', '12/09/2026', '2026-9-1', NaN]) expect(R.rdrFechaDDMMAAAA(v)).toBe('—');
+        expect(R.rdrLineaHistorial({ club: null, asociacion: undefined, fecha: null, nota: undefined })).not.toMatch(/undefined|null|Invalid Date|NaN/);
+        expect(R.rdrLineaHistorial(null)).toBe('· — | — | — | Sin nota');
+    });
+    test('escapa HTML del club y la asociación (sin inyección)', () => {
+        expect(R.rdrLineaHistorial({ club: '<b>x</b>', asociacion: 'A&B', fecha: '2026-09-12' })).toBe('· &lt;b&gt;x&lt;/b&gt; | A&amp;B | 12-09-2026 | Sin nota');
+    });
+});
+
 describe('rodeos.html: integración (guardas estáticas; la lógica de designación no cambió)', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'admin', 'rodeos.html'), 'utf8').replace(/\r\n/g, '\n');
     const inicio = html.indexOf('async function abrirDesignarJurado');
@@ -115,6 +150,31 @@ describe('rodeos.html: integración (guardas estáticas; la lógica de designaci
         expect(fn).toMatch(/id="dj-buscar"[^>]*oninput="filtrarJuradosDesignacion\(\)"/);
         expect(fn).toMatch(/id="dj-cat"[^>]*onchange="filtrarJuradosDesignacion\(\)"/);
         expect(fn).toMatch(/id="dj-ocultar-repite" onchange="renderJuradosDesignacion\(\)"/);
+    });
+    test('el listado usa el helper de fecha del historial (sin AAAA-MM-DD crudo) y el resto del render del candidato no cambió', () => {
+        const ren = html.slice(html.indexOf('function renderJuradosDesignacion'), html.indexOf('function confirmarDesignacionConAdvertencia') > 0 ? html.indexOf('// Modal de advertencia con checkbox') : undefined);
+        expect(ren).toMatch(/rdrLineaHistorial\(h\)/);
+        expect(ren).not.toMatch(/\$\{h\.fecha\}/);
+        expect(ren).toMatch(/_juradosDesignacion\.filter\(j => !j\.repite_asociacion\)/);   // "ocultar que repiten" igual
+        expect(ren).toMatch(/onclick="designarJurado\('\$\{j\.id\}','\$\{sanitizar\(j\.nombre_completo\)\}',false\)"/);   // Designar: mismo candidato
+        expect(html).toMatch(/if \(q\.trim\(\)\.length >= 2\) qs\.set\('q', q\.trim\(\)\)/);   // búsqueda igual
+        expect(html).toMatch(/if \(cat\) qs\.set\('categoria', cat\)/);   // filtro de categoría igual
+    });
+    test('mensaje de confirmación al asignar (historial en la asociación): usa rdrFechaDDMMAAAA y no imprime h.fecha crudo', () => {
+        const ini = html.indexOf('valResult.historial.slice(0, 3)');
+        const trozo = html.slice(ini, ini + 200);
+        expect(trozo).toMatch(/\.map\(h => `• \$\{h\.club\} \(\$\{rdrFechaDDMMAAAA\(h\.fecha\)\}\)`\)/);
+        expect(trozo).not.toMatch(/\(\$\{h\.fecha\}\)/);
+        // mismo formato que produce el helper: 2026-09-12 → 12-09-2026
+        expect(`• HUINTIL (${R.rdrFechaDDMMAAAA('2026-09-12')})`).toBe('• HUINTIL (12-09-2026)');
+        // la lógica de la validación no cambió (misma llamada y mismo flujo de confirmación)
+        expect(html).toMatch(/api\.post\('\/admin\/asignaciones\/validar-historial'/);
+        expect(html).toMatch(/if \(!continuar\) return;/);
+    });
+    test('el popover de la tabla de rodeos NO se tocó: sigue usando formatFecha (DD/MM/AAAA)', () => {
+        const ini = html.indexOf('function renderContenidoPopoverJurado');
+        const fin = html.indexOf('\nfunction ', ini + 10);   // hasta la siguiente función
+        expect(html.slice(ini, fin)).toMatch(/\$\{formatFecha\(h\.fecha\)\}/);
     });
     test('CASO J: designar sigue usando exactamente el mismo rodeo (_designarRodeoId) que se le muestra al usuario', () => {
         expect(fn).toMatch(/_designarRodeoId = rodeoId;/);

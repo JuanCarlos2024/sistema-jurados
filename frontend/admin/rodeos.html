@@ -1191,7 +1191,7 @@ async function guardarAsignacion(e, rodeoId) {
             });
             if (valResult.tiene_historial) {
                 const histStr = valResult.historial.slice(0, 3)
-                    .map(h => `• ${h.club} (${h.fecha})`)
+                    .map(h => `• ${h.club} (${rdrFechaDDMMAAAA(h.fecha)})`)
                     .join('\n');
                 const continuar = await confirmar(
                     `⚠️ Este jurado ya fue asignado en la asociación "${valResult.asociacion}".\n\n` +
@@ -1313,9 +1313,7 @@ function renderJuradosDesignacion() {
             ? `<div style="font-size:11px; color:var(--gris); margin-top:4px; line-height:1.6;">
                 <span style="font-weight:600;">Últimos:</span>
                 ${j.historial.map(h => {
-                    const nota = (h.nota !== null && h.nota !== undefined) ? `Nota: ${h.nota}` : 'Sin nota';
-                    const asoc = h.asociacion || '—';
-                    return `<br>· ${sanitizar(h.club||'—')} | ${sanitizar(asoc)} | ${h.fecha} | ${nota}`;
+                    return `<br>${rdrLineaHistorial(h)}`;   // fecha del historial en DD-MM-AAAA (solo presentación)
                 }).join('')}
                </div>`
             : '';

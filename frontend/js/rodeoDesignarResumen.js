@@ -32,6 +32,22 @@ function rdrTextoFecha(f) {
     return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+// Fecha del historial de un candidato: YYYY-MM-DD → DD-MM-AAAA por TRANSFORMACIÓN DE TEXTO (sin Date/UTC: una fecha
+// nunca se corre de día por zona horaria). Solo presentación: el backend sigue entregando YYYY-MM-DD.
+// Vacía o inválida → '—' (nunca "undefined", "null", "Invalid Date" ni "NaN").
+function rdrFechaDDMMAAAA(f) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/.exec(String(f === null || f === undefined ? '' : f).trim());
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : '—';
+}
+
+// Una línea del bloque "Últimos:" de un candidato: club | asociación | DD-MM-AAAA | nota (mismo texto de antes, solo cambia la fecha).
+function rdrLineaHistorial(h, esc) {
+    const e = esc || (typeof sanitizar === 'function' ? sanitizar : s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+    const x = h || {};
+    const nota = (x.nota !== null && x.nota !== undefined) ? `Nota: ${x.nota}` : 'Sin nota';
+    return `· ${e(x.club || '—')} | ${e(x.asociacion || '—')} | ${rdrFechaDDMMAAAA(x.fecha)} | ${nota}`;
+}
+
 // Campos en orden de prioridad visual: Club, Asociación y Fecha primero.
 function rdrCampos(r) {
     const x = r || {};
@@ -60,5 +76,5 @@ function rdrHtmlResumen(r, esc) {
     </div>`;
 }
 
-const _rodeoDesignarResumenExports = { RDR_SIN_INFO, rdrTextoDuracion, rdrTextoFecha, rdrCampos, rdrHtmlResumen };
+const _rodeoDesignarResumenExports = { RDR_SIN_INFO, rdrTextoDuracion, rdrTextoFecha, rdrFechaDDMMAAAA, rdrLineaHistorial, rdrCampos, rdrHtmlResumen };
 if (typeof module !== 'undefined' && module.exports) { module.exports = _rodeoDesignarResumenExports; }
