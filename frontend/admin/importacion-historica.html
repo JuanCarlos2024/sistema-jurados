@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Importar Rodeos Históricos — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .ih-resumen { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; margin-bottom:8px; }
+        .ih-kpi { border:1px solid var(--gris-claro); border-radius:8px; padding:10px 12px; background:#fff; }
+        .ih-kpi .v { font-size:22px; font-weight:700; }
+        .ih-kpi .e { font-size:11px; color:var(--gris); text-transform:uppercase; letter-spacing:.4px; }
+        .ih-kpi.err .v { color:#b91c1c; } .ih-kpi.warn .v { color:#b45309; } .ih-kpi.ok .v { color:#15803d; }
+        .ih-tabla-wrap { overflow-x:auto; }
+        .ih-tabla { border-collapse:collapse; font-size:12px; width:100%; }
+        .ih-tabla th, .ih-tabla td { border-bottom:1px solid var(--gris-claro); padding:6px 8px; text-align:left; vertical-align:top; white-space:nowrap; }
+        .ih-tabla td.msg { white-space:normal; min-width:260px; }
+        .ih-tabla th { background:#f3f4f6; position:sticky; top:0; }
+        .ih-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+        .ih-badge.LISTO { background:#dcfce7; color:#166534; } .ih-badge.SIN_CAMBIOS { background:#e0e7ff; color:#3730a3; }
+        .ih-badge.ADVERTENCIA { background:#fef3c7; color:#92400e; } .ih-badge.CONFLICTO { background:#ffedd5; color:#9a3412; }
+        .ih-badge.ERROR { background:#fee2e2; color:#991b1b; }
+        .ih-filtros { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; align-items:center; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>IMPORTAR RODEOS HISTÓRICOS</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="alerta alerta-info" style="margin-bottom:20px;">
+                <div>
+                    <strong>Primero VALIDAR ARCHIVO (vista previa, no modifica la base de datos). Luego CONFIRMAR IMPORTACIÓN, que pide una segunda confirmación antes de escribir.</strong><br>
+                    Los rodeos históricos no generan pagos (pago $0). Los datos existentes distintos nunca se sobrescriben: se informan como conflicto.<br>
+                    Hoja requerida: <strong>CARGA_HISTORICA</strong>. Columnas: Temporada, Fecha, Club, Asociación, Tipo Rodeo, Categoría del Rodeo, Nombre Jurado, Nota Delegado, Nota Comisión, Nota Deportiva, Casos por WhatsApp.<br>
+                    Una fila = un rodeo + un jurado (un rodeo con dos jurados ocupa dos filas). Fecha en formato DD-MM-AAAA.
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-titulo">📤 Archivo y temporada</div>
+                <div class="form-grupo" style="max-width:320px;">
+                    <label for="sel-temporada">Temporada</label>
+                    <select id="sel-temporada" class="form-control"></select>
+                    <div id="periodo-info" class="texto-gris" style="font-size:12px;margin-top:4px;"></div>
+                </div>
+                <div class="form-grupo" style="margin-top:12px;">
+                    <label for="input-archivo">Archivo Excel (.xlsx, .xls — máx. 10 MB)</label>
+                    <input type="file" id="input-archivo" accept=".xlsx,.xls" class="form-control">
+                </div>
+                <div class="form-acciones">
+                    <button class="btn btn-primario" id="btn-validar" onclick="validarArchivo()">VALIDAR ARCHIVO</button>
+                    <button class="btn btn-primario" id="btn-confirmar" disabled onclick="abrirConfirmacion()" title="Primero valide el archivo">CONFIRMAR IMPORTACIÓN</button>
+                </div>
+                <div id="progreso" class="oculto" style="margin-top:16px;text-align:center;">
+                    <div class="spinner" style="margin:0 auto 8px;"></div>
+                    <p class="texto-gris">Validando archivo…</p>
+                </div>
+                <div id="error-archivo" class="alerta alerta-error oculto" style="margin-top:16px;"></div>
+            </div>
+
+            <div id="vista-previa" class="oculto">
+                <div class="card">
+                    <div class="card-titulo">📋 Resumen de la vista previa</div>
+                    <div id="resumen" class="ih-resumen"></div>
+                    <div id="aviso-solo-lectura" class="texto-gris" style="font-size:12px;"></div>
+                </div>
+                <div class="card">
+                    <div class="card-titulo">🔎 Detalle por fila</div>
+                    <div class="ih-filtros">
+                        <label for="filtro-sev">Mostrar:</label>
+                        <select id="filtro-sev" class="form-control" style="width:auto;" onchange="pintarTabla()">
+                            <option value="">Todas las filas</option>
+                            <option value="ERROR">Solo errores</option>
+                            <option value="CONFLICTO">Solo conflictos</option>
+                            <option value="ADVERTENCIA">Solo advertencias</option>
+                            <option value="LISTO">Listas para importar</option>
+                            <option value="SIN_CAMBIOS">Sin cambios</option>
+                        </select>
+                        <span id="contador-filas" class="texto-gris" style="font-size:12px;"></span>
+                    </div>
+                    <div class="ih-tabla-wrap"><table class="ih-tabla" id="tabla-filas"></table></div>
+                </div>
+            </div>
+
+            <div id="resultado-importacion" class="oculto">
+                <div class="card">
+                    <div class="card-titulo">✅ Resultado de la importación histórica</div>
+                    <div id="resultado-resumen" class="ih-resumen"></div>
+                    <div class="form-acciones">
+                        <button class="btn btn-secundario" onclick="descargarResultadoCsv()">Descargar resultado (CSV)</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-titulo">🔎 Detalle por fila</div>
+                    <div class="ih-tabla-wrap"><table class="ih-tabla" id="tabla-resultado"></table></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Segunda confirmación: NO se escribe hasta pulsar "Confirmar importación" aquí -->
+<div id="modal-confirmar" class="oculto" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:none;align-items:center;justify-content:center;padding:16px;">
+    <div style="background:#fff;border-radius:10px;max-width:520px;width:100%;max-height:90vh;overflow:auto;padding:20px;" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+        <h2 id="modal-titulo" style="margin:0 0 12px;font-size:18px;">CONFIRMAR IMPORTACIÓN HISTÓRICA</h2>
+        <div id="modal-detalle" style="font-size:14px;line-height:1.7;"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+            <button class="btn btn-secundario" id="btn-modal-cancelar" onclick="cerrarConfirmacion()">Cancelar</button>
+            <button class="btn btn-primario" id="btn-modal-confirmar" onclick="ejecutarImportacion()">Confirmar importación</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let temporadas = [];
+let preview = null;
+let validado = null;          // { archivo, temporadaId, sha256 } del último VALIDAR ARCHIVO exitoso
+let _enviando = false;        // bloquea el doble envío mientras la importación está en curso
+let resultado = null;
+
+const fmt = iso => (iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : '—');
+const esc = v => sanitizar(v === null || v === undefined ? '' : String(v));
+
+async function cargarTemporadas() {
+    const sel = document.getElementById('sel-temporada');
+    try {
+        const data = await api.get('/admin/importacion/historicos/temporadas');
+        temporadas = data.temporadas || [];
+        if (!temporadas.length) {
+            sel.innerHTML = '<option value="">(no hay temporadas habilitadas)</option>';
+            document.getElementById('periodo-info').textContent = 'La temporada habilitada (' + (data.habilitadas || []).map(h => h.nombre).join(', ') + ') no existe en el sistema. Las temporadas no se crean desde esta pantalla.';
+            return;
+        }
+        sel.innerHTML = temporadas.map(t => `<option value="${esc(t.id)}">${esc(t.nombre)}</option>`).join('');
+        sel.onchange = mostrarPeriodo; mostrarPeriodo();
+    } catch (err) { mostrarError(err); }
+}
+function mostrarPeriodo() {
+    const t = temporadas.find(x => x.id === document.getElementById('sel-temporada').value);
+    document.getElementById('periodo-info').textContent = t ? `Fechas permitidas: ${fmt(t.periodo_permitido.desde)} a ${fmt(t.periodo_permitido.hasta)}` : '';
+}
+
+async function validarArchivo() {
+    const temporadaId = document.getElementById('sel-temporada').value;
+    const archivo = document.getElementById('input-archivo').files[0];
+    const err = document.getElementById('error-archivo');
+    err.classList.add('oculto'); document.getElementById('vista-previa').classList.add('oculto');
+    document.getElementById('resultado-importacion').classList.add('oculto');
+    validado = null; actualizarBotonConfirmar();
+    if (!temporadaId) { mostrarToast('Seleccione la temporada', 'error'); return; }
+    if (!archivo) { mostrarToast('Seleccione un archivo Excel', 'error'); return; }
+    const fd = new FormData();
+    fd.append('archivo', archivo);
+    fd.append('temporada_id', temporadaId);
+    const btn = document.getElementById('btn-validar');
+    btn.disabled = true; document.getElementById('progreso').classList.remove('oculto');
+    try {
+        preview = await api.upload('/admin/importacion/historicos/preview', fd);
+        pintarResumen(); pintarTabla();
+        document.getElementById('vista-previa').classList.remove('oculto');
+        validado = { archivo, temporadaId, sha256: preview.sha256 };
+        actualizarBotonConfirmar();
+    } catch (e) {
+        err.textContent = (e && e.message) || 'No se pudo validar el archivo';
+        err.classList.remove('oculto');
+    } finally {
+        btn.disabled = false; document.getElementById('progreso').classList.add('oculto');
+    }
+}
+
+function pintarResumen() {
+    const r = preview.resumen;
+    const items = [
+        ['Archivo', r.archivo], ['Temporada', r.temporada_seleccionada], ['Filas del Excel', r.filas_excel],
+        ['Rodeos únicos', r.rodeos_unicos], ['Rodeos nuevos', r.rodeos_nuevos, 'ok'], ['Rodeos existentes', r.rodeos_existentes],
+        ['Jurados encontrados', r.jurados_encontrados], ['Jurados a relacionar', r.jurados_a_relacionar, 'ok'], ['Jurados ya relacionados', r.jurados_ya_relacionados],
+        ['Jurados no encontrados', r.jurados_no_encontrados, r.jurados_no_encontrados ? 'err' : ''], ['Jurados ambiguos', r.jurados_ambiguos, r.jurados_ambiguos ? 'err' : ''],
+        ['Notas Delegado nuevas', r.notas_delegado_nuevas], ['Notas Comisión nuevas', r.notas_comision_nuevas], ['Notas Deportivas nuevas', r.notas_deportivas_nuevas],
+        ['Rodeos con Casos WhatsApp', r.casos_whatsapp_informados], ['Total Casos WhatsApp', r.casos_whatsapp_total],
+        ['Evaluaciones existentes', r.evaluaciones_existentes], ['Evaluaciones requeridas (Casos WhatsApp)', r.evaluaciones_requeridas_casos_whatsapp, r.evaluaciones_requeridas_casos_whatsapp ? 'warn' : ''],
+        ['Filas listas', r.filas_listas, 'ok'], ['Filas sin cambios', r.filas_sin_cambios],
+        ['Filas con advertencias', r.filas_con_advertencias, r.filas_con_advertencias ? 'warn' : ''],
+        ['Filas con errores', r.filas_con_errores, r.filas_con_errores ? 'err' : 'ok'],
+        ['Filas con conflictos', r.filas_con_conflictos, r.filas_con_conflictos ? 'warn' : ''],
+        ['Pago histórico futuro', '$0']
+    ];
+    document.getElementById('resumen').innerHTML = items.map(([e, v, c]) => `<div class="ih-kpi ${c || ''}"><div class="v">${esc(v)}</div><div class="e">${esc(e)}</div></div>`).join('');
+    document.getElementById('aviso-solo-lectura').textContent = 'Vista previa: no se modificó la base de datos. Cada fila importada quedaría con pago $0 y categoría actual del jurado.';
+}
+
+function pintarTabla() {
+    const filtro = document.getElementById('filtro-sev').value;
+    const filas = preview.filas.filter(f => !filtro || f.severidad === filtro);
+    document.getElementById('contador-filas').textContent = `${filas.length} de ${preview.filas.length} filas`;
+    const cab = ['Fila', 'Fecha', 'Club', 'Asociación', 'Tipo rodeo', 'Categoría rodeo', 'Jurado', 'Categoría jurado (actual)', 'Nota Delegado', 'Nota Comisión', 'Nota Deportiva', 'Casos WhatsApp', 'Rodeo', 'Asignación', 'Evaluación', 'Estado', 'Mensajes'];
+    const dash = v => (v === null || v === undefined || v === '' ? '—' : esc(v));
+    const filasHtml = filas.map(f => {
+        const msgs = [...f.errores.map(m => '❌ ' + m.mensaje), ...f.conflictos.map(m => '⚠ ' + m.mensaje), ...f.advertencias.map(m => 'ℹ ' + m.mensaje), ...f.acciones_futuras.map(a => '➜ ' + a)];
+        const ev = f.evaluacion ? (f.evaluacion.estado === 'EXISTENTE' ? `Existe (casos ${f.evaluacion.casos_whatsapp_actual})` : f.evaluacion.estado === 'REQUERIDA' ? 'Requerida' : f.evaluacion.estado === 'NO_NECESARIA' ? 'No necesaria' : '—') : '—';
+        return `<tr>
+            <td>${esc(f.fila)}</td><td>${fmt(f.fecha)}</td><td>${dash(f.club)}</td>
+            <td>${dash(f.asociacion.canonica || f.asociacion.excel)}</td>
+            <td>${dash(f.tipo.nombre || f.tipo.excel)}${f.tipo.duracion_dias ? ` <span class="texto-gris">(${esc(f.tipo.duracion_dias)} d)</span>` : ''}</td>
+            <td>${dash(f.categoria.nombre || f.categoria.excel)}${f.categoria.derivada ? ' <span class="texto-gris">(del tipo)</span>' : ''}</td>
+            <td>${dash(f.jurado.nombre || f.jurado.excel)}</td><td>${dash(f.jurado.categoria_actual)}</td>
+            <td>${dash(f.notas.delegado)}</td><td>${dash(f.notas.comision)}</td><td>${dash(f.notas.deportiva)}</td><td>${esc(f.casos_whatsapp)}</td>
+            <td>${f.rodeo ? (f.rodeo.estado === 'NUEVO' ? 'Nuevo' : f.rodeo.estado === 'EXISTENTE' ? 'Existente' : 'Ambiguo') : '—'}</td>
+            <td>${f.asignacion ? (f.asignacion.estado === 'NUEVA' ? 'Nueva' : f.asignacion.estado === 'EXISTENTE' ? 'Existente' : '—') : '—'}</td>
+            <td>${ev}</td>
+            <td><span class="ih-badge ${esc(f.severidad)}">${esc(f.estado)}</span>${f.importable ? '' : '<div class="texto-gris" style="font-size:11px;">No se importará</div>'}</td>
+            <td class="msg">${msgs.map(m => `<div>${esc(m)}</div>`).join('') || '—'}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('tabla-filas').innerHTML = `<thead><tr>${cab.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${filasHtml || `<tr><td colspan="${cab.length}">Sin filas para el filtro seleccionado.</td></tr>`}</tbody>`;
+}
+
+// El botón solo se habilita si hay una vista previa con acciones y el archivo y la temporada siguen siendo los validados.
+function validacionVigente() {
+    const archivo = document.getElementById('input-archivo').files[0];
+    const temporadaId = document.getElementById('sel-temporada').value;
+    return !!(validado && preview && preview.puede_confirmar && archivo === validado.archivo && temporadaId === validado.temporadaId);
+}
+function actualizarBotonConfirmar() {
+    const btn = document.getElementById('btn-confirmar');
+    btn.disabled = _enviando || !validacionVigente();
+    btn.title = btn.disabled ? 'Valide el archivo (con acciones importables) para habilitar la confirmación' : '';
+}
+function invalidarValidacion() {
+    validado = null; actualizarBotonConfirmar();
+    document.getElementById('vista-previa').classList.add('oculto');
+}
+document.getElementById('input-archivo').addEventListener('change', invalidarValidacion);
+document.getElementById('sel-temporada').addEventListener('change', invalidarValidacion);
+
+// ── Segunda confirmación (NO se escribe al primer clic) ─────────────────────
+function abrirConfirmacion() {
+    if (_enviando || !validacionVigente()) return;
+    const p = preview.plan;
+    const fila = (k, v) => `<div style="display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--gris-claro);"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`;
+    document.getElementById('modal-detalle').innerHTML =
+        `<div class="texto-gris" style="font-size:12px;margin-bottom:8px;">${esc(preview.resumen.archivo)} · Temporada ${esc(preview.resumen.temporada_seleccionada)}</div>` +
+        fila('Se crearán rodeos', p.rodeos_a_crear) + fila('Se reutilizarán rodeos existentes', p.rodeos_a_reutilizar) +
+        fila('Se crearán asignaciones', p.asignaciones_a_crear) +
+        fila('Notas Delegado', p.notas_delegado_a_cargar) + fila('Notas Comisión', p.notas_comision_a_cargar) + fila('Notas Deportivas', p.notas_deportivas_a_cargar) +
+        fila('Casos por WhatsApp', p.casos_whatsapp_a_cargar) + fila('Evaluaciones históricas', p.evaluaciones_historicas_a_crear) +
+        fila('Se omitirán (filas con errores/bloqueadas)', p.filas_omitidas) +
+        fila('Conflictos que NO serán sobrescritos', p.conflictos_no_sobrescritos) +
+        fila('Pagos históricos', '$0') +
+        `<div class="texto-gris" style="font-size:12px;margin-top:8px;">Las cifras finales las calcula el servidor al importar. La operación es atómica: si algo falla, no se guarda nada.</div>`;
+    document.getElementById('modal-confirmar').style.display = 'flex';
+}
+function cerrarConfirmacion() { if (!_enviando) document.getElementById('modal-confirmar').style.display = 'none'; }
+
+async function ejecutarImportacion() {
+    if (_enviando || !validacionVigente()) return;
+    _enviando = true;
+    const btnOk = document.getElementById('btn-modal-confirmar'), btnNo = document.getElementById('btn-modal-cancelar');
+    btnOk.disabled = true; btnNo.disabled = true; btnOk.textContent = 'Importando…';
+    actualizarBotonConfirmar();
+    document.getElementById('btn-validar').disabled = true;
+    document.getElementById('progreso').classList.remove('oculto');
+    document.getElementById('progreso').querySelector('p').textContent = 'Importando… no cierre esta ventana.';
+    const fd = new FormData();
+    fd.append('archivo', validado.archivo);
+    fd.append('temporada_id', validado.temporadaId);
+    fd.append('sha256', validado.sha256);
+    try {
+        resultado = await api.upload('/admin/importacion/historicos/confirmar', fd);
+        document.getElementById('modal-confirmar').style.display = 'none';
+        document.getElementById('vista-previa').classList.add('oculto');
+        pintarResultado();
+        document.getElementById('resultado-importacion').classList.remove('oculto');
+        validado = null;                                   // para revisar de nuevo hay que volver a validar
+        mostrarToast('Importación completada', 'success');
+    } catch (e) {
+        document.getElementById('modal-confirmar').style.display = 'none';
+        const err = document.getElementById('error-archivo');
+        err.textContent = (e && e.message) || 'No se pudo completar la importación';
+        err.classList.remove('oculto');
+    } finally {
+        _enviando = false;
+        btnOk.disabled = false; btnNo.disabled = false; btnOk.textContent = 'Confirmar importación';
+        document.getElementById('btn-validar').disabled = false;
+        document.getElementById('progreso').classList.add('oculto');
+        document.getElementById('progreso').querySelector('p').textContent = 'Validando archivo…';
+        actualizarBotonConfirmar();
+    }
+}
+
+// ── Resultado final ─────────────────────────────────────────────────────────
+function pintarResultado() {
+    const r = resultado.resumen;
+    const items = [
+        ['Archivo', resultado.archivo], ['Temporada', resultado.temporada.nombre],
+        ['Rodeos creados', r.rodeos_creados, 'ok'], ['Rodeos ya existentes', r.rodeos_reutilizados],
+        ['Asignaciones creadas', r.asignaciones_creadas, 'ok'], ['Asignaciones ya existentes', r.asignaciones_existentes],
+        ['Notas Delegado cargadas', r.notas_delegado_cargadas], ['Notas Comisión cargadas', r.notas_comision_cargadas], ['Notas Deportivas cargadas', r.notas_deportivas_cargadas],
+        ['Casos por WhatsApp cargados', r.casos_whatsapp_cargados], ['Evaluaciones históricas creadas', r.evaluaciones_historicas_creadas],
+        ['Datos ya existentes sin cambios', (r.notas_delegado_iguales || 0) + (r.notas_comision_iguales || 0) + (r.notas_deportivas_iguales || 0) + (r.casos_whatsapp_iguales || 0)],
+        ['Conflictos no sobrescritos', r.conflictos_total, r.conflictos_total ? 'warn' : ''],
+        ['Filas omitidas', r.filas_omitidas, r.filas_omitidas ? 'err' : ''], ['Filas con error', r.filas_con_error, r.filas_con_error ? 'err' : ''],
+        ['Pagos generados', '$0']
+    ];
+    document.getElementById('resultado-resumen').innerHTML = items.map(([e, v, c]) => `<div class="ih-kpi ${c || ''}"><div class="v">${esc(v)}</div><div class="e">${esc(e)}</div></div>`).join('');
+    const cab = ['Fila', 'Fecha', 'Club', 'Jurado', 'Acciones realizadas', 'Datos ya existentes', 'Conflictos', 'Errores', 'Estado final'];
+    const lista = a => (a && a.length ? a.map(x => `<div>${esc(x)}</div>`).join('') : '—');
+    const cls = { 'IMPORTADA': 'LISTO', 'IMPORTADA CON CONFLICTOS': 'CONFLICTO', 'SIN CAMBIOS (YA REGISTRADO)': 'SIN_CAMBIOS', 'OMITIDA': 'ERROR' };
+    document.getElementById('tabla-resultado').innerHTML = `<thead><tr>${cab.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>` +
+        resultado.filas.map(f => `<tr><td>${esc(f.fila)}</td><td>${fmt(f.fecha)}</td><td>${esc(f.club || '—')}</td><td>${esc(f.jurado || '—')}</td>
+            <td class="msg">${lista(f.acciones)}</td><td class="msg">${lista(f.existentes)}</td><td class="msg">${lista(f.conflictos)}</td><td class="msg">${lista(f.errores)}</td>
+            <td><span class="ih-badge ${cls[f.estado_final] || ''}">${esc(f.estado_final)}</span></td></tr>`).join('') + '</tbody>';
+}
+
+function descargarResultadoCsv() {
+    if (!resultado) return;
+    const q = v => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+    const cab = ['Fila', 'Fecha', 'Club', 'Asociación', 'Tipo', 'Jurado', 'Acciones', 'Datos ya existentes', 'Conflictos', 'Errores', 'Estado final'];
+    const lineas = [cab.map(q).join(';')].concat(resultado.filas.map(f => [f.fila, fmt(f.fecha), f.club, f.asociacion, f.tipo, f.jurado, (f.acciones || []).join(' | '), (f.existentes || []).join(' | '), (f.conflictos || []).join(' | '), (f.errores || []).join(' | '), f.estado_final].map(q).join(';')));
+    const blob = new Blob(['﻿' + lineas.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `importacion-historica-${resultado.temporada.nombre}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+}
+
+cargarTemporadas();
+</script>
+</body>
+</html>

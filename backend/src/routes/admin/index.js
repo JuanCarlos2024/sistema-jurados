@@ -26,6 +26,7 @@ router.use('/rodeos', require('./rodeos'));
 router.use('/asignaciones', require('./asignaciones'));
 router.use('/bonos', require('./bonos'));
 router.use('/configuracion', require('./configuracion'));
+router.use('/importacion/historicos', require('./importacion-historica'));
 router.use('/importacion', require('./importacion'));
 router.use('/control-gestion', require('./control-gestion'));
 router.use('/exportacion', require('./exportacion'));

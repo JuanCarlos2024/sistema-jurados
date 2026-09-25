@@ -579,6 +579,7 @@ router.get('/evaluaciones', async (req, res) => {
             .from('evaluaciones')
             .select('id, rodeo_id, estado, nota_final, puntaje_final, created_at, fecha_decision_jefe, analista_id')
             .in('rodeo_id', rodeoIds)
+            .eq('es_historica_importacion', false)          // los registros históricos (solo Casos por WhatsApp) no son evaluaciones deportivas
             .order('created_at', { ascending: false });
 
         if (estado) evQuery = evQuery.eq('estado', estado);
@@ -677,7 +678,8 @@ router.get('/evaluaciones/exportar', async (req, res) => {
         let evQuery = supabase
             .from('evaluaciones')
             .select('id, rodeo_id, estado, nota_final, puntaje_final, created_at, fecha_decision_jefe')
-            .in('rodeo_id', rodeoIds);
+            .in('rodeo_id', rodeoIds)
+            .eq('es_historica_importacion', false);         // los registros históricos (solo Casos por WhatsApp) no son evaluaciones deportivas
         if (estado) evQuery = evQuery.eq('estado', estado);
 
         const { data: evs } = await evQuery;

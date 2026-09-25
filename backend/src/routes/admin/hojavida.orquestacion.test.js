@@ -121,10 +121,10 @@ const ASIGNACIONES = [
 ];
 
 const EVALUACIONES = [
-    { id: 'eval-A', rodeo_id: 'rodeo-A', estado: 'publicado', resultados_alterados: true,  anulada: false },
-    { id: 'eval-B', rodeo_id: 'rodeo-B', estado: 'publicado', resultados_alterados: false, anulada: false },
+    { id: 'eval-A', rodeo_id: 'rodeo-A', estado: 'publicado', resultados_alterados: true,  anulada: false, es_historica_importacion: false },
+    { id: 'eval-B', rodeo_id: 'rodeo-B', estado: 'publicado', resultados_alterados: false, anulada: false, es_historica_importacion: false },
     // rodeo-C: sin fila en evaluaciones → sin análisis de caso.
-    { id: 'eval-D', rodeo_id: 'rodeo-D', estado: 'publicado', resultados_alterados: true,  anulada: false }
+    { id: 'eval-D', rodeo_id: 'rodeo-D', estado: 'publicado', resultados_alterados: true,  anulada: false, es_historica_importacion: false }
 ];
 
 function tablasBase() {
@@ -181,7 +181,7 @@ describe('GET /:id — columna "Altera resultado" (historial)', () => {
     test('evaluación anulada se trata igual que "sin evaluación" (null, no false)', async () => {
         const tablas = tablasBase();
         tablas.evaluaciones = [
-            { id: 'eval-A', rodeo_id: 'rodeo-A', estado: 'publicado', resultados_alterados: true, anulada: true }
+            { id: 'eval-A', rodeo_id: 'rodeo-A', estado: 'publicado', resultados_alterados: true, anulada: true, es_historica_importacion: false }
         ];
         crearSupabaseMock(tablas);
         const { body } = await llamarRutaJson({ method: 'GET', url: '/jurado-1', params: { id: 'jurado-1' } });

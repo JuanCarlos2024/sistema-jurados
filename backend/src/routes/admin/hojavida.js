@@ -146,7 +146,8 @@ router.get('/:id', async (req, res) => {
                 .from('evaluaciones')
                 .select('id, rodeo_id, estado, resultados_alterados')
                 .in('rodeo_id', rodeoIds)
-                .eq('anulada', false);
+                .eq('anulada', false)
+                .eq('es_historica_importacion', false);      // un registro histórico no es una evaluación: no habilita "Ver evaluación" ni "Altera resultado"
             (evals || []).forEach(e => { evalMap[e.rodeo_id] = e; });
         }
     }
@@ -607,7 +608,8 @@ router.get('/:id/exportar', async (req, res) => {
             .from('evaluaciones')
             .select('rodeo_id, resultados_alterados')
             .in('rodeo_id', rodeoIds)
-            .eq('anulada', false);
+            .eq('anulada', false)
+            .eq('es_historica_importacion', false);
         (evals || []).forEach(e => { evalMap[e.rodeo_id] = e; });
     }
 

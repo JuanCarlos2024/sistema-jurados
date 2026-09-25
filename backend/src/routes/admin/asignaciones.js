@@ -5,6 +5,7 @@ const auditoria = require('../../services/auditoria');
 const { obtenerTarifas, calcularPagoBase, obtenerBonoParaDistancia } = require('../../services/calculo');
 const { soloNoMonitor } = require('../../middleware/auth');
 const { normalizar } = require('../../services/importacion');
+const { esAsignacionHistoricaImportada, MENSAJE_ASIGNACION_HISTORICA, MENSAJE_PAGO_ASIGNACION_HISTORICA } = require('../../services/asignacionHistorica');
 // Feriados/bloque de fin de semana: lógica centralizada en services/feriados.js
 // (movida ahí tal cual, sin cambiar el algoritmo, para que el motor de propuesta
 // de designación —Etapa 3— reutilice exactamente esta misma versión).
@@ -275,6 +276,13 @@ router.patch('/:id', async (req, res) => {
     if (!anterior) return res.status(404).json({ error: 'Asignación no encontrada' });
     if (anterior.estado === 'anulado') return res.status(400).json({ error: 'No se puede editar una asignación anulada' });
 
+    // Asignación HISTÓRICA importada (pago 0, ya pagada fuera del sistema): se bloquea todo lo que toque el pago — cambio de persona
+    // (recalcula categoría/tarifa/pago), override del valor diario y kilometraje (genera bono de distancia). La observación sigue editable.
+    const tocaPago = (usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id) || valor_diario_aplicado !== undefined || distancia_km !== undefined;
+    if (tocaPago && await esAsignacionHistoricaImportada(supabase, anterior)) {
+        return res.status(409).json({ error: MENSAJE_PAGO_ASIGNACION_HISTORICA });
+    }
+
     const cambios = { updated_at: new Date().toISOString() };
     if (observacion !== undefined) cambios.observacion = observacion;
 
@@ -508,12 +516,14 @@ router.patch('/:id/km', async (req, res) => {
 
     const { data: asig } = await supabase
         .from('asignaciones')
-        .select('id, usuario_pagado_id, estado, distancia_km')
+        .select('id, usuario_pagado_id, estado, distancia_km, importacion_id')
         .eq('id', req.params.id)
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
     if (asig.estado === 'anulado') return res.status(400).json({ error: 'La asignación está anulada' });
+    // El kilometraje genera un bono de distancia (pago): no aplica a asignaciones históricas importadas.
+    if (await esAsignacionHistoricaImportada(supabase, asig)) return res.status(409).json({ error: MENSAJE_PAGO_ASIGNACION_HISTORICA });
 
     const ahora = new Date().toISOString();
 
@@ -554,6 +564,11 @@ router.post('/:id/recalcular', async (req, res) => {
         .single();
 
     if (!asig) return res.status(404).json({ error: 'Asignación no encontrada' });
+
+    // Las asignaciones de una importación HISTÓRICA tienen pago 0 (ya pagadas fuera del sistema): no se recalculan con la tarifa actual.
+    if (await esAsignacionHistoricaImportada(supabase, asig)) {
+        return res.status(409).json({ error: MENSAJE_ASIGNACION_HISTORICA });
+    }
 
     const tarifas = await obtenerTarifas();
     const calculo = calcularPagoBase(

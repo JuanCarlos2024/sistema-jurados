@@ -79,7 +79,7 @@ async function cargarDataset({ hasta }, db = supabase) {
 
     const rodeoIds = rodeos.map(r => r.id);
     const evaluaciones = await leerPorLotes(rodeoIds, lote => db.from('evaluaciones')
-        .select('id, rodeo_id, estado, nota_final, resultados_alterados, anulada').in('rodeo_id', lote).eq('anulada', false));
+        .select('id, rodeo_id, estado, nota_final, resultados_alterados, anulada').in('rodeo_id', lote).eq('anulada', false).eq('es_historica_importacion', false));   // los registros históricos (solo Casos por WhatsApp) no cuentan como evaluaciones
     const evalIds = evaluaciones.map(e => e.id);
 
     const [casos, cartillas, asignaciones, notasSecundarias, usuarios, disponibilidad] = await Promise.all([

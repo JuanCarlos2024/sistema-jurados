@@ -42,6 +42,7 @@ router.get('/', async (req, res) => {
         `)
         .in('rodeo_id', rodeoIds)
         .eq('anulada', false)
+        .eq('es_historica_importacion', false)     // el jurado no ve los registros históricos (solo Casos por WhatsApp): no son evaluaciones
         .order('created_at', { ascending: false });
 
     const evs        = evaluaciones || [];
@@ -165,6 +166,7 @@ router.get('/:id/casos', async (req, res) => {
             rodeo:rodeos(club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .eq('id', evalId)
+        .eq('es_historica_importacion', false)
         .single();
 
     if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
@@ -274,6 +276,7 @@ router.get('/:id/resultado', async (req, res) => {
             rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .eq('id', evalId)
+        .eq('es_historica_importacion', false)
         .single();
 
     if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
@@ -393,6 +396,7 @@ router.post('/:id/comentario-final', async (req, res) => {
         .from('evaluaciones')
         .select('id, rodeo_id, estado')
         .eq('id', req.params.id)
+        .eq('es_historica_importacion', false)
         .single();
 
     if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });

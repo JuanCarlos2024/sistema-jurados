@@ -107,7 +107,7 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             .neq('estado', 'anulado'),
         supabase
             .from('evaluaciones')
-            .select('id, estado, nota_final, anulada, puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er, observacion_general, resultados_alterados, comentario_resultados_alterados')
+            .select('id, estado, nota_final, anulada, puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er, observacion_general, resultados_alterados, comentario_resultados_alterados, es_historica_importacion, casos_whatsapp')
             .eq('rodeo_id', req.params.id)
             .eq('anulada', false)
             .maybeSingle(),
@@ -130,8 +130,13 @@ router.get('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
             .eq('rodeo_id', req.params.id)
     ]);
 
+    // Un registro histórico (solo Casos por WhatsApp) NO es la evaluación del rodeo: se expone aparte para que el dato siga consultable.
+    const evaluacionHistorica = evaluacion && evaluacion.es_historica_importacion === true
+        ? { id: evaluacion.id, casos_whatsapp: evaluacion.casos_whatsapp } : null;
+    const evaluacionReal = evaluacionHistorica ? null : evaluacion;
+
     res.json({
-        ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacion || null,
+        ...rodeo, asignaciones: asignaciones || [], evaluacion: evaluacionReal || null, evaluacion_historica: evaluacionHistorica,
         datos_monitor: datosMonitor || null, notas_secundarias: notasSecundarias || null,
         situaciones_control_gestion_count: situacionesCG || 0
     });

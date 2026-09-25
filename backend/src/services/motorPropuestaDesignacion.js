@@ -1334,7 +1334,7 @@ async function cargarRendimientoTemporada(contexto) {
     // es UNIQUE, así que como mucho hay 1 fila por rodeo; una evaluación
     // anulada se trata como "sin evaluación" (nunca como alteración=false).
     const { data: evalsRaw, error: errEvals } = await supabase
-        .from('evaluaciones').select('rodeo_id, resultados_alterados').in('rodeo_id', rodeoIds).eq('anulada', false);
+        .from('evaluaciones').select('rodeo_id, resultados_alterados').in('rodeo_id', rodeoIds).eq('anulada', false).eq('es_historica_importacion', false);   // histórica = sin análisis (no es "sin alteración")
     queries++;
     if (errEvals) throw new Error('No se pudieron cargar evaluaciones para métricas de rendimiento: ' + errEvals.message);
     const alteradoPorRodeo = new Map();

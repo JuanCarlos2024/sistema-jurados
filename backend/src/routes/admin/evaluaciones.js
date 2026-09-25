@@ -4,6 +4,7 @@ const supabase = require('../../config/supabase');
 const { soloRolEvaluacion } = require('../../middleware/auth');
 const { intentarAutoPublicar } = require('../../services/publicacion');
 const { normalizarCasosWhatsapp } = require('../../services/casosWhatsapp');
+const { cargarConfiguracion, crearEvaluacion } = require('../../services/evaluacionCreacion');
 
 // GET / — lista paginada con filtros, jurados y resumen de faltas
 router.get('/', async (req, res) => {
@@ -58,7 +59,8 @@ router.get('/', async (req, res) => {
             analista:analista_id(id, nombre_completo)
         `, { count: 'exact' })
         .order('created_at', { ascending: false })
-        .eq('anulada', false);
+        .eq('anulada', false)
+        .eq('es_historica_importacion', false);       // el listado operativo no incluye los registros históricos (solo Casos por WhatsApp)
 
     if (!hasRespFiltro) {
         query = query.range(offset, offset + parseInt(limit) - 1);
@@ -234,46 +236,15 @@ router.post('/', soloRolEvaluacion('jefe_area'), async (req, res) => {
     if (!rodeo_id)    return res.status(400).json({ error: 'rodeo_id requerido' });
     if (!analista_id) return res.status(400).json({ error: 'analista_id requerido' });
 
-    const { data: config } = await supabase
-        .from('evaluacion_configuracion')
-        .select('*')
-        .eq('activo', true)
-        .single();
+    const cfg = await cargarConfiguracion(supabase);
 
-    const cfg = config || { puntaje_base: 80, min_casos_ciclo1: 0, max_casos_ciclo1: 10, min_casos_ciclo2: 8, max_casos_ciclo2: 8 };
+    // Crea la evaluación normal (con sus ciclos y auditoría) o, si el rodeo tiene una evaluación HISTÓRICA importada
+    // (solo Casos por WhatsApp), la convierte atómicamente en normal reutilizando la misma fila (rodeo_id es UNIQUE).
+    const r = await crearEvaluacion({ supabase, cfg, rodeo_id, analista_id, actor: req.usuario, ip: req.ip });
+    if (r.resultado === 'existente') return res.status(409).json({ error: 'Ya existe una evaluación para este rodeo' });
+    if (r.resultado === 'error') return res.status(r.error.status).json({ error: r.error.mensaje });
 
-    const { data: ev, error: evErr } = await supabase
-        .from('evaluaciones')
-        .insert({
-            rodeo_id,
-            analista_id,
-            puntaje_base: cfg.puntaje_base,
-            creado_por: req.usuario.id
-        })
-        .select()
-        .single();
-
-    if (evErr) {
-        if (evErr.code === '23505') return res.status(409).json({ error: 'Ya existe una evaluación para este rodeo' });
-        return res.status(500).json({ error: evErr.message });
-    }
-
-    await supabase.from('evaluacion_ciclos').insert([
-        { evaluacion_id: ev.id, numero_ciclo: 1, min_casos: cfg.min_casos_ciclo1, max_casos: cfg.max_casos_ciclo1 },
-        { evaluacion_id: ev.id, numero_ciclo: 2, min_casos: cfg.min_casos_ciclo2, max_casos: cfg.max_casos_ciclo2 }
-    ]);
-
-    await supabase.from('evaluacion_auditoria').insert({
-        evaluacion_id: ev.id,
-        accion: 'crear_evaluacion',
-        detalle: { rodeo_id, analista_id },
-        actor_id: req.usuario.id,
-        actor_tipo: 'administrador',
-        actor_nombre: req.usuario.nombre,
-        ip_address: req.ip
-    });
-
-    res.status(201).json(ev);
+    res.status(201).json(r.evaluacion);
 });
 
 // GET /rodeos-disponibles — rodeos activos + jurados + indicador tiene_evaluacion
@@ -299,7 +270,7 @@ router.get('/rodeos-disponibles', async (req, res) => {
     const rodeoIds = rodeos.map(r => r.id);
 
     const [{ data: evals }, { data: asigs }] = await Promise.all([
-        supabase.from('evaluaciones').select('rodeo_id').in('rodeo_id', rodeoIds),
+        supabase.from('evaluaciones').select('rodeo_id, es_historica_importacion, anulada').in('rodeo_id', rodeoIds),
         supabase
             .from('asignaciones')
             .select('rodeo_id, estado_designacion, nombre_importado, usuarios_pagados(nombre_completo)')
@@ -308,7 +279,8 @@ router.get('/rodeos-disponibles', async (req, res) => {
             .eq('estado', 'activo')
     ]);
 
-    const evalSet = new Set((evals || []).map(e => e.rodeo_id));
+    // Una evaluación histórica vigente (solo Casos por WhatsApp) NO cuenta como evaluación realizada: el rodeo sigue disponible para evaluar.
+    const evalSet = new Set((evals || []).filter(e => !(e.es_historica_importacion === true && !e.anulada)).map(e => e.rodeo_id));
 
     const juradosPorRodeo = {};
     for (const a of (asigs || [])) {
@@ -337,58 +309,29 @@ router.post('/crear-masivo', soloRolEvaluacion('jefe_area'), async (req, res) =>
     if (!analista_id)
         return res.status(400).json({ error: 'analista_id requerido' });
 
-    const { data: config } = await supabase
-        .from('evaluacion_configuracion')
-        .select('*')
-        .eq('activo', true)
-        .single();
-
-    const cfg = config || { puntaje_base: 80, min_casos_ciclo1: 0, max_casos_ciclo1: 10, min_casos_ciclo2: 8, max_casos_ciclo2: 8 };
+    const cfg = await cargarConfiguracion(supabase);
 
     const { data: existentes } = await supabase
         .from('evaluaciones')
-        .select('rodeo_id')
+        .select('rodeo_id, es_historica_importacion, anulada')
         .in('rodeo_id', rodeo_ids);
 
-    const existeSet = new Set((existentes || []).map(e => e.rodeo_id));
+    // Una evaluación HISTÓRICA vigente (solo Casos por WhatsApp) no bloquea: se convierte en normal reutilizando la fila.
+    const existeSet = new Set((existentes || []).filter(e => !(e.es_historica_importacion === true && !e.anulada)).map(e => e.rodeo_id));
 
-    let creadas = 0, omitidas = 0;
+    let creadas = 0, convertidas = 0, omitidas = 0;
     const errores = [];
 
     for (const rodeo_id of rodeo_ids) {
         if (existeSet.has(rodeo_id)) { omitidas++; continue; }
 
-        const { data: ev, error: evErr } = await supabase
-            .from('evaluaciones')
-            .insert({ rodeo_id, analista_id, puntaje_base: cfg.puntaje_base, creado_por: req.usuario.id })
-            .select()
-            .single();
-
-        if (evErr) {
-            if (evErr.code === '23505') { omitidas++; }
-            else errores.push({ rodeo_id, error: evErr.message });
-            continue;
-        }
-
-        await supabase.from('evaluacion_ciclos').insert([
-            { evaluacion_id: ev.id, numero_ciclo: 1, min_casos: cfg.min_casos_ciclo1, max_casos: cfg.max_casos_ciclo1 },
-            { evaluacion_id: ev.id, numero_ciclo: 2, min_casos: cfg.min_casos_ciclo2, max_casos: cfg.max_casos_ciclo2 }
-        ]);
-
-        await supabase.from('evaluacion_auditoria').insert({
-            evaluacion_id: ev.id,
-            accion:        'crear_evaluacion',
-            detalle:       { rodeo_id, analista_id, origen: 'masivo' },
-            actor_id:      req.usuario.id,
-            actor_tipo:    'administrador',
-            actor_nombre:  req.usuario.nombre,
-            ip_address:    req.ip
-        });
-
-        creadas++;
+        const r = await crearEvaluacion({ supabase, cfg, rodeo_id, analista_id, actor: req.usuario, ip: req.ip, detalleExtra: { origen: 'masivo' } });
+        if (r.resultado === 'existente') omitidas++;
+        else if (r.resultado === 'error') errores.push({ rodeo_id, error: r.error.mensaje });
+        else { creadas++; if (r.resultado === 'convertida') convertidas++; }
     }
 
-    res.json({ creadas, omitidas, errores });
+    res.json({ creadas, convertidas, omitidas, errores });
 });
 
 // GET /:id — detalle con rodeo, analista, jefe, ciclos

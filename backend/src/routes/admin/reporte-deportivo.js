@@ -81,7 +81,8 @@ async function obtenerDatos(q, paginar = true) {
             resultados_alterados, comentario_resultados_alterados
         `)
         .in('rodeo_id', rodeoIds)
-        .eq('anulada', false);
+        .eq('anulada', false)
+        .eq('es_historica_importacion', false);          // los registros históricos (solo Casos por WhatsApp) no son análisis deportivos
 
     if (estado_evaluacion)            eq = eq.eq('estado', estado_evaluacion);
     if (resultados_alterados === 'si') eq = eq.eq('resultados_alterados', true);
