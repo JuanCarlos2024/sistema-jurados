@@ -301,6 +301,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
+<script src="/js/rodeoDesignarResumen.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
 protegerRuta('administrador');
@@ -1218,8 +1219,14 @@ let _designarBuscarTimer = null;
 
 async function abrirDesignarJurado(rodeoId) {
     _designarRodeoId = rodeoId;
+    // Contexto de la designación: se reutiliza el rodeo ya cargado en pantalla (verDetalle) SOLO si es el mismo id;
+    // si no, se pide con el endpoint existente GET /admin/rodeos/:id. El resumen se reconstruye en cada apertura
+    // (el cuerpo del modal se regenera completo), así nunca queda información de otro rodeo.
+    const rodeoCtx = (rodeoActual && rodeoActual.id === rodeoId) ? rodeoActual : null;
     document.getElementById('modal-titulo').textContent = 'Designar jurado';
     document.getElementById('modal-body').innerHTML = `
+        <div id="dj-contexto" style="position:sticky; top:0; z-index:2; background:#fff; padding-top:2px;">
+        ${rdrHtmlResumen(rodeoCtx)}
         <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
             <input type="text" id="dj-buscar" class="form-control" placeholder="Buscar por nombre..."
                 style="flex:1; min-width:160px;" oninput="filtrarJuradosDesignacion()">
@@ -1235,10 +1242,21 @@ async function abrirDesignarJurado(rodeoId) {
                 Ocultar que repiten
             </label>
         </div>
-        <div id="dj-lista" style="max-height:420px; overflow-y:auto; border:1px solid var(--gris-borde); border-radius:6px;">
+        </div>
+        <div id="dj-lista" style="max-height:clamp(160px, calc(90vh - 350px), 420px); overflow-y:auto; border:1px solid var(--gris-borde); border-radius:6px;">
             <div class="spinner-wrap"><div class="spinner"></div></div>
         </div>`;
     document.getElementById('modal-overlay').classList.remove('oculto');
+    if (!rodeoCtx) {
+        api.get('/admin/rodeos/' + rodeoId).then(r => {
+            // Solo si el modal sigue siendo de ESTE rodeo (evita pintar datos de un rodeo anterior)
+            const el = document.getElementById('dj-resumen');
+            if (r && r.id === rodeoId && _designarRodeoId === rodeoId && el) el.outerHTML = rdrHtmlResumen(r);
+        }).catch(() => {
+            const el = document.getElementById('dj-resumen');
+            if (el && _designarRodeoId === rodeoId) el.outerHTML = rdrHtmlResumen({ id: rodeoId });
+        });
+    }
     await cargarJuradosDesignacion();
 }
 
