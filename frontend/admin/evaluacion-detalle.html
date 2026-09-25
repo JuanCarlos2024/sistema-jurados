@@ -683,6 +683,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
+<script src="/js/casosWhatsapp.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
 protegerRuta('administrador');
@@ -2145,6 +2146,8 @@ function renderAnalisisDeportivo(ev) {
             </table>
         </div>
 
+        ${cwHtmlCampo(ev.casos_whatsapp, esAnalista)}
+
         <div class="form-group" style="margin-bottom:12px;">
             <label class="form-label">Observación general del análisis</label>
             ${campoText('observacion_general', 'Observaciones del analista sobre la evaluación...')}
@@ -2243,6 +2246,15 @@ async function guardarAnalisisDeportivo() {
         return;
     }
 
+    // Casos por WhatsApp (solo si el campo es editable en pantalla): entero >= 0; vacío = 0
+    let casos_whatsapp;
+    const cwEl = document.getElementById('ad-casos_whatsapp');
+    if (cwEl) {
+        const cw = cwLeerInput(cwEl.value);
+        if (!cw.ok) { mostrarToast(cw.error, 'error'); return; }
+        casos_whatsapp = cw.valor;
+    }
+
     const p1 = getTextPuntaje('ad-puntaje_analista_1er');
     const p2 = getTextPuntaje('ad-puntaje_analista_2do');
     const p3 = getTextPuntaje('ad-puntaje_analista_3er');
@@ -2262,6 +2274,7 @@ async function guardarAnalisisDeportivo() {
         resultados_alterados,
         comentario_resultados_alterados
     };
+    if (casos_whatsapp !== undefined) body.casos_whatsapp = casos_whatsapp;
 
     try {
         await api.patch(`/admin/evaluaciones/${evalId}/datos-deportivos`, body);

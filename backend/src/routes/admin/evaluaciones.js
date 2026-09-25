@@ -3,6 +3,7 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const { soloRolEvaluacion } = require('../../middleware/auth');
 const { intentarAutoPublicar } = require('../../services/publicacion');
+const { normalizarCasosWhatsapp } = require('../../services/casosWhatsapp');
 
 // GET / — lista paginada con filtros, jurados y resumen de faltas
 router.get('/', async (req, res) => {
@@ -662,8 +663,13 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
         puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
         observacion_general,
         resultados_alterados,
-        comentario_resultados_alterados
+        comentario_resultados_alterados,
+        casos_whatsapp
     } = req.body;
+
+    // Casos por WhatsApp: dato informativo del análisis (entero >= 0). No es notas_rodeo.nota ni entra en cálculos.
+    const casosWs = normalizarCasosWhatsapp(casos_whatsapp);
+    if (!casosWs.ok) return res.status(400).json({ error: casosWs.error });
 
     if (resultados_alterados === true && !comentario_resultados_alterados?.trim()) {
         return res.status(400).json({ error: 'El comentario de alteración es obligatorio cuando resultados_alterados = sí' });
@@ -698,6 +704,7 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
     if (resultados_alterados !== undefined) cambios.resultados_alterados = !!resultados_alterados;
     if (comentario_resultados_alterados !== undefined)
         cambios.comentario_resultados_alterados = comentario_resultados_alterados || null;
+    if (casosWs.cambia) cambios.casos_whatsapp = casosWs.valor;
 
     const { data, error } = await supabase
         .from('evaluaciones')
