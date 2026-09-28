@@ -112,6 +112,14 @@ async function cargarHoja1(ruta, nombreHoja, query) {
     return { res, wb, ws1: wb.getWorksheet(nombreHoja) };
 }
 
+// Busca en la columna `col` (1-based) la fila cuyo valor sea exactamente `valor`. La fila de encabezado de
+// la tabla detalle de "Colleras completas" ya no está en una fila fija: puede haber, antes de ella, el
+// bloque comparativo nuevo (FASE 2.6). Buscarla dinámicamente evita tests frágiles atados a un número de fila.
+function buscarFilaConValor(ws, col, valor, maxFila = 80) {
+    for (let r = 1; r <= maxFila; r++) if (ws.getCell(r, col).value === valor) return r;
+    return -1;
+}
+
 describe('GET /export-fin-semana', () => {
     test('A-G: 16 columnas; A:N iguales al Directorio; O = Obs. Monitor visible; P = Rodeo ID oculta con UUID exacto', async () => {
         const { res, ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
@@ -185,16 +193,17 @@ describe('GET /export-fin-semana', () => {
         expect(fila.getCell(6).font.color.argb).toBe('FFC0392B');
     });
 
-    test('M: Hoja 2 "Colleras completas" presente con estructura del Directorio', async () => {
+    test('M: Hoja 2 "Colleras completas" presente con estructura del Directorio (tabla detalle desplazada por la comparativa, FASE 2.6)', async () => {
         const { wb } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const ws2 = wb.getWorksheet('Colleras completas');
         expect(ws2).toBeDefined();
         expect(ws2.getCell(1, 1).value).toBe('1 COLLERAS COMPLETAS AL ' + ws2.getCell(1, 1).value.split(' AL ')[1]);
-        expect(ws2.getCell(8, 1).value).toBe('CABALLO 1');
-        expect(ws2.getCell(8, 10).value).toBe('ZONA CLASIF.');
-        expect(ws2.getCell(9, 1).value).toBe('A');
+        const filaHeader = buscarFilaConValor(ws2, 1, 'CABALLO 1');
+        expect(filaHeader).toBeGreaterThan(8);   // ahora va después del bloque comparativo (antes: fija en la fila 8)
+        expect(ws2.getCell(filaHeader, 10).value).toBe('ZONA CLASIF.');
+        expect(ws2.getCell(filaHeader + 1, 1).value).toBe('A');
         // Obs. Monitor NO se agrega a la Hoja 2
-        expect(ws2.getRow(8).values.slice(1).length).toBe(10);
+        expect(ws2.getRow(filaHeader).values.slice(1).length).toBe(10);
     });
 
     test('502 sin generar archivo si falla la fuente de Colleras Completas', async () => {

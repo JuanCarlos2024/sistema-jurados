@@ -3,6 +3,8 @@ const router = express.Router();
 const supabase = require('../../config/supabase');
 const ExcelJS = require('exceljs');
 const { obtenerCollerasCompletas } = require('../../services/colleras-completas');
+const { cargarComparativaColleras } = require('../../services/informeGestion/collerasComparativa');
+const { generarGraficoComparativoColleras } = require('../../services/informeGestion/graficoColleras');
 
 const HEADER_STYLE = {
     font: { bold: true, color: { argb: 'FFFFFFFF' } },
@@ -1145,6 +1147,52 @@ router.get('/export-fin-semana', async (req, res) => {
         addResumenRow([['Total zona norte:', colleras.resumen.zonaNorte], ['Colleras centro norte:', colleras.resumen.centroNorte]]);
         addResumenRow([['Total zona centro:', colleras.resumen.zonaCentro], ['Colleras centro sur:', colleras.resumen.centroSur]]);
         addResumenRow([['Total zona sur:', colleras.resumen.zonaSur]]);
+        r++;
+
+        // ── Comparativa "Colleras completas": temporada actual vs anterior, a fecha equivalente ──
+        // Reutiliza el MISMO dato `colleras` ya obtenido arriba (sin re-scrapear la fuente externa) +
+        // historico_colleras_medicion / colleras_completas_snapshots (misma fuente que el Informe de
+        // Gestión). Ver services/informeGestion/collerasComparativa.js. Va ANTES de la tabla detalle,
+        // que solo queda desplazada hacia abajo (sin cambios en su contenido ni columnas).
+        const comparativa = await cargarComparativaColleras({ colleras });
+        const fechaComparativaTxt = fmtFecha(comparativa.fecha_dato) || fechaHoy;
+        ws2.mergeCells(r, 1, r, 6);
+        const tituloComp = ws2.getCell(r, 1);
+        tituloComp.value = `COMPARATIVA COLLERAS COMPLETAS AL ${fechaComparativaTxt}`;
+        tituloComp.font = { bold: true, size: 12, color: { argb: 'FF1e3a5f' } };
+        r++;
+
+        const filaEtiquetaValor = (etiqueta, valor) => {
+            ws2.getCell(r, 1).value = etiqueta;
+            ws2.getCell(r, 1).font = { bold: true };
+            ws2.getCell(r, 2).value = (valor === null || valor === undefined) ? '—' : valor;
+            r++;
+        };
+        filaEtiquetaValor(`Temporada actual (${comparativa.temporada_actual || '—'}):`, comparativa.resumen.actual);
+        filaEtiquetaValor(
+            `Temporada anterior (${comparativa.temporada_anterior || '—'}, fecha equivalente):`,
+            comparativa.disponible ? comparativa.resumen.historico : 'Sin dato histórico comparable'
+        );
+        filaEtiquetaValor('Diferencia:', comparativa.disponible
+            ? (comparativa.resumen.diferencia > 0 ? `+${comparativa.resumen.diferencia}` : String(comparativa.resumen.diferencia))
+            : '—');
+        filaEtiquetaValor('Variación:', (comparativa.disponible && comparativa.resumen.variacion_pct !== null)
+            ? `${comparativa.resumen.variacion_pct > 0 ? '+' : ''}${comparativa.resumen.variacion_pct}%`
+            : '—');
+        r++;
+
+        // Gráfico de líneas con marcadores (imagen PNG: ExcelJS 4.4.0 no soporta charts nativos — ver
+        // graficoPng.js). Si no hay ningún punto que graficar, se deja un aviso de texto y el reporte
+        // sigue sin romperse (nunca bloquea la exportación).
+        const pngComparativa = generarGraficoComparativoColleras(comparativa);
+        if (pngComparativa) {
+            const imageId = wb.addImage({ buffer: pngComparativa, extension: 'png' });
+            ws2.addImage(imageId, { tl: { col: 0, row: r - 1 }, ext: { width: 900, height: 380 } });
+            r += 20; // filas en blanco reservadas para que la tabla no quede tapada por la imagen flotante
+        } else {
+            ws2.getCell(r, 1).value = 'Sin datos suficientes para graficar la comparativa.';
+            r += 2;
+        }
         r++;
 
         const headerRowNum = r;
