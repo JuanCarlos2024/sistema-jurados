@@ -1187,8 +1187,8 @@ router.get('/export-fin-semana', async (req, res) => {
         const pngComparativa = generarGraficoComparativoColleras(comparativa);
         if (pngComparativa) {
             const imageId = wb.addImage({ buffer: pngComparativa, extension: 'png' });
-            ws2.addImage(imageId, { tl: { col: 0, row: r - 1 }, ext: { width: 900, height: 380 } });
-            r += 20; // filas en blanco reservadas para que la tabla no quede tapada por la imagen flotante
+            ws2.addImage(imageId, { tl: { col: 0, row: r - 1 }, ext: { width: 900, height: 430 } });
+            r += 23; // filas en blanco reservadas para que la tabla no quede tapada por la imagen flotante
         } else {
             ws2.getCell(r, 1).value = 'Sin datos suficientes para graficar la comparativa.';
             r += 2;

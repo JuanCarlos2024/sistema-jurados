@@ -1,7 +1,7 @@
 // Lienzo de píxeles + codificador PNG (sin dependencias externas). Se valida decodificando el PNG a mano
 // con zlib.inflateSync (Node core) — sin depender de ninguna librería de imágenes.
 const zlib = require('zlib');
-const { crearLienzo, setPixel, fillRect, drawLine, drawCircle, drawText, anchoTexto, lienzoAPng } = require('./graficoPng');
+const { crearLienzo, setPixel, fillRect, drawLine, drawCircle, drawText, anchoTexto, rotarGlifoCW, drawTextVertical, altoTextoVertical, anchoTextoVertical, lienzoAPng } = require('./graficoPng');
 
 const FIRMA = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 function leerChunk(buf, offset) {
@@ -74,6 +74,35 @@ describe('lienzo de píxeles', () => {
     });
     test('anchoTexto crece con la longitud del texto', () => {
         expect(anchoTexto('12345')).toBeGreaterThan(anchoTexto('12'));
+    });
+});
+
+describe('rotarGlifoCW / drawTextVertical (FASE 2.8: fechas del eje X en vertical)', () => {
+    test('rota 90° en sentido horario una grilla de 5×3 a 3×5 (fórmula out[c][nf-1-r] = filas[r][c])', () => {
+        // El '8' es simétrico izq/der: sirve para comprobar que el resultado NO es una simetría accidental.
+        expect(rotarGlifoCW(['111', '101', '101', '101', '111'])).toEqual(['11111', '10001', '11111']);
+        // El '7' es asimétrico: confirma la orientación exacta de la rotación (no solo las dimensiones).
+        expect(rotarGlifoCW(['111', '001', '010', '010', '010'])).toEqual(['00001', '11101', '00011']);
+    });
+    test('altoTextoVertical/anchoTextoVertical: el texto vertical es más ALTO que ANCHO a partir de 2 caracteres', () => {
+        expect(altoTextoVertical('27/09', 2)).toBeGreaterThan(anchoTextoVertical(2));
+        expect(anchoTextoVertical(2)).toBe(anchoTextoVertical(2));   // constante: no depende del contenido
+    });
+    test('drawTextVertical dibuja el bloque APILADO hacia abajo: más alto que ancho (al revés que drawText horizontal)', () => {
+        const l = crearLienzo(60, 60, [255, 255, 255, 255]);
+        drawTextVertical(l, 5, 2, '27/09', [0, 0, 0, 255], 2);
+        let minX = 60, maxX = -1, minY = 60, maxY = -1;
+        for (let y = 0; y < 60; y++) for (let x = 0; x < 60; x++) {
+            const i = (y * 60 + x) * 4;
+            if (l.data[i] === 0 && l.data[i + 1] === 0 && l.data[i + 2] === 0) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+        }
+        const alto = maxY - minY, ancho = maxX - minX;
+        expect(alto).toBeGreaterThan(ancho);          // vertical: más alto que ancho
+        expect(alto).toBeCloseTo(altoTextoVertical('27/09', 2), -1);
+    });
+    test('un carácter no soportado no lanza (se omite, igual que en drawText)', () => {
+        const l = crearLienzo(30, 30, [255, 255, 255, 255]);
+        expect(() => drawTextVertical(l, 0, 0, '1ª2', [0, 0, 0, 255], 1)).not.toThrow();
     });
 });
 

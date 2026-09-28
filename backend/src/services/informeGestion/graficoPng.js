@@ -90,6 +90,38 @@ function drawText(l, x, y, texto, color, escala = 2, espaciado = 1) {
 }
 function anchoTexto(texto, escala = 2, espaciado = 1) { return String(texto).length * ((ANCHO_GLIFO * escala) + espaciado) - espaciado; }
 
+// Rota una matriz de '1'/'0' (array de strings) 90° en sentido horario: una grilla de nf filas × nc
+// columnas queda de nc filas × nf columnas, con out[c][nf-1-r] = filas[r][c] (fórmula estándar de rotación
+// de matrices). Se usa para las etiquetas verticales del eje X (FASE 2.8).
+function rotarGlifoCW(filas) {
+    const nf = filas.length, nc = filas[0].length;
+    const out = Array.from({ length: nc }, () => new Array(nf).fill('0'));
+    for (let r = 0; r < nf; r++) for (let c = 0; c < nc; c++) out[c][nf - 1 - r] = filas[r][c];
+    return out.map(a => a.join(''));
+}
+
+// Texto en VERTICAL: cada carácter se dibuja rotado 90° en sentido horario (como al girar físicamente una
+// tira de texto horizontal) y se apilan hacia abajo en el mismo orden — se lee inclinando la cabeza hacia
+// la derecha. Evita que las etiquetas de fecha del eje X se monten entre sí (FASE 2.8). `x,y` = esquina
+// superior izquierda del bloque de texto (mismo punto de referencia que drawText).
+function drawTextVertical(l, x, y, texto, color, escala = 2, espaciado = 1) {
+    let cy = y;
+    for (const ch of String(texto)) {
+        const glifo = GLIFOS[ch];
+        if (glifo) {
+            const rot = rotarGlifoCW(glifo);   // ANCHO_GLIFO filas × ALTO_GLIFO columnas (dimensiones intercambiadas)
+            for (let fy = 0; fy < rot.length; fy++) for (let fx = 0; fx < rot[fy].length; fx++) {
+                if (rot[fy][fx] === '1') fillRect(l, x + fx * escala, cy + fy * escala, escala, escala, color);
+            }
+        }
+        cy += (ANCHO_GLIFO * escala) + espaciado;   // avanza el ancho original del glifo (= alto tras rotar)
+    }
+    return cy - y; // alto total dibujado
+}
+// Alto/ancho del bloque de texto vertical (para centrarlo respecto de una marca del eje).
+function altoTextoVertical(texto, escala = 2, espaciado = 1) { return String(texto).length * ((ANCHO_GLIFO * escala) + espaciado) - espaciado; }
+function anchoTextoVertical(escala = 2) { return ALTO_GLIFO * escala; }
+
 // ── Codificador PNG (RGBA 8 bits, filtro "None", IDAT via zlib.deflateSync) ──
 const FIRMA_PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 let TABLA_CRC = null;
@@ -139,4 +171,8 @@ function lienzoAPng(l) {
     ]);
 }
 
-module.exports = { crearLienzo, setPixel, fillRect, drawLine, drawCircle, drawText, anchoTexto, lienzoAPng };
+module.exports = {
+    crearLienzo, setPixel, fillRect, drawLine, drawCircle, drawText, anchoTexto,
+    rotarGlifoCW, drawTextVertical, altoTextoVertical, anchoTextoVertical,
+    lienzoAPng
+};
