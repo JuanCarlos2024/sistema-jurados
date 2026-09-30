@@ -50,12 +50,18 @@
             font-size: 12px;
             background: #fff;
         }
-        /* El thead sigue sticky, pero ahora respecto de la PÁGINA (ya no hay contenedor con scroll
-           vertical propio del que colgar): se fija justo debajo de la topbar y de la barra de scroll
-           superior (--mat-topbar-h se mide por JS; --mat-scroll-top-h es la altura fija de esa barra). */
+        /* El thead NO puede ser sticky respecto de la PÁGINA: `.mat-tabla-wrap` tiene overflow-x:auto,
+           y por la regla de interoperabilidad de CSS (ver comentario arriba) eso hace que el propio
+           navegador la trate como scroll container también en Y — la convierte en el "nearest scrolling
+           ancestor" real para position:sticky, no el viewport. Como ese contenedor jamás scrollea
+           verticalmente (no tiene max-height), cualquier `top` distinto de 0 ahí se traduce en un
+           desplazamiento constante del thead hacia abajo DENTRO de la tabla (el bug reportado: hueco
+           vacío + datos de la primera fila asomando antes del encabezado). Con top:0 el thead queda en
+           su posición natural (primera fila de la tabla) y el scroll vertical se comporta de forma
+           normal junto con el resto de la página — que es el comportamiento pedido. */
         .mat-tabla thead {
             position: sticky;
-            top: calc(var(--mat-topbar-h, 58px) + var(--mat-scroll-top-h, 18px));
+            top: 0;
             z-index: 20;
             box-shadow: 0 2px 4px rgba(0,0,0,.07);
         }

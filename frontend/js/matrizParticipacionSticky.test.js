@@ -238,8 +238,44 @@ describe('encabezado sticky y barra superior conviven sin superponerse con la to
         expect(bloque).toMatch(/position:\s*sticky/);
         expect(bloque).toMatch(/top:\s*var\(--mat-topbar-h/);
     });
-    test('el thead se fija debajo de la topbar Y de la barra superior (suma de ambas alturas, no solo la topbar)', () => {
-        const bloque = html.slice(html.indexOf('.mat-tabla thead {'), html.indexOf('.mat-tabla thead {') + 300);
-        expect(bloque).toMatch(/top:\s*calc\(var\(--mat-topbar-h[^)]*\)\s*\+\s*var\(--mat-scroll-top-h/);
+});
+
+// Bug de producción (post f030908/449354d): .mat-tabla-wrap tiene overflow-x:auto, y por la regla de
+// interoperabilidad de CSS (ver comentario en el propio archivo) eso la convierte también en scroll
+// container en Y — es decir, en el "nearest scrolling ancestor" REAL del thead para position:sticky, no
+// el viewport. Como ese contenedor nunca scrollea verticalmente, cualquier `top` != 0 ahí se traduce en
+// un desplazamiento constante del thead hacia abajo DENTRO de la tabla: exactamente el hueco vacío +
+// datos de la primera fila asomando por encima del encabezado que se vio en producción. Estos tests
+// protegen la causa real (el offset artificial), no solo el síntoma.
+describe('el thead NO recibe un offset artificial dentro de .mat-tabla-wrap (bug del hueco vacío)', () => {
+    const bloqueThead = html.slice(html.indexOf('.mat-tabla thead {'), html.indexOf('.mat-tabla thead {') + 300);
+
+    test('el thead queda en su posición natural: top:0, sin sumar la altura de la topbar ni de la barra superior', () => {
+        expect(bloqueThead).toMatch(/position:\s*sticky/);
+        expect(bloqueThead).toMatch(/top:\s*0\s*;/);
+        expect(bloqueThead).not.toMatch(/--mat-topbar-h/);
+        expect(bloqueThead).not.toMatch(/--mat-scroll-top-h/);
+        expect(bloqueThead).not.toMatch(/calc\(/);
+    });
+
+    test('ninguna otra regla dentro de .mat-tabla-wrap crea separación artificial (margin-top/padding-top) entre la barra superior y el encabezado', () => {
+        const bloqueWrap = html.slice(html.indexOf('.mat-tabla-wrap {'), html.indexOf('.mat-tabla-wrap {') + 400);
+        expect(bloqueWrap).not.toMatch(/margin-top|padding-top/);
+        const bloqueTabla = html.slice(html.indexOf('.mat-tabla {'), html.indexOf('.mat-tabla {') + 300);
+        expect(bloqueTabla).not.toMatch(/margin-top|padding-top/);
+    });
+
+    test('orden conceptual en el DOM: barra superior → .mat-tabla-wrap (con thead en flujo normal) → tbody (no offset artificial → tbody visible → thead desplazado)', () => {
+        // En el HTML renderizado (no en el orden de las reglas CSS, que es independiente), la barra
+        // superior debe aparecer antes que .mat-tabla-wrap, y dentro de ese wrap el <thead> debe seguir
+        // precediendo al <tbody> en flujo normal — sin ningún offset JS/CSS que lo desplace.
+        const iBarDom = html.indexOf('<div class="mat-scroll-top-fila">');
+        const iWrapDom = html.indexOf('<div class="mat-tabla-wrap"');
+        const iTheadDom = html.indexOf('<thead>');
+        const iTbodyDom = html.indexOf('<tbody>');
+        expect(iBarDom).toBeGreaterThan(-1);
+        expect(iBarDom).toBeLessThan(iWrapDom);
+        expect(iWrapDom).toBeLessThan(iTheadDom);
+        expect(iTheadDom).toBeLessThan(iTbodyDom);
     });
 });
