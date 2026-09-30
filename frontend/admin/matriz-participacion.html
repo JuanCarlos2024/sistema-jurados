@@ -30,6 +30,9 @@
         }
 
         /* ── Tabla ── */
+        /* Contenedor con SU PROPIO scroll horizontal/vertical (no depende del scroll de la página).
+           overflow-x:auto ya estaba; min-width:0 en .main-content (style.css) evita que un ítem flex
+           imponga a la página el ancho mínimo de contenido de la tabla (ver comentario allá). */
         .mat-tabla-wrap {
             overflow-x: auto;
             overflow-y: auto;
@@ -50,31 +53,44 @@
             box-shadow: 0 2px 4px rgba(0,0,0,.07);
         }
         .mat-tabla thead tr { background: #f5f7fa; }
-        .mat-th-persona {
-            min-width: 190px;
-            position: sticky;
-            left: 0;
-            background: #1a3c6e;
-            color: #fff;
-            font-weight: 700;
-            z-index: 21;
-            border-right: 2px solid #0f2547;
-            white-space: nowrap;
-            padding: 8px 12px;
-        }
-        .mat-td-persona {
-            position: sticky;
-            left: 0;
-            background: #fff;
-            z-index: 5;
-            border-right: 2px solid #d5dae0;
-            padding: 8px 12px;
-            min-width: 190px;
-            box-shadow: 2px 0 4px rgba(0,0,0,.06);
-        }
+
+        /* ── Zona fija: Persona → Prom. Delegado (7 columnas), sticky en ambos ejes ──
+           Con ancho automático (min-width), el "left" acumulado de una columna sticky se
+           desalinea apenas el contenido de esa columna cambia de ancho entre renders. Por
+           eso las 7 columnas usan un ancho FIJO (width = min-width = max-width): así el
+           "left" de cada una es una constante exacta, sin medir nada por JavaScript.
+
+               columna          ancho   left acumulado
+               Persona           190px      0px
+               Tipo               92px    190px
+               Cat.               70px    282px
+               Salidas            82px    352px
+               Prom. Casos       150px    434px
+               Prom. Comisión    150px    584px
+               Prom. Delegado    150px    734px   → fin zona fija: 884px (ahí empieza "Rodeo 1")
+        */
+        .mat-th-fija, .mat-td-fija { position: sticky; box-sizing: border-box; }
+        .mat-th-fija { background: #f5f7fa; z-index: 25; }   /* por encima del thead sticky (20) y de .mat-td-fija */
+        .mat-td-fija { background: #fff; z-index: 6; }        /* por encima de las celdas normales de rodeos */
+
+        .mat-col-persona  { left: 0px;   width: 190px; min-width: 190px; max-width: 190px; }
+        .mat-col-tipo     { left: 190px; width: 92px;  min-width: 92px;  max-width: 92px; }
+        .mat-col-cat      { left: 282px; width: 70px;  min-width: 70px;  max-width: 70px; }
+        .mat-col-salidas  { left: 352px; width: 82px;  min-width: 82px;  max-width: 82px; }
+        .mat-col-casos    { left: 434px; width: 150px; min-width: 150px; max-width: 150px; }
+        .mat-col-comision { left: 584px; width: 150px; min-width: 150px; max-width: 150px; }
+        .mat-col-delegado { left: 734px; width: 150px; min-width: 150px; max-width: 150px; }
+
+        /* Separación visual entre "información persona" y "rodeos desplazables" — al final de la zona fija */
+        .mat-th-fija.mat-col-delegado { border-right: 2px solid #0f2547; }
+        .mat-td-fija.mat-col-delegado { border-right: 2px solid #d5dae0; box-shadow: 3px 0 6px rgba(0,0,0,.08); }
+
+        .mat-th-persona { background: #1a3c6e; color: #fff; font-weight: 700; white-space: nowrap; padding: 8px 12px; }
+        .mat-td-persona { padding: 8px 12px; }
+
         .mat-tabla tbody tr { border-bottom: 1px solid #f0f0f0; }
         .mat-tabla tbody tr:hover { background: #fafbfc; }
-        .mat-tabla tbody tr:hover .mat-td-persona { background: #f7f8fb; }
+        .mat-tabla tbody tr:hover .mat-td-fija { background: #f7f8fb; }
 
         /* ── Resumen y exportación ── */
         .mat-resumen {
@@ -420,15 +436,16 @@ function renderMatriz(d) {
         return linea('Casos', r.nota_casos) + linea('Com.', r.nota_comision) + linea('Del.', r.nota_delegado);
     }
 
-    // Encabezados
+    // Encabezados — las primeras 7 columnas (Persona → Prom. Delegado) son la ZONA FIJA: quedan
+    // visibles al desplazar horizontalmente los rodeos (mat-th-fija + mat-col-* en el <style>).
     let thR1 = `
-        <th class="mat-th-persona" rowspan="2">Persona</th>
-        <th rowspan="2" style="white-space:nowrap;padding:8px 10px;">Tipo</th>
-        <th rowspan="2" style="text-align:center;padding:8px 8px;">Cat.</th>
-        <th rowspan="2" style="text-align:right;white-space:nowrap;padding:8px 10px;">Salidas</th>
-        <th rowspan="2" style="text-align:center;white-space:nowrap;min-width:150px;padding:8px 10px;">Prom. Casos</th>
-        <th rowspan="2" style="text-align:center;white-space:nowrap;min-width:150px;padding:8px 10px;border-left:1px solid #d5dae0;">Prom. Comisión</th>
-        <th rowspan="2" style="text-align:center;white-space:nowrap;min-width:150px;padding:8px 10px;border-left:1px solid #d5dae0;">Prom. Delegado</th>`;
+        <th class="mat-th-fija mat-th-persona mat-col-persona" rowspan="2">Persona</th>
+        <th class="mat-th-fija mat-col-tipo" rowspan="2" style="white-space:nowrap;padding:8px 10px;">Tipo</th>
+        <th class="mat-th-fija mat-col-cat" rowspan="2" style="text-align:center;padding:8px 8px;">Cat.</th>
+        <th class="mat-th-fija mat-col-salidas" rowspan="2" style="text-align:right;white-space:nowrap;padding:8px 10px;">Salidas</th>
+        <th class="mat-th-fija mat-col-casos" rowspan="2" style="text-align:center;white-space:nowrap;padding:8px 10px;">Prom. Casos</th>
+        <th class="mat-th-fija mat-col-comision" rowspan="2" style="text-align:center;white-space:nowrap;padding:8px 10px;border-left:1px solid #d5dae0;">Prom. Comisión</th>
+        <th class="mat-th-fija mat-col-delegado" rowspan="2" style="text-align:center;white-space:nowrap;padding:8px 10px;">Prom. Delegado</th>`;
     for (let i = 1; i <= maxRodeos; i++) {
         thR1 += `<th colspan="2" style="text-align:center;font-size:10px;background:#edf2f7;color:#555;white-space:nowrap;border-left:1px solid #d5dae0;padding:6px 8px;">Rodeo ${i}</th>`;
     }
@@ -468,18 +485,18 @@ function renderMatriz(d) {
         }
 
         return `<tr>
-            <td class="mat-td-persona">
+            <td class="mat-td-fija mat-td-persona mat-col-persona">
                 <div style="font-weight:600;font-size:12px;color:#1a2744;">${sanitizar(p.nombre)}</div>
                 <span style="display:inline-block;margin-top:3px;font-size:10px;background:${col}22;color:${col};border-radius:4px;padding:1px 5px;font-weight:600;">${p.categoria}</span>
             </td>
-            <td style="font-size:11px;white-space:nowrap;padding:7px 10px;">${TIPO_LBL[p.tipo_persona] || p.tipo_persona}</td>
-            <td style="text-align:center;padding:7px 8px;">
+            <td class="mat-td-fija mat-col-tipo" style="font-size:11px;white-space:nowrap;padding:7px 10px;">${TIPO_LBL[p.tipo_persona] || p.tipo_persona}</td>
+            <td class="mat-td-fija mat-col-cat" style="text-align:center;padding:7px 8px;">
                 <span style="background:${col}22;color:${col};border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">${p.categoria}</span>
             </td>
-            <td style="text-align:right;font-weight:700;font-size:14px;color:var(--primario);padding:7px 10px;">${p.total_salidas}</td>
-            <td style="text-align:center;line-height:1.5;padding:7px 10px;">${prCasos}</td>
-            <td style="text-align:center;line-height:1.5;padding:7px 10px;border-left:1px solid #f0f0f0;">${prComision}</td>
-            <td style="text-align:center;line-height:1.5;padding:7px 10px;border-left:1px solid #f0f0f0;">${prDelegado}</td>
+            <td class="mat-td-fija mat-col-salidas" style="text-align:right;font-weight:700;font-size:14px;color:var(--primario);padding:7px 10px;">${p.total_salidas}</td>
+            <td class="mat-td-fija mat-col-casos" style="text-align:center;line-height:1.5;padding:7px 10px;">${prCasos}</td>
+            <td class="mat-td-fija mat-col-comision" style="text-align:center;line-height:1.5;padding:7px 10px;border-left:1px solid #f0f0f0;">${prComision}</td>
+            <td class="mat-td-fija mat-col-delegado" style="text-align:center;line-height:1.5;padding:7px 10px;border-left:1px solid #f0f0f0;">${prDelegado}</td>
             ${celdas}
         </tr>`;
     }).join('');

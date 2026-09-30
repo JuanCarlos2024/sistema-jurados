@@ -123,6 +123,10 @@ body {
 .main-content {
     margin-left: 240px;
     flex: 1;
+    /* Sin esto, un ítem flex no se encoge más allá del ancho mínimo de su contenido: una tabla ancha
+       (p. ej. Matriz de Participación) empujaría .main-content — y con él, la página entera — a
+       desplazarse horizontalmente, aunque el propio contenedor de la tabla tenga overflow-x:auto. */
+    min-width: 0;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
