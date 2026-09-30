@@ -13,9 +13,13 @@ const styleCss = fs.readFileSync(path.join(__dirname, '..', 'css', 'style.css'),
 const COLUMNAS_FIJAS = ['persona', 'tipo', 'cat', 'salidas', 'casos', 'comision', 'delegado'];
 
 describe('contenedor con scroll horizontal propio (no depende del scroll de la página)', () => {
+    const bloqueWrap = html.slice(html.indexOf('.mat-tabla-wrap {'), html.indexOf('.mat-tabla-wrap {') + 400);
     test('.mat-tabla-wrap tiene overflow-x:auto', () => {
-        const bloque = html.slice(html.indexOf('.mat-tabla-wrap {'), html.indexOf('.mat-tabla-wrap {') + 300);
-        expect(bloque).toMatch(/overflow-x:\s*auto/);
+        expect(bloqueWrap).toMatch(/overflow-x:\s*auto/);
+    });
+    test('.mat-tabla-wrap NO tiene un segundo scroll vertical propio (sin max-height ni overflow-y:auto)', () => {
+        expect(bloqueWrap).not.toMatch(/max-height/);
+        expect(bloqueWrap).not.toMatch(/overflow-y:\s*auto/);
     });
     test('.main-content (style.css) tiene min-width:0 — evita que la tabla ancha empuje toda la página a desplazarse', () => {
         const bloque = styleCss.slice(styleCss.indexOf('.main-content {'), styleCss.indexOf('.main-content {') + 400);
@@ -144,5 +148,98 @@ describe('sin cambios en cálculos, colores ni comparaciones (regresión)', () =
         }
         expect(html).toMatch(/onclick="cargarMatriz\(\)">Cargar matriz</);
         expect(html).toMatch(/onclick="limpiarTodo\(\)">Limpiar</);
+    });
+});
+
+describe('barra de scroll horizontal SUPERIOR (accesible sin bajar hasta el final de la tabla)', () => {
+    test('existe el elemento auxiliar .mat-scroll-top-fila, antes de .mat-tabla-wrap, con su espaciador y su interior', () => {
+        const iScrollFila = html.indexOf('<div class="mat-scroll-top-fila">');
+        const iWrap = html.indexOf('<div class="mat-tabla-wrap"');
+        expect(iScrollFila).toBeGreaterThan(-1);
+        expect(iWrap).toBeGreaterThan(iScrollFila);   // la barra superior va ANTES del contenedor real (visualmente arriba)
+        const bloque = html.slice(iScrollFila, iWrap);
+        expect(bloque).toMatch(/class="mat-scroll-top-espaciador"/);
+        expect(bloque).toMatch(/id="mat-scroll-top"/);
+        expect(bloque).toMatch(/id="mat-scroll-top-interior"/);
+    });
+    test('la barra superior empieza donde termina la zona fija: usa la MISMA variable --mat-zona-fija-ancho (no un número nuevo)', () => {
+        expect(html).toMatch(/\.mat-scroll-top-espaciador\s*\{[^}]*flex:[^;]*var\(--mat-zona-fija-ancho/);
+    });
+    test('--mat-zona-fija-ancho es EXACTAMENTE la suma de los anchos de las 7 columnas fijas (una sola fuente de verdad)', () => {
+        let suma = 0;
+        for (const col of COLUMNAS_FIJAS) {
+            const props = new RegExp(`\\.mat-col-${col}\\s*\\{([^}]*)\\}`).exec(html)[1];
+            suma += Number(/(?<!min-|max-)width:\s*(\d+)px/.exec(props)[1]);
+        }
+        const declarada = Number(/--mat-zona-fija-ancho:\s*(\d+)px/.exec(html)[1]);
+        expect(declarada).toBe(suma);
+    });
+    test('el espaciador puede achicarse en viewports angostos (no se pierde la barra) y la fila nunca desborda la página', () => {
+        const bloqueFila = /\.mat-scroll-top-fila\s*\{([^}]*)\}/.exec(html)[1];
+        expect(bloqueFila).toMatch(/overflow:\s*hidden/);
+        const bloqueEspaciador = /\.mat-scroll-top-espaciador\s*\{([^}]*)\}/.exec(html)[1];
+        expect(bloqueEspaciador).toMatch(/flex:\s*0\s+1\s+var/);   // flex-shrink 1, no 0: puede reducirse
+        const bloqueTop = /\.mat-scroll-top\s*\{([^}]*)\}/.exec(html)[1];
+        expect(bloqueTop).toMatch(/min-width:\s*\d+px/);            // pero la barra en sí nunca llega a 0px
+    });
+});
+
+describe('sincronización bidireccional del scroll (sin loop de eventos)', () => {
+    const bloqueJs = html.slice(html.indexOf('function configurarScrollSincronizado'), html.indexOf('function actualizarOffsetsMatriz'));
+    test('mover la barra superior mueve .mat-tabla-wrap, y viceversa', () => {
+        expect(bloqueJs).toMatch(/wrap\.addEventListener\('scroll'/);
+        expect(bloqueJs).toMatch(/topBar\.addEventListener\('scroll'/);
+        expect(bloqueJs).toMatch(/topBar\.scrollLeft = wrap\.scrollLeft/);
+        expect(bloqueJs).toMatch(/wrap\.scrollLeft = topBar\.scrollLeft/);
+    });
+    test('usa una bandera de sincronización para evitar el loop scroll → scroll → scroll…', () => {
+        expect(bloqueJs).toMatch(/_matSincronizando/);
+        const listeners = bloqueJs.match(/addEventListener\('scroll', \(\) => \{[^}]*\}/g) || [];
+        expect(listeners.length).toBe(2);
+        for (const l of listeners) {
+            expect(l).toMatch(/if \(_matSincronizando\) return;/);
+            expect(l).toMatch(/_matSincronizando = true;/);
+            expect(l).toMatch(/_matSincronizando = false;/);
+        }
+    });
+    test('se vuelve a configurar/recalcular después de CADA render (el DOM de la matriz se reconstruye entero)', () => {
+        const bloqueRender = html.slice(html.indexOf('function renderMatriz'), html.indexOf('// ─── Scroll horizontal'));
+        expect(bloqueRender).toMatch(/configurarScrollSincronizado\(\);/);
+    });
+});
+
+describe('el ancho desplazable se calcula dinámicamente (nunca hardcodeado a una cantidad de rodeos)', () => {
+    test('recalcularAnchosScrollMatriz mide tabla.scrollWidth real (DOM), no una fórmula con maxRodeos', () => {
+        const fn = /function recalcularAnchosScrollMatriz\(\) \{([\s\S]*?)\n\}/.exec(html)[1];
+        expect(fn).toMatch(/tabla\.scrollWidth/);
+        expect(fn).not.toMatch(/maxRodeos/);
+        expect(fn).not.toMatch(/Rodeo (4|10|20|30)\b/);
+    });
+    test('el ancho del espaciador interior resta la zona fija de ambos lados (mismo rango de scroll que .mat-tabla-wrap)', () => {
+        const fn = /function recalcularAnchosScrollMatriz\(\) \{([\s\S]*?)\n\}/.exec(html)[1];
+        expect(fn).toMatch(/tabla\.scrollWidth - zonaFija/);
+    });
+    test('recalcularAnchosScrollMatriz también corre al cambiar el tamaño de la ventana (responsive)', () => {
+        expect(html).toMatch(/window\.addEventListener\('resize', actualizarOffsetsMatriz\)/);
+        const fnOffsets = /function actualizarOffsetsMatriz\(\) \{([\s\S]*?)\n\}/.exec(html)[1];
+        expect(fnOffsets).toMatch(/recalcularAnchosScrollMatriz\(\);/);
+    });
+});
+
+describe('encabezado sticky y barra superior conviven sin superponerse con la topbar fija', () => {
+    test('la topbar se mide por JS (offsetHeight) y se guarda en --mat-topbar-h; no se asume un valor fijo', () => {
+        const fn = /function actualizarOffsetsMatriz\(\) \{([\s\S]*?)\n\}/.exec(html)[1];
+        expect(fn).toMatch(/document\.querySelector\('\.topbar'\)/);
+        expect(fn).toMatch(/topbar\.offsetHeight/);
+        expect(fn).toMatch(/setProperty\('--mat-topbar-h'/);
+    });
+    test('.mat-scroll-top-fila se fija justo debajo de la topbar (top: var(--mat-topbar-h))', () => {
+        const bloque = /\.mat-scroll-top-fila\s*\{([^}]*)\}/.exec(html)[1];
+        expect(bloque).toMatch(/position:\s*sticky/);
+        expect(bloque).toMatch(/top:\s*var\(--mat-topbar-h/);
+    });
+    test('el thead se fija debajo de la topbar Y de la barra superior (suma de ambas alturas, no solo la topbar)', () => {
+        const bloque = html.slice(html.indexOf('.mat-tabla thead {'), html.indexOf('.mat-tabla thead {') + 300);
+        expect(bloque).toMatch(/top:\s*calc\(var\(--mat-topbar-h[^)]*\)\s*\+\s*var\(--mat-scroll-top-h/);
     });
 });

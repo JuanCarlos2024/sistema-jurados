@@ -30,13 +30,17 @@
         }
 
         /* ── Tabla ── */
-        /* Contenedor con SU PROPIO scroll horizontal/vertical (no depende del scroll de la página).
+        /* Contenedor con SU PROPIO scroll HORIZONTAL (no depende del scroll de la página).
            overflow-x:auto ya estaba; min-width:0 en .main-content (style.css) evita que un ítem flex
-           imponga a la página el ancho mínimo de contenido de la tabla (ver comentario allá). */
+           imponga a la página el ancho mínimo de contenido de la tabla (ver comentario allá).
+           SIN overflow-y ni max-height: la matriz ya NO tiene un segundo scroll vertical propio —
+           crece con su contenido y la página se desplaza verticalmente de forma normal. (Nota: por
+           la regla de interoperabilidad de CSS, si overflow-x no es "visible", el navegador computa
+           overflow-y como "auto" aunque se escriba "visible"; es inofensivo porque, al no existir
+           max-height/height, el contenido nunca excede la caja y jamás aparece una barra vertical.) */
         .mat-tabla-wrap {
             overflow-x: auto;
-            overflow-y: auto;
-            max-height: calc(100vh - 280px);
+            overflow-y: visible;
             border: 1px solid var(--gris-borde);
             border-radius: 8px;
         }
@@ -46,13 +50,43 @@
             font-size: 12px;
             background: #fff;
         }
+        /* El thead sigue sticky, pero ahora respecto de la PÁGINA (ya no hay contenedor con scroll
+           vertical propio del que colgar): se fija justo debajo de la topbar y de la barra de scroll
+           superior (--mat-topbar-h se mide por JS; --mat-scroll-top-h es la altura fija de esa barra). */
         .mat-tabla thead {
             position: sticky;
-            top: 0;
+            top: calc(var(--mat-topbar-h, 58px) + var(--mat-scroll-top-h, 18px));
             z-index: 20;
             box-shadow: 0 2px 4px rgba(0,0,0,.07);
         }
         .mat-tabla thead tr { background: #f5f7fa; }
+
+        /* ── Barra de scroll horizontal SUPERIOR (accesible sin bajar hasta el final de la tabla) ──
+           Un elemento auxiliar con overflow-x:auto y un "espaciador" interno cuyo ancho se calcula por
+           JS = ancho real desplazable de la tabla (sin la zona fija). Su scrollLeft se sincroniza en
+           ambos sentidos con .mat-tabla-wrap (misma cantidad de píxeles: el ancho de la zona fija se
+           resta de AMBOS lados — contenedor y espaciador — así el rango de scroll queda idéntico al de
+           .mat-tabla-wrap, sin necesidad de convertir por proporción). No depende de cuántos "Rodeo N"
+           haya: el ancho se mide del DOM real después de cada render. */
+        .mat-scroll-top-fila {
+            display: flex;
+            position: sticky;
+            top: var(--mat-topbar-h, 58px);
+            z-index: 22;
+            background: #fff;
+            overflow: hidden;   /* red de seguridad: en un viewport angosto, nunca empuja la página a desplazarse horizontalmente */
+        }
+        /* flex-shrink:1 (no 0): en viewports angostos el espaciador puede achicarse para que la barra
+           siga siendo accesible (min-width:40px más abajo) en vez de desaparecer del todo. */
+        .mat-scroll-top-espaciador { flex: 0 1 var(--mat-zona-fija-ancho, 884px); min-width: 0; }
+        .mat-scroll-top {
+            flex: 1 1 auto;
+            min-width: 40px;
+            height: var(--mat-scroll-top-h, 18px);
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        .mat-scroll-top-interior { height: 1px; }
 
         /* ── Zona fija: Persona → Prom. Delegado (7 columnas), sticky en ambos ejes ──
            Con ancho automático (min-width), el "left" acumulado de una columna sticky se
@@ -68,7 +102,12 @@
                Prom. Casos       150px    434px
                Prom. Comisión    150px    584px
                Prom. Delegado    150px    734px   → fin zona fija: 884px (ahí empieza "Rodeo 1")
+
+           --mat-zona-fija-ancho es la MISMA suma (884px), como variable — la usan tanto la barra de
+           scroll superior (para arrancar visualmente donde empieza "Rodeo 1") como sus tests, que
+           verifican que sigue siendo exactamente la suma de las 7 columnas de arriba.
         */
+        :root { --mat-zona-fija-ancho: 884px; }
         .mat-th-fija, .mat-td-fija { position: sticky; box-sizing: border-box; }
         .mat-th-fija { background: #f5f7fa; z-index: 25; }   /* por encima del thead sticky (20) y de .mat-td-fija */
         .mat-td-fija { background: #fff; z-index: 6; }        /* por encima de las celdas normales de rodeos */
@@ -516,8 +555,12 @@ function renderMatriz(d) {
             <button class="btn btn-outline btn-pequeño"  onclick="exportarCSV()"   style="font-size:12px;">Exportar CSV</button>
         </div>
     </div>
-    <div class="mat-tabla-wrap">
-        <table class="mat-tabla">
+    <div class="mat-scroll-top-fila">
+        <div class="mat-scroll-top-espaciador"></div>
+        <div class="mat-scroll-top" id="mat-scroll-top"><div class="mat-scroll-top-interior" id="mat-scroll-top-interior"></div></div>
+    </div>
+    <div class="mat-tabla-wrap" id="mat-tabla-wrap">
+        <table class="mat-tabla" id="mat-tabla">
             <thead>
                 <tr>${thR1}</tr>
                 <tr>${thR2}</tr>
@@ -525,7 +568,62 @@ function renderMatriz(d) {
             <tbody>${filas}</tbody>
         </table>
     </div>`;
+
+    configurarScrollSincronizado();
 }
+
+// ─── Scroll horizontal: barra superior sincronizada con el scroll real de la tabla ──
+// Se recalcula/rebinda después de cada render (el DOM de la matriz se reconstruye entero).
+// zonaFijaAncho sale de la MISMA variable CSS que usan las columnas sticky (--mat-zona-fija-ancho):
+// nunca se duplica el número acá. El ancho desplazable (espaciador de la barra superior) se resta esa
+// misma cantidad tanto del contenedor visible como del espaciador interno, para que el rango de
+// scrollLeft de la barra superior sea IDÉNTICO al de .mat-tabla-wrap (sincronización 1:1, sin razones/
+// proporciones) — ver el comentario del CSS. `_matSincronizando` evita el loop de eventos scroll↔scroll.
+let _matSincronizando = false;
+function _matZonaFijaAncho() {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--mat-zona-fija-ancho');
+    return parseInt(v, 10) || 0;
+}
+function recalcularAnchosScrollMatriz() {
+    const wrap = document.getElementById('mat-tabla-wrap');
+    const tabla = document.getElementById('mat-tabla');
+    const topBar = document.getElementById('mat-scroll-top');
+    const topInterior = document.getElementById('mat-scroll-top-interior');
+    if (!wrap || !tabla || !topBar || !topInterior) return; // sin matriz cargada todavía
+    const zonaFija = _matZonaFijaAncho();
+    topInterior.style.width = Math.max(0, tabla.scrollWidth - zonaFija) + 'px';
+}
+function configurarScrollSincronizado() {
+    const wrap = document.getElementById('mat-tabla-wrap');
+    const topBar = document.getElementById('mat-scroll-top');
+    if (!wrap || !topBar) return;
+
+    recalcularAnchosScrollMatriz();
+
+    wrap.addEventListener('scroll', () => {
+        if (_matSincronizando) return;
+        _matSincronizando = true;
+        topBar.scrollLeft = wrap.scrollLeft;
+        _matSincronizando = false;
+    });
+    topBar.addEventListener('scroll', () => {
+        if (_matSincronizando) return;
+        _matSincronizando = true;
+        wrap.scrollLeft = topBar.scrollLeft;
+        _matSincronizando = false;
+    });
+}
+
+// Altura real de la topbar fija (varía apenas entre resoluciones): se mide una vez cargada la página y
+// de nuevo si la ventana cambia de tamaño, para que el thead sticky y la barra superior queden justo
+// debajo de ella (nunca superpuestos). El ancho desplazable también se recalcula al cambiar de tamaño.
+function actualizarOffsetsMatriz() {
+    const topbar = document.querySelector('.topbar');
+    if (topbar) document.documentElement.style.setProperty('--mat-topbar-h', topbar.offsetHeight + 'px');
+    recalcularAnchosScrollMatriz();
+}
+actualizarOffsetsMatriz();
+window.addEventListener('resize', actualizarOffsetsMatriz);
 
 // ─── Exportar Excel ───────────────────────────────────────────────
 async function exportarExcel() {
