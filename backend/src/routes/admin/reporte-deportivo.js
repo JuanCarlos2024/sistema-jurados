@@ -80,7 +80,8 @@ async function obtenerDatos(q, paginar = true) {
             id, rodeo_id, estado, nota_final, updated_at,
             puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
             observacion_general, modo_flujo,
-            resultados_alterados, comentario_resultados_alterados
+            resultados_alterados, comentario_resultados_alterados,
+            casos_whatsapp
         `)
         .in('rodeo_id', rodeoIds)
         .eq('anulada', false)
@@ -111,6 +112,18 @@ async function obtenerDatos(q, paginar = true) {
         .in('rodeo_id', rodeoIds);
     const monitorPorRodeo = {};
     for (const dm of (datosMonitorList || [])) monitorPorRodeo[dm.rodeo_id] = dm;
+
+    // Notas secundarias por rodeo (Nota Delegado / Nota Comisión) — misma tabla/columnas
+    // que ya usa el resto del sistema (rodeosListado.js: cargarNotasPorRodeo(),
+    // matrizParticipacion.js), 1 fila por rodeo (rodeo_id UNIQUE, migración 028). Se usa
+    // en /export (columnas "Nota Delegado"/"Nota Comisión"); el resto de los endpoints de
+    // este archivo simplemente no leen estas claves nuevas de `filas`.
+    const { data: notasSecList } = await supabase
+        .from('rodeo_notas_secundarias')
+        .select('rodeo_id, nota_delegado, nota_comision')
+        .in('rodeo_id', rodeoIds);
+    const notasSecPorRodeo = {};
+    for (const n of (notasSecList || [])) notasSecPorRodeo[n.rodeo_id] = n;
 
     // Asignaciones
     const { data: asigs } = await supabase.from('asignaciones')
@@ -230,6 +243,7 @@ async function obtenerDatos(q, paginar = true) {
     const filas = rodeos.map(rodeo => {
         const ev    = evalPorRodeo[rodeo.id] || null;
         const dm    = monitorPorRodeo[rodeo.id] || null;
+        const ns    = notasSecPorRodeo[rodeo.id] || null;
         const stats = ev ? (statsPorEval[ev.id] || null) : null;
         const carts = cartillasPorRodeo[rodeo.id] || [];
         const modoFlujo = ev?.modo_flujo || 'apelacion_jurado';
@@ -337,6 +351,13 @@ async function obtenerDatos(q, paginar = true) {
             puntaje_analista_1er: ev?.puntaje_analista_1er ?? null,
             puntaje_analista_2do: ev?.puntaje_analista_2do ?? null,
             puntaje_analista_3er: ev?.puntaje_analista_3er ?? null,
+            // Nota Delegado / Nota Comisión (rodeo_notas_secundarias, 1 fila por rodeo) y Total
+            // Casos WSP (evaluaciones.casos_whatsapp) — usados hoy solo por /export; null/ausencia
+            // se devuelve tal cual (nunca se infiere ni se recalcula), igual criterio que el resto
+            // de los campos de este objeto (ej. puntaje_oficial_1er arriba).
+            nota_delegado:  ns?.nota_delegado ?? null,
+            nota_comision:  ns?.nota_comision ?? null,
+            casos_whatsapp: ev?.casos_whatsapp ?? null,
             diferencia_1er: dif1,
             diferencia_2do: dif2,
             diferencia_3er: dif3,
@@ -446,6 +467,14 @@ router.get('/export', async (req, res) => {
             { header: 'Jurado(s)',                  key: 'jurados',          width: 30 },
             { header: 'Delegado Rentado',           key: 'delegados',        width: 25 },
             { header: 'Nota Final',                 key: 'nota_final',       width: 10 },
+            // ── 3 columnas nuevas, justo después de "Nota Final" ──
+            // Nota Delegado / Nota Comisión: rodeo_notas_secundarias (1 fila por rodeo); null →
+            // 'SIN INFORMACIÓN' (texto exacto pedido). Ancho suficiente para ese texto.
+            { header: 'Nota Delegado',              key: 'nota_delegado',    width: 16 },
+            { header: 'Nota Comisión',               key: 'nota_comision',    width: 16 },
+            // Total Casos WSP: evaluaciones.casos_whatsapp (INTEGER, DEFAULT 0); 0 es un valor
+            // válido y se muestra tal cual — nunca 'SIN INFORMACIÓN' (ver nota en el loop de filas).
+            { header: 'Total Casos WSP',             key: 'casos_whatsapp',   width: 16 },
             { header: 'Oficial 1er Lugar',          key: 'puntaje_oficial_1er',  width: 14, style: { numFmt: '@' } },
             { header: 'Oficial 2do Lugar',          key: 'puntaje_oficial_2do',  width: 14, style: { numFmt: '@' } },
             { header: 'Oficial 3er Lugar',          key: 'puntaje_oficial_3er',  width: 14, style: { numFmt: '@' } },
@@ -497,6 +526,12 @@ router.get('/export', async (req, res) => {
                 jurados:          f.jurados,
                 delegados:        f.delegados,
                 nota_final:       f.nota_final != null ? Number(f.nota_final) : '',
+                // null/undefined → 'SIN INFORMACIÓN' (texto exacto pedido); valor presente → número.
+                nota_delegado:    f.nota_delegado != null ? Number(f.nota_delegado) : 'SIN INFORMACIÓN',
+                nota_comision:    f.nota_comision != null ? Number(f.nota_comision) : 'SIN INFORMACIÓN',
+                // Entero exacto almacenado; null/undefined (incluye "sin evaluación") → 0, nunca
+                // 'SIN INFORMACIÓN' (0 es un dato válido: cero casos registrados).
+                casos_whatsapp:   f.casos_whatsapp ?? 0,
                 puntaje_oficial_1er:  f.puntaje_oficial_1er  ?? '',
                 puntaje_oficial_2do:  f.puntaje_oficial_2do  ?? '',
                 puntaje_oficial_3er:  f.puntaje_oficial_3er  ?? '',
