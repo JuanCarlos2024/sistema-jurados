@@ -1008,12 +1008,22 @@ router.get('/export-directorio', async (req, res) => {
     }
 });
 
-// ── Reporte Fin de Semana — mismo contenido que el Reporte Directorio (mismas
-// 14 columnas A:N vía obtenerDatos(), mismos filtros) + columna visible O
-// "Obs. Monitor" (datos_monitor_rodeo.comentario_monitor tal cual) + columna
-// técnica oculta P "Rodeo ID". Endpoint independiente: /export-directorio NO
-// se modifica (es la base del flujo GPT → Control de Gestión). La Hoja 2 se
-// replica a propósito en vez de refactorizar el endpoint estable. ──────────
+// ── Reporte Fin de Semana — mismo contenido que el Reporte Directorio vía
+// obtenerDatos() (mismos filtros), EXCEPTO que aquí se eliminan 4 columnas
+// (Caseta Jurado, Faltas Disciplinarias/Reglamentarias, Ganado Fuera del Peso
+// Reglamentario, Movimiento a la Rienda) y se agregan, justo después de
+// "Resultado Alterado", "Puntaje Serie Campeones 1° - 2° - 3°" y "Revisión
+// Puntaje 1° - 2° - 3°" — misma fuente/lógica/formato que usa hoy el Reporte
+// Deportivo Detalle (fmtP + "1er - 2do - 3er" con '—' para null/vacío; ver
+// `/export-detalle` más arriba), duplicada aquí a propósito en vez de
+// exportar un helper compartido, para no tocar ese endpoint. Los campos
+// crudos (puntaje_oficial_1er/2do/3er, puntaje_analista_1er/2do/3er) ya
+// vienen en `filas` porque ambos endpoints usan la misma obtenerDatos(): sin
+// queries nuevas. Después de esto: + "Obs. Monitor" (columna visible,
+// datos_monitor_rodeo.comentario_monitor tal cual) + columna técnica oculta
+// "Rodeo ID". Endpoint independiente: /export-directorio NO se modifica (es
+// la base del flujo GPT → Control de Gestión). La Hoja 2 se replica a
+// propósito en vez de refactorizar el endpoint estable. ────────────────────
 const ANCHO_OBS_MONITOR = 60;
 
 router.get('/export-fin-semana', async (req, res) => {
@@ -1041,13 +1051,14 @@ router.get('/export-fin-semana', async (req, res) => {
             { header: 'Tipo Rodeo',                                 key: 'tipo_rodeo',       width: 20 },
             { header: 'Jurado(s)',                                  key: 'jurados',          width: 28 },
             { header: 'Resultado Alterado',                         key: 'resultado_alterado', width: 15 },
+            // Mismas 2 columnas, misma fuente y lógica que el Reporte Deportivo
+            // Detalle (fmtP + "1er - 2do - 3er"; ver /export-detalle) — ver
+            // comentario de cabecera de este endpoint.
+            { header: 'Puntaje Serie Campeones 1° - 2° - 3°',       key: 'puntaje_oficial',    width: 24, style: { numFmt: '@' } },
+            { header: 'Revisión Puntaje 1° - 2° - 3°',              key: 'puntaje_revisado',   width: 24, style: { numFmt: '@' } },
             { header: 'Descripción de lo observado',                key: 'descripcion_observado', width: 44 },
             { header: 'Total Situaciones',                          key: 'total_situaciones', width: 15 },
             { header: 'Serie Campeones - 2 Vueltas',                 key: 'serie_campeones',  width: 20 },
-            { header: 'Caseta Jurado',                               key: 'caseta_jurado',    width: 16 },
-            { header: 'Faltas Disciplinarias/Reglamentarias',        key: 'faltas',           width: 24 },
-            { header: 'Ganado Fuera del Peso Reglamentario',         key: 'ganado_fuera_peso', width: 24 },
-            { header: 'Movimiento a la Rienda',                      key: 'movimiento_rienda', width: 18 },
             { header: 'Acciones Área Deportiva',                     key: 'acciones_area_deportiva', width: 44 },
             { header: 'Obs. Monitor',                                key: 'obs_monitor',      width: ANCHO_OBS_MONITOR },
             { header: 'Rodeo ID', key: 'rodeo_id', width: 38, hidden: true },
@@ -1061,14 +1072,18 @@ router.get('/export-fin-semana', async (req, res) => {
         });
         ws1.getRow(1).height = 26;
         ws1.views = [{ state: 'frozen', ySplit: 1 }];
-        ws1.autoFilter = { from: 'A1', to: 'O1' };
+        ws1.autoFilter = { from: 'A1', to: 'M1' };
 
         const WRAP_COLS = new Set(['descripcion_observado', 'acciones_area_deportiva', 'obs_monitor']);
 
+        // Mismo formateo que /export-detalle (fmtP) para Puntaje Serie Campeones /
+        // Revisión Puntaje — duplicado a propósito (ver comentario de cabecera).
+        const fmtP = (v) => (v != null && v !== '') ? String(v) : '—';
+
         for (const f of filas) {
-            const casetaTxt = f.cartilla_caseta_adecuada === 'Sí' ? 'Cumple'
-                : f.cartilla_caseta_adecuada === 'No' ? 'No cumple' : '—';
             const accionesTxt = (f.obs_admin || '').trim() || 'No aplica';
+            const puntajeOficial  = `${fmtP(f.puntaje_oficial_1er)} - ${fmtP(f.puntaje_oficial_2do)} - ${fmtP(f.puntaje_oficial_3er)}`;
+            const puntajeRevisado = `${fmtP(f.puntaje_analista_1er)} - ${fmtP(f.puntaje_analista_2do)} - ${fmtP(f.puntaje_analista_3er)}`;
 
             // comentario_monitor íntegro, sin trim ni resumen; vacío/NULL → celda vacía.
             const obsMonitor = (typeof f.obs_monitor === 'string' && f.obs_monitor.trim() !== '') ? f.obs_monitor : null;
@@ -1080,13 +1095,11 @@ router.get('/export-fin-semana', async (req, res) => {
                 tipo_rodeo:       f.tipo_rodeo,
                 jurados:          f.jurados,
                 resultado_alterado: f.resultados_alterados ? 'Sí' : 'No',
+                puntaje_oficial:   puntajeOficial,
+                puntaje_revisado:  puntajeRevisado,
                 descripcion_observado: f.comentario_resultados_alterados?.trim() || '—',
                 total_situaciones: f.c1_total + f.c2_total,
                 serie_campeones:   f.cartilla_serie_campeones_2_vueltas || '—',
-                caseta_jurado:     casetaTxt,
-                faltas:            f.cartilla_hubo_faltas || '—',
-                ganado_fuera_peso: f.cartilla_hubo_ganado_fuera_peso || '—',
-                movimiento_rienda: f.cartilla_hubo_movimiento_rienda || '—',
                 acciones_area_deportiva: accionesTxt,
                 obs_monitor:      obsMonitor,
                 rodeo_id: f.rodeo_id,
@@ -1108,10 +1121,7 @@ router.get('/export-fin-semana', async (req, res) => {
             }
             row.height = Math.min(409, Math.max(28, lineasObs * 14));
 
-            if (f.resultados_alterados)                     row.getCell('resultado_alterado').font = ROJO_FONT;
-            if (casetaTxt === 'No cumple')                  row.getCell('caseta_jurado').font = ROJO_FONT;
-            if (f.cartilla_hubo_faltas === 'Sí')            row.getCell('faltas').font = ROJO_FONT;
-            if (f.cartilla_hubo_ganado_fuera_peso === 'Sí') row.getCell('ganado_fuera_peso').font = ROJO_FONT;
+            if (f.resultados_alterados) row.getCell('resultado_alterado').font = ROJO_FONT;
         }
 
         // ── Hoja 2: Colleras completas (réplica exacta de /export-directorio) ──

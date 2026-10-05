@@ -1,5 +1,13 @@
-// Reporte Fin de Semana: GET /export-fin-semana = 14 columnas del Reporte
-// Directorio (A:N) + "Obs. Monitor" (O, visible) + "Rodeo ID" (P, oculta).
+// Reporte Fin de Semana: GET /export-fin-semana = columnas del Reporte
+// Directorio (vía obtenerDatos(), mismos filtros) EXCEPTO que aquí se
+// eliminan 4 columnas (Caseta Jurado, Faltas Disciplinarias/Reglamentarias,
+// Ganado Fuera del Peso Reglamentario, Movimiento a la Rienda) y se agregan,
+// justo después de "Resultado Alterado", "Puntaje Serie Campeones 1° - 2° -
+// 3°" y "Revisión Puntaje 1° - 2° - 3°" (misma fuente/lógica que el Reporte
+// Deportivo Detalle) + "Obs. Monitor" (visible) + "Rodeo ID" (oculta).
+// Total: 14 columnas base del Directorio − 4 eliminadas + 2 nuevas = 12,
+// + Obs. Monitor (13ª, visible) + Rodeo ID (14ª, oculta) → 13 visibles
+// (A:M) + 1 oculta (N) = 14 columnas en total.
 // Workbook ExcelJS REAL escrito y releído (mismo patrón que
 // reporte-deportivo.export-directorio.test.js). Solo fixtures, sin datos reales.
 const { Writable } = require('stream');
@@ -31,11 +39,24 @@ const COMENTARIO_PUCON =
     '- Sin situaciones relevantes\n' +
     'Comentario del monitor: Rodeo finalizado sin novedad, según lo informado por el jurado.';
 
+// Usado solo para /export-directorio (NO cambia en esta tarea).
 const HEADERS_14 = [
     'Fecha', 'Club', 'Asociación', 'Tipo Rodeo', 'Jurado(s)', 'Resultado Alterado',
     'Descripción de lo observado', 'Total Situaciones', 'Serie Campeones - 2 Vueltas',
     'Caseta Jurado', 'Faltas Disciplinarias/Reglamentarias', 'Ganado Fuera del Peso Reglamentario',
     'Movimiento a la Rienda', 'Acciones Área Deportiva'
+];
+
+// Las 12 columnas base de /export-fin-semana (sin Obs. Monitor ni Rodeo ID):
+// las 4 columnas eliminadas (Caseta Jurado, Faltas, Ganado Fuera de Peso,
+// Movimiento a la Rienda) ya NO están, y "Puntaje Serie Campeones 1° - 2° -
+// 3°" / "Revisión Puntaje 1° - 2° - 3°" quedan consecutivas justo después de
+// "Resultado Alterado".
+const HEADERS_FIN_SEMANA = [
+    'Fecha', 'Club', 'Asociación', 'Tipo Rodeo', 'Jurado(s)', 'Resultado Alterado',
+    'Puntaje Serie Campeones 1° - 2° - 3°', 'Revisión Puntaje 1° - 2° - 3°',
+    'Descripción de lo observado', 'Total Situaciones', 'Serie Campeones - 2 Vueltas',
+    'Acciones Área Deportiva'
 ];
 
 let respuestas;
@@ -121,36 +142,77 @@ function buscarFilaConValor(ws, col, valor, maxFila = 80) {
 }
 
 describe('GET /export-fin-semana', () => {
-    test('A-G: 16 columnas; A:N iguales al Directorio; O = Obs. Monitor visible; P = Rodeo ID oculta con UUID exacto', async () => {
+    test('A-G: 14 columnas (12 base + Obs. Monitor + Rodeo ID); Obs. Monitor visible; Rodeo ID oculta con UUID exacto', async () => {
         const { res, ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         expect(res.statusCode).toBe(200);
         expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename="reporte_fin_semana_\d{4}-\d{2}-\d{2}\.xlsx"$/);
         expect(ws1).toBeDefined();
 
         const headers = ws1.getRow(1).values.slice(1);
-        expect(headers.length).toBe(16);
-        expect(headers.slice(0, 14)).toEqual(HEADERS_14);
-        expect(headers[14]).toBe('Obs. Monitor');
-        expect(headers[15]).toBe('Rodeo ID');
+        expect(headers.length).toBe(14);
+        expect(headers.slice(0, 12)).toEqual(HEADERS_FIN_SEMANA);
+        expect(headers[12]).toBe('Obs. Monitor');
+        expect(headers[13]).toBe('Rodeo ID');
 
-        expect(ws1.getColumn(15).hidden).toBeFalsy();
-        expect(ws1.getColumn(16).hidden).toBe(true);
+        expect(ws1.getColumn(13).hidden).toBeFalsy();
+        expect(ws1.getColumn(14).hidden).toBe(true);
 
         const fila = ws1.getRow(2).values.slice(1);
-        expect(fila[15]).toBe(ID_SAN_CARLOS);
+        expect(fila[13]).toBe(ID_SAN_CARLOS);
         expect(fila[1]).toBe('SAN CARLOS');
+    });
+
+    test('las 4 columnas eliminadas no aparecen en ningún lugar del Reporte Fin de Semana (CASO E)', async () => {
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        const headers = ws1.getRow(1).values.slice(1);
+        for (const eliminada of ['Caseta Jurado', 'Faltas Disciplinarias/Reglamentarias', 'Ganado Fuera del Peso Reglamentario', 'Movimiento a la Rienda']) {
+            expect(headers).not.toContain(eliminada);
+        }
+    });
+
+    test('Puntaje Serie Campeones / Revisión Puntaje quedan consecutivas inmediatamente después de Resultado Alterado', async () => {
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        const headers = ws1.getRow(1).values.slice(1);
+        const iAlterado = headers.indexOf('Resultado Alterado');
+        expect(headers[iAlterado + 1]).toBe('Puntaje Serie Campeones 1° - 2° - 3°');
+        expect(headers[iAlterado + 2]).toBe('Revisión Puntaje 1° - 2° - 3°');
+    });
+
+    test('CASO A/B/C: Puntaje Serie Campeones y Revisión Puntaje usan la misma fuente/lógica/formato que el Reporte Deportivo Detalle (fmtP, "1er - 2do - 3er", "—" para null)', async () => {
+        // San Carlos: puntaje_oficial_1er='10' (resto null en el fixture) → "10 - — - —".
+        // Ningún rodeo tiene evaluación con puntaje_analista_*, por lo que la revisión queda "— - — - —"
+        // en los 3 (mismo criterio que /export-detalle: null/'' → '—').
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        expect(ws1.getRow(2).getCell(7).value).toBe('10 - — - —');   // San Carlos (CASO A: dato presente)
+        expect(ws1.getRow(2).getCell(8).value).toBe('— - — - —');    // sin revisión (CASO C)
+        expect(ws1.getRow(3).getCell(7).value).toBe('— - — - —');    // Pucón, sin puntaje oficial (CASO B)
+        expect(ws1.getRow(4).getCell(7).value).toBe('— - — - —');    // sin comentario, sin puntaje oficial (CASO B)
+    });
+
+    test('CASO A: con puntaje_analista_* presentes, Revisión Puntaje refleja exactamente esos valores (misma fuente que evaluaciones.puntaje_analista_1er/2do/3er)', async () => {
+        respuestas.evaluaciones.data = [
+            { id: 'ev1', rodeo_id: ID_SAN_CARLOS, estado: 'cerrada', puntaje_analista_1er: '9', puntaje_analista_2do: '8+', puntaje_analista_3er: null, modo_flujo: null }
+        ];
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        expect(ws1.getRow(2).getCell(8).value).toBe('9 - 8+ - —');
+    });
+
+    test('las columnas de puntaje usan formato de texto (numFmt "@"), igual que en el Reporte Deportivo Detalle, para no perder valores como "8+"', async () => {
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        expect(ws1.getColumn(7).numFmt).toBe('@');
+        expect(ws1.getColumn(8).numFmt).toBe('@');
     });
 
     test('H/J/18: San Carlos exporta el comentario COMPLETO con saltos de línea (manual previo + bloque CG)', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        const obs = ws1.getRow(2).values.slice(1)[14];
+        const obs = ws1.getRow(2).values.slice(1)[12];
         expect(obs).toBe(COMENTARIO_SAN_CARLOS);
         expect(obs.split('\n').length).toBe(COMENTARIO_SAN_CARLOS.split('\n').length);
     });
 
     test('18/19: Pucón con 0 situaciones exporta su comentario completo (no depende de control_gestion_situaciones)', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        expect(ws1.getRow(3).values.slice(1)[14]).toBe(COMENTARIO_PUCON);
+        expect(ws1.getRow(3).values.slice(1)[12]).toBe(COMENTARIO_PUCON);
         expect(supabase.from.mock.calls.map(c => c[0])).not.toContain('control_gestion_situaciones');
     });
 
@@ -160,35 +222,35 @@ describe('GET /export-fin-semana', () => {
         respuestas.datos_monitor_rodeo.data[2].comentario_monitor = '   ';
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         for (const n of [3, 4]) {
-            const v = ws1.getRow(n).getCell(15).value;
+            const v = ws1.getRow(n).getCell(13).value;
             expect(v === null || v === undefined || v === '').toBe(true);
         }
         // sin fila en datos_monitor_rodeo tampoco
         respuestas.datos_monitor_rodeo.data = [];
         const { ws1: ws } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        const v = ws.getRow(2).getCell(15).value;
+        const v = ws.getRow(2).getCell(13).value;
         expect(v === null || v === undefined || v === '').toBe(true);
     });
 
     test('K: Obs. Monitor con wrapText y alineación superior; altura crece con el contenido', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        const c = ws1.getRow(2).getCell(15);
+        const c = ws1.getRow(2).getCell(13);
         expect(c.alignment.wrapText).toBe(true);
         expect(c.alignment.vertical).toBe('top');
         expect(ws1.getRow(2).height).toBeGreaterThan(28);
-        expect(ws1.getColumn(15).width).toBeGreaterThanOrEqual(50);
+        expect(ws1.getColumn(13).width).toBeGreaterThanOrEqual(50);
     });
 
-    test('L: autoFilter cubre A:O (columnas visibles), sin la P oculta', async () => {
+    test('L: autoFilter cubre A:M (columnas visibles), sin la N oculta', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        expect(ws1.autoFilter).toBe('A1:O1');
+        expect(ws1.autoFilter).toBe('A1:M1');
     });
 
     test('estilos: fila alterada recibe fill también en Obs. Monitor, con rojo/negrita en Resultado Alterado', async () => {
         respuestas.evaluaciones.data = [{ id: 'ev1', rodeo_id: ID_SAN_CARLOS, estado: 'cerrada', resultados_alterados: true, comentario_resultados_alterados: 'x', modo_flujo: null }];
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const fila = ws1.getRow(2);
-        expect(fila.getCell(15).fill.fgColor.argb).toBe('FFFDEBD0');
+        expect(fila.getCell(13).fill.fgColor.argb).toBe('FFFDEBD0');
         expect(fila.getCell(6).font.bold).toBe(true);
         expect(fila.getCell(6).font.color.argb).toBe('FFC0392B');
     });
@@ -230,7 +292,7 @@ describe('GET /export-fin-semana', () => {
         const dir = await cargarHoja1('/export-directorio', 'Reporte Deportivo', query);
         const fin = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana', query);
         const idsDir = dir.ws1.getColumn(15).values.slice(2);
-        const idsFin = fin.ws1.getColumn(16).values.slice(2);
+        const idsFin = fin.ws1.getColumn(14).values.slice(2);
         expect(idsFin).toEqual(idsDir);
     });
 
