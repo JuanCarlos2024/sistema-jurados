@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Perfil — Delegado de Asociación</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados</h2></div>
+        <nav class="sidebar-nav">
+            <a href="/institucional/rodeos.html" class="nav-item"><span class="icon">🤠</span> Mis Rodeos</a>
+            <a href="/institucional/perfil.html" class="nav-item activo"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Mi Perfil</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div id="banner-primer-login" class="oculto">
+                <div class="primer-login-banner">
+                    <strong>Primer ingreso:</strong> debe establecer una nueva contraseña antes de continuar.
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-titulo">🏛️ Información institucional</div>
+                <div class="form-grupo">
+                    <label class="form-label">Asociación</label>
+                    <input type="text" id="inp-asociacion" class="form-control" readonly style="background:#f4f6f9;">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Correo institucional</label>
+                    <input type="text" id="inp-email" class="form-control" readonly style="background:#f4f6f9;">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Tipo de usuario</label>
+                    <input type="text" value="Delegado de Asociación" class="form-control" readonly style="background:#f4f6f9;">
+                </div>
+                <div class="form-grupo">
+                    <label class="form-label">Estado de la cuenta</label>
+                    <input type="text" id="inp-estado" class="form-control" readonly style="background:#f4f6f9;">
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-titulo">🔑 Cambiar contraseña</div>
+                <form onsubmit="cambiarPassword(event)">
+                    <div id="campo-password-actual" class="form-grupo">
+                        <label class="form-label">Contraseña actual</label>
+                        <input type="password" id="inp-pass-actual" class="form-control" placeholder="••••••••" autocomplete="current-password">
+                        <div class="form-hint">Requerida salvo en el primer ingreso</div>
+                    </div>
+                    <div class="form-fila">
+                        <div class="form-grupo">
+                            <label class="form-label" id="lbl-nueva-pass">Nueva contraseña</label>
+                            <input type="password" id="inp-pass-nueva" class="form-control" placeholder="••••••••" required autocomplete="new-password">
+                            <div class="form-hint">Mínimo 8 caracteres</div>
+                        </div>
+                        <div class="form-grupo">
+                            <label class="form-label">Confirmar nueva contraseña</label>
+                            <input type="password" id="inp-pass-confirm" class="form-control" placeholder="••••••••" required autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div class="form-acciones">
+                        <button type="submit" class="btn btn-primario" id="btn-guardar">Cambiar contraseña</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('cuenta_institucional');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.asociacion_nombre ? `Delegado de ${api.getUsuario().asociacion_nombre}` : '';
+
+const params = getQueryParams();
+let esPrimerLogin = params.primer_login === '1';
+
+async function init() {
+    try {
+        const perfil = await api.get('/institucional/perfil');
+        esPrimerLogin = perfil.activo && esPrimerLogin; // el backend no expone primer_login acá; se respeta el flag de la URL recién emitido por el login
+
+        document.getElementById('inp-asociacion').value = perfil.asociacion_nombre || '—';
+        document.getElementById('inp-email').value = perfil.email || '';
+        document.getElementById('inp-estado').value = perfil.activo ? 'Activa' : 'Inactiva';
+
+        if (esPrimerLogin) {
+            document.getElementById('banner-primer-login').classList.remove('oculto');
+            document.getElementById('lbl-nueva-pass').innerHTML = 'Nueva contraseña <span class="req">*</span>';
+            document.getElementById('campo-password-actual').style.display = 'none';
+        }
+    } catch (err) { mostrarError(err); }
+}
+
+async function cambiarPassword(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-guardar');
+    const passActual = document.getElementById('inp-pass-actual').value;
+    const passNueva = document.getElementById('inp-pass-nueva').value;
+    const passConfirm = document.getElementById('inp-pass-confirm').value;
+
+    if (passNueva !== passConfirm) { mostrarToast('Las contraseñas no coinciden', 'error'); return; }
+    if (passNueva.length < 8) { mostrarToast('La contraseña debe tener al menos 8 caracteres', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Guardando…';
+    try {
+        await api.post('/institucional/auth/cambiar-password', {
+            password_actual: passActual || undefined,
+            password_nueva: passNueva
+        });
+        mostrarToast('Contraseña actualizada correctamente', 'success');
+        if (esPrimerLogin) {
+            setTimeout(() => { window.location.href = '/institucional/rodeos.html'; }, 1200);
+        } else {
+            document.getElementById('inp-pass-actual').value = '';
+            document.getElementById('inp-pass-nueva').value = '';
+            document.getElementById('inp-pass-confirm').value = '';
+        }
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Cambiar contraseña';
+    }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -353,4 +353,14 @@ router.post('/:id/enviar', async (req, res) => {
     res.json({ mensaje: msg, cartilla: data, nota_delegado_sincronizada: notaDelegadoSincronizada });
 });
 
+// Fase 3 (Delegado de Asociación): expone las mismas 2 listas de campos como
+// propiedades del router — puramente aditivo, no cambia el comportamiento de
+// este router como middleware — para que routes/institucional/cartilla.js
+// reutilice EXACTAMENTE los mismos campos editables/requeridos en vez de
+// duplicarlos (si este archivo agrega un campo nuevo, el institucional lo
+// hereda automáticamente, sin tener que recordar actualizar dos listas).
+router.CAMPOS_EDITABLES = CAMPOS_EDITABLES;
+router.CAMPOS_REQUERIDOS_ENVIO = CAMPOS_REQUERIDOS_ENVIO;
+router.cargarJuradosRodeo = cargarJuradosRodeo;
+
 module.exports = router;

@@ -25,6 +25,9 @@
             <button class="login-tab" id="tab-usuario" onclick="mostrarTab('usuario')">
                 Jurado / Delegado
             </button>
+            <button class="login-tab" id="tab-institucional" onclick="mostrarTab('institucional')">
+                Delegado de Asociación
+            </button>
         </div>
 
         <!-- Formulario Admin -->
@@ -70,6 +73,24 @@
                 Iniciar Sesión
             </button>
         </form>
+
+        <!-- Formulario Cuenta Institucional (Delegado de Asociación) -->
+        <form id="form-institucional" class="oculto" onsubmit="loginInstitucional(event)">
+            <div class="form-grupo">
+                <label class="form-label">Correo institucional</label>
+                <input type="email" id="inst-email" class="form-control"
+                       placeholder="delegado-osorno@ferochi.com" required autocomplete="username">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Contraseña</label>
+                <input type="password" id="inst-password" class="form-control"
+                       placeholder="••••••••" required autocomplete="current-password">
+            </div>
+            <div id="inst-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
+            <button type="submit" class="btn btn-primario w-100" id="btn-inst-login">
+                Iniciar Sesión
+            </button>
+        </form>
     </div>
 </div>
 
@@ -86,6 +107,9 @@
                 if (u.rol_evaluacion === 'analista' || u.rol_evaluacion === 'comision_tecnica') window.location.href = '/admin/evaluaciones.html';
                 else if (u.rol_evaluacion === 'capacitador') window.location.href = '/admin/capacitaciones.html';
                 else window.location.href = '/admin/dashboard.html';
+            } else if (u.tipo === 'cuenta_institucional') {
+                // Fase 3.3: entra directo a Mis Rodeos, sin pasar por Mi Panel (eliminado).
+                window.location.href = '/institucional/rodeos.html';
             } else {
                 window.location.href = '/usuario/dashboard.html';
             }
@@ -95,8 +119,10 @@
     function mostrarTab(tab) {
         document.getElementById('form-admin').classList.toggle('oculto', tab !== 'admin');
         document.getElementById('form-usuario').classList.toggle('oculto', tab !== 'usuario');
+        document.getElementById('form-institucional').classList.toggle('oculto', tab !== 'institucional');
         document.getElementById('tab-admin').classList.toggle('activo', tab === 'admin');
         document.getElementById('tab-usuario').classList.toggle('activo', tab === 'usuario');
+        document.getElementById('tab-institucional').classList.toggle('activo', tab === 'institucional');
     }
 
     // ── Helper: fetch con signal para los handlers de login ──────────────────
@@ -180,6 +206,30 @@
         await usuarioLoginHandler.login({
             identificador: document.getElementById('usr-identificador').value.trim(),
             password:      document.getElementById('usr-password').value,
+        });
+    }
+
+    // ── Handler: login de Cuenta Institucional (Delegado de Asociación) ──────
+    const institucionalLoginHandler = LoginUX.createLoginHandler({
+        apiFetch: makeFetchLogin('/institucional/auth/login'),
+        onStateChange: makeStateHandler('btn-inst-login', 'inst-error'),
+        onSuccess: function(data) {
+            api.guardarSesion(data.token, data.usuario);
+            if (data.usuario.primer_login) {
+                window.location.href = '/institucional/perfil.html?primer_login=1';
+            } else {
+                // Fase 3.3: entra directo a Mis Rodeos, sin pasar por Mi Panel (eliminado).
+                window.location.href = '/institucional/rodeos.html';
+            }
+        },
+    });
+
+    async function loginInstitucional(e) {
+        e.preventDefault();
+        if (document.getElementById('btn-inst-login').disabled) return;
+        await institucionalLoginHandler.login({
+            email:    document.getElementById('inst-email').value.trim(),
+            password: document.getElementById('inst-password').value,
         });
     }
 </script>

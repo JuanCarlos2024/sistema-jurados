@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Rodeos — Delegado de Asociación</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* Fase 3.4 — filtros compactos, responsive, estilo institucional
+           azul/blanco ya usado en el resto del sistema (reutiliza .form-control,
+           .btn, .card existentes — sin tokens de color nuevos). */
+        .filtros-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr) auto;
+            gap: 10px;
+            align-items: end;
+        }
+        @media (max-width: 900px) {
+            .filtros-grid { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 560px) {
+            .filtros-grid { grid-template-columns: 1fr; }
+        }
+        .filtros-grid .form-label { font-size: 12px; margin-bottom: 4px; }
+        #filtros-resultado { font-size: 13px; color: #666; margin-top: 10px; }
+        #filtros-error { font-size: 13px; color: #c0392b; margin-top: 6px; }
+        .celda-acciones { display: flex; gap: 6px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados</h2></div>
+        <nav class="sidebar-nav">
+            <a href="/institucional/rodeos.html" class="nav-item activo"><span class="icon">🤠</span> Mis Rodeos</a>
+            <a href="/institucional/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <div>
+                    <h1>Mis Rodeos</h1>
+                    <!-- Fase 3.3: la información de la asociación aparece discretamente
+                         acá (ya no hay una pantalla "Mi Panel" independiente). -->
+                    <div id="info-asociacion-discreta" style="font-size:12px;color:#888;margin-top:2px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- Fase 3.4 — Filtros: siempre sobre la lista ya cargada y autorizada
+                 (filtrado 100% frontend, no hay paginación en este listado), nunca
+                 alteran la visibilidad por permisos/temporada/asociación. -->
+            <div class="card">
+                <div class="card-titulo">Filtros</div>
+                <div class="filtros-grid">
+                    <div>
+                        <label class="form-label">Fecha desde</label>
+                        <input type="date" id="f-fecha-desde" class="form-control" onchange="aplicarFiltros()">
+                    </div>
+                    <div>
+                        <label class="form-label">Fecha hasta</label>
+                        <input type="date" id="f-fecha-hasta" class="form-control" onchange="aplicarFiltros()">
+                    </div>
+                    <div>
+                        <label class="form-label">Club</label>
+                        <select id="f-club" class="form-control" onchange="aplicarFiltros()">
+                            <option value="">Todos los clubes</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label">Tipo de rodeo</label>
+                        <select id="f-tipo" class="form-control" onchange="aplicarFiltros()">
+                            <option value="">Todos los tipos</option>
+                        </select>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secundario" onclick="limpiarFiltros()">Limpiar filtros</button>
+                    </div>
+                </div>
+                <div id="filtros-error" class="oculto"></div>
+                <div id="filtros-resultado"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-titulo" id="titulo-temporada">Rodeos de la temporada vigente</div>
+                <div id="tabla-rodeos" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('cuenta_institucional');
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.asociacion_nombre ? `Delegado de ${api.getUsuario().asociacion_nombre}` : '';
+
+const ETIQUETA_CARTILLA = {
+    sin_cartilla: 'Sin cartilla',
+    borrador: 'Borrador',
+    enviada: 'Enviada',
+    observada: 'Observada',
+    reenviada: 'Reenviada',
+    aprobada: 'Aprobada',
+    cerrada: 'Cerrada',
+    multiples_cartillas_sin_resolver: 'Múltiples registros — pendiente de revisión administrativa'
+};
+// rodeos.fecha es una fecha deportiva PURA (sin hora): fmtFechaChile() haría una
+// conversión UTC→America/Santiago que no corresponde acá (correcta para timestamps
+// reales como enviada_en, pero esta fecha no tiene componente horario real) y
+// retrocede un día (ej. "2026-09-18" medianoche UTC -> "17-09-2026 21:00" en Chile).
+// Mismo criterio de solo-lectura de los componentes Y-M-D que ya usa
+// formatFecha() en este mismo utils.js (línea ~12) — se replica localmente con
+// guiones en vez de reutilizar formatFecha() tal cual para no tocar esa función
+// compartida (usada con "/" en otras pantallas) ni su formato en otros lugares.
+function fmtFechaRodeo(fecha) {
+    if (!fecha) return '—';
+    const [y, m, d] = fecha.split('T')[0].split('-');
+    return `${d}-${m}-${y}`;
+}
+// Fase 3.4: mismo criterio sin-huso-horario, pero como clave YYYY-MM-DD
+// comparable lexicográficamente (para el filtro de rango de fechas — nunca
+// se crea un objeto Date, nunca se desplaza un día).
+function fechaComparable(fecha) {
+    return fecha ? fecha.split('T')[0] : '';
+}
+
+const BADGE_CARTILLA = {
+    sin_cartilla: 'badge-pendiente',
+    borrador: 'badge-pendiente',
+    enviada: 'badge-activo',
+    observada: 'badge-pendiente',
+    reenviada: 'badge-pendiente',
+    aprobada: 'badge-activo',
+    cerrada: 'badge-inactivo',
+    multiples_cartillas_sin_resolver: 'badge-anulado'
+};
+
+// Fase 3.1/3.3 — regla oficial: "cada rodeo tiene un solo delegado responsable".
+// "Tipo de Delegado": la MODALIDAD (de quién es la responsabilidad), nunca
+// decidida acá — solo refleja tipo_delegado, ya calculado por el backend
+// (GET /institucional/rodeos) con el mismo criterio de "designación
+// efectiva" verificado también al crear/guardar la cartilla.
+const ETIQUETA_TIPO_DELEGADO = {
+    delegado_rentado: '<span class="badge badge-pendiente">Delegado Rentado</span>',
+    delegado_asociacion: '<span class="badge badge-activo">Delegado de Asociación</span>',
+    conflicto: '<span class="badge badge-anulado">Situación excepcional</span>'
+};
+function celdaTipoDelegado(r) {
+    return ETIQUETA_TIPO_DELEGADO[r.tipo_delegado] || '<span class="badge badge-inactivo">—</span>';
+}
+
+const ESTADOS_CARTILLA_BLOQUEADOS = ['enviada', 'reenviada', 'aprobada', 'cerrada'];
+
+// Fase 3.4 — "Jurado designado": reemplaza la columna "Estado rodeo". Solo
+// muestra designaciones YA PUBLICADAS y no rechazadas (jurados_designados ya
+// viene filtrado así desde el backend) — nunca inventa nombres; si el
+// arreglo viene vacío, es porque el administrador todavía no publicó ninguna
+// designación de jurado para este rodeo.
+function celdaJurados(r) {
+    if (!r.jurados_designados || r.jurados_designados.length === 0) {
+        return '<span class="badge badge-pendiente">Pendiente de designación</span>';
+    }
+    return r.jurados_designados.map(n => `<div>${sanitizar(n)}</div>`).join('');
+}
+
+// "Nombre del Delegado" — comportamiento distinto según la modalidad (Fase 3.3):
+//   A) Delegado Rentado: solo lectura, nombre real desde asignaciones/catálogo
+//      de personas (nunca el seleccionado institucionalmente, nunca inventado).
+//   B) Delegado de Asociación, AÚN SIN confirmar: selector desplegable
+//      INDEPENDIENTE por rodeo — cada fila guarda su propia elección, nunca
+//      afecta a otro rodeo.
+//   C) Delegado de Asociación YA CONFIRMADO (Fase 3.5): el selector
+//      desaparece PARA SIEMPRE — regla oficial "una vez confirmado, no se
+//      puede cambiar directamente" — se muestra como "Responsable
+//      confirmado", SIN IMPORTAR el estado de la cartilla (ni siquiera
+//      "borrador" o "sin_cartilla" permiten volver a elegir). El bloqueo
+//      real vive en el backend (ver institucional/rodeos.js); esto es solo
+//      el reflejo visual de ese estado ya persistido.
+function celdaNombreDelegado(r) {
+    if (r.tipo_delegado === 'delegado_rentado') {
+        return r.nombre_delegado
+            ? sanitizar(r.nombre_delegado)
+            : '<span style="color:#999;">No disponible</span>';
+    }
+    if (r.tipo_delegado === 'conflicto') {
+        return r.nombre_delegado
+            ? `${sanitizar(r.nombre_delegado)} <span style="color:#999;">(revisión admin)</span>`
+            : '<span style="color:#999;">Revisión administrativa</span>';
+    }
+    // tipo_delegado === 'delegado_asociacion'
+    if (r.delegado_asociacion_id_seleccionado) {
+        return `<span class="badge badge-activo" title="Un reemplazo solo puede autorizarlo el Administrador.">Responsable confirmado</span><br>${r.nombre_delegado ? sanitizar(r.nombre_delegado) : '<span style="color:#999;">—</span>'}`;
+    }
+    if (_delegadosCatalogo.length === 0) {
+        return '<span style="color:#c0392b;">Sin delegados certificados</span>';
+    }
+    return `<select id="sel-delegado-${r.id}" class="form-control" style="min-width:160px;" onchange="confirmarDelegadoRodeo('${r.id}')">
+        <option value="">— Seleccionar delegado —</option>
+        ${_delegadosCatalogo.map(d => `<option value="${d.id}">${sanitizar(d.nombre)}</option>`).join('')}
+    </select>`;
+}
+
+// Fase 3.4 — "Cartillas completadas: ver en línea y descargar": en los
+// estados bloqueados (enviada/reenviada/aprobada/cerrada) se muestran, en la
+// MISMA fila, "Ver cartilla" (formulario oficial de 14 secciones, en modo
+// solo lectura — lo decide la propia página según su estado) y "Descargar
+// PDF" (reutiliza el generador oficial existente, nunca un diseño paralelo).
+// "observada" NO se considera bloqueado a propósito: el flujo de
+// correcciones existente sigue intacto (se muestra "Continuar cartilla").
+function celdaAccion(r) {
+    if (r.estado_rodeo === 'anulado') {
+        return `<button class="btn btn-secundario btn-pequeño" disabled title="Rodeo anulado: no admite cartilla">Completar cartilla</button>`;
+    }
+    if (r.delegado_rentado_designado) {
+        return `<button class="btn btn-secundario btn-pequeño" disabled title="Este rodeo tiene un Delegado Rentado designado. La cartilla corresponde a dicho delegado.">Delegado Rentado designado</button>`;
+    }
+    if (r.tipo_delegado === 'conflicto') {
+        return `<button class="btn btn-secundario btn-pequeño" disabled title="Situación excepcional: requiere resolución administrativa antes de continuar.">No disponible</button>`;
+    }
+    // Delegado de Asociación: antes de permitir crear/completar, debe existir
+    // una selección explícita para ESTE rodeo (nunca se abre sin elegir a nadie).
+    if (!r.cartilla_iniciada && !r.delegado_asociacion_id_seleccionado) {
+        if (_delegadosCatalogo.length === 0) {
+            return `<button class="btn btn-secundario btn-pequeño" disabled title="Esta asociación no tiene delegados certificados registrados todavía.">Sin delegados certificados</button>`;
+        }
+        return `<button class="btn btn-secundario btn-pequeño" disabled title="Seleccione un delegado para este rodeo antes de completar la cartilla.">Seleccione un delegado</button>`;
+    }
+
+    const verLink = `<a href="/usuario/cartilla-delegado.html?rodeo_id=${encodeURIComponent(r.id)}" class="btn btn-secundario btn-pequeño">Ver cartilla</a>`;
+
+    if (r.estado_cartilla === 'sin_cartilla') {
+        return `<a href="/usuario/cartilla-delegado.html?rodeo_id=${encodeURIComponent(r.id)}" class="btn btn-primario btn-pequeño">Completar cartilla</a>`;
+    }
+    if (ESTADOS_CARTILLA_BLOQUEADOS.includes(r.estado_cartilla)) {
+        const pdfBtn = r.cartilla_id
+            ? `<button type="button" class="btn btn-secundario btn-pequeño" onclick="descargarPdfCartilla('${r.id}')">Descargar PDF</button>`
+            : '';
+        return `<div class="celda-acciones">${verLink}${pdfBtn}</div>`;
+    }
+    // borrador / observada -> el flujo de correcciones existente sigue intacto.
+    return `<a href="/usuario/cartilla-delegado.html?rodeo_id=${encodeURIComponent(r.id)}" class="btn btn-primario btn-pequeño">Continuar cartilla</a>`;
+}
+
+// Fase 3.4 — mismo criterio de nombre de archivo que el backend (acentos
+// fuera, no-alfanumérico -> guion bajo) para que el nombre descargado sea
+// claro independientemente de lo que el navegador infiera del header.
+function nombreArchivoPDF(club, fechaRodeo) {
+    const clubLimpio = (club || 'rodeo').normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'rodeo';
+    let fechaLimpia = 'sin-fecha';
+    if (fechaRodeo) {
+        const [y, m, d] = fechaRodeo.split('T')[0].split('-');
+        if (y && m && d) fechaLimpia = `${d}-${m}-${y}`;
+    }
+    return `Cartilla_Delegado_${clubLimpio}_${fechaLimpia}.pdf`;
+}
+
+// Nunca simula una descarga: siempre pide el PDF real al backend (mismo
+// generador oficial) y muestra el error real si algo falla — nunca un botón
+// inerte con éxito fingido.
+async function descargarPdfCartilla(rodeoId) {
+    const r = _rodeosActuales.find(x => x.id === rodeoId);
+    if (!r || !r.cartilla_id) return;
+    try {
+        await api.descargar(`/institucional/cartilla/${encodeURIComponent(r.cartilla_id)}/pdf`, nombreArchivoPDF(r.club, r.fecha));
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+let _rodeosActuales = [];
+let _rodeosFiltrados = [];
+let _delegadosCatalogo = [];
+
+function renderFilaRodeo(r) {
+    const badgeAnulado = r.estado_rodeo === 'anulado' ? ' <span class="badge badge-anulado">Anulado</span>' : '';
+    return `<tr id="fila-rodeo-${r.id}">
+        <td>${fmtFechaRodeo(r.fecha)}</td>
+        <td>${sanitizar(r.club)}${badgeAnulado}</td>
+        <td>${sanitizar(r.asociacion)}</td>
+        <td>${sanitizar(r.tipo_rodeo || '—')}</td>
+        <td>${celdaJurados(r)}</td>
+        <td>${celdaTipoDelegado(r)}</td>
+        <td id="celda-nombre-${r.id}">${celdaNombreDelegado(r)}</td>
+        <td><span class="badge ${BADGE_CARTILLA[r.estado_cartilla] || 'badge-inactivo'}">${ETIQUETA_CARTILLA[r.estado_cartilla] || r.estado_cartilla}</span></td>
+        <td id="celda-accion-${r.id}">${celdaAccion(r)}</td>
+    </tr>`;
+}
+
+function renderTabla() {
+    const div = document.getElementById('tabla-rodeos');
+    const resultadoDiv = document.getElementById('filtros-resultado');
+    if (_rodeosActuales.length === 0) {
+        div.innerHTML = `<div class="tabla-vacia">No hay rodeos registrados para su asociación en esta temporada.</div>`;
+        resultadoDiv.textContent = '';
+        return;
+    }
+    resultadoDiv.textContent = `${_rodeosFiltrados.length} de ${_rodeosActuales.length} rodeo(s) encontrado(s).`;
+    if (_rodeosFiltrados.length === 0) {
+        div.innerHTML = `<div class="tabla-vacia">Ningún rodeo coincide con los filtros aplicados.</div>`;
+        return;
+    }
+    div.innerHTML = `<div style="overflow-x:auto;"><table>
+        <thead><tr>
+            <th>Fecha</th>
+            <th>Club</th>
+            <th>Asociación</th>
+            <th>Tipo</th>
+            <th>Jurado designado</th>
+            <th>Tipo de Delegado</th>
+            <th>Nombre del Delegado</th>
+            <th>Cartilla</th>
+            <th>Acción</th>
+        </tr></thead>
+        <tbody>${_rodeosFiltrados.map(renderFilaRodeo).join('')}</tbody>
+    </table></div>`;
+}
+
+// ── Filtros (Fase 3.4) — 100% frontend sobre la lista ya autorizada y
+// cargada; nunca cambian qué rodeos están permitidos ver, solo cuáles se
+// muestran. Los tres filtros se combinan con AND y se re-evalúan completos
+// cada vez (nunca sobre lo que quedó visible de un filtro anterior).
+function poblarSelectsFiltro() {
+    const clubes = [...new Set(_rodeosActuales.map(r => r.club).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+    const tipos = [...new Set(_rodeosActuales.map(r => r.tipo_rodeo).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+    const selClub = document.getElementById('f-club');
+    const selTipo = document.getElementById('f-tipo');
+    selClub.innerHTML = `<option value="">Todos los clubes</option>` + clubes.map(c => `<option value="${sanitizar(c)}">${sanitizar(c)}</option>`).join('');
+    selTipo.innerHTML = `<option value="">Todos los tipos</option>` + tipos.map(t => `<option value="${sanitizar(t)}">${sanitizar(t)}</option>`).join('');
+}
+
+function aplicarFiltros() {
+    const errorDiv = document.getElementById('filtros-error');
+    errorDiv.classList.add('oculto');
+    errorDiv.textContent = '';
+
+    const desde = document.getElementById('f-fecha-desde').value; // 'YYYY-MM-DD' o ''
+    const hasta = document.getElementById('f-fecha-hasta').value;
+    const club = document.getElementById('f-club').value;
+    const tipo = document.getElementById('f-tipo').value;
+
+    if (desde && hasta && desde > hasta) {
+        errorDiv.textContent = 'La fecha "desde" no puede ser posterior a la fecha "hasta".';
+        errorDiv.classList.remove('oculto');
+        _rodeosFiltrados = [];
+        renderTabla();
+        return;
+    }
+
+    _rodeosFiltrados = _rodeosActuales.filter(r => {
+        const f = fechaComparable(r.fecha);
+        if (desde && f < desde) return false;   // inclusivo: f === desde pasa
+        if (hasta && f > hasta) return false;   // inclusivo: f === hasta pasa
+        if (club && r.club !== club) return false;
+        if (tipo && r.tipo_rodeo !== tipo) return false;
+        return true;
+    });
+    renderTabla();
+}
+
+function limpiarFiltros() {
+    document.getElementById('f-fecha-desde').value = '';
+    document.getElementById('f-fecha-hasta').value = '';
+    document.getElementById('f-club').value = '';
+    document.getElementById('f-tipo').value = '';
+    document.getElementById('filtros-error').classList.add('oculto');
+    _rodeosFiltrados = [..._rodeosActuales];
+    renderTabla();
+}
+
+// Fase 3.5 — regla oficial: "una vez confirmado, no se puede cambiar
+// directamente". Esta es una CONFIRMACIÓN, no una edición: requiere el
+// diálogo explícito con el texto exacto acordado, y solo se persiste si el
+// usuario confirma (si cancela, el <select> vuelve a "— Seleccionar
+// delegado —" y nunca se llama al backend). Se valida en backend
+// (asociación dueña, delegado certificado/activo, sin Rentado vigente, y el
+// bloqueo real de "responsable único" vía RPC con índice único — ver
+// institucional/rodeos.js) antes de persistir — nunca se asume en el cliente.
+async function confirmarDelegadoRodeo(rodeoId) {
+    const select = document.getElementById(`sel-delegado-${rodeoId}`);
+    const delegadoId = select.value;
+    if (!delegadoId) return;
+    const delegado = _delegadosCatalogo.find(d => d.id === delegadoId);
+    const nombre = delegado ? delegado.nombre : '';
+    const confirmado = await confirmar(
+        `¿Confirma que ${sanitizar(nombre)} será el Delegado de Asociación responsable de completar la cartilla de este rodeo? ` +
+        `Una vez confirmado, no podrá cambiarlo directamente. Cualquier reemplazo deberá ser autorizado por el administrador.`
+    );
+    if (!confirmado) {
+        select.value = ''; // nunca persiste si se cancela
+        return;
+    }
+
+    select.disabled = true;
+    const r = _rodeosActuales.find(x => x.id === rodeoId);
+    try {
+        const resultado = await api.post(`/institucional/rodeos/${encodeURIComponent(rodeoId)}/seleccionar-delegado`, { delegado_asociacion_id: delegadoId });
+        if (r) {
+            r.delegado_asociacion_id_seleccionado = resultado.seleccion.delegado_asociacion_id;
+            r.nombre_delegado = resultado.seleccion.nombre;
+            document.getElementById(`celda-nombre-${rodeoId}`).innerHTML = celdaNombreDelegado(r);
+            document.getElementById(`celda-accion-${rodeoId}`).innerHTML = celdaAccion(r);
+        }
+        mostrarToast(`Delegado confirmado como responsable de este rodeo: ${resultado.seleccion.nombre}`, 'success');
+    } catch (err) {
+        // Fase 3.5 — si perdió la carrera de confirmación (otra sesión o una
+        // llamada concurrente ya confirmó a OTRO responsable mientras tanto),
+        // el backend devuelve 409 RESPONSABLE_YA_CONFIRMADO: nunca se reintenta
+        // en silencio, se recarga esta fila completa para reflejar quién quedó
+        // realmente confirmado (nunca lo que el cliente intentó).
+        if (err?.data?.code === 'RESPONSABLE_YA_CONFIRMADO') {
+            mostrarToast('Este rodeo ya quedó con otro Delegado de Asociación confirmado como responsable mientras tanto. Se actualizó la tabla con el estado real.', 'error');
+            await init(); // recarga completa: nunca se confía en lo que el cliente intentó
+            return;
+        }
+        mostrarError(err);
+        select.disabled = false;
+        select.value = '';
+    }
+}
+
+async function cargarInfoAsociacion() {
+    try {
+        const perfil = await api.get('/institucional/perfil');
+        document.getElementById('info-asociacion-discreta').textContent =
+            `${perfil.asociacion_nombre || '—'} · ${perfil.email || ''}`;
+    } catch { /* puramente informativo — un error acá no debe bloquear la pantalla */ }
+}
+
+async function init() {
+    const div = document.getElementById('tabla-rodeos');
+    cargarInfoAsociacion();
+    try {
+        const [{ rodeos, temporada, mensaje }, { delegados }] = await Promise.all([
+            api.get('/institucional/rodeos'),
+            api.get('/institucional/delegados')
+        ]);
+        _delegadosCatalogo = delegados || [];
+
+        document.getElementById('titulo-temporada').textContent = temporada
+            ? `Rodeos de la temporada ${temporada.nombre}`
+            : 'Rodeos';
+
+        if (mensaje) {
+            div.innerHTML = `<div class="alerta alerta-info">${sanitizar(mensaje)}</div>`;
+            return;
+        }
+
+        _rodeosActuales = rodeos;
+        _rodeosFiltrados = [...rodeos];
+        poblarSelectsFiltro();
+        renderTabla();
+    } catch (err) {
+        div.innerHTML = '';
+        mostrarError(err);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

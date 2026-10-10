@@ -175,13 +175,38 @@
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
-protegerRuta('usuario_pagado');
+// Fase 3 (Delegado de Asociación): esta MISMA página se reutiliza para ambos
+// tipos de sesión — "no crear un formulario simplificado". Lo único que
+// cambia es de dónde viene la autorización: asignación individual (Delegado
+// Rentado) vs asociación+delegado certificado (cuenta institucional). El
+// formulario, sus validaciones y su lógica de negocio son IDÉNTICOS.
+protegerRuta(['usuario_pagado', 'cuenta_institucional']);
 
 const _usr = api.getUsuario();
-if (_usr?.tipo_persona !== 'delegado_rentado') {
+const _esInstitucional = _usr?.tipo === 'cuenta_institucional';
+if (!_esInstitucional && _usr?.tipo_persona !== 'delegado_rentado') {
     window.location.href = '/usuario/dashboard.html';
 }
-document.getElementById('nombre-usr').textContent = _usr?.nombre || '';
+document.getElementById('nombre-usr').textContent = _esInstitucional
+    ? (_usr?.asociacion_nombre ? `Delegado de ${_usr.asociacion_nombre}` : '')
+    : (_usr?.nombre || '');
+
+// Namespace de API y navegación "Mi Panel" según el tipo de sesión — el
+// backend institucional vive en /institucional/cartilla, completamente
+// separado del namespace /usuario/* (nunca comparten middleware de
+// autorización); ver backend/src/routes/institucional/cartilla.js.
+const _API_BASE = _esInstitucional ? '/institucional/cartilla' : '/usuario/cartilla-delegado';
+if (_esInstitucional) {
+    // Fase 3.3: ya no hay "Mi Panel" — Mis Rodeos es la pantalla de entrada.
+    document.querySelectorAll('a[href="/usuario/dashboard.html"]').forEach(a => { a.href = '/institucional/rodeos.html'; });
+    // El menú institucional no tiene Mis Pagos/Capacitaciones/Material — se
+    // reemplaza completo en vez de dejar enlaces a páginas a las que esta
+    // sesión nunca tiene acceso (defensa en profundidad visual; el backend
+    // ya las bloquea de cualquier forma por namespace separado).
+    document.querySelector('.sidebar-nav').innerHTML = `
+        <a href="/institucional/rodeos.html" class="nav-item"><span class="icon">🤠</span> Mis Rodeos</a>
+        <a href="/institucional/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>`;
+}
 
 const params   = new URLSearchParams(location.search);
 const RODEO_ID = params.get('rodeo_id');
@@ -189,6 +214,25 @@ const RODEO_ID = params.get('rodeo_id');
 // ── Globals ETAPA 1 ──────────────────────────────────────────────────────────
 let _cartillaId    = null;
 let _estado        = null;
+// Fase 3: control de concurrencia optimista — solo lo usa el flujo
+// institucional (el backend de Delegado Rentado no tiene/exige `version`,
+// se envía únicamente cuando _esInstitucional es true, ver guardarBorrador()
+// y enviarCartilla()).
+let _version       = null;
+// Fase 3.1 (cierre, Caso D): true cuando la cartilla institucional YA existe
+// y DESPUÉS apareció una designación vigente de Delegado Rentado para el
+// mismo rodeo — se sigue mostrando todo el contenido (lectura), pero el
+// formulario completo pasa a modo solo-lectura (ver esSoloLectura()) y se
+// deshabilitan Guardar/Enviar. El backend repite esta misma verificación en
+// cada PATCH/enviar — este flag nunca es la única barrera.
+let _bloqueadaPorDesignacionPosterior = false;
+// Único punto que decide si el formulario es editable o no — reemplaza las
+// múltiples repeticiones de `['enviada','reenviada','aprobada'].includes(_estado)`
+// que ya existían por sección, para que el bloqueo por designación posterior
+// aplique de forma uniforme a TODO el formulario sin tener que tocar cada sección.
+function esSoloLectura() {
+    return ['enviada', 'reenviada', 'aprobada'].includes(_estado) || _bloqueadaPorDesignacionPosterior;
+}
 let _guardando     = false;
 let _jurados       = []; // Jurado(s) real(es) asignados al rodeo — SOLO LECTURA (nuevo formato 2026-2027)
 let _rodeoActual    = null; // rodeo cargado — fuente EN VIVO de Temporada/Tipo de Rodeo/Asociación/Club (4ª revisión)
@@ -235,7 +279,7 @@ if (!RODEO_ID) {
 
 async function init() {
     try {
-        const r = await api.get(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`);
+        const r = await api.get(`${_API_BASE}/rodeo/${RODEO_ID}`);
         renderCartilla(r);
     } catch (err) {
         document.getElementById('cuerpo-cartilla').innerHTML =
@@ -247,12 +291,32 @@ async function init() {
 // RENDER PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
 function renderCartilla(r) {
-    const { rodeo, perfil, cartilla, jurados } = r;
+    const { rodeo, perfil, cartilla, jurados, conflicto_rentado, delegado_rentado_designado, bloqueada_por_designacion_posterior, historial_responsables } = r;
+    _bloqueadaPorDesignacionPosterior = !!bloqueada_por_designacion_posterior;
+
+    // Fase 3.1 — regla oficial: "cada rodeo tiene un solo delegado responsable".
+    // Caso A (designación vigente de Delegado Rentado): mensaje EXACTO pedido
+    // — la cartilla institucional no está disponible porque el rodeo pertenece
+    // HOY a la modalidad Rentado. Caso D/histórico (ya existe contenido real de
+    // una cartilla Rentado aunque su designación haya sido anulada después):
+    // mensaje distinto, deja explícito que requiere resolución administrativa.
+    // En ambos casos nunca se toca la cartilla del Rentado ni se crea una
+    // institucional en paralelo — se detiene el render con un mensaje claro.
+    if (conflicto_rentado) {
+        const mensaje = delegado_rentado_designado
+            ? 'Este rodeo tiene un Delegado Rentado designado. La cartilla corresponde a dicho delegado.'
+            : 'Este rodeo ya tiene una Cartilla de Delegado Rentado registrada. No puede crearse una cartilla institucional en paralelo — esta situación requiere revisión administrativa antes de continuar.';
+        document.getElementById('cuerpo-cartilla').innerHTML = `
+            <div class="alerta alerta-info">${sanitizar(mensaje)}</div>`;
+        return;
+    }
+
     _jurados = Array.isArray(jurados) ? jurados : [];
     _rodeoActual = rodeo || null;
     _estado     = cartilla ? cartilla.estado : 'nueva';
     _cartillaId = cartilla ? cartilla.id     : null;
-    const ya    = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    _version    = cartilla ? (cartilla.version ?? null) : null;
+    const ya    = esSoloLectura();
 
     _respuestasJson = cartilla?.respuestas_json || {};
     _seriesGanado   = Array.isArray(_respuestasJson.ganado_series)
@@ -307,6 +371,20 @@ function renderCartilla(r) {
         } else if (diasRestantes <= 1) {
             html += `<div class="plazo-proximo">⏰ El plazo de envío vence el ${fechaLimite.toLocaleDateString('es-CL')} — en ${diasRestantes} día(s).</div>`;
         }
+    }
+
+    // ── Fase 3.1 (cierre, Caso D) ───────────────────────────────────────────
+    // La cartilla institucional ya existe pero DESPUÉS apareció una
+    // designación vigente de Delegado Rentado: se sigue mostrando TODO el
+    // contenido (nunca se oculta ni se borra), pero el formulario completo
+    // queda en modo solo-lectura (ver esSoloLectura()) hasta que el
+    // Administrador resuelva el conflicto. El backend repite este mismo
+    // bloqueo en cada PATCH/enviar — este banner nunca es la única barrera.
+    if (_bloqueadaPorDesignacionPosterior) {
+        html += `<div class="alerta alerta-info" style="margin-bottom:16px;">
+            <strong>⚠ Cartilla temporalmente bloqueada</strong><br>
+            Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.
+        </div>`;
     }
 
     // ── Banners de estado ─────────────────────────────────────────────────
@@ -643,12 +721,27 @@ function renderCartilla(r) {
         <div class="bloque-body" id="sec-adjuntos-cd"></div>
     </div>`;
 
+    // ─── HISTORIAL DE RESPONSABLES DE LA CARTILLA (Fase 3.5) ───────────────
+    // Exclusivo del portal institucional (_esInstitucional) — el flujo de
+    // Delegado Rentado no tiene "responsable único por confirmación" ni esta
+    // tabla de respaldo, y su backend (/usuario/cartilla-delegado) nunca
+    // devuelve historial_responsables. Bloque puramente informativo y de
+    // SOLO LECTURA: no agrega ningún control editable, no reemplaza ni
+    // reordena ninguna de las secciones anteriores — se agrega al final.
+    if (_esInstitucional) {
+        html += `<div class="bloque">
+            <div class="bloque-header">HISTORIAL DE RESPONSABLES DE LA CARTILLA</div>
+            <div class="bloque-body" id="sec-historial-responsables"></div>
+        </div>`;
+    }
+
     document.getElementById('cuerpo-cartilla').innerHTML = html;
 
     // Renderizar secciones dinámicas
     renderSeriesGanadoUnificado(ya);
     _initSecciones3(cartilla);
     _initSecciones4(cartilla);
+    if (_esInstitucional) renderHistorialResponsables(historial_responsables);
 
     if (!ya) {
         const barra = document.createElement('div');
@@ -659,6 +752,53 @@ function renderCartilla(r) {
             <button class="btn btn-primario"   onclick="enviarCartilla()" id="btn-enviar">${btnEnviarLabel}</button>`;
         document.getElementById('cuerpo-cartilla').appendChild(barra);
     }
+}
+
+// ─── HISTORIAL DE RESPONSABLES DE LA CARTILLA (Fase 3.5) ───────────────────
+// Solo lectura: ningún control editable, nunca modifica ni reordena nada.
+// Se construye 100% desde eventos reales de auditoría ya persistidos (ver
+// backend/src/services/historialResponsableInstitucional.js) — si el
+// arreglo viene vacío, NUNCA se inventa un evento, se muestra un mensaje
+// explícito. Incluye, de forma honesta y visible, la limitación de que el
+// nombre del delegado declarado corresponde a una cuenta institucional
+// compartida por la asociación — nunca una prueba de identidad individual.
+const ETIQUETA_ACCION_HISTORIAL = {
+    confirmar_responsable_institucional: 'Delegado confirmado como responsable',
+    reemplazar_responsable_institucional: 'Reemplazo de responsable autorizado por el Administrador',
+    crear: 'Creación de la cartilla',
+    guardar: 'Guardado de avance',
+    enviar: 'Envío de la cartilla'
+};
+function fmtFechaHoraEvento(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-CL') + ' ' + d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+}
+function renderHistorialResponsables(lista) {
+    const cont = document.getElementById('sec-historial-responsables');
+    if (!cont) return;
+    const eventos = Array.isArray(lista) ? lista : [];
+
+    const nota = `<p style="font-size:0.85em;color:#777;font-style:italic;margin-bottom:12px;">
+        Nota: el delegado declarado corresponde a la cuenta institucional de la asociación (credencial compartida).
+        Este historial no certifica la identidad individual de quien efectivamente completó cada campo del formulario.
+    </p>`;
+
+    if (eventos.length === 0) {
+        cont.innerHTML = nota + `<p style="color:#999;">Sin eventos de responsable registrados todavía para esta cartilla.</p>`;
+        return;
+    }
+
+    const filas = eventos.map(ev => {
+        const etiqueta = ETIQUETA_ACCION_HISTORIAL[ev.accion] || sanitizar(ev.accion || '—');
+        const descripcion = ev.descripcion ? `<div style="color:#666;font-size:0.9em;">${sanitizar(ev.descripcion)}</div>` : '';
+        return `<li style="margin-bottom:8px;">
+            <strong>${sanitizar(fmtFechaHoraEvento(ev.created_at))}</strong> — ${etiqueta}
+            ${descripcion}
+        </li>`;
+    }).join('');
+
+    cont.innerHTML = nota + `<ul style="padding-left:18px;margin:0;">${filas}</ul>`;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -937,7 +1077,7 @@ function toggleEjemplo(id) {
 
 function agregarSerie(){
     _seriesGanado.push({nombre:''});
-    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    const ya = esSoloLectura();
     renderSeriesGanadoUnificado(ya);
     renderFaltasPorSerie(ya);
 }
@@ -946,7 +1086,7 @@ function agregarSerie(){
 // usadas por OTRA serie quedan `disabled` en el <select> (ver
 // optsSerieSelect), y esta validación es una segunda barrera defensiva.
 function setSerieNombre(idx, valor) {
-    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    const ya = esSoloLectura();
     if (valor && _seriesGanado.some((s, j) => j !== idx && s.nombre === valor)) {
         alert('Esta serie ya fue agregada a la cartilla. Seleccione una serie distinta.');
         renderSeriesGanadoUnificado(ya); // revierte el <select> a su valor anterior
@@ -969,7 +1109,7 @@ function quitarSerie(idx){
         : '¿Quitar esta serie?';
     if (!confirm(msg)) return;
     _seriesGanado.splice(idx, 1);
-    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    const ya = esSoloLectura();
     renderSeriesGanadoUnificado(ya);
     renderFaltasPorSerie(ya);
 }
@@ -999,7 +1139,7 @@ function _initSecciones3(cartilla) {
     // Situaciones a revisar (máximo 3, solo referente al jurado) — Sección V.
     _sitRev  = Object.assign({ items: [] }, rj.situaciones_revisar || {});
 
-    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    const ya = esSoloLectura();
     renderSeccionDesempeno(ya);
     renderSeccionSituacionesRevisar(ya);
     renderSeccionDisciplina(ya);
@@ -1603,7 +1743,7 @@ function _initSecciones4(cartilla) {
         _acc.observaciones_generales = _accGeneral;
     }
 
-    const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+    const ya = esSoloLectura();
     renderSeccionAccidentes(ya);
     renderSeccionBienestar(ya);
     renderSeccionComentarios(ya);
@@ -2073,7 +2213,7 @@ async function cargarAdjuntosCd() {
             cont.innerHTML = '<p style="font-size:13px;color:#888;font-style:italic;">Sin adjuntos subidos aún.</p>';
             return;
         }
-        const ya = ['enviada', 'reenviada', 'aprobada'].includes(_estado);
+        const ya = esSoloLectura();
         cont.innerHTML = '<div style="border:1px solid #e0e8f5;border-radius:6px;padding:0 12px;">' +
             propios.map(function(a) {
                 const ico = a.mime_type && a.mime_type.startsWith('image/') ? '🖼️' : '📄';
@@ -2212,14 +2352,28 @@ async function guardarBorrador() {
     try {
         const datos = recolectarDatos();
         if (!_cartillaId) {
-            const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
+            // Fase 3.3: el delegado ya NO se lee de un selector global en sessionStorage —
+            // el backend resuelve la selección guardada POR ESTE RODEO (Mis Rodeos); si no
+            // hay ninguna, responde 422 DELEGADO_NO_SELECCIONADO (mensaje claro, ver catch).
+            const r = await api.post(`${_API_BASE}/rodeo/${RODEO_ID}`, {});
             _cartillaId = r.cartilla.id;
+            if (_esInstitucional) _version = r.cartilla.version;
         }
-        await api.patch(`/usuario/cartilla-delegado/${_cartillaId}`, datos);
+        if (_esInstitucional) datos.version = _version;
+        const resp = await api.patch(`${_API_BASE}/${_cartillaId}`, datos);
+        if (_esInstitucional) _version = resp.cartilla.version;
         _respuestasJson = datos.respuestas_json;
         mostrarToast('Borrador guardado correctamente', 'exito');
     } catch (err) {
-        mostrarToast(err.message || 'Error al guardar', 'error');
+        // Concurrencia (Fase 3): otra sesión institucional ya guardó una
+        // versión más nueva — nunca se sobrescribe en silencio, se avisa y se
+        // recarga el estado real desde el servidor.
+        if (err.data?.code === 'VERSION_DESACTUALIZADA') {
+            mostrarToast('Esta cartilla fue modificada por otra sesión. Se recargarán los datos más recientes.', 'advertencia');
+            setTimeout(() => init(), 1200);
+        } else {
+            mostrarToast(err.message || 'Error al guardar', 'error');
+        }
     } finally {
         _guardando = false;
         if (btn) { btn.disabled = false; btn.textContent = 'Guardar borrador'; }
@@ -2350,14 +2504,23 @@ async function enviarCartilla() {
     if (btn) { btn.disabled = true; btn.textContent = esReenvio ? 'Reenviando…' : 'Enviando…'; }
     try {
         if (!_cartillaId) {
-            const r = await api.post(`/usuario/cartilla-delegado/rodeo/${RODEO_ID}`, {});
+            // Fase 3.3: mismo cambio que guardarBorrador() — el backend resuelve el
+            // delegado desde la selección guardada por rodeo, nunca de sessionStorage.
+            const r = await api.post(`${_API_BASE}/rodeo/${RODEO_ID}`, {});
             _cartillaId = r.cartilla.id;
+            if (_esInstitucional) _version = r.cartilla.version;
         }
-        await api.post(`/usuario/cartilla-delegado/${_cartillaId}/enviar`, datos);
+        if (_esInstitucional) datos.version = _version;
+        await api.post(`${_API_BASE}/${_cartillaId}/enviar`, datos);
         mostrarToast(esReenvio ? 'Informe reenviado correctamente' : 'Informe enviado correctamente', 'exito');
         setTimeout(() => init(), 1200);
     } catch (err) {
-        mostrarToast(err.message || 'Error al enviar', 'error');
+        if (err.data?.code === 'VERSION_DESACTUALIZADA') {
+            mostrarToast('Esta cartilla fue modificada por otra sesión. Se recargarán los datos más recientes.', 'advertencia');
+            setTimeout(() => init(), 1200);
+        } else {
+            mostrarToast(err.message || 'Error al enviar', 'error');
+        }
         _guardando = false;
         if (btn) { btn.disabled = false; btn.textContent = esReenvio ? 'Reenviar informe' : 'Enviar informe'; }
     }

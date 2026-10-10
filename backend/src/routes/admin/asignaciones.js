@@ -6,6 +6,7 @@ const { obtenerTarifas, calcularPagoBase, obtenerBonoParaDistancia } = require('
 const { soloNoMonitor } = require('../../middleware/auth');
 const { normalizar } = require('../../services/importacion');
 const { esAsignacionHistoricaImportada, MENSAJE_ASIGNACION_HISTORICA, MENSAJE_PAGO_ASIGNACION_HISTORICA } = require('../../services/asignacionHistorica');
+const { responderSiConflictoDesignacionRentado } = require('../../services/designacionRentadoConflicto');
 // Feriados/bloque de fin de semana: lógica centralizada en services/feriados.js
 // (movida ahí tal cual, sin cambiar el algoritmo, para que el motor de propuesta
 // de designación —Etapa 3— reutilice exactamente esta misma versión).
@@ -338,7 +339,10 @@ router.patch('/:id', async (req, res) => {
         .select()
         .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+        if (responderSiConflictoDesignacionRentado(error, res)) return;
+        return res.status(500).json({ error: error.message });
+    }
 
     await auditoria.registrar({
         tabla: 'asignaciones',
@@ -474,7 +478,10 @@ router.post('/:id/estado', async (req, res) => {
         .select()
         .single();
 
-    if (errUpd) return res.status(500).json({ error: errUpd.message });
+    if (errUpd) {
+        if (responderSiConflictoDesignacionRentado(errUpd, res)) return;
+        return res.status(500).json({ error: errUpd.message });
+    }
 
     const descripcionMap = {
         aceptar:   `Designación aceptada por admin: ${asig.rodeos?.club} (${asig.rodeos?.fecha})${distancia_km ? ` — ${distancia_km} km` : ''}`,

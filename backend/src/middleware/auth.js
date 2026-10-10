@@ -1,8 +1,16 @@
 const jwt = require('jsonwebtoken');
+const supabase = require('../config/supabase');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_change_in_prod';
 
 // Middleware: verificar cualquier token válido
+// Nota: `return next()` (no solo `next()`) para que, cuando `next` es una
+// función async (ej. soloCuentaInstitucional, que revalida contra la BD),
+// la promesa se propague hacia quien llamó a verificarToken — así se puede
+// hacer `await soloCuentaInstitucional(...)` en tests y confiar en que ya
+// terminó. No cambia nada para los callers síncronos existentes (soloAdmin,
+// soloUsuario, adminOPropioUsuario): `return undefined` es idéntico a no
+// retornar nada.
 function verificarToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
@@ -15,7 +23,7 @@ function verificarToken(req, res, next) {
     try {
         const payload = jwt.verify(token, JWT_SECRET);
         req.usuario = payload;
-        next();
+        return next();
     } catch (err) {
         console.warn(`[AUTH] 401 token inválido: ${req.method} ${req.path} — ${err.message}`);
         return res.status(401).json({ error: 'Token inválido o expirado' });
@@ -40,6 +48,39 @@ function soloUsuario(req, res, next) {
             return res.status(403).json({ error: 'Acceso restringido a usuarios pagados' });
         }
         next();
+    });
+}
+
+// Middleware: solo cuentas institucionales (Delegado de Asociación, Fase 1).
+// Mismo patrón que soloAdmin/soloUsuario: un tipo de token, sin mezclar con
+// `usuario_pagado` ni `administrador` — un token institucional nunca pasa
+// soloAdmin/soloUsuario, y viceversa (namespace de autorización separado).
+//
+// Fase 2 (Caso F de seguridad): a diferencia de soloAdmin/soloUsuario, acá SÍ
+// se revalida contra la BD en cada request — no basta con que el JWT diga
+// tipo="cuenta_institucional". Si la cuenta se desactiva (o su asociación se
+// deshabilita) DESPUÉS de emitido el token, debe perder acceso de inmediato,
+// no recién cuando el token expire por tiempo.
+async function soloCuentaInstitucional(req, res, next) {
+    return verificarToken(req, res, async () => {
+        if (req.usuario.tipo !== 'cuenta_institucional') {
+            return res.status(403).json({ error: 'Acceso restringido a cuentas institucionales' });
+        }
+        try {
+            const { data: cuenta, error } = await supabase
+                .from('cuentas_institucionales')
+                .select('activo, asociaciones(activa)')
+                .eq('id', req.usuario.id)
+                .single();
+            if (error || !cuenta || !cuenta.activo || !cuenta.asociaciones || cuenta.asociaciones.activa === false) {
+                console.warn(`[AUTH] 401 cuenta institucional ya no válida id="${req.usuario.id}": ${req.method} ${req.path}`);
+                return res.status(401).json({ error: 'Sesión inválida: la cuenta institucional ya no está activa' });
+            }
+        } catch (e) {
+            console.error('[AUTH] error revalidando cuenta institucional:', e.message);
+            return res.status(401).json({ error: 'No fue posible validar la sesión' });
+        }
+        return next();
     });
 }
 
@@ -105,4 +146,4 @@ function soloNoComisionTecnica(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };
+module.exports = { verificarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };

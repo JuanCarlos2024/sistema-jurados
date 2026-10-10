@@ -3,6 +3,9 @@ const router   = express.Router();
 const supabase = require('../../config/supabase');
 const { generarCartillaDelegadoPDF } = require('../../services/cartilla-delegado-pdf');
 const { enviarEmail } = require('../../services/emailService');
+// Fase 3.5 — mismo servicio ÚNICO de lectura de historial (basado 100% en
+// auditoria real, nunca fabricado) que usa institucional/cartilla.js.
+const { obtenerHistorialResponsables } = require('../../services/historialResponsableInstitucional');
 
 // ─── GET /api/admin/cartillas-delegado/by-rodeo/:rodeo_id ────────────────────
 router.get('/by-rodeo/:rodeo_id', async (req, res) => {
@@ -14,6 +17,7 @@ router.get('/by-rodeo/:rodeo_id', async (req, res) => {
                 temporada, fecha_rodeo, tipo_rodeo, club_asociacion_organizador,
                 delegado_nombre, delegado_telefono,
                 observada_en, observacion_admin, aprobada_en, reenviada_en,
+                delegado_asociacion_id,
                 delegado:usuarios_pagados!cartillas_delegado_delegado_id_fkey(
                     id, nombre_completo, tipo_persona
                 )
@@ -22,7 +26,35 @@ router.get('/by-rodeo/:rodeo_id', async (req, res) => {
             .order('created_at', { ascending: false });
 
         if (error) return res.status(500).json({ error: error.message });
-        res.json(data || []);
+        // Fase 3: distingue el origen de la cartilla (Delegado Rentado vs
+        // Delegado de Asociación) — campo puramente informativo, no cambia
+        // ningún comportamiento existente de este endpoint.
+        const conOrigen = (data || []).map(c => ({ ...c, origen: c.delegado_asociacion_id ? 'delegado_asociacion' : 'delegado_rentado' }));
+
+        // Fase 3.1 (Caso D — cambio de designación posterior): si hay una
+        // cartilla institucional Y, además, una designación VIGENTE de
+        // Delegado Rentado para el mismo rodeo, es una señal de conflicto que
+        // requiere resolución administrativa. Es puramente informativa: NUNCA
+        // elimina, bloquea ni transfiere nada por sí sola — solo expone el
+        // conflicto para que el administrador decida. Mismo criterio exacto
+        // de "designación efectiva" que institucional/cartilla.js.
+        const hayInstitucional = conOrigen.some(c => c.origen === 'delegado_asociacion');
+        if (hayInstitucional) {
+            const { data: designacion } = await supabase
+                .from('asignaciones')
+                .select('id')
+                .eq('rodeo_id', req.params.rodeo_id)
+                .eq('tipo_persona', 'delegado_rentado')
+                .eq('estado', 'activo')
+                .eq('publicado', true)
+                .neq('estado_designacion', 'rechazado')
+                .maybeSingle();
+            if (designacion) {
+                conOrigen.forEach(c => { if (c.origen === 'delegado_asociacion') c.conflicto_designacion_posterior = true; });
+            }
+        }
+
+        res.json(conOrigen);
     } catch (err) {
         console.error('[CARTILLAS-DELEGADO by-rodeo]', err.message);
         res.status(500).json({ error: 'Error interno al cargar cartillas del delegado' });
@@ -47,7 +79,30 @@ router.get('/:id', async (req, res) => {
             .single();
 
         if (error || !data) return res.status(404).json({ error: 'Cartilla no encontrada' });
-        res.json(data);
+
+        // Fase 3.5 — "Historial de Responsables": solo tiene sentido para
+        // cartillas de origen institucional (las de Delegado Rentado no usan
+        // rodeos_delegado_institucional). Nunca fabrica eventos: si no hay
+        // designación asociada, el servicio devuelve [] directamente.
+        let historialResponsables = [];
+        if (data.delegado_asociacion_id) {
+            const { data: designacion } = await supabase
+                .from('rodeos_delegado_institucional')
+                .select('id')
+                .eq('rodeo_id', data.rodeo_id)
+                .maybeSingle();
+            historialResponsables = await obtenerHistorialResponsables(supabase, {
+                designacionId: designacion?.id || null,
+                cartillaId: data.id
+            });
+        }
+
+        // Fase 3: mismo campo informativo que GET /by-rodeo/:rodeo_id.
+        res.json({
+            ...data,
+            origen: data.delegado_asociacion_id ? 'delegado_asociacion' : 'delegado_rentado',
+            historial_responsables: historialResponsables
+        });
     } catch (err) {
         console.error('[CARTILLAS-DELEGADO detalle]', err.message);
         res.status(500).json({ error: 'Error interno al cargar cartilla del delegado' });
@@ -162,7 +217,23 @@ router.get('/:id/pdf', async (req, res) => {
 
         if (error || !cartilla) return res.status(404).json({ error: 'Cartilla no encontrada.' });
 
-        const buffer = await generarCartillaDelegadoPDF(cartilla, cartilla.rodeo || {});
+        // Fase 3.5: mismo servicio de historial que el detalle (GET /:id) —
+        // solo aplica a cartillas institucionales; para Delegado Rentado
+        // queda vacío y el bloque final simplemente no aparece en el PDF.
+        let historialResponsables = [];
+        if (cartilla.delegado_asociacion_id) {
+            const { data: designacion } = await supabase
+                .from('rodeos_delegado_institucional')
+                .select('id')
+                .eq('rodeo_id', cartilla.rodeo_id)
+                .maybeSingle();
+            historialResponsables = await obtenerHistorialResponsables(supabase, {
+                designacionId: designacion?.id || null,
+                cartillaId: cartilla.id
+            });
+        }
+
+        const buffer = await generarCartillaDelegadoPDF(cartilla, cartilla.rodeo || {}, { historialResponsables });
 
         const nombre = [
             'cartilla-delegado',

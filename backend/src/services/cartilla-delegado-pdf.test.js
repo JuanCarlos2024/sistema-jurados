@@ -389,3 +389,49 @@ describe('generarCartillaDelegadoPDF — campo Público (retirado de nuevas cart
         expect(Buffer.isBuffer(buffer)).toBe(true);
     });
 });
+
+// ═════════════════════════════════════════════════════════════════════════
+// FASE 3.5 — Historial de Responsables de la Cartilla (bloque final, solo
+// institucional). El proyecto no cuenta con extracción de texto de PDF (ver
+// cabecera de este archivo), así que estos tests son de humo: verifican que
+// el nuevo parámetro opcional nunca rompe la generación, ni para cartillas
+// institucionales (con o sin eventos) ni para las de Delegado Rentado
+// (donde el bloque nunca debe aparecer — aquí se confirma al menos que
+// pasar historialResponsables por error no lanza excepción, dado que no hay
+// forma de inspeccionar el texto renderizado).
+describe('generarCartillaDelegadoPDF — Historial de Responsables (Fase 3.5)', () => {
+    const CARTILLA_INSTITUCIONAL = { ...CARTILLA_BASE, delegado_asociacion_id: 'del-1' };
+
+    test('cartilla institucional CON historialResponsables -> resuelve sin lanzar excepción', async () => {
+        const historialResponsables = [
+            { accion: 'confirmar_responsable_institucional', descripcion: 'Delegado de Asociación confirmado como responsable: Juan Pérez', created_at: '2026-01-01T12:00:00Z' },
+            { accion: 'reemplazar_responsable_institucional', descripcion: 'Reemplazo de responsable autorizado — motivo: Juan no puede continuar', created_at: '2026-01-10T09:00:00Z' }
+        ];
+        const buffer = await generarCartillaDelegadoPDF(CARTILLA_INSTITUCIONAL, RODEO, { historialResponsables });
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer.length).toBeGreaterThan(0);
+    });
+
+    test('cartilla institucional SIN eventos (historialResponsables=[]) -> resuelve sin lanzar excepción, nunca fabrica un evento', async () => {
+        const buffer = await generarCartillaDelegadoPDF(CARTILLA_INSTITUCIONAL, RODEO, { historialResponsables: [] });
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+
+    test('cartilla institucional sin pasar el parámetro opciones -> resuelve sin lanzar excepción (compatibilidad hacia atrás)', async () => {
+        const buffer = await generarCartillaDelegadoPDF(CARTILLA_INSTITUCIONAL, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+
+    test('cartilla de Delegado Rentado (delegado_asociacion_id null/ausente) -> resuelve sin lanzar excepción, igual que antes de la Fase 3.5', async () => {
+        const cartillaRentado = { ...CARTILLA_BASE, delegado_asociacion_id: null };
+        const buffer = await generarCartillaDelegadoPDF(cartillaRentado, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+
+    test('evento con accion desconocida (fuera del mapa de etiquetas) -> no lanza excepción, nunca oculta el evento', async () => {
+        const buffer = await generarCartillaDelegadoPDF(CARTILLA_INSTITUCIONAL, RODEO, {
+            historialResponsables: [{ accion: 'accion_no_mapeada', created_at: '2026-01-01T12:00:00Z' }]
+        });
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});

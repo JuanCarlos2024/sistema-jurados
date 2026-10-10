@@ -46,6 +46,20 @@ app.use('/api', (req, res, next) => {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin/index'));
 app.use('/api/usuario', require('./routes/usuario/index'));
+// Namespace separado para cuentas institucionales (Delegado de Asociación,
+// Fase 1) — a propósito no comparte router con /api/usuario: ver comentario
+// en routes/institucional/index.js.
+//
+// MODO DEMOSTRACIÓN (Fase 2.5): doble guardia — exige NODE_ENV!=='production'
+// Y la variable explícita DEMO_INSTITUCIONAL=1. Si cualquiera de las dos
+// condiciones falla, se usa SIEMPRE el router real (nunca ambos montados a
+// la vez); dev/institucionalDemo.js además se niega a cargar si alguien lo
+// requiere con NODE_ENV=production por error (ver ese archivo).
+const DEMO_INSTITUCIONAL_ACTIVO = process.env.NODE_ENV !== 'production' && process.env.DEMO_INSTITUCIONAL === '1';
+if (DEMO_INSTITUCIONAL_ACTIVO) {
+    console.warn('[DEV] Modo demostración institucional ACTIVO — datos ficticios en memoria, Supabase NO se usa para /api/institucional.');
+}
+app.use('/api/institucional', DEMO_INSTITUCIONAL_ACTIVO ? require('./dev/institucionalDemo') : require('./routes/institucional/index'));
 
 // ─── Health check ────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

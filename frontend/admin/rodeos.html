@@ -2306,6 +2306,7 @@ async function verCartillaDelegadoDigital(cartillaId) {
             <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:10px;">Adjuntos de la cartilla</div>
             <div id="adj-cd-modal-cont"><p style="font-size:12px;color:#888;font-style:italic;">Cargando adjuntos...</p></div>
             ${renderHistorialObsCd(c)}
+            ${renderHistorialResponsablesCd(c)}
             <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
             <div id="cd-admin-acciones"></div>`;
         _cdActivaData = c;
@@ -2899,6 +2900,79 @@ function renderHistorialObsCd(c) {
     return `<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
         <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Historial de revisiones</div>
         <div style="border:1px solid #e0e8f5;border-radius:6px;padding:4px 14px;">${items}</div>`;
+}
+
+// ─── Historial de responsables de la cartilla (Fase 3.5.1) ──────────────────
+// Exclusivo de cartillas institucionales (delegado_asociacion_id presente) —
+// las de Delegado Rentado nunca pasan por aquí, ni siquiera con un bloque
+// vacío (se retorna '' de inmediato). Se construye 100% desde
+// c.historial_responsables, que ya viene del backend basado en auditoria
+// real (services/historialResponsableInstitucional.js) — NUNCA se fabrica
+// un evento. Solo lectura: no hay ningún control para editar ni eliminar
+// registros históricos.
+function renderHistorialResponsablesCd(c) {
+    if (!c.delegado_asociacion_id) return '';
+
+    const eventos = Array.isArray(c.historial_responsables) ? c.historial_responsables : [];
+    const nota = `<p style="font-size:11px;color:#999;font-style:italic;margin:4px 0 10px;">
+        El delegado declarado corresponde a la cuenta institucional de la asociación (credencial compartida).
+        Este historial no certifica la identidad individual de quien efectivamente completó cada campo.
+    </p>`;
+
+    if (eventos.length === 0) {
+        return `<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
+            <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Historial de responsables de la cartilla</div>
+            ${nota}
+            <p style="font-size:12px;color:#888;">Sin eventos de responsable registrados todavía para esta cartilla.</p>`;
+    }
+
+    const ETIQUETAS_ACCION_RESP = {
+        confirmar_responsable_institucional: 'Delegado confirmado como responsable',
+        reemplazar_responsable_institucional: 'Reemplazo autorizado por el Administrador',
+        crear: 'Creación de la cartilla',
+        guardar: 'Guardado de avance',
+        enviar: 'Envío de la cartilla'
+    };
+
+    // Recorrido cronológico (ya viene ordenado así desde el backend) para
+    // reconstruir "delegado anterior/nuevo" en cada reemplazo y determinar
+    // el responsable vigente al final.
+    let nombreActual = null;
+    const filas = eventos.map(function (ev) {
+        const fecha = ev.created_at ? new Date(ev.created_at).toLocaleString('es-CL') : '—';
+        const etiqueta = ETIQUETAS_ACCION_RESP[ev.accion] || ev.accion || '—';
+        let detalle = '';
+        if (ev.accion === 'confirmar_responsable_institucional') {
+            nombreActual = ev.datos_nuevos?.delegado_nombre || nombreActual;
+            detalle = `<div style="font-size:12px;color:#555;margin-top:3px;">Delegado original: <strong>${sanitizar(nombreActual || '—')}</strong></div>`;
+        } else if (ev.accion === 'reemplazar_responsable_institucional') {
+            const anterior = nombreActual;
+            nombreActual = ev.datos_nuevos?.delegado_nombre || nombreActual;
+            const autorizante = ev.actor_nombre || (ev.actor_id ? `Administrador (ID ${ev.actor_id})` : '—');
+            detalle = `<div style="font-size:12px;color:#555;margin-top:3px;padding:6px 8px;background:#fff;border-radius:4px;border:1px solid #e0e0e0;">
+                De <strong>${sanitizar(anterior || '—')}</strong> a <strong>${sanitizar(nombreActual || '—')}</strong><br>
+                Motivo: ${sanitizar(ev.datos_nuevos?.motivo || '—')}<br>
+                Autorizado por: ${sanitizar(autorizante)}
+            </div>`;
+        } else if (ev.descripcion) {
+            detalle = `<div style="font-size:12px;color:#777;margin-top:2px;">${sanitizar(ev.descripcion)}</div>`;
+        }
+        return `<div style="padding:8px 0;border-bottom:1px solid #f0f0f0;">
+            <div style="font-size:12px;font-weight:700;color:#1a3c6e;">${sanitizar(etiqueta)}</div>
+            <div style="font-size:11px;color:#888;">${fecha}</div>
+            ${detalle}
+        </div>`;
+    }).join('');
+
+    const vigenteHtml = `<div style="margin-top:10px;padding:8px 10px;background:#eaf3ff;border-radius:6px;font-size:12px;">
+        <strong>Responsable vigente:</strong> ${sanitizar(nombreActual || c.delegado_nombre || '—')}
+    </div>`;
+
+    return `<hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
+        <div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Historial de responsables de la cartilla</div>
+        ${nota}
+        <div style="border:1px solid #e0e8f5;border-radius:6px;padding:4px 14px;">${filas}</div>
+        ${vigenteHtml}`;
 }
 
 // ─── Acciones administrativas sobre cartilla delegado ───────────────────────

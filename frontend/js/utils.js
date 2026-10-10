@@ -221,6 +221,11 @@ function _aplicarControlAccesoAdmin(usuario) {
 }
 
 // Proteger ruta: redirigir si no hay token del tipo correcto
+// Fase 3: tipoRequerido admite además un arreglo de tipos aceptados (ej. la
+// Cartilla de Delegado, compartida entre 'usuario_pagado' y
+// 'cuenta_institucional'). Retrocompatible: todo llamador existente sigue
+// pasando un string y se comporta exactamente igual que antes (comparación
+// !== en vez de !includes).
 function protegerRuta(tipoRequerido) {
     const usuario = api.getUsuario();
     const token = api.getToken();
@@ -230,9 +235,15 @@ function protegerRuta(tipoRequerido) {
         return false;
     }
 
-    if (tipoRequerido && usuario.tipo !== tipoRequerido) {
+    const permitido = !tipoRequerido || (Array.isArray(tipoRequerido)
+        ? tipoRequerido.includes(usuario.tipo)
+        : usuario.tipo === tipoRequerido);
+
+    if (!permitido) {
         if (usuario.tipo === 'administrador') {
             window.location.href = '/admin/dashboard.html';
+        } else if (usuario.tipo === 'cuenta_institucional') {
+            window.location.href = '/institucional/dashboard.html';
         } else {
             window.location.href = '/usuario/dashboard.html';
         }

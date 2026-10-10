@@ -5,9 +5,14 @@ const { calcularPorcentajeFueraPeso } = require('./cartillaDelegadoGanado');
  * Genera el PDF de una cartilla del delegado y retorna un Buffer.
  * @param {object} cartilla - registro de cartillas_delegado con todos los campos
  * @param {object} rodeo    - registro de rodeos
+ * @param {{ historialResponsables?: object[] }} [opciones] - Fase 3.5: eventos
+ *   reales de auditoria (ver services/historialResponsableInstitucional.js),
+ *   SOLO para cartillas de origen institucional. Parámetro opcional y
+ *   aditivo: los llamadores existentes (Delegado Rentado) que no lo pasan
+ *   siguen generando exactamente el mismo PDF que antes.
  * @returns {Promise<Buffer>}
  */
-function generarCartillaDelegadoPDF(cartilla, rodeo) {
+function generarCartillaDelegadoPDF(cartilla, rodeo, { historialResponsables = [] } = {}) {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({ margin: 50, size: 'A4' });
         const chunks = [];
@@ -410,6 +415,37 @@ function generarCartillaDelegadoPDF(cartilla, rodeo) {
                 doc.fontSize(9).font('Helvetica').fillColor('#333')
                    .text(`  ${i + 1}. [${h.tipo || '—'}] ${h.fecha ? fmtFechaHora(h.fecha) : '—'} — ${h.por || '—'}`);
                 if (h.motivo) doc.text(`     Motivo: ${h.motivo}`);
+            });
+            doc.moveDown(0.5);
+        }
+
+        // ── Historial de Responsables de la Cartilla (Fase 3.5) ──────
+        // Exclusivo de cartillas de origen institucional (delegado_asociacion_id
+        // presente) — las de Delegado Rentado nunca reciben historialResponsables
+        // (parámetro opcional), así que este bloque NUNCA aparece en sus PDFs, ni
+        // en los ya emitidos ni en los nuevos. Se construye 100% desde eventos de
+        // auditoria ya persistidos (services/historialResponsableInstitucional.js)
+        // — nunca se fabrica un evento. No reemplaza ni altera ninguna de las 14
+        // secciones anteriores, solo se agrega al final.
+        if (cartilla.delegado_asociacion_id && Array.isArray(historialResponsables) && historialResponsables.length > 0) {
+            seccion(doc, 'HISTORIAL DE RESPONSABLES DE LA CARTILLA', AZUL);
+            doc.fontSize(8.5).fillColor(GRIS).font('Helvetica-Oblique')
+               .text('Nota: el delegado declarado corresponde a la cuenta institucional de la asociación (credencial compartida). Este historial no certifica la identidad individual de quien efectivamente completó cada campo.');
+            doc.font('Helvetica').fillColor('#333');
+            doc.moveDown(0.2);
+            const ETIQUETAS_ACCION = {
+                confirmar_responsable_institucional: 'Delegado confirmado como responsable',
+                reemplazar_responsable_institucional: 'Reemplazo de responsable autorizado por Administrador',
+                crear: 'Creación de la cartilla',
+                guardar: 'Guardado de avance',
+                enviar: 'Envío de la cartilla'
+            };
+            historialResponsables.forEach((ev, i) => {
+                const etiqueta = ETIQUETAS_ACCION[ev.accion] || ev.accion || '—';
+                doc.fontSize(9).font('Helvetica').fillColor('#333')
+                   .text(`  ${i + 1}. [${ev.created_at ? fmtFechaHora(ev.created_at) : '—'}] ${etiqueta}`);
+                if (ev.descripcion) doc.fontSize(8.5).fillColor('#555').text(`     ${ev.descripcion}`);
+                doc.font('Helvetica').fillColor('#333');
             });
             doc.moveDown(0.5);
         }

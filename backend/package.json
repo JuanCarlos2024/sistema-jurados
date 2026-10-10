@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
+    "dev:preview": "set DEMO_INSTITUCIONAL=1&& set NODE_ENV=development&& set PORT=3100&& nodemon src/app.js",
     "test": "jest --testPathPattern=\\.test\\.js$ --no-coverage",
     "setup": "node src/scripts/setup-inicial.js",
     "setup:admin": "node src/scripts/crear-admin.js",
