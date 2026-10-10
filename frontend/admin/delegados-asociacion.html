@@ -168,7 +168,7 @@ function renderTablaAsociaciones(asociaciones) {
         </tbody>
     </table>
     <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
-        Total: ${asociaciones.length} asociación(es)
+        Total: ${asociaciones.length} asociación(es) | Total delegados: ${asociaciones.reduce((suma, a) => suma + a.delegados_total, 0)}
     </div>`;
 }
 
