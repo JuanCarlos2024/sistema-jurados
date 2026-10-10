@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delegados de Asociación — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-suspendido { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
+        .badge-certificado { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+        .badge-pendiente-cert { background: #fef5e7; color: #a04000; border: 1px solid #f0c27b; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1 id="titulo-pagina">Delegados de Asociación</h1>
+            </div>
+            <div class="topbar-acciones" id="acciones-topbar"></div>
+        </div>
+
+        <div class="page-body">
+            <!-- Vista 1: catálogo de asociaciones -->
+            <div id="vista-asociaciones">
+                <div class="filtros-barra">
+                    <div class="form-grupo">
+                        <label class="form-label">Buscar asociación</label>
+                        <input type="text" id="f-buscar-asoc" class="form-control" placeholder="Nombre de la asociación" oninput="debounce(cargarAsociaciones, 400)()">
+                    </div>
+                    <button class="btn btn-secundario" onclick="document.getElementById('f-buscar-asoc').value=''; cargarAsociaciones();">Limpiar</button>
+                </div>
+                <div class="card">
+                    <div id="tabla-asociaciones" class="tabla-wrap">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vista 2: nómina de una asociación -->
+            <div id="vista-nomina" class="oculto">
+                <div style="margin-bottom:12px;">
+                    <a href="/admin/delegados-asociacion.html" class="btn btn-secundario btn-pequeño">← Volver a asociaciones</a>
+                </div>
+                <div class="filtros-barra">
+                    <div class="form-grupo">
+                        <label class="form-label">Buscar delegado</label>
+                        <input type="text" id="f-buscar-del" class="form-control" placeholder="Nombre del delegado" oninput="debounce(cargarNomina, 400)()">
+                    </div>
+                </div>
+                <div class="card">
+                    <div id="tabla-nomina" class="tabla-wrap">
+                        <div class="spinner-wrap"><div class="spinner"></div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal">
+    <div class="modal-header">
+        <h3 id="modal-titulo">Delegado</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body">
+        <div id="modal-contenido"></div>
+    </div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+let debounceTimer;
+function debounce(fn, delay) {
+    return (...args) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => fn(...args), delay);
+    };
+}
+
+let asociacionActual = null; // { id, nombre } cuando se está viendo una nómina
+let _asociacionesMap = {};
+let _delegadosMap = {};
+
+async function init() {
+    const params = getQueryParams();
+    if (params.asociacion_id) {
+        await abrirNomina(params.asociacion_id);
+    } else {
+        mostrarVistaAsociaciones();
+        await cargarAsociaciones();
+    }
+}
+
+function mostrarVistaAsociaciones() {
+    asociacionActual = null;
+    document.getElementById('vista-asociaciones').classList.remove('oculto');
+    document.getElementById('vista-nomina').classList.add('oculto');
+    document.getElementById('titulo-pagina').textContent = 'Delegados de Asociación';
+    document.getElementById('acciones-topbar').innerHTML = '';
+    history.replaceState(null, '', '/admin/delegados-asociacion.html');
+}
+
+async function cargarAsociaciones() {
+    const wrap = document.getElementById('tabla-asociaciones');
+    mostrarSpinner(wrap);
+    const buscar = document.getElementById('f-buscar-asoc').value.trim();
+    try {
+        const data = await api.get('/admin/delegados-asociacion' + (buscar ? '?buscar=' + encodeURIComponent(buscar) : ''));
+        renderTablaAsociaciones(data.asociaciones);
+    } catch (err) {
+        wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
+}
+
+function renderTablaAsociaciones(asociaciones) {
+    const wrap = document.getElementById('tabla-asociaciones');
+    if (!asociaciones || asociaciones.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">No se encontraron asociaciones</p>';
+        return;
+    }
+    _asociacionesMap = {};
+    asociaciones.forEach(a => { _asociacionesMap[a.asociacion_id] = a; });
+
+    wrap.innerHTML = `
+    <table style="font-size:13px;">
+        <thead><tr>
+            <th>Asociación</th>
+            <th>Delegados activos</th>
+            <th>Delegados suspendidos</th>
+            <th>Total</th>
+            <th>Acción</th>
+        </tr></thead>
+        <tbody>
+        ${asociaciones.map(a => `
+            <tr>
+                <td><strong>${sanitizar(a.nombre)}</strong></td>
+                <td>${a.delegados_activos}</td>
+                <td>${a.delegados_suspendidos > 0 ? `<span class="badge badge-suspendido">${a.delegados_suspendidos}</span>` : '0'}</td>
+                <td>${a.delegados_total}</td>
+                <td><button class="btn btn-pequeño btn-outline" onclick="abrirNomina('${a.asociacion_id}')">Ver delegados</button></td>
+            </tr>
+        `).join('')}
+        </tbody>
+    </table>
+    <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
+        Total: ${asociaciones.length} asociación(es)
+    </div>`;
+}
+
+async function abrirNomina(asociacionId) {
+    document.getElementById('vista-asociaciones').classList.add('oculto');
+    document.getElementById('vista-nomina').classList.remove('oculto');
+    document.getElementById('f-buscar-del').value = '';
+    history.replaceState(null, '', '/admin/delegados-asociacion.html?asociacion_id=' + asociacionId);
+    await cargarNomina(asociacionId);
+}
+
+async function cargarNomina(asociacionIdParam) {
+    const asociacionId = asociacionIdParam || asociacionActual?.id;
+    if (!asociacionId) return;
+    const wrap = document.getElementById('tabla-nomina');
+    mostrarSpinner(wrap);
+    const buscar = document.getElementById('f-buscar-del').value.trim();
+    try {
+        const data = await api.get('/admin/delegados-asociacion/' + asociacionId + (buscar ? '?buscar=' + encodeURIComponent(buscar) : ''));
+        asociacionActual = data.asociacion;
+        document.getElementById('titulo-pagina').textContent = 'Delegados — ' + data.asociacion.nombre;
+        document.getElementById('acciones-topbar').innerHTML =
+            `<button class="btn btn-primario" onclick="abrirModalNuevo()">+ Agregar delegado</button>`;
+        renderTablaNomina(data.delegados);
+    } catch (err) {
+        wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`;
+    }
+}
+
+function fmtFechaSimple(iso) {
+    if (!iso) return '—';
+    const [y, m, d] = iso.slice(0, 10).split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function renderTablaNomina(delegados) {
+    const wrap = document.getElementById('tabla-nomina');
+    if (!delegados || delegados.length === 0) {
+        wrap.innerHTML = '<p class="tabla-vacia">Esta asociación no tiene delegados registrados</p>';
+        return;
+    }
+    _delegadosMap = {};
+    delegados.forEach(d => { _delegadosMap[d.id] = d; });
+
+    wrap.innerHTML = `
+    <table style="font-size:13px;">
+        <thead><tr>
+            <th>Nombre completo</th>
+            <th>Asociación</th>
+            <th>Estado</th>
+            <th>Certificación</th>
+            <th>Fecha de registro</th>
+            <th>Acciones</th>
+        </tr></thead>
+        <tbody>
+        ${delegados.map(d => `
+            <tr>
+                <td><strong>${sanitizar(d.nombre)}</strong></td>
+                <td>${sanitizar(asociacionActual.nombre)}</td>
+                <td>${d.estado === 'activo' ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-suspendido">Suspendido</span>'}</td>
+                <td>${d.certificado ? '<span class="badge badge-certificado">Certificado</span>' : '<span class="badge badge-pendiente-cert">Pendiente de certificación</span>'}</td>
+                <td>${fmtFechaSimple(d.created_at)}</td>
+                <td>
+                    <div class="flex gap-8">
+                        ${d.estado === 'activo'
+                            ? `<button class="btn btn-pequeño" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="suspenderDelegado('${d.id}')">Suspender</button>`
+                            : `<button class="btn btn-pequeño btn-success" onclick="reactivarDelegado('${d.id}')">Reactivar</button>`}
+                        <button class="btn btn-pequeño btn-peligro" onclick="eliminarDelegado('${d.id}')">Eliminar</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('')}
+        </tbody>
+    </table>
+    <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
+        Total: ${delegados.length} delegado(s)
+    </div>`;
+}
+
+// ─── Agregar delegado ──────────────────────────────────────────────────
+async function abrirModalNuevo() {
+    let opcionesAsoc = `<option value="${asociacionActual.id}" selected>${sanitizar(asociacionActual.nombre)}</option>`;
+    try {
+        const data = await api.get('/admin/delegados-asociacion');
+        opcionesAsoc = data.asociaciones.map(a =>
+            `<option value="${a.asociacion_id}" ${a.asociacion_id === asociacionActual.id ? 'selected' : ''}>${sanitizar(a.nombre)}</option>`
+        ).join('');
+    } catch (err) { /* si falla, se mantiene solo la asociación actual preseleccionada */ }
+
+    document.getElementById('modal-titulo').textContent = 'Agregar delegado';
+    document.getElementById('modal-contenido').innerHTML = `
+    <form onsubmit="guardarNuevoDelegado(event)">
+        <div class="form-grupo">
+            <label class="form-label">Nombre completo del delegado <span class="req">*</span></label>
+            <input type="text" name="nombre" class="form-control" required placeholder="Juan Pérez González">
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Asociación <span class="req">*</span></label>
+            <select name="asociacion_id" class="form-control" required>${opcionesAsoc}</select>
+        </div>
+        <div class="form-grupo">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:13px;">
+                <input type="checkbox" name="certificado">
+                Confirmo que esta persona está certificada como delegado de la asociación
+            </label>
+            <div class="form-hint">Si no se confirma, el delegado queda "Pendiente de certificación" y no aparecerá en el selector del portal institucional hasta que se certifique.</div>
+        </div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">Agregar delegado</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function guardarNuevoDelegado(e) {
+    e.preventDefault();
+    const form = e.target;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const fd = new FormData(form);
+    const datos = {
+        nombre: fd.get('nombre'),
+        asociacion_id: fd.get('asociacion_id'),
+        certificado: fd.get('certificado') === 'on'
+    };
+    try {
+        await api.post('/admin/delegados-asociacion', datos);
+        mostrarToast('Delegado agregado correctamente', 'success');
+        cerrarModal();
+        if (datos.asociacion_id === asociacionActual.id) {
+            cargarNomina();
+        } else {
+            await abrirNomina(datos.asociacion_id);
+        }
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function cerrarModal() {
+    document.getElementById('modal-overlay').classList.add('oculto');
+}
+
+// ─── Suspender / Reactivar ─────────────────────────────────────────────
+async function suspenderDelegado(id) {
+    const d = _delegadosMap[id];
+    if (!d) return;
+    const ok = await confirmar(
+        `¿Suspender a ${d.nombre}?\n\nDejará de estar disponible para nuevas selecciones en el portal institucional. El registro, su asociación y su certificación se conservan — puede reactivarlo cuando quiera.`
+    );
+    if (!ok) return;
+    try {
+        const res = await api.patch('/admin/delegados-asociacion/' + id + '/suspender', {});
+        if (res.advertencias && (res.advertencias.cartillas_vinculadas > 0 || res.advertencias.rodeos_con_seleccion > 0)) {
+            mostrarToast(
+                `Delegado suspendido. Nota: tiene ${res.advertencias.cartillas_vinculadas} cartilla(s) y ${res.advertencias.rodeos_con_seleccion} selección(es) de rodeo asociadas — su historial no se modificó.`,
+                'info', 6000
+            );
+        } else {
+            mostrarToast('Delegado suspendido', 'success');
+        }
+        cargarNomina();
+    } catch (err) { mostrarError(err); }
+}
+
+async function reactivarDelegado(id) {
+    const d = _delegadosMap[id];
+    if (!d) return;
+    const ok = await confirmar(`¿Reactivar a ${d.nombre}? Volverá a estar disponible para nuevas selecciones.`);
+    if (!ok) return;
+    try {
+        await api.patch('/admin/delegados-asociacion/' + id + '/reactivar', {});
+        mostrarToast('Delegado reactivado', 'success');
+        cargarNomina();
+    } catch (err) { mostrarError(err); }
+}
+
+// ─── Eliminar (doble confirmación, el backend decide Caso A/B) ─────────
+async function eliminarDelegado(id) {
+    const d = _delegadosMap[id];
+    if (!d) return;
+
+    const ok1 = await confirmar(
+        `¿Eliminar definitivamente a ${d.nombre} (${asociacionActual.nombre})?\n\nSi tiene cartillas o selecciones de rodeo asociadas, no podrá eliminarse — se le ofrecerá suspenderlo en su lugar.`
+    );
+    if (!ok1) return;
+
+    const ok2 = await confirmar(`Confirme nuevamente: esta acción NO se puede deshacer. ¿Eliminar a ${d.nombre}?`);
+    if (!ok2) return;
+
+    try {
+        await api.deleteBody('/admin/delegados-asociacion/' + id, { confirmar: true });
+        mostrarToast('Delegado eliminado definitivamente', 'success');
+        cargarNomina();
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

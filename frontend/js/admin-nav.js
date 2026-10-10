@@ -9,6 +9,7 @@
         { href: '/admin/matriz-participacion.html',    icon: '🗂️', label: 'Matriz de Participación' },
         { s: 'Personas' },
         { href: '/admin/usuarios.html',            icon: '👥', label: 'Jurados y Delegados' },
+        { href: '/admin/delegados-asociacion.html', icon: '🏛️', label: 'Delegados de Asociación' },
         { href: '/admin/disponibilidad.html',      icon: '📅', label: 'Disponibilidad' },
         { s: 'Rodeos' },
         { href: '/admin/rodeos.html',              icon: '🏆', label: 'Rodeos' },

@@ -138,7 +138,8 @@ const _PAGINAS_DIRECTOR = [
 const _PAGINAS_BLOQUEADAS_EVAL = [
     '/admin/configuracion.html', '/admin/bonos.html', '/admin/exportacion-pagos.html',
     '/admin/reportes.html', '/admin/usuarios.html', '/admin/disponibilidad.html',
-    '/admin/importacion.html', '/admin/importacion-historica.html', '/admin/auditoria.html'
+    '/admin/importacion.html', '/admin/importacion-historica.html', '/admin/auditoria.html',
+    '/admin/delegados-asociacion.html'
 ];
 
 function _ajustarMenuPorRol(rol) {
