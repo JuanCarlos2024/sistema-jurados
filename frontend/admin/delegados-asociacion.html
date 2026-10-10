@@ -146,13 +146,19 @@ function renderTablaAsociaciones(asociaciones) {
     _asociacionesMap = {};
     asociaciones.forEach(a => { _asociacionesMap[a.asociacion_id] = a; });
 
+    // Totales acumulados de las asociaciones visibles (una sola vez por
+    // renderizado, reutilizados en encabezados y en el resumen inferior).
+    const totalActivos = asociaciones.reduce((suma, a) => suma + a.delegados_activos, 0);
+    const totalSuspendidos = asociaciones.reduce((suma, a) => suma + a.delegados_suspendidos, 0);
+    const totalGeneral = asociaciones.reduce((suma, a) => suma + a.delegados_total, 0);
+
     wrap.innerHTML = `
     <table style="font-size:13px;">
         <thead><tr>
             <th>Asociación</th>
-            <th>Delegados activos</th>
-            <th>Delegados suspendidos</th>
-            <th>Total</th>
+            <th>Delegados activos (${totalActivos})</th>
+            <th>Delegados suspendidos (${totalSuspendidos})</th>
+            <th>Total (${totalGeneral})</th>
             <th>Acción</th>
         </tr></thead>
         <tbody>
@@ -168,7 +174,7 @@ function renderTablaAsociaciones(asociaciones) {
         </tbody>
     </table>
     <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
-        Total: ${asociaciones.length} asociación(es) | Total delegados: ${asociaciones.reduce((suma, a) => suma + a.delegados_total, 0)}
+        Total: ${asociaciones.length} asociación(es) | Total delegados: ${totalGeneral}
     </div>`;
 }
 
