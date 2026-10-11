@@ -33,7 +33,7 @@
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados</h2></div>
         <nav class="sidebar-nav">
-            <a href="/institucional/rodeos.html" class="nav-item activo"><span class="icon">🤠</span> Mis Rodeos</a>
+            <a href="/institucional/rodeos.html" class="nav-item activo"><span class="icon">📋</span> Mis Rodeos</a>
             <a href="/institucional/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
         </nav>
         <div class="sidebar-footer">
@@ -212,9 +212,9 @@ function celdaNombreDelegado(r) {
     // "pendiente" (histórico sin revisar) — nunca el mismo texto.
     if (r.cartilla_delegado_adjunta) {
         const mensaje = r.cartilla_delegado_estado === 'pendiente'
-            ? 'Cartilla adjunta pendiente de revisión administrativa.'
+            ? 'Existe una cartilla o documento adjunto para este rodeo. Está pendiente de revisión administrativa, por lo que no se permite completar una nueva cartilla para evitar duplicidad de información.'
             : 'Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.';
-        return `<span style="color:#999;" title="${sanitizar(mensaje)}">No corresponde</span>`;
+        return `<span style="color:#999;" title="${sanitizar(mensaje)}">Sin información</span>`;
     }
     if (_delegadosCatalogo.length === 0) {
         return '<span style="color:#c0392b;">Sin delegados certificados</span>';
@@ -249,7 +249,7 @@ function celdaAccion(r) {
     // un mensaje distintos — nunca se le dice al usuario "ya adjuntada" por
     // un archivo que un administrador ni siquiera revisó todavía.
     const botonAdjuntaDisabled = r.cartilla_delegado_estado === 'pendiente'
-        ? `<button class="btn btn-secundario btn-pequeño" disabled title="${sanitizar('Cartilla adjunta pendiente de revisión administrativa.')}">Pendiente de revisión</button>`
+        ? `<button class="btn btn-secundario btn-pequeño" disabled title="${sanitizar('Existe una cartilla o documento adjunto para este rodeo. Está pendiente de revisión administrativa, por lo que no se permite completar una nueva cartilla para evitar duplicidad de información.')}">Cartilla pendiente de revisión</button>`
         : `<button class="btn btn-secundario btn-pequeño" disabled title="${sanitizar('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.')}">Cartilla ya adjuntada</button>`;
 
     // Verificación previa a publicación: el Administrador ya adjuntó la
@@ -331,7 +331,7 @@ let _delegadosCatalogo = [];
 function celdaCartilla(r) {
     if (r.cartilla_delegado_adjunta && r.estado_cartilla === 'sin_cartilla') {
         if (r.cartilla_delegado_estado === 'pendiente') {
-            return `<span class="badge badge-pendiente" title="${sanitizar('Cartilla adjunta pendiente de revisión administrativa.')}">Pendiente de revisión</span>`;
+            return `<span class="badge badge-pendiente" title="${sanitizar('Existe una cartilla o documento adjunto para este rodeo. Está pendiente de revisión administrativa, por lo que no se permite completar una nueva cartilla para evitar duplicidad de información.')}">Cartilla pendiente de revisión</span>`;
         }
         return `<span class="badge badge-activo" title="${sanitizar('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.')}">Cartilla adjunta</span>`;
     }

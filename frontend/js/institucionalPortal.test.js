@@ -341,11 +341,14 @@ describe('rodeos.html — Fase 3.3: "Tipo de Delegado" / "Nombre del Delegado" /
             expect(html).toContain('Este rodeo tiene un Delegado Rentado designado. La cartilla corresponde a dicho delegado.');
         });
 
-        test('celdaNombreDelegado: adjunta=true y SIN responsable confirmado -> "No corresponde", nunca ofrece el selector', () => {
+        // Ajuste visual/textual: el texto visible pasó de "No corresponde" a
+        // "Sin información" (más claro para usuarios básicos) — el tooltip
+        // explicativo se conserva igual.
+        test('celdaNombreDelegado: adjunta=true y SIN responsable confirmado -> "Sin información", nunca ofrece el selector', () => {
             const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; let ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
             const celdaNombreDelegado = extraerFuncion('celdaNombreDelegado', ctx);
             const html = celdaNombreDelegado({ tipo_delegado: 'delegado_asociacion', estado_cartilla: 'sin_cartilla', delegado_asociacion_id_seleccionado: null, cartilla_delegado_adjunta: true });
-            expect(html).toContain('No corresponde');
+            expect(html).toMatch(/>Sin información</);
             expect(html).not.toMatch(/<select/);
         });
 
@@ -383,32 +386,36 @@ describe('rodeos.html — Fase 3.3: "Tipo de Delegado" / "Nombre del Delegado" /
     });
 
     describe('Corrección final (076) — distinción "pendiente" (histórico sin clasificar) vs "vigente" (oficial confirmada)', () => {
-        const MSG_PENDIENTE = 'Cartilla adjunta pendiente de revisión administrativa.';
+        // Ajuste visual/textual (mejora de claridad): el texto visible pasó
+        // de "Pendiente de revisión" a "Cartilla pendiente de revisión", y
+        // el tooltip/title ahora explica el motivo del bloqueo con el texto
+        // completo pedido explícitamente.
+        const MSG_PENDIENTE = 'Existe una cartilla o documento adjunto para este rodeo. Está pendiente de revisión administrativa, por lo que no se permite completar una nueva cartilla para evitar duplicidad de información.';
 
-        test('celdaAccion: cartilla_delegado_estado=pendiente, sin cartilla digital todavía -> botón "Pendiente de revisión" con el mensaje distinto (nunca "Cartilla ya adjuntada")', () => {
+        test('celdaAccion: cartilla_delegado_estado=pendiente, sin cartilla digital todavía -> botón "Cartilla pendiente de revisión" con el mensaje distinto (nunca "Cartilla ya adjuntada")', () => {
             const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; const ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
             const celdaAccion = extraerFuncion('celdaAccion', ctx);
             const html = celdaAccion({ id: 'r1', estado_rodeo: 'activo', delegado_rentado_designado: false, tipo_delegado: 'delegado_asociacion', cartilla_iniciada: false, delegado_asociacion_id_seleccionado: null, estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
-            expect(html).toContain('Pendiente de revisión');
+            expect(html).toContain('Cartilla pendiente de revisión');
             expect(html).toContain(MSG_PENDIENTE);
             expect(html).not.toContain('Cartilla ya adjuntada');
             expect(html).toMatch(/disabled/);
         });
 
-        test('celdaNombreDelegado: cartilla_delegado_estado=pendiente y SIN responsable confirmado -> "No corresponde" con el mensaje distinto', () => {
+        test('celdaNombreDelegado: cartilla_delegado_estado=pendiente y SIN responsable confirmado -> "Sin información" con el mensaje distinto', () => {
             const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; let ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
             const celdaNombreDelegado = extraerFuncion('celdaNombreDelegado', ctx);
             const html = celdaNombreDelegado({ tipo_delegado: 'delegado_asociacion', estado_cartilla: 'sin_cartilla', delegado_asociacion_id_seleccionado: null, cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
-            expect(html).toContain('No corresponde');
+            expect(html).toContain('Sin información');
             expect(html).toContain(MSG_PENDIENTE);
             expect(html).not.toMatch(/<select/);
         });
 
-        test('celdaCartilla: sin cartilla digital + cartilla_delegado_estado=pendiente -> "Pendiente de revisión" (nunca "Cartilla adjunta", que implica vigente confirmada)', () => {
+        test('celdaCartilla: sin cartilla digital + cartilla_delegado_estado=pendiente -> "Cartilla pendiente de revisión" (nunca "Cartilla adjunta", que implica vigente confirmada)', () => {
             const ctx = STUB + "\nconst ETIQUETA_CARTILLA={sin_cartilla:'Sin cartilla'}; const BADGE_CARTILLA={sin_cartilla:'badge-pendiente'};";
             const celdaCartilla = extraerFuncion('celdaCartilla', ctx);
             const html = celdaCartilla({ estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
-            expect(html).toContain('Pendiente de revisión');
+            expect(html).toContain('Cartilla pendiente de revisión');
             expect(html).not.toMatch(/>Cartilla adjunta</); // la etiqueta VISIBLE nunca es "Cartilla adjunta" (esa implica vigente confirmada)
             expect(html).not.toContain('Sin cartilla');
         });
