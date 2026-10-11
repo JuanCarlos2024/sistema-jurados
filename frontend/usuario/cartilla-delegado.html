@@ -226,12 +226,16 @@ let _version       = null;
 // deshabilitan Guardar/Enviar. El backend repite esta misma verificación en
 // cada PATCH/enviar — este flag nunca es la única barrera.
 let _bloqueadaPorDesignacionPosterior = false;
+// Verificación previa a publicación: true cuando ya existía un borrador
+// institucional Y DESPUÉS el Administrador adjuntó la Cartilla de Delegado
+// oficial para el mismo rodeo — ver esSoloLectura() más abajo.
+let _bloqueadaPorCartillaAdjunta = false;
 // Único punto que decide si el formulario es editable o no — reemplaza las
 // múltiples repeticiones de `['enviada','reenviada','aprobada'].includes(_estado)`
 // que ya existían por sección, para que el bloqueo por designación posterior
 // aplique de forma uniforme a TODO el formulario sin tener que tocar cada sección.
 function esSoloLectura() {
-    return ['enviada', 'reenviada', 'aprobada'].includes(_estado) || _bloqueadaPorDesignacionPosterior;
+    return ['enviada', 'reenviada', 'aprobada'].includes(_estado) || _bloqueadaPorDesignacionPosterior || _bloqueadaPorCartillaAdjunta;
 }
 let _guardando     = false;
 let _jurados       = []; // Jurado(s) real(es) asignados al rodeo — SOLO LECTURA (nuevo formato 2026-2027)
@@ -291,8 +295,29 @@ async function init() {
 // RENDER PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
 function renderCartilla(r) {
-    const { rodeo, perfil, cartilla, jurados, conflicto_rentado, delegado_rentado_designado, bloqueada_por_designacion_posterior, historial_responsables } = r;
+    const { rodeo, perfil, cartilla, jurados, conflicto_rentado, delegado_rentado_designado, bloqueada_por_designacion_posterior, cartilla_delegado_adjunta, cartilla_delegado_estado, historial_responsables } = r;
     _bloqueadaPorDesignacionPosterior = !!bloqueada_por_designacion_posterior;
+    // Verificación previa a publicación: solo aplica cuando YA existe un
+    // borrador (si no existe ninguno, se corta el render más abajo con el
+    // mismo mensaje — nunca se ofrece completar una cartilla duplicada).
+    _bloqueadaPorCartillaAdjunta = !!cartilla_delegado_adjunta && !!cartilla;
+
+    // Verificación previa a publicación — acceso directo por URL: si el
+    // Administrador ya adjuntó la Cartilla de Delegado oficial, o existe un
+    // archivo histórico todavía sin clasificar, y todavía no existe ningún
+    // borrador institucional, nunca se permite iniciar uno (mismo criterio
+    // que ya aplica institucional/rodeos.html, reforzado acá para quien
+    // llegue directo por URL sin pasar por esa pantalla). Corrección final
+    // (076): el mensaje distingue "vigente" (oficial confirmada) de
+    // "pendiente" (histórico sin revisar) — nunca el mismo texto.
+    if (cartilla_delegado_adjunta && !cartilla) {
+        const mensaje = cartilla_delegado_estado === 'pendiente'
+            ? 'Cartilla adjunta pendiente de revisión administrativa.'
+            : 'Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.';
+        document.getElementById('cuerpo-cartilla').innerHTML = `
+            <div class="alerta alerta-info">${sanitizar(mensaje)}</div>`;
+        return;
+    }
 
     // Fase 3.1 — regla oficial: "cada rodeo tiene un solo delegado responsable".
     // Caso A (designación vigente de Delegado Rentado): mensaje EXACTO pedido
@@ -384,6 +409,24 @@ function renderCartilla(r) {
         html += `<div class="alerta alerta-info" style="margin-bottom:16px;">
             <strong>⚠ Cartilla temporalmente bloqueada</strong><br>
             Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.
+        </div>`;
+    }
+
+    // ── Verificación previa a publicación ───────────────────────────────────
+    // El Administrador ya adjuntó la Cartilla de Delegado oficial para este
+    // rodeo DESPUÉS de haberse iniciado un borrador institucional: se sigue
+    // mostrando todo el contenido (nunca se oculta ni se borra), pero el
+    // formulario completo queda en modo solo-lectura (ver esSoloLectura())
+    // hasta revisión administrativa. El backend repite este mismo bloqueo en
+    // cada PATCH/enviar — este banner nunca es la única barrera. (El caso
+    // "sin ningún borrador todavía" ya cortó el render más arriba.)
+    if (_bloqueadaPorCartillaAdjunta) {
+        const mensajeBloqueo = cartilla_delegado_estado === 'pendiente'
+            ? 'Cartilla adjunta pendiente de revisión administrativa. El borrador se conserva para revisión administrativa, pero no admite nuevos guardados ni envíos.'
+            : 'Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. El borrador se conserva para revisión administrativa, pero no admite nuevos guardados ni envíos.';
+        html += `<div class="alerta alerta-info" style="margin-bottom:16px;">
+            <strong>⚠ Cartilla temporalmente bloqueada</strong><br>
+            ${sanitizar(mensajeBloqueo)}
         </div>`;
     }
 

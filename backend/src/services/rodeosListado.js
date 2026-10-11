@@ -279,27 +279,88 @@ async function cargarStatsAsignacionesPorRodeo(rodeoIds) {
 // tipo_adjunto IN ('cartilla_jurado','cartilla' [legacy]); CD = existe
 // rodeo_adjuntos con tipo_adjunto='cartilla_delegado'; Video = existe
 // CUALQUIER fila en rodeo_links para ese rodeo.
-// @returns Map rodeo_id -> { cj, cd, vy } (booleanos)
+// Auditoría (077): `cd` se mantiene EXACTAMENTE igual ("¿existe algún archivo
+// tipo_adjunto='cartilla_delegado'?") para no romper el filtro existente ni
+// la exportación a Excel (ambos siguen leyendo solo `cd`). Se agrega
+// `cd_estado` (no reemplaza nada) para que la tabla principal del
+// Administrador pueda distinguir, con un simple tooltip, entre una versión
+// oficial confirmada ('vigente'), un archivo histórico aún sin clasificar
+// ('pendiente') y archivos que son EXCLUSIVAMENTE documentos complementarios
+// ('complementario', confirmados explícitamente — nunca bloquean ni
+// cuentan como la cartilla real, pero sí hacen que `cd` sea true).
+// Prioridad al combinar varias filas del mismo rodeo: vigente > pendiente >
+// complementario.
+// @returns Map rodeo_id -> { cj, cd, vy, cd_estado: 'vigente'|'pendiente'|'complementario'|null }
 async function cargarIndicadoresAdjuntosPorRodeo(rodeoIds) {
     if (!rodeoIds || rodeoIds.length === 0) return {};
 
     const [adjRes, linkRes] = await Promise.all([
-        supabase.from('rodeo_adjuntos').select('rodeo_id, tipo_adjunto').in('rodeo_id', rodeoIds),
+        supabase.from('rodeo_adjuntos').select('rodeo_id, tipo_adjunto, cartilla_clasificacion').in('rodeo_id', rodeoIds),
         supabase.from('rodeo_links').select('rodeo_id').in('rodeo_id', rodeoIds)
     ]);
 
     const result = {};
-    rodeoIds.forEach(id => { result[id] = { cj: false, cd: false, vy: false }; });
+    rodeoIds.forEach(id => { result[id] = { cj: false, cd: false, vy: false, cd_estado: null }; });
 
+    const PRIORIDAD = { vigente: 3, pendiente: 2, complementario: 1 };
     (adjRes.data || []).forEach(a => {
         if (!result[a.rodeo_id]) return;
         if (['cartilla_jurado', 'cartilla'].includes(a.tipo_adjunto)) result[a.rodeo_id].cj = true;
-        if (a.tipo_adjunto === 'cartilla_delegado')                   result[a.rodeo_id].cd = true;
+        if (a.tipo_adjunto === 'cartilla_delegado') {
+            result[a.rodeo_id].cd = true;
+            // cartilla_clasificacion solo existe desde la migración 077 —
+            // si todavía no se aplicó, viene undefined y simplemente no se
+            // fija ningún cd_estado (cd sigue funcionando igual que siempre).
+            const estado = a.cartilla_clasificacion === 'version_cartilla' ? 'vigente' : a.cartilla_clasificacion;
+            if (estado && (PRIORIDAD[estado] || 0) > (PRIORIDAD[result[a.rodeo_id].cd_estado] || 0)) {
+                result[a.rodeo_id].cd_estado = estado;
+            }
+        }
     });
     (linkRes.data || []).forEach(l => {
         if (result[l.rodeo_id]) result[l.rodeo_id].vy = true;
     });
 
+    return result;
+}
+
+// ─── Cartilla única por rodeo, con versiones y clasificación en tres
+// estados (076, endurecida en 077): a diferencia del indicador "CD" de
+// arriba (uso administrativo — "¿hay algún archivo de este tipo?", sigue
+// contando cualquier fila tipo_adjunto='cartilla_delegado' sin cambios,
+// para no alterar el triage del administrador ni la exportación a Excel),
+// ESTA función responde la pregunta que SÍ debe bloquear la creación de una
+// cartilla digital institucional: ¿existe alguna fila confirmada como
+// 'version_cartilla' (oficial — SIN exigir además cartilla_vigente=true:
+// auditoría 077 — si la vigente desapareciera por cualquier motivo pero
+// sigue existiendo una versión oficial histórica, el rodeo debe seguir
+// bloqueado, nunca depender solo de ese booleano), O algún archivo
+// histórico todavía SIN CLASIFICAR ("pendiente" — el DEFAULT real para los
+// 180 archivos ya existentes en producción, nunca inferido de un NULL)?
+// Solo un archivo confirmado EXPLÍCITAMENTE como "complementario" (informe
+// médico/paramédico/disciplinario, etc. — hallazgo real: CHACAICO/BÍO-BÍO)
+// nunca cuenta acá.
+// @returns Map rodeo_id -> 'vigente' | 'pendiente' | null
+async function cargarEstadoCartillaDelegadoAdjuntaPorRodeo(rodeoIds) {
+    if (!rodeoIds || rodeoIds.length === 0) return {};
+
+    const { data, error } = await supabase
+        .from('rodeo_adjuntos')
+        .select('rodeo_id, cartilla_clasificacion')
+        .in('rodeo_id', rodeoIds)
+        .eq('tipo_adjunto', 'cartilla_delegado');
+    if (error) throw new Error(error.message);
+
+    const result = {};
+    rodeoIds.forEach(id => { result[id] = null; });
+    (data || []).forEach(a => {
+        if (!(a.rodeo_id in result)) return;
+        if (a.cartilla_clasificacion === 'version_cartilla') {
+            result[a.rodeo_id] = 'vigente';
+        } else if (a.cartilla_clasificacion === 'pendiente' && result[a.rodeo_id] !== 'vigente') {
+            result[a.rodeo_id] = 'pendiente';
+        }
+    });
     return result;
 }
 
@@ -356,5 +417,6 @@ module.exports = {
     textoEstadoDesignacion,
     cargarStatsAsignacionesPorRodeo,
     cargarIndicadoresAdjuntosPorRodeo,
+    cargarEstadoCartillaDelegadoAdjuntaPorRodeo,
     cargarNotasPorRodeo
 };

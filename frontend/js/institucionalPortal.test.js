@@ -296,6 +296,132 @@ describe('rodeos.html — Fase 3.3: "Tipo de Delegado" / "Nombre del Delegado" /
         expect(html).toContain('Ver cartilla');
         expect(html).not.toMatch(/Descargar PDF/);
     });
+
+    describe('Verificación previa a publicación — Cartilla de Delegado oficial adjuntada', () => {
+        const MSG = 'Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.';
+
+        test('celdaAccion: adjunta=true, sin cartilla digital todavía -> "Cartilla ya adjuntada" deshabilitado, con el mensaje exacto, SIN IMPORTAR si hay delegado seleccionado', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; const ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaAccion = extraerFuncion('celdaAccion', ctx);
+            const html = celdaAccion({ id: 'r1', estado_rodeo: 'activo', delegado_rentado_designado: false, tipo_delegado: 'delegado_asociacion', cartilla_iniciada: false, delegado_asociacion_id_seleccionado: null, estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Cartilla ya adjuntada');
+            expect(html).toContain(MSG);
+            expect(html).toMatch(/disabled/);
+            expect(html).not.toMatch(/Seleccione un delegado/); // ni siquiera llega a ese chequeo
+        });
+
+        test('celdaAccion: adjunta=true PERO ya había un borrador iniciado (no bloqueado) -> conserva "Ver cartilla", pero NUNCA "Continuar cartilla"', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; const ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaAccion = extraerFuncion('celdaAccion', ctx);
+            const html = celdaAccion({ id: 'r1', estado_rodeo: 'activo', delegado_rentado_designado: false, tipo_delegado: 'delegado_asociacion', cartilla_iniciada: true, delegado_asociacion_id_seleccionado: 'd1', estado_cartilla: 'borrador', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Ver cartilla');
+            expect(html).toContain('Cartilla ya adjuntada');
+            expect(html).not.toContain('Continuar cartilla');
+        });
+
+        test('celdaAccion: adjunta=true pero la cartilla YA estaba enviada/aprobada (ya bloqueada por su propio estado) -> sigue el flujo normal (Ver cartilla + Descargar PDF), sin romperlo', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; const ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaAccion = extraerFuncion('celdaAccion', ctx);
+            const html = celdaAccion({ id: 'r1', estado_rodeo: 'activo', delegado_rentado_designado: false, tipo_delegado: 'delegado_asociacion', cartilla_iniciada: true, delegado_asociacion_id_seleccionado: 'd1', estado_cartilla: 'enviada', cartilla_id: 'cart-1', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Ver cartilla');
+            expect(html).toContain('Descargar PDF');
+        });
+
+        test('celdaAccion: Rodeo anulado sigue teniendo prioridad incluso con adjunta=true (el bloqueo existente no se debilita)', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [];";
+            const celdaAccion = extraerFuncion('celdaAccion', ctx);
+            const html = celdaAccion({ id: 'r1', estado_rodeo: 'anulado', delegado_rentado_designado: false, tipo_delegado: 'delegado_asociacion', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Rodeo anulado: no admite cartilla');
+        });
+
+        test('celdaAccion: Delegado Rentado designado sigue teniendo prioridad incluso con adjunta=true (el bloqueo existente no se debilita)', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [];";
+            const celdaAccion = extraerFuncion('celdaAccion', ctx);
+            const html = celdaAccion({ id: 'r1', estado_rodeo: 'activo', delegado_rentado_designado: true, tipo_delegado: 'delegado_rentado', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Este rodeo tiene un Delegado Rentado designado. La cartilla corresponde a dicho delegado.');
+        });
+
+        test('celdaNombreDelegado: adjunta=true y SIN responsable confirmado -> "No corresponde", nunca ofrece el selector', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; let ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaNombreDelegado = extraerFuncion('celdaNombreDelegado', ctx);
+            const html = celdaNombreDelegado({ tipo_delegado: 'delegado_asociacion', estado_cartilla: 'sin_cartilla', delegado_asociacion_id_seleccionado: null, cartilla_delegado_adjunta: true });
+            expect(html).toContain('No corresponde');
+            expect(html).not.toMatch(/<select/);
+        });
+
+        test('celdaNombreDelegado: adjunta=true PERO ya había un responsable confirmado ANTES -> se conserva "Responsable confirmado", nunca se borra', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; let ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaNombreDelegado = extraerFuncion('celdaNombreDelegado', ctx);
+            const html = celdaNombreDelegado({ tipo_delegado: 'delegado_asociacion', estado_cartilla: 'borrador', nombre_delegado: 'Ana Soto', delegado_asociacion_id_seleccionado: 'd1', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Responsable confirmado');
+            expect(html).toContain('Ana Soto');
+        });
+
+        test('celdaCartilla: sin cartilla digital + adjunta=true -> "Cartilla adjunta" en vez de "Sin cartilla"', () => {
+            const ctx = STUB + "\nconst ETIQUETA_CARTILLA={sin_cartilla:'Sin cartilla'}; const BADGE_CARTILLA={sin_cartilla:'badge-pendiente'};";
+            const celdaCartilla = extraerFuncion('celdaCartilla', ctx);
+            const html = celdaCartilla({ estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Cartilla adjunta');
+            expect(html).not.toContain('Sin cartilla');
+        });
+
+        test('celdaCartilla: sin ningún adjunto -> conserva "Sin cartilla" tal cual (sin cambios)', () => {
+            const ctx = STUB + "\nconst ETIQUETA_CARTILLA={sin_cartilla:'Sin cartilla'}; const BADGE_CARTILLA={sin_cartilla:'badge-pendiente'};";
+            const celdaCartilla = extraerFuncion('celdaCartilla', ctx);
+            const html = celdaCartilla({ estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: false });
+            expect(html).toContain('Sin cartilla');
+            expect(html).not.toContain('Cartilla adjunta');
+        });
+
+        test('celdaCartilla: borrador YA iniciado + adjunta=true -> conserva el estado real (nunca lo oculta) y agrega la advertencia de adjunto oficial', () => {
+            const ctx = STUB + "\nconst ETIQUETA_CARTILLA={borrador:'Borrador'}; const BADGE_CARTILLA={borrador:'badge-pendiente'};";
+            const celdaCartilla = extraerFuncion('celdaCartilla', ctx);
+            const html = celdaCartilla({ estado_cartilla: 'borrador', cartilla_delegado_adjunta: true });
+            expect(html).toContain('Borrador');
+            expect(html).toContain('Adjunto oficial');
+        });
+    });
+
+    describe('Corrección final (076) — distinción "pendiente" (histórico sin clasificar) vs "vigente" (oficial confirmada)', () => {
+        const MSG_PENDIENTE = 'Cartilla adjunta pendiente de revisión administrativa.';
+
+        test('celdaAccion: cartilla_delegado_estado=pendiente, sin cartilla digital todavía -> botón "Pendiente de revisión" con el mensaje distinto (nunca "Cartilla ya adjuntada")', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; const ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaAccion = extraerFuncion('celdaAccion', ctx);
+            const html = celdaAccion({ id: 'r1', estado_rodeo: 'activo', delegado_rentado_designado: false, tipo_delegado: 'delegado_asociacion', cartilla_iniciada: false, delegado_asociacion_id_seleccionado: null, estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
+            expect(html).toContain('Pendiente de revisión');
+            expect(html).toContain(MSG_PENDIENTE);
+            expect(html).not.toContain('Cartilla ya adjuntada');
+            expect(html).toMatch(/disabled/);
+        });
+
+        test('celdaNombreDelegado: cartilla_delegado_estado=pendiente y SIN responsable confirmado -> "No corresponde" con el mensaje distinto', () => {
+            const ctx = STUB + "\nlet _delegadosCatalogo = [{id:'d1',nombre:'Ana Soto'}]; let ESTADOS_CARTILLA_BLOQUEADOS=['enviada','reenviada','aprobada','cerrada'];";
+            const celdaNombreDelegado = extraerFuncion('celdaNombreDelegado', ctx);
+            const html = celdaNombreDelegado({ tipo_delegado: 'delegado_asociacion', estado_cartilla: 'sin_cartilla', delegado_asociacion_id_seleccionado: null, cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
+            expect(html).toContain('No corresponde');
+            expect(html).toContain(MSG_PENDIENTE);
+            expect(html).not.toMatch(/<select/);
+        });
+
+        test('celdaCartilla: sin cartilla digital + cartilla_delegado_estado=pendiente -> "Pendiente de revisión" (nunca "Cartilla adjunta", que implica vigente confirmada)', () => {
+            const ctx = STUB + "\nconst ETIQUETA_CARTILLA={sin_cartilla:'Sin cartilla'}; const BADGE_CARTILLA={sin_cartilla:'badge-pendiente'};";
+            const celdaCartilla = extraerFuncion('celdaCartilla', ctx);
+            const html = celdaCartilla({ estado_cartilla: 'sin_cartilla', cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
+            expect(html).toContain('Pendiente de revisión');
+            expect(html).not.toMatch(/>Cartilla adjunta</); // la etiqueta VISIBLE nunca es "Cartilla adjunta" (esa implica vigente confirmada)
+            expect(html).not.toContain('Sin cartilla');
+        });
+
+        test('celdaCartilla: borrador YA iniciado + cartilla_delegado_estado=pendiente -> conserva el estado real y agrega la advertencia de adjunto, con el título distinto de "pendiente"', () => {
+            const ctx = STUB + "\nconst ETIQUETA_CARTILLA={borrador:'Borrador'}; const BADGE_CARTILLA={borrador:'badge-pendiente'};";
+            const celdaCartilla = extraerFuncion('celdaCartilla', ctx);
+            const html = celdaCartilla({ estado_cartilla: 'borrador', cartilla_delegado_adjunta: true, cartilla_delegado_estado: 'pendiente' });
+            expect(html).toContain('Borrador');
+            expect(html).toContain('Adjunto oficial');
+            expect(html).toContain('pendiente de revisión administrativa');
+        });
+    });
 });
 
 describe('rodeos.html — Fase 3.4: "Jurado designado" reemplaza la columna "Estado rodeo"', () => {

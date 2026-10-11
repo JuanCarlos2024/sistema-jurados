@@ -35,14 +35,19 @@ describe('Namespace de API — nunca comparte middleware de autorización entre 
 
 describe('Conflicto con cartilla de Delegado Rentado — nunca se toca ni se crea en paralelo', () => {
     test('conflicto_rentado detiene el render del formulario con un mensaje, antes de tocar ningún campo', () => {
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 1500);
+        // Verificación previa a publicación + corrección final (076):
+        // ventana ampliada (antes 1500, luego 2500) — renderCartilla ahora
+        // empieza con el chequeo de cartilla_delegado_adjunta (que distingue
+        // vigente/pendiente, ver más abajo), que corre ANTES de llegar a
+        // conflicto_rentado.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 2900);
         expect(bloque).toMatch(/conflicto_rentado/);
         expect(bloque).toMatch(/requiere revisión administrativa/);
         expect(bloque).toMatch(/return;/);
     });
 
     test('Fase 3.1 — Caso A (delegado_rentado_designado=true): usa el mensaje EXACTO pedido, no el mensaje histórico genérico', () => {
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 1500);
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 2900);
         expect(bloque).toMatch(/delegado_rentado_designado/);
         expect(bloque).toContain('Este rodeo tiene un Delegado Rentado designado. La cartilla corresponde a dicho delegado.');
     });
@@ -64,7 +69,9 @@ describe('Fase 3.1 (cierre) — Caso D: bloqueo de escritura tras designación p
     });
 
     test('renderCartilla() setea _bloqueadaPorDesignacionPosterior desde la respuesta del backend ANTES de calcular el modo solo-lectura', () => {
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 2000);
+        // Ventana ampliada (antes 2000, luego 3000) — ver nota de la
+        // corrección final (076) arriba.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 3400);
         const iSet = bloque.indexOf('_bloqueadaPorDesignacionPosterior = ');
         const iYa = bloque.indexOf('esSoloLectura()');
         expect(iSet).toBeGreaterThan(-1);
@@ -72,13 +79,58 @@ describe('Fase 3.1 (cierre) — Caso D: bloqueo de escritura tras designación p
     });
 
     test('se muestra el mensaje EXACTO pedido para el bloqueo (distinto del mensaje del Caso A), sin detener el render del formulario', () => {
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 6000);
+        // Ventana ampliada (antes 6000, luego 6800) — ver nota de la
+        // corrección final (076) arriba.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 7300);
         expect(bloque).toContain('Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.');
     });
 
     test('la barra de Guardar/Enviar solo se oculta cuando esSoloLectura() es true (reutiliza el mismo guard, no uno nuevo paralelo)', () => {
         const bloque = html.slice(html.indexOf('document.getElementById(\'cuerpo-cartilla\').innerHTML = html;'), html.indexOf('document.getElementById(\'cuerpo-cartilla\').innerHTML = html;') + 500);
         expect(bloque).toMatch(/if \(!ya\)/);
+    });
+});
+
+describe('Verificación previa a publicación — bloqueo por Cartilla de Delegado oficial adjuntada (acceso directo por URL)', () => {
+    test('GET destructura cartilla_delegado_adjunta de la respuesta del backend', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 300);
+        expect(bloque).toMatch(/cartilla_delegado_adjunta/);
+    });
+
+    test('sin ningún borrador todavía (acceso directo por URL) -> corta el render con el mensaje EXACTO, ANTES de llegar a conflicto_rentado', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 2900);
+        const iCorte = bloque.indexOf('cartilla_delegado_adjunta && !cartilla');
+        const iConflicto = bloque.indexOf('if (conflicto_rentado)');
+        expect(iCorte).toBeGreaterThan(-1);
+        expect(iConflicto).toBeGreaterThan(iCorte); // el chequeo nuevo corre PRIMERO
+        expect(bloque).toContain('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.');
+        expect(bloque).toMatch(/return;/);
+    });
+
+    test('corrección final (076) — acceso directo por URL con un archivo histórico pendiente de clasificar -> corta el render con el mensaje DISTINTO de "pendiente" (nunca el mismo texto que la cartilla vigente)', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 2900);
+        expect(bloque).toMatch(/cartilla_delegado_estado === 'pendiente'/);
+        expect(bloque).toContain('Cartilla adjunta pendiente de revisión administrativa.');
+    });
+
+    test('_bloqueadaPorCartillaAdjunta solo se activa cuando YA existe un borrador (nunca cuando el render ya se cortó arriba)', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 700);
+        expect(bloque).toMatch(/_bloqueadaPorCartillaAdjunta = !!cartilla_delegado_adjunta && !!cartilla/);
+    });
+
+    test('esSoloLectura() combina también _bloqueadaPorCartillaAdjunta (no solo _bloqueadaPorDesignacionPosterior)', () => {
+        const bloque = html.slice(html.indexOf('function esSoloLectura'), html.indexOf('function esSoloLectura') + 250);
+        expect(bloque).toMatch(/_bloqueadaPorCartillaAdjunta/);
+    });
+
+    test('se muestra un banner con el mensaje EXACTO para el caso "borrador ya iniciado + adjunto posterior", sin detener el render del formulario', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 8400);
+        expect(bloque).toContain('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. El borrador se conserva para revisión administrativa, pero no admite nuevos guardados ni envíos.');
+    });
+
+    test('corrección final (076) — mismo banner, pero con un archivo histórico pendiente de clasificar -> mensaje DISTINTO de "pendiente" (nunca el mismo texto que la cartilla vigente)', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 8400);
+        expect(bloque).toContain('Cartilla adjunta pendiente de revisión administrativa. El borrador se conserva para revisión administrativa, pero no admite nuevos guardados ni envíos.');
     });
 });
 

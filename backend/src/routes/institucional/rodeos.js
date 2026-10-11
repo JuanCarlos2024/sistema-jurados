@@ -20,9 +20,21 @@ const { soloCuentaInstitucional } = require('../../middleware/auth');
 const { resolverTemporada } = require('../../services/informeGestion/cargaDatos');
 const { construirIndiceCatalogo, resolverAsociacion } = require('../../services/informeGestion/asociaciones');
 const auditoria = require('../../services/auditoria');
+// Cartilla única por rodeo, con versiones (migración 075): NO reutiliza el
+// indicador administrativo genérico "CD" (cargarIndicadoresAdjuntosPorRodeo,
+// cuenta cualquier archivo de ese tipo, incluidos documentos complementarios
+// mal clasificados — ver su propio comentario) — distingue 'vigente' de
+// 'pendiente' (corrección final, migración 076), las dos únicas que
+// corresponde bloquear. Batched por rodeo_id; solo informativo para el
+// listado (la barrera de escritura real reutiliza el chequeo fail-closed
+// de institucional/cartilla.js, ver más abajo).
+const { cargarEstadoCartillaDelegadoAdjuntaPorRodeo } = require('../../services/rodeosListado');
 // Fase 3.3: reutiliza la MISMA verificación de pertenencia de rodeo y de
 // delegado válido que ya usa institucional/cartilla.js — nunca se duplica.
-const { rodeoDeMiAsociacion, delegadoValido } = require('./cartilla');
+// Corrección final (076): también reutiliza desde ahí el chequeo de tres
+// estados (fail-closed) de Cartilla de Delegado adjunta, para
+// POST /seleccionar-delegado.
+const { rodeoDeMiAsociacion, delegadoValido, estadoBloqueoCartillaDelegadoAdjunta } = require('./cartilla');
 
 router.use(soloCuentaInstitucional);
 
@@ -76,13 +88,15 @@ router.get('/', async (req, res) => {
         let rentadoDesignadoPorRodeo = new Map(); // rodeo_id -> nombre real del Rentado (o null si no se pudo resolver)
         let seleccionPorRodeo = new Map(); // rodeo_id -> { delegado_asociacion_id, nombre }
         let juradosPorRodeo = new Map(); // rodeo_id -> string[] (nombres), SOLO designaciones publicadas y no rechazadas
+        let estadoCartillaAdjuntaPorRodeo = {}; // rodeo_id -> 'vigente'|'pendiente'|null (corrección final, migración 076)
         if (propios.length > 0) {
             const idsPropios = propios.map(r => r.id);
             const [
                 { data: cartillas, error: errCart },
                 { data: designaciones, error: errAsig },
                 { data: selecciones, error: errSel },
-                { data: jurados, error: errJur }
+                { data: jurados, error: errJur },
+                estadoCartillaAdjunta
             ] = await Promise.all([
                 supabase.from('cartillas_delegado').select('id, rodeo_id, estado, delegado_id, delegado_asociacion_id').in('rodeo_id', idsPropios),
                 // Fase 3.1 — regla oficial: "cada rodeo tiene un solo delegado responsable".
@@ -115,12 +129,15 @@ router.get('/', async (req, res) => {
                     .eq('tipo_persona', 'jurado')
                     .eq('estado', 'activo')
                     .eq('publicado', true)
-                    .neq('estado_designacion', 'rechazado')
+                    .neq('estado_designacion', 'rechazado'),
+                // Corrección final (076): ver cabecera.
+                cargarEstadoCartillaDelegadoAdjuntaPorRodeo(idsPropios)
             ]);
             if (errCart) return res.status(500).json({ error: errCart.message });
             if (errAsig) return res.status(500).json({ error: errAsig.message });
             if (errSel) return res.status(500).json({ error: errSel.message });
             if (errJur) return res.status(500).json({ error: errJur.message });
+            estadoCartillaAdjuntaPorRodeo = estadoCartillaAdjunta;
             for (const c of (cartillas || [])) {
                 if (!cartillasPorRodeo[c.rodeo_id]) cartillasPorRodeo[c.rodeo_id] = [];
                 cartillasPorRodeo[c.rodeo_id].push(c);
@@ -184,6 +201,14 @@ router.get('/', async (req, res) => {
                 nombre_delegado: nombreDelegado,
                 delegado_asociacion_id_seleccionado: delegadoAsociacionIdSeleccionado,
                 cartilla_iniciada: !!institucional,
+                // Corrección final (076): bloqueado tanto por una versión
+                // VIGENTE confirmada como por un archivo histórico
+                // PENDIENTE de revisión — `cartilla_delegado_estado`
+                // distingue cuál, para que el frontend muestre el mensaje
+                // correcto. Un documento complementario (confirmado
+                // explícitamente) nunca activa esto.
+                cartilla_delegado_adjunta: !!estadoCartillaAdjuntaPorRodeo[r.id],
+                cartilla_delegado_estado: estadoCartillaAdjuntaPorRodeo[r.id] || null,
                 // Fase 3.4 — "Ver cartilla"/"Descargar PDF": id real de la cartilla
                 // institucional (nunca la de Delegado Rentado) para armar el enlace
                 // de descarga; null si todavía no existe ninguna.
@@ -231,6 +256,19 @@ router.post('/:rodeo_id/seleccionar-delegado', async (req, res) => {
     // 2. El delegado está certificado, activo y es de la MISMA asociación.
     const delegado = await delegadoValido(delegado_asociacion_id, req.usuario.asociacion_id);
     if (!delegado) return res.status(403).json({ error: 'Delegado no válido para esta asociación.' });
+
+    // Corrección final (076): si ya existe la Cartilla de Delegado oficial
+    // vigente, O un archivo histórico pendiente de revisión, ni siquiera se
+    // permite confirmar un responsable institucional para iniciar una
+    // cartilla duplicada.
+    try {
+        const estado = await estadoBloqueoCartillaDelegadoAdjunta(rodeo.id);
+        if (estado.bloqueado) {
+            return res.status(409).json({ error: estado.mensaje, code: estado.codigo });
+        }
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
 
     // Fase 3.1 — regla oficial: si el rodeo ya es responsabilidad de un
     // Delegado Rentado vigente, ni siquiera se permite declarar una

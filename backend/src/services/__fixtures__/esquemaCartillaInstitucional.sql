@@ -31,6 +31,26 @@ CREATE TABLE asignaciones (
     observacion TEXT
 );
 
+-- Reproduce rodeo_adjuntos real (migraciones 004/005/006, ya aplicada en
+-- producción, anterior a todo este desarrollo) — necesaria desde la
+-- verificación previa a publicación del bloqueo de cartillas ya adjuntadas
+-- (institucional/cartilla.js:tieneCartillaDelegadoAdjunta, migración 074):
+-- ningún archivo anterior de esta familia de fixtures la necesitaba.
+CREATE TABLE rodeo_adjuntos (
+    id                 UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    rodeo_id           UUID NOT NULL REFERENCES rodeos(id) ON DELETE CASCADE,
+    usuario_pagado_id  UUID REFERENCES usuarios_pagados(id) ON DELETE SET NULL,
+    subido_por_admin   BOOLEAN NOT NULL DEFAULT false,
+    tipo_adjunto       TEXT NOT NULL DEFAULT 'otro'
+                       CHECK (tipo_adjunto IN ('cartilla_jurado', 'cartilla_delegado', 'respaldo', 'cartilla', 'planilla', 'contrato', 'foto', 'otro')),
+    nombre_archivo     TEXT NOT NULL,
+    storage_path       TEXT NOT NULL UNIQUE,
+    mime_type          TEXT NOT NULL,
+    tamano_bytes       INTEGER,
+    created_by         UUID,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Reproduce la tabla auditoria real (database/schema.sql), incluido su CHECK
 -- ORIGINAL (sin 'cuenta_institucional'), para que la migración 069 ejercite
 -- de verdad el DROP/ADD CONSTRAINT que corrige el bug detectado en Fase 3.5

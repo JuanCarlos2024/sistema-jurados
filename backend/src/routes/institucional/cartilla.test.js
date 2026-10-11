@@ -28,7 +28,16 @@ const DELEGADO_INACTIVO = { id: 'del-3', nombre: 'Inactivo', asociacion_id: ASOC
 let respuestas, rpcImpl;
 function crearChain(tabla) {
     const chain = {};
-    ['select', 'eq', 'in', 'neq', 'upsert'].forEach(m => { chain[m] = () => chain; });
+    // Verificación previa a publicación: rodeo_adjuntos SÍ aplica sus
+    // filtros .eq() de verdad (a diferencia del resto, que los ignora) —
+    // necesario para probar que SOLO tipo_adjunto='cartilla_delegado'
+    // activa el bloqueo, nunca 'cartilla_jurado'/'foto'/etc.
+    const filtros = {};
+    ['select', 'in', 'neq', 'upsert'].forEach(m => { chain[m] = () => chain; });
+    chain.eq = (campo, valor) => {
+        if (tabla === 'rodeo_adjuntos') filtros[campo] = valor;
+        return chain;
+    };
     chain.maybeSingle = () => Promise.resolve(respuestas[tabla]?.maybeSingle ?? { data: null, error: null });
     chain.single = () => Promise.resolve(respuestas[tabla]?.single ?? { data: null, error: null });
     // Fase 3.5 — historial de responsables: .order() es la llamada FINAL de
@@ -38,7 +47,14 @@ function crearChain(tabla) {
         const upd = { payload, eq: () => upd, select: () => upd, maybeSingle: () => Promise.resolve(respuestas[tabla]?.updateResult ?? { data: null, error: null }) };
         return upd;
     };
-    chain.then = (resolve, reject) => Promise.resolve(respuestas[tabla]?.list ?? { data: [], error: null }).then(resolve, reject);
+    chain.then = (resolve, reject) => {
+        const base = respuestas[tabla]?.list ?? { data: [], error: null };
+        if (tabla !== 'rodeo_adjuntos' || base.error || !Array.isArray(base.data)) {
+            return Promise.resolve(base).then(resolve, reject);
+        }
+        const filtrada = base.data.filter(row => Object.entries(filtros).every(([k, v]) => row[k] === v));
+        return Promise.resolve({ data: filtrada, error: null }).then(resolve, reject);
+    };
     return chain;
 }
 
@@ -51,6 +67,9 @@ beforeEach(() => {
         delegados_asociacion: { maybeSingle: { data: DELEGADO_OK, error: null } },
         cartillas_delegado: { list: { data: [], error: null }, maybeSingle: { data: null, error: null }, updateResult: { data: null, error: null } },
         asignaciones: { maybeSingle: { data: null, error: null } }, // sin designación vigente de Rentado por defecto
+        // Verificación previa a publicación: sin adjunto de Cartilla de
+        // Delegado oficial por defecto.
+        rodeo_adjuntos: { list: { data: [], error: null } },
         // Fase 3.5: la fuente del responsable CONFIRMADO ya no es el body del
         // POST, sino esta tabla — por defecto ya hay un delegado confirmado
         // (del-1, el mismo DELEGADO_OK) para que los tests existentes de
@@ -155,6 +174,64 @@ describe('GET /institucional/cartilla/rodeo/:rodeo_id', () => {
         expect(res.jsonBody.bloqueada_por_designacion_posterior).toBe(true);
         expect(res.jsonBody.conflicto_rentado).toBe(false); // no es Caso A: ya existe cartilla, se puede consultar
     });
+
+    describe('Verificación previa a publicación — cartilla_delegado_adjunta', () => {
+        test('con rodeo_adjuntos.tipo_adjunto=cartilla_delegado, clasificación version_cartilla vigente -> cartilla_delegado_adjunta=true, cartilla_delegado_estado=vigente', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(true);
+            expect(res.jsonBody.cartilla_delegado_estado).toBe('vigente');
+        });
+
+        test('corrección final (076) — archivo histórico pendiente de clasificar (cartilla_clasificacion=pendiente, el DEFAULT) -> cartilla_delegado_adjunta=true, cartilla_delegado_estado=pendiente', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(true);
+            expect(res.jsonBody.cartilla_delegado_estado).toBe('pendiente');
+        });
+
+        test('sin ningún adjunto -> cartilla_delegado_adjunta=false', async () => {
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('solo Cartilla de Jurado adjunta (tipo_adjunto=cartilla_jurado) -> cartilla_delegado_adjunta=false, nunca se confunden', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_jurado' }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('solo "cartilla" (legacy, equivale a Cartilla de Jurado) -> cartilla_delegado_adjunta=false', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla' }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('solo un adjunto "foto"/"otro" -> cartilla_delegado_adjunta=false', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'foto' }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('migración 076 — tipo_adjunto=cartilla_delegado clasificado como complementario (confirmado por un administrador, caso real CHACAICO/BÍO-BÍO) -> cartilla_delegado_adjunta=false', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'complementario', cartilla_vigente: false }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(false);
+            expect(res.jsonBody.cartilla_delegado_estado).toBeNull();
+        });
+
+        test('adjunto cartilla_delegado de OTRO rodeo -> no afecta a este rodeo', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'otro-rodeo', tipo_adjunto: 'cartilla_delegado' }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('una falla real al leer rodeo_adjuntos -> 500, nunca false silencioso (fail-closed)', async () => {
+            respuestas.rodeo_adjuntos.list = { data: null, error: { message: 'timeout' } };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(500);
+        });
+    });
 });
 
 describe('POST /institucional/cartilla/rodeo/:rodeo_id (creación/adjunto)', () => {
@@ -224,6 +301,47 @@ describe('POST /institucional/cartilla/rodeo/:rodeo_id (creación/adjunto)', () 
         // La auditoría ('guardar' en este caso) la registra la propia RPC —
         // ver nota de la Fase 3.5.1 arriba.
         expect(auditoria.registrar).not.toHaveBeenCalled();
+    });
+
+    describe('Verificación previa a publicación — bloqueo por Cartilla de Delegado oficial adjunta', () => {
+        test('con cartilla_delegado adjunta (version_cartilla vigente) -> 409 CARTILLA_DELEGADO_ADJUNTA, nunca llama la RPC', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+            const res = await llamar('POST', '/rodeo/rodeo-1', { delegado_asociacion_id: 'del-1' }, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(409);
+            expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_ADJUNTA');
+            expect(res.jsonBody.error).toBe('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.');
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
+
+        test('corrección final (076) — archivo histórico pendiente de clasificar -> 409 CARTILLA_DELEGADO_PENDIENTE_REVISION, nunca llama la RPC (reproduce el bloqueo original hasta que un administrador clasifique el archivo)', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+            const res = await llamar('POST', '/rodeo/rodeo-1', { delegado_asociacion_id: 'del-1' }, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(409);
+            expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_PENDIENTE_REVISION');
+            expect(res.jsonBody.error).toBe('Cartilla adjunta pendiente de revisión administrativa.');
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
+
+        test('solo Cartilla de Jurado adjunta -> NO bloquea, sigue creando normalmente', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_jurado' }], error: null };
+            const res = await llamar('POST', '/rodeo/rodeo-1', { delegado_asociacion_id: 'del-1' }, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(201);
+            expect(supabase.rpc).toHaveBeenCalled();
+        });
+
+        test('migración 076 — documento clasificado como complementario (caso real CHACAICO/BÍO-BÍO: informes médico/paramédico/disciplinario, confirmados por un administrador) -> NO bloquea', async () => {
+            respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'complementario', cartilla_vigente: false }], error: null };
+            const res = await llamar('POST', '/rodeo/rodeo-1', { delegado_asociacion_id: 'del-1' }, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(201);
+            expect(supabase.rpc).toHaveBeenCalled();
+        });
+
+        test('falla real al leer rodeo_adjuntos -> 500, nunca procede como si no hubiera adjunto', async () => {
+            respuestas.rodeo_adjuntos.list = { data: null, error: { message: 'timeout' } };
+            const res = await llamar('POST', '/rodeo/rodeo-1', { delegado_asociacion_id: 'del-1' }, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(500);
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
     });
 
     test('Fase 3.5 — body con delegado_asociacion_id DISTINTO al confirmado -> 403 RESPONSABLE_YA_CONFIRMADO, nunca llega a llamar la RPC', async () => {
@@ -313,6 +431,25 @@ describe('PATCH /institucional/cartilla/:id (guardar — concurrencia optimista)
         expect(res.statusCode).toBe(409);
         expect(res.jsonBody.code).toBe('BLOQUEADA_POR_DESIGNACION_POSTERIOR');
         expect(res.jsonBody.error).toBe('Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.');
+    });
+
+    test('Verificación previa a publicación — Cartilla de Delegado oficial adjuntada DESPUÉS de iniciado el borrador -> 409 CARTILLA_DELEGADO_ADJUNTA, nunca llega a actualizar (el borrador se conserva intacto para revisión administrativa)', async () => {
+        respuestas.cartillas_delegado.maybeSingle = { data: CARTILLA_INST, error: null };
+        respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+        const res = await llamar('PATCH', '/cart-1', { version: 3 }, auth(ASOC_OSORNO));
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_ADJUNTA');
+        expect(supabase.rpc).not.toHaveBeenCalledWith('actualizar_cartilla_institucional_con_auditoria', expect.anything());
+    });
+
+    test('corrección final (076) — archivo histórico pendiente de clasificar aparecido DESPUÉS de iniciado el borrador -> 409 CARTILLA_DELEGADO_PENDIENTE_REVISION, nunca llega a actualizar (el borrador se conserva intacto)', async () => {
+        respuestas.cartillas_delegado.maybeSingle = { data: CARTILLA_INST, error: null };
+        respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+        const res = await llamar('PATCH', '/cart-1', { version: 3 }, auth(ASOC_OSORNO));
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_PENDIENTE_REVISION');
+        expect(res.jsonBody.error).toBe('Cartilla adjunta pendiente de revisión administrativa.');
+        expect(supabase.rpc).not.toHaveBeenCalledWith('actualizar_cartilla_institucional_con_auditoria', expect.anything());
     });
 
     test('Fase 3.5 — intentar cambiar delegado_asociacion_id vía guardado normal -> 403 RESPONSABLE_YA_CONFIRMADO, nunca llega a actualizar', async () => {
@@ -416,6 +553,25 @@ describe('POST /institucional/cartilla/:id/enviar', () => {
         expect(res.statusCode).toBe(409);
         expect(res.jsonBody.code).toBe('BLOQUEADA_POR_DESIGNACION_POSTERIOR');
         expect(res.jsonBody.error).toBe('Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.');
+    });
+
+    test('Verificación previa a publicación — Cartilla de Delegado oficial adjunta -> 409 CARTILLA_DELEGADO_ADJUNTA, nunca envía', async () => {
+        respuestas.cartillas_delegado.maybeSingle = { data: BASE, error: null };
+        respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+        const res = await llamar('POST', '/cart-1/enviar', { version: 1 }, auth(ASOC_OSORNO));
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_ADJUNTA');
+        expect(supabase.rpc).not.toHaveBeenCalledWith('actualizar_cartilla_institucional_con_auditoria', expect.anything());
+    });
+
+    test('corrección final (076) — archivo histórico pendiente de clasificar -> 409 CARTILLA_DELEGADO_PENDIENTE_REVISION, nunca envía', async () => {
+        respuestas.cartillas_delegado.maybeSingle = { data: BASE, error: null };
+        respuestas.rodeo_adjuntos.list = { data: [{ id: 'adj-1', rodeo_id: 'rodeo-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+        const res = await llamar('POST', '/cart-1/enviar', { version: 1 }, auth(ASOC_OSORNO));
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_PENDIENTE_REVISION');
+        expect(res.jsonBody.error).toBe('Cartilla adjunta pendiente de revisión administrativa.');
+        expect(supabase.rpc).not.toHaveBeenCalledWith('actualizar_cartilla_institucional_con_auditoria', expect.anything());
     });
 
     test('Fase 3.5 — intentar cambiar delegado_nombre al enviar -> 403 RESPONSABLE_YA_CONFIRMADO, nunca envía', async () => {

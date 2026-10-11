@@ -203,6 +203,19 @@ function celdaNombreDelegado(r) {
     if (r.delegado_asociacion_id_seleccionado) {
         return `<span class="badge badge-activo" title="Un reemplazo solo puede autorizarlo el Administrador.">Responsable confirmado</span><br>${r.nombre_delegado ? sanitizar(r.nombre_delegado) : '<span style="color:#999;">—</span>'}`;
     }
+    // Verificación previa a publicación: si todavía no hay un responsable
+    // confirmado, pero el Administrador ya adjuntó la Cartilla de Delegado
+    // oficial (o existe un archivo histórico aún sin clasificar), no
+    // corresponde seleccionar uno para iniciar una cartilla duplicada (el
+    // backend igual lo bloquearía — esto evita ofrecerlo). Corrección final
+    // (076): el mensaje distingue "vigente" (oficial confirmada) de
+    // "pendiente" (histórico sin revisar) — nunca el mismo texto.
+    if (r.cartilla_delegado_adjunta) {
+        const mensaje = r.cartilla_delegado_estado === 'pendiente'
+            ? 'Cartilla adjunta pendiente de revisión administrativa.'
+            : 'Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.';
+        return `<span style="color:#999;" title="${sanitizar(mensaje)}">No corresponde</span>`;
+    }
     if (_delegadosCatalogo.length === 0) {
         return '<span style="color:#c0392b;">Sin delegados certificados</span>';
     }
@@ -229,6 +242,33 @@ function celdaAccion(r) {
     if (r.tipo_delegado === 'conflicto') {
         return `<button class="btn btn-secundario btn-pequeño" disabled title="Situación excepcional: requiere resolución administrativa antes de continuar.">No disponible</button>`;
     }
+
+    const verLink = `<a href="/usuario/cartilla-delegado.html?rodeo_id=${encodeURIComponent(r.id)}" class="btn btn-secundario btn-pequeño">Ver cartilla</a>`;
+    // Corrección final (076): "vigente" (oficial confirmada) y "pendiente"
+    // (histórico sin clasificar todavía) bloquean IGUAL, pero con un botón y
+    // un mensaje distintos — nunca se le dice al usuario "ya adjuntada" por
+    // un archivo que un administrador ni siquiera revisó todavía.
+    const botonAdjuntaDisabled = r.cartilla_delegado_estado === 'pendiente'
+        ? `<button class="btn btn-secundario btn-pequeño" disabled title="${sanitizar('Cartilla adjunta pendiente de revisión administrativa.')}">Pendiente de revisión</button>`
+        : `<button class="btn btn-secundario btn-pequeño" disabled title="${sanitizar('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.')}">Cartilla ya adjuntada</button>`;
+
+    // Verificación previa a publicación: el Administrador ya adjuntó la
+    // Cartilla de Delegado oficial para este rodeo (o existe un archivo
+    // histórico sin clasificar) — nunca se permite completar una cartilla
+    // digital nueva. Si YA existía un borrador antes de que apareciera el
+    // adjunto, se conserva íntegro (nunca se borra ni se oculta) para
+    // revisión administrativa, pero sin "Continuar cartilla" (el backend
+    // bloquea cualquier guardado/envío nuevo de todos modos).
+    if (r.cartilla_delegado_adjunta) {
+        if (!r.cartilla_iniciada) {
+            return botonAdjuntaDisabled;
+        }
+        if (!ESTADOS_CARTILLA_BLOQUEADOS.includes(r.estado_cartilla)) {
+            return `<div class="celda-acciones">${verLink}${botonAdjuntaDisabled}</div>`;
+        }
+        // Estado ya bloqueado (enviada/aprobada/etc.) -> sigue el flujo normal de abajo.
+    }
+
     // Delegado de Asociación: antes de permitir crear/completar, debe existir
     // una selección explícita para ESTE rodeo (nunca se abre sin elegir a nadie).
     if (!r.cartilla_iniciada && !r.delegado_asociacion_id_seleccionado) {
@@ -237,8 +277,6 @@ function celdaAccion(r) {
         }
         return `<button class="btn btn-secundario btn-pequeño" disabled title="Seleccione un delegado para este rodeo antes de completar la cartilla.">Seleccione un delegado</button>`;
     }
-
-    const verLink = `<a href="/usuario/cartilla-delegado.html?rodeo_id=${encodeURIComponent(r.id)}" class="btn btn-secundario btn-pequeño">Ver cartilla</a>`;
 
     if (r.estado_cartilla === 'sin_cartilla') {
         return `<a href="/usuario/cartilla-delegado.html?rodeo_id=${encodeURIComponent(r.id)}" class="btn btn-primario btn-pequeño">Completar cartilla</a>`;
@@ -284,6 +322,29 @@ let _rodeosActuales = [];
 let _rodeosFiltrados = [];
 let _delegadosCatalogo = [];
 
+// Verificación previa a publicación: "Cartilla adjunta" en vez de "Sin
+// cartilla" cuando el Administrador ya adjuntó la Cartilla de Delegado
+// oficial y todavía no existe ningún registro digital. Si YA existe un
+// registro digital (borrador u otro estado), se sigue mostrando su estado
+// real tal cual — nunca se oculta — con una advertencia adicional de que
+// también existe el adjunto oficial (requiere revisión administrativa).
+function celdaCartilla(r) {
+    if (r.cartilla_delegado_adjunta && r.estado_cartilla === 'sin_cartilla') {
+        if (r.cartilla_delegado_estado === 'pendiente') {
+            return `<span class="badge badge-pendiente" title="${sanitizar('Cartilla adjunta pendiente de revisión administrativa.')}">Pendiente de revisión</span>`;
+        }
+        return `<span class="badge badge-activo" title="${sanitizar('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.')}">Cartilla adjunta</span>`;
+    }
+    const base = `<span class="badge ${BADGE_CARTILLA[r.estado_cartilla] || 'badge-inactivo'}">${ETIQUETA_CARTILLA[r.estado_cartilla] || r.estado_cartilla}</span>`;
+    if (r.cartilla_delegado_adjunta) {
+        const tituloAdjunto = r.cartilla_delegado_estado === 'pendiente'
+            ? 'Existe un archivo histórico de Cartilla de Delegado pendiente de revisión administrativa para este rodeo.'
+            : 'También existe una Cartilla de Delegado oficial adjuntada para este rodeo — requiere revisión administrativa.';
+        return `${base}<br><span class="badge badge-anulado" title="${sanitizar(tituloAdjunto)}">⚠ Adjunto oficial</span>`;
+    }
+    return base;
+}
+
 function renderFilaRodeo(r) {
     const badgeAnulado = r.estado_rodeo === 'anulado' ? ' <span class="badge badge-anulado">Anulado</span>' : '';
     return `<tr id="fila-rodeo-${r.id}">
@@ -294,7 +355,7 @@ function renderFilaRodeo(r) {
         <td>${celdaJurados(r)}</td>
         <td>${celdaTipoDelegado(r)}</td>
         <td id="celda-nombre-${r.id}">${celdaNombreDelegado(r)}</td>
-        <td><span class="badge ${BADGE_CARTILLA[r.estado_cartilla] || 'badge-inactivo'}">${ETIQUETA_CARTILLA[r.estado_cartilla] || r.estado_cartilla}</span></td>
+        <td>${celdaCartilla(r)}</td>
         <td id="celda-accion-${r.id}">${celdaAccion(r)}</td>
     </tr>`;
 }

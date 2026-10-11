@@ -78,7 +78,10 @@ beforeEach(() => {
             error: null
         },
         cartillas_delegado: { data: [], error: null },
-        asignaciones: { data: [], error: null } // sin designaciones vigentes de Rentado por defecto
+        asignaciones: { data: [], error: null }, // sin designaciones vigentes de Rentado por defecto
+        // Verificación previa a publicación: sin adjuntos por defecto.
+        rodeo_adjuntos: { data: [], error: null },
+        rodeo_links: { data: [], error: null }
     };
     supabase.from.mockReset();
     supabase.from.mockImplementation(tabla => crearChain(tabla));
@@ -233,6 +236,69 @@ describe('GET /institucional/rodeos', () => {
         const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
         const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-anulado');
         expect(r.cartilla_institucional_disponible).toBe(false);
+    });
+
+    describe('Verificación previa a publicación — cartilla_delegado_adjunta (corrección final 076: 3 estados)', () => {
+        // Esta ruta usa cargarEstadoCartillaDelegadoAdjuntaPorRodeo (services/
+        // rodeosListado.js), que filtra tipo_adjunto='cartilla_delegado' EN LA
+        // CONSULTA, pero decide vigente/pendiente/complementario EN JS a
+        // partir de cartilla_clasificacion/cartilla_vigente — el mock de este
+        // archivo no es filter-aware por .in()/.eq(), así que los casos
+        // negativos (tipo distinto) se representan directamente como la
+        // lista YA filtrada por tipo que la BD real devolvería (vacía). La
+        // semántica del filtro por tipo en sí ya está probada en
+        // services/rodeosListado.test.js y en
+        // clasificacionTresEstadosCartillaDelegadoAdjunta.rpc.test.js
+        // (Postgres real).
+        test('rodeo con una versión VIGENTE de Cartilla de Delegado -> cartilla_delegado_adjunta=true, cartilla_delegado_estado=vigente', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'rodeo-osorno-1', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-1');
+            expect(r.cartilla_delegado_adjunta).toBe(true);
+            expect(r.cartilla_delegado_estado).toBe('vigente');
+        });
+
+        test('corrección final (076) — archivo histórico pendiente de clasificar -> cartilla_delegado_adjunta=true, cartilla_delegado_estado=pendiente (se sigue bloqueando hasta que un administrador lo clasifique)', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'rodeo-osorno-1', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-1');
+            expect(r.cartilla_delegado_adjunta).toBe(true);
+            expect(r.cartilla_delegado_estado).toBe('pendiente');
+        });
+
+        test('sin ningún adjunto -> cartilla_delegado_adjunta=false para todos los rodeos', async () => {
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            expect(res.jsonBody.rodeos.every(r => r.cartilla_delegado_adjunta === false)).toBe(true);
+        });
+
+        test('solo Cartilla de Jurado adjunta, o solo documentos clasificados como complementarios con tipo_adjunto=cartilla_delegado (caso real CHACAICO/BÍO-BÍO) -> cartilla_delegado_adjunta=false', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null }; // la BD real ya los excluyó por tipo; el caso complementario-explícito se cubre abajo
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-1');
+            expect(r.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('migración 076 — documento clasificado como complementario (confirmado por un administrador) -> cartilla_delegado_adjunta=false, cartilla_delegado_estado=null', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'rodeo-osorno-1', cartilla_clasificacion: 'complementario', cartilla_vigente: false }], error: null };
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-1');
+            expect(r.cartilla_delegado_adjunta).toBe(false);
+            expect(r.cartilla_delegado_estado).toBeNull();
+        });
+
+        test('solo un video (rodeo_links) -> cartilla_delegado_adjunta=false (esta función ya ni siquiera consulta rodeo_links)', async () => {
+            respuestas.rodeo_links = { data: [{ rodeo_id: 'rodeo-osorno-1' }], error: null };
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-1');
+            expect(r.cartilla_delegado_adjunta).toBe(false);
+        });
+
+        test('adjunto cartilla_delegado de OTRO rodeo -> no afecta a los demás', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'rodeo-valdivia-1', tipo_adjunto: 'cartilla_delegado' }], error: null };
+            const res = await llamar({ authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+            const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-osorno-1');
+            expect(r.cartilla_delegado_adjunta).toBe(false);
+        });
     });
 
     test('Caso F: cuenta institucional desactivada -> 401, ni siquiera llega a consultar rodeos', async () => {
@@ -409,6 +475,23 @@ describe('POST /institucional/rodeos/:rodeo_id/seleccionar-delegado (Fase 3.3)',
         const res = await llamarPost('/rodeo-osorno-1/seleccionar-delegado', { delegado_asociacion_id: 'del-1' }, { authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
         expect(res.statusCode).toBe(409);
         expect(res.jsonBody.code).toBe('DELEGADO_RENTADO_DESIGNADO');
+    });
+
+    test('Verificación previa a publicación — Cartilla de Delegado oficial adjunta -> 409 CARTILLA_DELEGADO_ADJUNTA, nunca llega a confirmar un responsable', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'rodeo-osorno-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+        const res = await llamarPost('/rodeo-osorno-1/seleccionar-delegado', { delegado_asociacion_id: 'del-1' }, { authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_ADJUNTA');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    test('corrección final (076) — archivo histórico pendiente de clasificar -> 409 CARTILLA_DELEGADO_PENDIENTE_REVISION, nunca llega a confirmar un responsable', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'rodeo-osorno-1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+        const res = await llamarPost('/rodeo-osorno-1/seleccionar-delegado', { delegado_asociacion_id: 'del-1' }, { authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('CARTILLA_DELEGADO_PENDIENTE_REVISION');
+        expect(res.jsonBody.error).toBe('Cartilla adjunta pendiente de revisión administrativa.');
+        expect(supabase.rpc).not.toHaveBeenCalled();
     });
 
     // ── Fase 3.5 — bloqueo del responsable confirmado ───────────────────

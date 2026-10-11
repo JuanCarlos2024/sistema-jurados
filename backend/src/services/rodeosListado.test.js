@@ -15,6 +15,7 @@ const {
     cargarStatsAsignacionesPorRodeo,
     textoEstadoDesignacion,
     cargarIndicadoresAdjuntosPorRodeo,
+    cargarEstadoCartillaDelegadoAdjuntaPorRodeo,
     cargarNotasPorRodeo
 } = require('./rodeosListado');
 
@@ -227,7 +228,7 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
         ], error: null };
         respuestas.rodeo_links = { data: [{ rodeo_id: 'r1' }], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
-        expect(ind.r1).toEqual({ cj: true, cd: true, vy: true });
+        expect(ind.r1).toEqual({ cj: true, cd: true, vy: true, cd_estado: null });
     });
     test('CASO 2 — con cartillas pero SIN video -> {cj:true, cd:true, vy:false}', async () => {
         respuestas.rodeo_adjuntos = { data: [
@@ -236,13 +237,13 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
         ], error: null };
         respuestas.rodeo_links = { data: [], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
-        expect(ind.r1).toEqual({ cj: true, cd: true, vy: false });
+        expect(ind.r1).toEqual({ cj: true, cd: true, vy: false, cd_estado: null });
     });
     test('CASO 3 — sin ningún adjunto ni link -> {cj:false, cd:false, vy:false}', async () => {
         respuestas.rodeo_adjuntos = { data: [], error: null };
         respuestas.rodeo_links = { data: [], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
-        expect(ind.r1).toEqual({ cj: false, cd: false, vy: false });
+        expect(ind.r1).toEqual({ cj: false, cd: false, vy: false, cd_estado: null });
     });
     test('tipo_adjunto legacy "cartilla" (sin sufijo) también cuenta como Cartilla Jurado — mismo criterio que GET /admin/adjuntos/resumen', async () => {
         respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla' }], error: null };
@@ -254,14 +255,145 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
         respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' }], error: null };
         respuestas.rodeo_links = { data: [{ rodeo_id: 'r2' }], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1', 'r2', 'r3']);
-        expect(ind.r1).toEqual({ cj: true, cd: false, vy: false });
-        expect(ind.r2).toEqual({ cj: false, cd: false, vy: true });
-        expect(ind.r3).toEqual({ cj: false, cd: false, vy: false });
+        expect(ind.r1).toEqual({ cj: true, cd: false, vy: false, cd_estado: null });
+        expect(ind.r2).toEqual({ cj: false, cd: false, vy: true, cd_estado: null });
+        expect(ind.r3).toEqual({ cj: false, cd: false, vy: false, cd_estado: null });
     });
     test('array de ids vacío -> {} sin consultar BD', async () => {
         const ind = await cargarIndicadoresAdjuntosPorRodeo([]);
         expect(ind).toEqual({});
         expect(supabase.from).not.toHaveBeenCalled();
+    });
+
+    describe('auditoría (077) — cd_estado: distingue vigente/pendiente/complementario sin alterar `cd`', () => {
+        test('cartilla_clasificacion=version_cartilla -> cd=true Y cd_estado="vigente" (sin exigir cartilla_vigente=true)', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla' }], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd).toBe(true);
+            expect(ind.r1.cd_estado).toBe('vigente');
+        });
+
+        test('cartilla_clasificacion=pendiente (histórico sin revisar) -> cd=true Y cd_estado="pendiente"', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente' }], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd).toBe(true);
+            expect(ind.r1.cd_estado).toBe('pendiente');
+        });
+
+        test('cartilla_clasificacion=complementario (caso real CHACAICO/BÍO-BÍO) -> cd=true (sigue contando el archivo) Y cd_estado="complementario" (nunca se confunde con la cartilla real)', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'complementario' }], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd).toBe(true);
+            expect(ind.r1.cd_estado).toBe('complementario');
+        });
+
+        test('mezcla real (CHACAICO-style): varios complementarios + 1 pendiente -> cd_estado="pendiente" (prioridad: vigente > pendiente > complementario)', async () => {
+            respuestas.rodeo_adjuntos = { data: [
+                { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'complementario' },
+                { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'complementario' },
+                { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente' }
+            ], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_estado).toBe('pendiente');
+        });
+
+        test('mezcla: pendiente + version_cartilla -> cd_estado="vigente" (máxima prioridad, nunca se degrada)', async () => {
+            respuestas.rodeo_adjuntos = { data: [
+                { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente' },
+                { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla' }
+            ], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_estado).toBe('vigente');
+        });
+
+        test('cartilla_clasificacion ausente (fila anterior a la migración 077, o columna todavía no aplicada) -> cd sigue siendo true, cd_estado se queda en null (nunca rompe)', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado' }], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd).toBe(true);
+            expect(ind.r1.cd_estado).toBeNull();
+        });
+    });
+});
+
+// ─── cargarEstadoCartillaDelegadoAdjuntaPorRodeo — corrección final (076):
+// 3 estados (vigente / pendiente / complementario-o-sin adjunto). A
+// diferencia de cargarIndicadoresAdjuntosPorRodeo (arriba, de uso
+// administrativo), esta función es la que usa institucional/rodeos.js para
+// decidir el bloqueo real — filtra tipo_adjunto=cartilla_delegado EN LA
+// CONSULTA, pero decide vigente/pendiente/complementario EN JS a partir de
+// cartilla_clasificacion/cartilla_vigente (nunca solo por el tipo), y falla
+// CERRADO ante un error de lectura (nunca asume "sin adjunto").
+describe('cargarEstadoCartillaDelegadoAdjuntaPorRodeo — 3 estados (vigente/pendiente/null) (verificación previa a publicación)', () => {
+    test('la consulta real filtra por tipo_adjunto=cartilla_delegado', async () => {
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        const registro = llamadas.rodeo_adjuntos[0];
+        expect(fueLlamado(registro, 'eq', 'tipo_adjunto', 'cartilla_delegado')).toBe(true);
+    });
+
+    test('rodeo con una versión vigente (cartilla_clasificacion=version_cartilla, cartilla_vigente=true) -> "vigente"', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        expect(ind.r1).toBe('vigente');
+    });
+
+    test('corrección final (076) — archivo histórico pendiente de clasificar (cartilla_clasificacion=pendiente, el DEFAULT) -> "pendiente" (se sigue bloqueando)', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', cartilla_clasificacion: 'pendiente', cartilla_vigente: false }], error: null };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        expect(ind.r1).toBe('pendiente');
+    });
+
+    test('documento clasificado como complementario (confirmado por un administrador, caso real CHACAICO/BÍO-BÍO) -> null (no bloquea)', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', cartilla_clasificacion: 'complementario', cartilla_vigente: false }], error: null };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        expect(ind.r1).toBeNull();
+    });
+
+    test('rodeo sin ninguna fila -> null', async () => {
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        expect(ind.r1).toBeNull();
+    });
+
+    test('varios rodeos, cada uno independiente', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }], error: null };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1', 'r2']);
+        expect(ind.r1).toBe('vigente');
+        expect(ind.r2).toBeNull();
+    });
+
+    test('auditoría (077) — version_cartilla con cartilla_vigente=false (ej. el booleano se perdió/nunca se fijó) -> SIGUE siendo "vigente" (nunca depende solo de ese flag)', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: false }], error: null };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        expect(ind.r1).toBe('vigente');
+    });
+
+    test('mismo rodeo con un archivo vigente Y otro pendiente (transición real durante la clasificación histórica) -> "vigente" nunca se degrada a "pendiente"', async () => {
+        respuestas.rodeo_adjuntos = {
+            data: [
+                { rodeo_id: 'r1', cartilla_clasificacion: 'pendiente', cartilla_vigente: false },
+                { rodeo_id: 'r1', cartilla_clasificacion: 'version_cartilla', cartilla_vigente: true }
+            ], error: null
+        };
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1']);
+        expect(ind.r1).toBe('vigente');
+    });
+
+    test('array de ids vacío -> {} sin consultar BD', async () => {
+        const ind = await cargarEstadoCartillaDelegadoAdjuntaPorRodeo([]);
+        expect(ind).toEqual({});
+        expect(supabase.from).not.toHaveBeenCalled();
+    });
+
+    test('falla de lectura -> lanza (fail-closed), nunca asume null silenciosamente', async () => {
+        respuestas.rodeo_adjuntos = { data: null, error: { message: 'timeout' } };
+        await expect(cargarEstadoCartillaDelegadoAdjuntaPorRodeo(['r1'])).rejects.toThrow(/timeout/);
     });
 });
 

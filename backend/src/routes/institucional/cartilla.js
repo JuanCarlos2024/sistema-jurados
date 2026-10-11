@@ -48,6 +48,60 @@ const ESTADOS_BLOQUEADOS = ['enviada', 'reenviada', 'aprobada', 'cerrada'];
 const MENSAJE_BLOQUEADA_POR_DESIGNACION_POSTERIOR = 'Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.';
 const CODIGO_BLOQUEADA_POR_DESIGNACION_POSTERIOR = 'BLOQUEADA_POR_DESIGNACION_POSTERIOR';
 
+// Corrección final del versionado y bloqueo de cartillas históricas
+// (migración 076): el Administrador ya adjuntó una Cartilla de Delegado
+// OFICIAL (rodeo_adjuntos.tipo_adjunto='cartilla_delegado'), O existe un
+// archivo histórico TODAVÍA sin clasificar ("pendiente" — el estado
+// DEFAULT, nunca inferido de un NULL) — en cualquiera de los dos casos el
+// portal institucional no debe permitir crear/guardar/enviar una segunda
+// cartilla DIGITAL para el mismo rodeo. Solo un archivo confirmado
+// EXPLÍCITAMENTE como "complementario" (informe médico/paramédico/
+// disciplinario, etc. — hallazgo real: CHACAICO/BÍO-BÍO) nunca bloquea.
+// Mensaje y código DISTINTOS para cada motivo — nunca el mismo texto para
+// "ya tiene cartilla oficial" que para "pendiente de revisión".
+const MENSAJE_CARTILLA_DELEGADO_ADJUNTA = 'Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. No corresponde completar otra cartilla.';
+const CODIGO_CARTILLA_DELEGADO_ADJUNTA = 'CARTILLA_DELEGADO_ADJUNTA';
+const MENSAJE_CARTILLA_DELEGADO_PENDIENTE_REVISION = 'Cartilla adjunta pendiente de revisión administrativa.';
+const CODIGO_CARTILLA_DELEGADO_PENDIENTE_REVISION = 'CARTILLA_DELEGADO_PENDIENTE_REVISION';
+
+// Deliberadamente NO reutiliza cargarIndicadoresAdjuntosPorRodeo() de
+// services/rodeosListado.js tal cual: esa función es de uso administrativo
+// (indicador visual CJ/CD/VY + exportación a Excel) y, por diseño, si la
+// consulta a rodeo_adjuntos fallara, devuelve `cd:false` sin distinguir
+// "no hay adjunto" de "no se pudo verificar" — correcto para un indicador de
+// pantalla, pero inaceptable para una barrera de escritura: una falla de
+// lectura NUNCA debe habilitar silenciosamente la creación de una cartilla
+// duplicada. Esta función usa el MISMO criterio base (misma tabla, mismo
+// campo), pero falla CERRADO (si la consulta da error, lanza — el caller
+// responde 500, nunca procede como si no hubiera adjunto) y distingue los
+// TRES estados explícitos (cartilla_clasificacion: 'pendiente' bloquea
+// preventivamente igual que 'version_cartilla' vigente; solo
+// 'complementario', confirmado explícitamente, nunca bloquea).
+// @returns { bloqueado: false } | { bloqueado: true, codigo, mensaje }
+async function estadoBloqueoCartillaDelegadoAdjunta(rodeoId) {
+    const { data, error } = await supabase
+        .from('rodeo_adjuntos')
+        .select('cartilla_clasificacion')
+        .eq('rodeo_id', rodeoId)
+        .eq('tipo_adjunto', 'cartilla_delegado');
+    if (error) throw new Error(error.message);
+    const filas = data || [];
+    // Auditoría (077): ya NO se exige además cartilla_vigente=true — basta
+    // con que exista una fila confirmada como 'version_cartilla' (oficial),
+    // vigente o histórica. Si el booleano vigente desapareciera por
+    // cualquier motivo (ej. eliminación manual), el rodeo debe seguir
+    // bloqueado mientras exista una versión oficial real — nunca depender
+    // únicamente de ese flag (mismo criterio que crear_o_adjuntar_cartilla_
+    // institucional en la migración 077).
+    if (filas.some(f => f.cartilla_clasificacion === 'version_cartilla')) {
+        return { bloqueado: true, codigo: CODIGO_CARTILLA_DELEGADO_ADJUNTA, mensaje: MENSAJE_CARTILLA_DELEGADO_ADJUNTA };
+    }
+    if (filas.some(f => f.cartilla_clasificacion === 'pendiente')) {
+        return { bloqueado: true, codigo: CODIGO_CARTILLA_DELEGADO_PENDIENTE_REVISION, mensaje: MENSAJE_CARTILLA_DELEGADO_PENDIENTE_REVISION };
+    }
+    return { bloqueado: false };
+}
+
 router.use(soloCuentaInstitucional);
 
 // Confirma que el rodeo pertenece a la asociación del token — SIEMPRE server-side,
@@ -108,6 +162,13 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
     const rodeo = await rodeoDeMiAsociacion(req.params.rodeo_id, req.usuario.asociacion_id);
     if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado para su asociación.' });
 
+    let estadoAdjunta;
+    try {
+        estadoAdjunta = await estadoBloqueoCartillaDelegadoAdjunta(rodeo.id);
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+
     const [{ data: filas }, rentadoDesignado, jurados, { data: designacion }] = await Promise.all([
         supabase.from('cartillas_delegado').select('*').eq('rodeo_id', rodeo.id),
         tieneDelegadoRentadoDesignado(rodeo.id),
@@ -152,6 +213,14 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
         conflicto_rentado: conflictoRentado,
         delegado_rentado_designado: rentadoDesignado,
         bloqueada_por_designacion_posterior: bloqueadaPorDesignacionPosterior,
+        // Corrección final (076): true si está bloqueado por cualquiera de
+        // los dos motivos (cartilla oficial vigente O archivo pendiente de
+        // revisión) — `cartilla_delegado_estado` distingue CUÁL para que el
+        // frontend muestre el mensaje correcto. Nunca oculta `cartilla`
+        // cuando ya existe un borrador institucional (ver comentario de
+        // cabecera) — el frontend decide qué mostrar con esto.
+        cartilla_delegado_adjunta: estadoAdjunta.bloqueado,
+        cartilla_delegado_estado: estadoAdjunta.bloqueado ? (estadoAdjunta.codigo === CODIGO_CARTILLA_DELEGADO_ADJUNTA ? 'vigente' : 'pendiente') : null,
         jurados,
         historial_responsables: historialResponsables
     });
@@ -171,6 +240,21 @@ router.post('/rodeo/:rodeo_id', async (req, res) => {
     if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado para su asociación.' });
     if (rodeo.estado === 'anulado') {
         return res.status(422).json({ error: 'No puede crearse una cartilla para un rodeo anulado.', code: 'RODEO_ANULADO' });
+    }
+
+    // Corrección final (076): nunca crear/adjuntar una cartilla digital si
+    // ya existe una Cartilla de Delegado oficial vigente O un archivo
+    // histórico pendiente de revisión — ver cabecera. Chequeo JS previo a
+    // la RPC (la RPC repite el mismo chequeo dentro de su propia
+    // transacción — ver crear_o_adjuntar_cartilla_institucional, migración
+    // 076 — cerrando la condición de carrera, no solo documentándola).
+    try {
+        const estado = await estadoBloqueoCartillaDelegadoAdjunta(rodeo.id);
+        if (estado.bloqueado) {
+            return res.status(409).json({ error: estado.mensaje, code: estado.codigo });
+        }
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
     }
 
     const { data: confirmado } = await supabase
@@ -270,6 +354,21 @@ router.patch('/:id', async (req, res) => {
         return res.status(409).json({ error: MENSAJE_BLOQUEADA_POR_DESIGNACION_POSTERIOR, code: CODIGO_BLOQUEADA_POR_DESIGNACION_POSTERIOR });
     }
 
+    // Corrección final (076): re-verificar en CADA guardado (no solo al
+    // crear) si entretanto apareció una Cartilla de Delegado oficial
+    // vigente O un archivo pendiente de revisión — nunca se borra ni se
+    // oculta el borrador (el GET sigue devolviéndolo), pero no se admite
+    // ningún guardado nuevo. Mismo criterio que el bloqueo por designación
+    // posterior, arriba.
+    try {
+        const estado = await estadoBloqueoCartillaDelegadoAdjunta(cartilla.rodeo_id);
+        if (estado.bloqueado) {
+            return res.status(409).json({ error: estado.mensaje, code: estado.codigo });
+        }
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+
     if (req.body.version === undefined) return res.status(400).json({ error: 'version es requerida.' });
 
     if (req.body.respuestas_json?.desempeno_jurado !== undefined) {
@@ -362,6 +461,18 @@ router.post('/:id/enviar', async (req, res) => {
     // resolver.
     if (await tieneDelegadoRentadoDesignado(cartilla.rodeo_id)) {
         return res.status(409).json({ error: MENSAJE_BLOQUEADA_POR_DESIGNACION_POSTERIOR, code: CODIGO_BLOQUEADA_POR_DESIGNACION_POSTERIOR });
+    }
+
+    // Corrección final (076): mismo bloqueo que PATCH — nunca se envía/
+    // reenvía una cartilla institucional si ya existe la Cartilla de
+    // Delegado oficial vigente o un archivo pendiente de revisión.
+    try {
+        const estado = await estadoBloqueoCartillaDelegadoAdjunta(cartilla.rodeo_id);
+        if (estado.bloqueado) {
+            return res.status(409).json({ error: estado.mensaje, code: estado.codigo });
+        }
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
     }
 
     if (req.body?.version === undefined) return res.status(400).json({ error: 'version es requerida.' });
@@ -530,5 +641,9 @@ router.get('/:id/pdf', async (req, res) => {
 // verificación de pertenencia de rodeo y de delegado válido, sin duplicarla.
 router.rodeoDeMiAsociacion = rodeoDeMiAsociacion;
 router.delegadoValido = delegadoValido;
+// Corrección final (076): expone el mismo chequeo de tres estados para que
+// institucional/rodeos.js lo reutilice en POST /:rodeo_id/seleccionar-delegado,
+// sin duplicarlo.
+router.estadoBloqueoCartillaDelegadoAdjunta = estadoBloqueoCartillaDelegadoAdjunta;
 
 module.exports = router;
