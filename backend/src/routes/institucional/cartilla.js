@@ -18,7 +18,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloCuentaInstitucional } = require('../../middleware/auth');
+const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('../../middleware/auth');
 const { construirIndiceCatalogo, resolverAsociacion } = require('../../services/informeGestion/asociaciones');
 const {
     validarAspectosDesempeno, calcularPromedioDesempeno, sincronizarNotaDelegado
@@ -103,6 +103,9 @@ async function estadoBloqueoCartillaDelegadoAdjunta(rodeoId) {
 }
 
 router.use(soloCuentaInstitucional);
+// Gestión de acceso institucional (078): cambio de contraseña de primer
+// ingreso obligatorio ANTES de poder usar esta ruta de negocio.
+router.use(exigirCambioPasswordSiPrimerLogin);
 
 // Confirma que el rodeo pertenece a la asociación del token — SIEMPRE server-side,
 // resolviendo por catálogo+alias real (nunca ILIKE), igual que institucional/rodeos.js.

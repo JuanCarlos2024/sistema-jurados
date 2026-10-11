@@ -10,6 +10,13 @@
         .badge-suspendido { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
         .badge-certificado { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
         .badge-pendiente-cert { background: #fef5e7; color: #a04000; border: 1px solid #f0c27b; }
+        /* Gestión de acceso institucional (078) */
+        .badge-sin-cuenta { background: #f4f4f4; color: #666; border: 1px solid #ddd; }
+        .password-temporal-caja {
+            display: flex; align-items: center; gap: 8px; margin-top: 8px;
+            padding: 10px 12px; background: #f8f9fa; border: 1px solid var(--gris-claro); border-radius: 6px;
+        }
+        .password-temporal-caja code { font-size: 15px; font-weight: 600; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -93,6 +100,11 @@
 <script>
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+// Gestión de acceso institucional (078): crear/suspender/reactivar/
+// restablecer son exclusivas de administrador pleno. Ocultar los botones
+// es solo cortesía de UX — el backend (soloRolEvaluacion() sin argumentos)
+// es quien realmente lo exige en cada endpoint, nunca este chequeo.
+const _esAdminPleno = (api.getUsuario()?.rol_evaluacion ?? null) === null;
 
 let debounceTimer;
 function debounce(fn, delay) {
@@ -121,7 +133,9 @@ function mostrarVistaAsociaciones() {
     document.getElementById('vista-asociaciones').classList.remove('oculto');
     document.getElementById('vista-nomina').classList.add('oculto');
     document.getElementById('titulo-pagina').textContent = 'Delegados de Asociación';
-    document.getElementById('acciones-topbar').innerHTML = '';
+    document.getElementById('acciones-topbar').innerHTML = _esAdminPleno
+        ? `<button class="btn btn-primario" onclick="abrirModalNuevaAsociacion()">+ Nueva asociación</button>`
+        : '';
     history.replaceState(null, '', '/admin/delegados-asociacion.html');
 }
 
@@ -159,6 +173,7 @@ function renderTablaAsociaciones(asociaciones) {
             <th>Delegados activos (${totalActivos})</th>
             <th>Delegados suspendidos (${totalSuspendidos})</th>
             <th>Total (${totalGeneral})</th>
+            <th>Estado de acceso</th>
             <th>Acción</th>
         </tr></thead>
         <tbody>
@@ -168,7 +183,13 @@ function renderTablaAsociaciones(asociaciones) {
                 <td>${a.delegados_activos}</td>
                 <td>${a.delegados_suspendidos > 0 ? `<span class="badge badge-suspendido">${a.delegados_suspendidos}</span>` : '0'}</td>
                 <td>${a.delegados_total}</td>
-                <td><button class="btn btn-pequeño btn-outline" onclick="abrirNomina('${a.asociacion_id}')">Ver delegados</button></td>
+                <td>${celdaEstadoAcceso(a.cuenta_institucional)}</td>
+                <td>
+                    <div class="flex gap-8">
+                        <button class="btn btn-pequeño btn-outline" onclick="abrirNomina('${a.asociacion_id}')">Ver delegados</button>
+                        ${_esAdminPleno ? `<button class="btn btn-pequeño btn-outline" onclick="abrirModalGestionAcceso('${a.asociacion_id}')">Gestionar acceso</button>` : ''}
+                    </div>
+                </td>
             </tr>
         `).join('')}
         </tbody>
@@ -176,6 +197,17 @@ function renderTablaAsociaciones(asociaciones) {
     <div style="padding:10px 14px; font-size:13px; color:var(--gris); border-top:1px solid var(--gris-claro);">
         Total: ${asociaciones.length} asociación(es) | Total delegados: ${totalGeneral}
     </div>`;
+}
+
+// Gestión de acceso institucional (078): "activa" / "suspendida" / "sin
+// cuenta" — nunca se confunde con el estado de los DELEGADOS (columnas
+// aparte, arriba) ni con `asociaciones.activa` del catálogo deportivo
+// (concepto distinto, no se muestra ni se toca en esta columna).
+function celdaEstadoAcceso(cuenta) {
+    if (!cuenta) return '<span class="badge badge-sin-cuenta">Sin cuenta</span>';
+    return cuenta.estado === 'activa'
+        ? '<span class="badge badge-activo">Activa</span>'
+        : '<span class="badge badge-suspendido">Suspendida</span>';
 }
 
 async function abrirNomina(asociacionId) {
@@ -374,6 +406,334 @@ async function eliminarDelegado(id) {
         cargarNomina();
     } catch (err) {
         mostrarError(err);
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Gestión de acceso institucional (migración 078): crear asociaciones y
+// cuentas, suspender/reactivar el acceso, restablecer contraseñas. Reutiliza
+// el mismo modal (#modal-overlay) y el mismo patrón confirmar()/mostrarToast/
+// mostrarError que el resto de este archivo — nunca una pieza de UI paralela.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Bloque de contraseña compartido (generar automática / manual) ───────
+function bloqueOpcionesPassword() {
+    return `
+    <div class="form-grupo">
+        <label class="form-label">Contraseña <span class="req">*</span></label>
+        <div style="display:flex; gap:20px; margin-bottom:8px; font-size:13px;">
+            <label style="font-weight:400;"><input type="radio" name="password_mode" value="generar" checked onchange="togglePasswordManual(this)"> Generar automáticamente</label>
+            <label style="font-weight:400;"><input type="radio" name="password_mode" value="manual" onchange="togglePasswordManual(this)"> Ingresar manualmente</label>
+        </div>
+        <div class="password-manual-cont oculto">
+            <div style="position:relative;">
+                <input type="password" name="password" class="form-control input-password-manual" placeholder="Mínimo 12 caracteres: mayúsculas, minúsculas, números y símbolos" minlength="12" style="padding-right:42px;">
+                <button type="button" class="btn-icono" style="position:absolute; right:2px; top:2px;" onclick="toggleVerPassword(this)" title="Mostrar/ocultar contraseña">👁</button>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Confirmar contraseña</label>
+                <input type="password" name="password_confirmar" class="form-control">
+            </div>
+        </div>
+    </div>`;
+}
+
+function togglePasswordManual(radio) {
+    const cont = radio.closest('form').querySelector('.password-manual-cont');
+    cont.classList.toggle('oculto', radio.value !== 'manual');
+}
+
+function toggleVerPassword(btn) {
+    const input = btn.previousElementSibling;
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// Lee {password_mode, password} del formulario. Si es manual, valida la
+// COINCIDENCIA en el cliente (UX, requisito explícito) — la validación REAL
+// de fortaleza/longitud la hace siempre el backend, nunca se duplica ni se
+// relaja ese criterio acá.
+function leerDatosPassword(form) {
+    const fd = new FormData(form);
+    const password_mode = fd.get('password_mode');
+    if (password_mode === 'manual') {
+        const password = fd.get('password') || '';
+        const confirmarPwd = fd.get('password_confirmar') || '';
+        if (password !== confirmarPwd) {
+            throw new Error('La contraseña y su confirmación no coinciden.');
+        }
+        return { password_mode, password };
+    }
+    return { password_mode };
+}
+
+// Resultado: la contraseña temporal se muestra UNA sola vez — nunca vuelve
+// a ser accesible por un GET posterior, ni acá ni en el backend.
+function mostrarPasswordTemporalResultado(passwordTemporal, tituloExito) {
+    document.getElementById('modal-titulo').textContent = tituloExito;
+    document.getElementById('modal-contenido').innerHTML = `
+        <p>${sanitizar(tituloExito)}. Comunique esta contraseña por un medio seguro — <strong>no volverá a mostrarse</strong>.</p>
+        <div class="password-temporal-caja">
+            <code id="password-temporal-valor">${sanitizar(passwordTemporal)}</code>
+            <button type="button" class="btn btn-pequeño btn-outline" onclick="copiarPasswordTemporal()">Copiar</button>
+        </div>
+        <div class="form-hint" style="margin-top:8px;">La cuenta deberá cambiarla obligatoriamente en su próximo ingreso.</div>
+        <div class="form-acciones" style="margin-top:16px;">
+            <button type="button" class="btn btn-primario" onclick="cerrarModal(); cargarAsociaciones();">Listo</button>
+        </div>`;
+}
+
+async function copiarPasswordTemporal() {
+    const valor = document.getElementById('password-temporal-valor').textContent;
+    try {
+        await navigator.clipboard.writeText(valor);
+        mostrarToast('Contraseña copiada al portapapeles', 'success');
+    } catch (e) {
+        mostrarToast('No se pudo copiar automáticamente — selecciónela manualmente', 'error');
+    }
+}
+
+// ─── + Nueva asociación (Opción A: existente sin cuenta / Opción B: nueva) ──
+async function abrirModalNuevaAsociacion() {
+    document.getElementById('modal-titulo').textContent = 'Nueva asociación';
+    let opcionesSinCuenta = '';
+    let hayOpciones = false;
+    try {
+        const data = await api.get('/admin/delegados-asociacion');
+        const sinCuenta = (data.asociaciones || []).filter(a => !a.cuenta_institucional);
+        hayOpciones = sinCuenta.length > 0;
+        opcionesSinCuenta = sinCuenta.map(a => `<option value="${a.asociacion_id}">${sanitizar(a.nombre)}</option>`).join('');
+    } catch (err) { /* si falla la carga, la Opción A queda sin asociaciones para elegir — se informa abajo */ }
+
+    document.getElementById('modal-contenido').innerHTML = `
+    <div class="form-grupo">
+        <label style="font-weight:400; display:block; margin-bottom:6px;">
+            <input type="radio" name="tipo_alta" value="existente" checked onchange="toggleTipoAltaAsociacion(this)">
+            Asociación ya existente en el catálogo, sin cuenta todavía
+        </label>
+        <label style="font-weight:400; display:block;">
+            <input type="radio" name="tipo_alta" value="nueva" onchange="toggleTipoAltaAsociacion(this)">
+            Asociación realmente nueva (no está en el catálogo)
+        </label>
+    </div>
+
+    <div id="bloque-alta-existente">
+        <form onsubmit="guardarAltaAsociacion(event, 'existente')">
+            <div class="form-grupo">
+                <label class="form-label">Asociación <span class="req">*</span></label>
+                <select name="asociacion_id" class="form-control" required ${hayOpciones ? '' : 'disabled'}>
+                    <option value="">— Seleccionar —</option>
+                    ${opcionesSinCuenta}
+                </select>
+                ${hayOpciones ? '' : '<div class="form-hint">No hay asociaciones del catálogo sin cuenta institucional por ahora.</div>'}
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Correo institucional <span class="req">*</span></label>
+                <input type="email" name="email" class="form-control" required placeholder="asociacion@ferochi.cl">
+            </div>
+            ${bloqueOpcionesPassword()}
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario" ${hayOpciones ? '' : 'disabled'}>Crear cuenta</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>
+    </div>
+
+    <div id="bloque-alta-nueva" class="oculto">
+        <form onsubmit="guardarAltaAsociacion(event, 'nueva')">
+            <div class="form-grupo">
+                <label class="form-label">Nombre oficial de la asociación <span class="req">*</span></label>
+                <input type="text" name="nombre" class="form-control" required placeholder="Asociación de Rodeo de…">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Zona</label>
+                <input type="text" name="zona" class="form-control" placeholder="Opcional">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Correo institucional <span class="req">*</span></label>
+                <input type="email" name="email" class="form-control" required placeholder="asociacion@ferochi.cl">
+            </div>
+            ${bloqueOpcionesPassword()}
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Crear asociación y cuenta</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>
+    </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function toggleTipoAltaAsociacion(radio) {
+    const esNueva = radio.value === 'nueva';
+    document.getElementById('bloque-alta-existente').classList.toggle('oculto', esNueva);
+    document.getElementById('bloque-alta-nueva').classList.toggle('oculto', !esNueva);
+}
+
+async function guardarAltaAsociacion(e, tipo) {
+    e.preventDefault();
+    const form = e.target;
+    let datosPassword;
+    try {
+        datosPassword = leerDatosPassword(form);
+    } catch (err) {
+        mostrarToast(err.message, 'error');
+        return;
+    }
+    const fd = new FormData(form);
+    const ok = await confirmar(tipo === 'existente'
+        ? '¿Crear la cuenta institucional para la asociación seleccionada?'
+        : `¿Crear la asociación "${fd.get('nombre')}" y su cuenta institucional?`);
+    if (!ok) return;
+
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+        const resultado = tipo === 'existente'
+            ? await api.post('/admin/cuentas-institucionales/para-asociacion-existente', {
+                asociacion_id: fd.get('asociacion_id'), email: fd.get('email'), ...datosPassword
+            })
+            : await api.post('/admin/cuentas-institucionales/nueva-asociacion', {
+                nombre: fd.get('nombre'), zona: fd.get('zona') || null, email: fd.get('email'), ...datosPassword
+            });
+        mostrarPasswordTemporalResultado(resultado.password_temporal, 'Cuenta creada correctamente');
+    } catch (err) {
+        mostrarError(err);
+        btn.disabled = false;
+    }
+}
+
+// ─── Gestionar acceso (asociación existente, con o sin cuenta todavía) ───
+function abrirModalGestionAcceso(asociacionId) {
+    const a = _asociacionesMap[asociacionId];
+    if (!a) return;
+    document.getElementById('modal-titulo').textContent = 'Gestionar acceso — ' + a.nombre;
+    document.getElementById('modal-contenido').innerHTML = renderGestionAccesoContenido(a);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+function renderGestionAccesoContenido(a) {
+    const cuenta = a.cuenta_institucional;
+    if (!cuenta) {
+        return `
+        <p style="margin-bottom:12px;">Esta asociación todavía no tiene una cuenta institucional de acceso.</p>
+        <form onsubmit="guardarCuentaParaAsociacionExistente(event, '${a.asociacion_id}')">
+            <div class="form-grupo">
+                <label class="form-label">Correo institucional <span class="req">*</span></label>
+                <input type="email" name="email" class="form-control" required placeholder="asociacion@ferochi.cl">
+            </div>
+            ${bloqueOpcionesPassword()}
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Crear cuenta</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    }
+    return `
+    <div style="margin-bottom:16px; font-size:14px; line-height:2;">
+        <div><strong>Asociación:</strong> ${sanitizar(a.nombre)}</div>
+        <div><strong>Correo institucional:</strong> ${sanitizar(cuenta.email)}</div>
+        <div><strong>Estado:</strong> ${celdaEstadoAcceso(cuenta)}</div>
+        <div><strong>Último acceso:</strong> ${cuenta.ultimo_acceso_en ? fmtFechaChile(cuenta.ultimo_acceso_en) : 'Nunca'}</div>
+    </div>
+    <div class="form-acciones" style="flex-wrap:wrap;">
+        ${cuenta.estado === 'activa'
+            ? `<button class="btn" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="suspenderCuentaInstitucional('${cuenta.id}', '${a.asociacion_id}')">Suspender cuenta</button>`
+            : `<button class="btn btn-success" onclick="reactivarCuentaInstitucional('${cuenta.id}', '${a.asociacion_id}')">Reactivar cuenta</button>`}
+        <button class="btn btn-secundario" onclick="abrirFormResetearPassword('${cuenta.id}')">Restablecer contraseña</button>
+        <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
+    </div>`;
+}
+
+async function guardarCuentaParaAsociacionExistente(e, asociacionId) {
+    e.preventDefault();
+    const form = e.target;
+    let datosPassword;
+    try {
+        datosPassword = leerDatosPassword(form);
+    } catch (err) {
+        mostrarToast(err.message, 'error');
+        return;
+    }
+    const ok = await confirmar('¿Crear la cuenta institucional para esta asociación?');
+    if (!ok) return;
+
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const fd = new FormData(form);
+    try {
+        const resultado = await api.post('/admin/cuentas-institucionales/para-asociacion-existente', {
+            asociacion_id: asociacionId, email: fd.get('email'), ...datosPassword
+        });
+        mostrarPasswordTemporalResultado(resultado.password_temporal, 'Cuenta creada correctamente');
+    } catch (err) {
+        mostrarError(err);
+        btn.disabled = false;
+    }
+}
+
+// ─── Suspender / Reactivar cuenta institucional ───────────────────────────
+// Nunca toca asociaciones.activa (catálogo deportivo) ni delegados_asociacion
+// — exclusivamente el acceso de la cuenta. Ver backend (migración 078).
+async function suspenderCuentaInstitucional(cuentaId, asociacionId) {
+    const a = _asociacionesMap[asociacionId];
+    const ok = await confirmar(
+        `¿Suspender el acceso institucional de ${a?.nombre || 'esta asociación'}?\n\nNo podrá iniciar sesión hasta que se reactive. Sus delegados, certificaciones, rodeos, designaciones y cartillas se conservan intactos — nunca se modifican.`
+    );
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/cuentas-institucionales/${cuentaId}/suspender`, {});
+        mostrarToast('Cuenta institucional suspendida', 'success');
+        cerrarModal();
+        cargarAsociaciones();
+    } catch (err) { mostrarError(err); }
+}
+
+async function reactivarCuentaInstitucional(cuentaId, asociacionId) {
+    const a = _asociacionesMap[asociacionId];
+    const ok = await confirmar(`¿Reactivar el acceso institucional de ${a?.nombre || 'esta asociación'}? Podrá iniciar sesión nuevamente con su contraseña vigente (no se modifica).`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/cuentas-institucionales/${cuentaId}/reactivar`, {});
+        mostrarToast('Cuenta institucional reactivada', 'success');
+        cerrarModal();
+        cargarAsociaciones();
+    } catch (err) { mostrarError(err); }
+}
+
+// ─── Restablecer contraseña ────────────────────────────────────────────────
+function abrirFormResetearPassword(cuentaId) {
+    document.getElementById('modal-titulo').textContent = 'Restablecer contraseña';
+    document.getElementById('modal-contenido').innerHTML = `
+    <form onsubmit="guardarResetearPassword(event, '${cuentaId}')">
+        ${bloqueOpcionesPassword()}
+        <div class="form-hint" style="margin-bottom:12px;">La asociación deberá cambiar esta contraseña obligatoriamente en su próximo ingreso. Cualquier sesión que tuviera abierta se cerrará de inmediato.</div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">Restablecer</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+}
+
+async function guardarResetearPassword(e, cuentaId) {
+    e.preventDefault();
+    const form = e.target;
+    let datosPassword;
+    try {
+        datosPassword = leerDatosPassword(form);
+    } catch (err) {
+        mostrarToast(err.message, 'error');
+        return;
+    }
+    const ok = await confirmar('¿Restablecer la contraseña de esta cuenta institucional? Cerrará de inmediato cualquier sesión que tuviera abierta.');
+    if (!ok) return;
+
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+        const resultado = await api.post(`/admin/cuentas-institucionales/${cuentaId}/resetear-password`, datosPassword);
+        mostrarPasswordTemporalResultado(resultado.password_temporal, 'Contraseña restablecida correctamente');
+    } catch (err) {
+        mostrarError(err);
+        btn.disabled = false;
     }
 }
 

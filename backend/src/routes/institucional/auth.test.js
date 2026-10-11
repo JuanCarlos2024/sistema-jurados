@@ -19,12 +19,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_change_in_prod';
 
 let respuestas;
 let actualizaciones;
+let errorUpdateForzado; // null por defecto — un test puede forzar un error real de BD en el próximo .update().eq()
 function crearChain(tabla) {
     const chain = {};
     ['select', 'eq', 'neq', 'single'].forEach(m => { chain[m] = () => chain; });
     chain.update = (payload) => {
         actualizaciones.push({ tabla, payload });
-        return { eq: () => Promise.resolve({ data: null, error: null }) };
+        return { eq: () => Promise.resolve({ data: null, error: errorUpdateForzado }) };
     };
     chain.then = (resolve, reject) => Promise.resolve(respuestas[tabla] || { data: null, error: null }).then(resolve, reject);
     return chain;
@@ -40,6 +41,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
     actualizaciones = [];
+    errorUpdateForzado = null;
     respuestas = {
         cuentas_institucionales: {
             data: {
@@ -148,6 +150,22 @@ describe('POST /institucional/auth/login', () => {
         const res = await llamar('/login', { email: 'delegado-osorno@ferochi.com' });
         expect(res.statusCode).toBe(400);
     });
+
+    // Gestión de acceso institucional (migración 078): invalidación real de
+    // sesiones — password_version viaja en el token para que soloCuentaInstitucional
+    // pueda revalidarla contra la BD en cada request.
+    test('migración 078 — password_version real de la cuenta viaja en el JWT', async () => {
+        respuestas.cuentas_institucionales.data.password_version = 3;
+        const res = await llamar('/login', { email: 'delegado-osorno@ferochi.com', password: 'ClaveSegura123' });
+        const payload = jwt.verify(res.jsonBody.token, JWT_SECRET);
+        expect(payload.password_version).toBe(3);
+    });
+
+    test('migración 078 — cuenta sin password_version todavía (columna recién migrada) -> el JWT usa 1 (el mismo DEFAULT de la columna), nunca undefined', async () => {
+        const res = await llamar('/login', { email: 'delegado-osorno@ferochi.com', password: 'ClaveSegura123' });
+        const payload = jwt.verify(res.jsonBody.token, JWT_SECRET);
+        expect(payload.password_version).toBe(1);
+    });
 });
 
 describe('POST /institucional/auth/cambiar-password', () => {
@@ -193,5 +211,36 @@ describe('POST /institucional/auth/cambiar-password', () => {
     test('password_nueva muy corta -> 400', async () => {
         const res = await llamar('/cambiar-password', { password_actual: 'ClaveSegura123', password_nueva: '123' }, { authorization: `Bearer ${tokenInstitucional()}` });
         expect(res.statusCode).toBe(400);
+    });
+
+    // Gestión de acceso institucional (migración 078): cualquier cambio de
+    // contraseña (propio o administrativo) incrementa password_version —
+    // invalida de inmediato cualquier otra sesión abierta con la clave anterior.
+    test('migración 078 — cambio de contraseña propio incrementa password_version', async () => {
+        respuestas.cuentas_institucionales.data.primer_login = false;
+        respuestas.cuentas_institucionales.data.password_version = 1;
+        const res = await llamar('/cambiar-password', { password_actual: 'ClaveSegura123', password_nueva: 'NuevaClave123' }, { authorization: `Bearer ${tokenInstitucional()}` });
+        expect(res.statusCode).toBe(200);
+        const upd = actualizaciones.find(a => a.tabla === 'cuentas_institucionales' && 'password_version' in a.payload);
+        expect(upd.payload.password_version).toBe(2);
+    });
+
+    test('revisión posterior — si el UPDATE de password_hash falla realmente en la BD, responde 500 y NUNCA "Contraseña actualizada correctamente" (antes no se comprobaba el error devuelto)', async () => {
+        respuestas.cuentas_institucionales.data.primer_login = false;
+        errorUpdateForzado = { message: 'conexión interrumpida con la base de datos' };
+        const res = await llamar('/cambiar-password', { password_actual: 'ClaveSegura123', password_nueva: 'NuevaClave123' }, { authorization: `Bearer ${tokenInstitucional()}` });
+        expect(res.statusCode).toBe(500);
+        expect(res.jsonBody.mensaje).toBeUndefined(); // nunca el mensaje de éxito
+        // Tampoco se registra auditoría de un cambio que en realidad no se aplicó.
+        expect(auditoria.registrar).not.toHaveBeenCalledWith(expect.objectContaining({ accion: 'cambiar_clave' }));
+    });
+
+    test('migración 078 — nunca registra el hash ni la contraseña en texto plano en la auditoría', async () => {
+        respuestas.cuentas_institucionales.data.primer_login = false;
+        await llamar('/cambiar-password', { password_actual: 'ClaveSegura123', password_nueva: 'NuevaClave123' }, { authorization: `Bearer ${tokenInstitucional()}` });
+        const llamadaAuditoria = auditoria.registrar.mock.calls.find(c => c[0].accion === 'cambiar_clave');
+        const serializado = JSON.stringify(llamadaAuditoria[0]);
+        expect(serializado).not.toContain('NuevaClave123');
+        expect(serializado.toLowerCase()).not.toContain('hash');
     });
 });

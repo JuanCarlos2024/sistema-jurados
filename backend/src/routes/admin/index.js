@@ -23,6 +23,7 @@ router.use((req, res, next) => {
 
 router.use('/usuarios', require('./usuarios'));
 router.use('/delegados-asociacion', require('./delegados-asociacion'));
+router.use('/cuentas-institucionales', require('./cuentas-institucionales'));
 router.use('/rodeos', require('./rodeos'));
 router.use('/asignaciones', require('./asignaciones'));
 router.use('/bonos', require('./bonos'));

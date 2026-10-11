@@ -16,7 +16,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloCuentaInstitucional } = require('../../middleware/auth');
+const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('../../middleware/auth');
 const { resolverTemporada } = require('../../services/informeGestion/cargaDatos');
 const { construirIndiceCatalogo, resolverAsociacion } = require('../../services/informeGestion/asociaciones');
 const auditoria = require('../../services/auditoria');
@@ -37,6 +37,9 @@ const { cargarEstadoCartillaDelegadoAdjuntaPorRodeo } = require('../../services/
 const { rodeoDeMiAsociacion, delegadoValido, estadoBloqueoCartillaDelegadoAdjunta } = require('./cartilla');
 
 router.use(soloCuentaInstitucional);
+// Gestión de acceso institucional (078): cambio de contraseña de primer
+// ingreso obligatorio ANTES de poder usar esta ruta de negocio.
+router.use(exigirCambioPasswordSiPrimerLogin);
 
 // Estado de cartilla para un rodeo, dadas TODAS sus filas en cartillas_delegado.
 // Nunca elige una "oficial" arbitrariamente cuando hay más de una (ver Fase 1:

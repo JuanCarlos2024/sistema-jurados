@@ -116,6 +116,35 @@ describe('GET / — catálogo oficial de asociaciones ordinarias + conteos', () 
         const res = await llamar(router);
         expect(res.jsonBody.asociaciones[0]).toMatchObject({ delegados_activos: 0, delegados_suspendidos: 0, delegados_total: 0 });
     });
+
+    // Gestión de acceso institucional (migración 078): primer join real
+    // entre asociaciones y cuentas_institucionales desde este módulo.
+    describe('cuenta_institucional (078) — estado de acceso por asociación', () => {
+        test('sin ninguna cuenta institucional -> cuenta_institucional=null (nunca "sin_cuenta" inventado, se representa con null)', async () => {
+            respuestas.cuentas_institucionales = { list: { data: [], error: null } };
+            const res = await llamar(router);
+            expect(res.jsonBody.asociaciones[0].cuenta_institucional).toBeNull();
+        });
+
+        test('con cuenta activa -> estado="activa", nunca expone password_hash (el SELECT ni lo pide)', async () => {
+            respuestas.cuentas_institucionales = {
+                list: { data: [{ id: 'cta-1', email: 'osorno@ferochi.com', asociacion_id: 'asoc-osorno', activo: true, ultimo_acceso_en: '2026-01-01T00:00:00Z' }], error: null }
+            };
+            const res = await llamar(router);
+            expect(res.jsonBody.asociaciones[0].cuenta_institucional).toEqual({
+                id: 'cta-1', email: 'osorno@ferochi.com', estado: 'activa', ultimo_acceso_en: '2026-01-01T00:00:00Z'
+            });
+            expect(JSON.stringify(res.jsonBody)).not.toContain('password_hash');
+        });
+
+        test('con cuenta suspendida -> estado="suspendida"', async () => {
+            respuestas.cuentas_institucionales = {
+                list: { data: [{ id: 'cta-1', email: 'osorno@ferochi.com', asociacion_id: 'asoc-osorno', activo: false, ultimo_acceso_en: null }], error: null }
+            };
+            const res = await llamar(router);
+            expect(res.jsonBody.asociaciones[0].cuenta_institucional.estado).toBe('suspendida');
+        });
+    });
 });
 
 describe('GET /:asociacionId — nómina completa (activos Y suspendidos)', () => {

@@ -53,6 +53,11 @@ async function contarReferencias(delegadoId) {
 }
 
 // ─── GET / — asociaciones ordinarias del catálogo oficial + conteos ───────
+// Gestión de acceso institucional (078): además del conteo de delegados
+// (sin cambios), incluye el estado de la CUENTA institucional de cada
+// asociación (tabla distinta, join NUEVO en este archivo — primera vez que
+// se consulta cuentas_institucionales desde este módulo). Nunca se expone
+// password_hash: el SELECT la omite explícitamente.
 router.get('/', async (req, res) => {
     const buscar = (req.query.buscar || '').toString().trim();
 
@@ -67,10 +72,12 @@ router.get('/', async (req, res) => {
     const { data: asociaciones, error: errAsoc } = await query;
     if (errAsoc) return res.status(500).json({ error: errAsoc.message });
 
-    const { data: delegados, error: errDel } = await supabase
-        .from('delegados_asociacion')
-        .select('asociacion_id, activo');
+    const [{ data: delegados, error: errDel }, { data: cuentas, error: errCuentas }] = await Promise.all([
+        supabase.from('delegados_asociacion').select('asociacion_id, activo'),
+        supabase.from('cuentas_institucionales').select('id, email, asociacion_id, activo, ultimo_acceso_en')
+    ]);
     if (errDel) return res.status(500).json({ error: errDel.message });
+    if (errCuentas) return res.status(500).json({ error: errCuentas.message });
 
     const conteos = {};
     for (const d of (delegados || [])) {
@@ -79,14 +86,27 @@ router.get('/', async (req, res) => {
         else conteos[d.asociacion_id].suspendidos++;
     }
 
+    const cuentaPorAsociacion = {};
+    for (const c of (cuentas || [])) {
+        cuentaPorAsociacion[c.asociacion_id] = c;
+    }
+
     const resultado = (asociaciones || []).map(a => {
         const c = conteos[a.id] || { activos: 0, suspendidos: 0 };
+        const cuenta = cuentaPorAsociacion[a.id] || null;
         return {
             asociacion_id: a.id,
             nombre: a.nombre,
             delegados_activos: c.activos,
             delegados_suspendidos: c.suspendidos,
-            delegados_total: c.activos + c.suspendidos
+            delegados_total: c.activos + c.suspendidos,
+            // 'activa' | 'suspendida' | 'sin_cuenta' — nunca inferido de otra cosa.
+            cuenta_institucional: cuenta ? {
+                id: cuenta.id,
+                email: cuenta.email,
+                estado: cuenta.activo ? 'activa' : 'suspendida',
+                ultimo_acceso_en: cuenta.ultimo_acceso_en
+            } : null
         };
     });
 

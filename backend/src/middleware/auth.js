@@ -61,6 +61,22 @@ function soloUsuario(req, res, next) {
 // tipo="cuenta_institucional". Si la cuenta se desactiva (o su asociación se
 // deshabilita) DESPUÉS de emitido el token, debe perder acceso de inmediato,
 // no recién cuando el token expire por tiempo.
+//
+// Gestión de acceso institucional (migración 078): además revalida
+// `password_version` — un JWT emitido ANTES de un restablecimiento
+// administrativo de contraseña queda rechazado de inmediato, aunque la
+// cuenta siga `activo=true` (nunca basta con cambiar el hash: sin esto, una
+// sesión robada o compartida ANTES del reset seguiría funcionando hasta que
+// expirara por tiempo). Un JWT sin el claim (emitido antes de esta
+// migración) se trata como versión 1 — igual al DEFAULT de la columna — para
+// no cortar sesiones legítimas ya activas al desplegar. También expone
+// `req.cuentaInstitucional` con el `primer_login` REAL (de la BD, nunca del
+// JWT, que puede quedar desactualizado) para que un middleware aparte
+// (`exigirCambioPasswordSiPrimerLogin`) decida si bloquear rutas de negocio
+// — nunca se mezcla esa decisión dentro de esta función, porque
+// institucional/auth.js reutiliza ESTA MISMA función para /cambiar-password,
+// que es justamente la ruta que debe seguir disponible mientras
+// primer_login esté pendiente.
 async function soloCuentaInstitucional(req, res, next) {
     return verificarToken(req, res, async () => {
         if (req.usuario.tipo !== 'cuenta_institucional') {
@@ -69,19 +85,48 @@ async function soloCuentaInstitucional(req, res, next) {
         try {
             const { data: cuenta, error } = await supabase
                 .from('cuentas_institucionales')
-                .select('activo, asociaciones(activa)')
+                .select('activo, primer_login, password_version, asociaciones(activa)')
                 .eq('id', req.usuario.id)
                 .single();
             if (error || !cuenta || !cuenta.activo || !cuenta.asociaciones || cuenta.asociaciones.activa === false) {
                 console.warn(`[AUTH] 401 cuenta institucional ya no válida id="${req.usuario.id}": ${req.method} ${req.path}`);
                 return res.status(401).json({ error: 'Sesión inválida: la cuenta institucional ya no está activa' });
             }
+            const versionDelToken = req.usuario.password_version ?? 1;
+            const versionReal = cuenta.password_version ?? 1;
+            if (versionDelToken !== versionReal) {
+                console.warn(`[AUTH] 401 cuenta institucional id="${req.usuario.id}": contraseña restablecida después de emitido el token`);
+                return res.status(401).json({ error: 'Sesión inválida: la contraseña fue restablecida. Inicie sesión nuevamente.' });
+            }
+            req.cuentaInstitucional = { primer_login: !!cuenta.primer_login };
         } catch (e) {
             console.error('[AUTH] error revalidando cuenta institucional:', e.message);
             return res.status(401).json({ error: 'No fue posible validar la sesión' });
         }
         return next();
     });
+}
+
+// Middleware: exige que la cuenta institucional ya haya completado el
+// cambio de contraseña obligatorio de primer ingreso antes de usar rutas de
+// negocio (Mis Rodeos, cartillas, delegados). Debe ir SIEMPRE después de
+// `soloCuentaInstitucional` (usa `req.cuentaInstitucional`, nunca el JWT,
+// que puede tener un `primer_login` desactualizado) — y NUNCA se aplica a
+// institucional/auth.js (login es público; /cambiar-password es la única
+// vía para resolver este estado, y debe seguir alcanzable mientras está
+// pendiente) ni a GET /institucional/perfil (lectura mínima de identidad,
+// necesaria para mostrar la pantalla de cambio obligatorio). Así se cierra
+// la evasión real: antes de esto, una llamada directa al backend a
+// cualquier ruta institucional de negocio funcionaba igual aunque
+// primer_login=true, sin pasar nunca por el cambio de contraseña.
+function exigirCambioPasswordSiPrimerLogin(req, res, next) {
+    if (req.cuentaInstitucional?.primer_login) {
+        return res.status(403).json({
+            error: 'Debe cambiar su contraseña antes de continuar.',
+            code: 'CAMBIO_PASSWORD_REQUERIDO'
+        });
+    }
+    next();
 }
 
 // Middleware: admin o el propio usuario
@@ -146,4 +191,4 @@ function soloNoComisionTecnica(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };
+module.exports = { verificarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };

@@ -48,13 +48,18 @@ router.post('/login', async (req, res) => {
         return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
+    // Gestión de acceso institucional (078): password_version viaja en el
+    // JWT para que soloCuentaInstitucional pueda invalidar, en cada
+    // request, cualquier sesión emitida ANTES de un restablecimiento
+    // administrativo o un cambio propio de contraseña — ver middleware/auth.js.
     const token = generarToken({
         id: cuenta.id,
         tipo: 'cuenta_institucional',
         rol_institucional: cuenta.rol_institucional,
         asociacion_id: cuenta.asociaciones.id,
         asociacion_nombre: cuenta.asociaciones.nombre,
-        primer_login: cuenta.primer_login
+        primer_login: cuenta.primer_login,
+        password_version: cuenta.password_version ?? 1
     });
 
     // Registro de último acceso — no interrumpe el login si falla.
@@ -103,7 +108,7 @@ router.post('/cambiar-password', soloCuentaInstitucional, async (req, res) => {
 
     const { data: cuenta } = await supabase
         .from('cuentas_institucionales')
-        .select('password_hash, primer_login')
+        .select('password_hash, primer_login, password_version')
         .eq('id', req.usuario.id)
         .single();
 
@@ -120,10 +125,29 @@ router.post('/cambiar-password', soloCuentaInstitucional, async (req, res) => {
     }
 
     const nuevo_hash = await bcrypt.hash(password_nueva, 12);
-    await supabase
+    // Gestión de acceso institucional (078): cualquier cambio de contraseña
+    // (propio o administrativo) incrementa password_version — invalida de
+    // inmediato cualquier otra sesión que quedara abierta con la clave
+    // anterior, nunca solo la pestaña/navegador donde se hizo el cambio.
+    //
+    // Revisión posterior: el `error` del UPDATE se comprueba ANTES de
+    // responder éxito — antes, un fallo real de base de datos acá habría
+    // quedado reportado como "Contraseña actualizada correctamente" sin
+    // haber cambiado nada (nunca se leía `{ error }`, solo se ejecutaba el
+    // UPDATE y se seguía de largo).
+    const { error: errorUpdate } = await supabase
         .from('cuentas_institucionales')
-        .update({ password_hash: nuevo_hash, primer_login: false, updated_at: new Date().toISOString() })
+        .update({
+            password_hash: nuevo_hash,
+            primer_login: false,
+            password_version: (cuenta.password_version ?? 1) + 1,
+            updated_at: new Date().toISOString()
+        })
         .eq('id', req.usuario.id);
+
+    if (errorUpdate) {
+        return res.status(500).json({ error: errorUpdate.message });
+    }
 
     await auditoria.registrar({
         tabla: 'cuentas_institucionales',

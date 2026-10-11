@@ -5,9 +5,12 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloCuentaInstitucional } = require('../../middleware/auth');
+const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('../../middleware/auth');
 
 router.use(soloCuentaInstitucional);
+// Gestión de acceso institucional (078): cambio de contraseña de primer
+// ingreso obligatorio ANTES de poder usar esta ruta de negocio.
+router.use(exigirCambioPasswordSiPrimerLogin);
 
 // GET /api/institucional/delegados — solo delegados activos Y certificados
 // (ver migración 064: certificado != activo) de la asociación del token.
