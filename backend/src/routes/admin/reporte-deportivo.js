@@ -1119,12 +1119,36 @@ router.get('/export-fin-semana', async (req, res) => {
         // Revisión Puntaje — duplicado a propósito (ver comentario de cabecera).
         const fmtP = (v) => (v != null && v !== '') ? String(v) : '—';
 
+        // Corrección posterior (a pedido del usuario): datos_monitor_rodeo NO tiene
+        // ninguna columna separada con el texto puro del monitor (confirmado en el
+        // esquema: solo existen comentario_monitor y control_gestion_ultimo_bloque,
+        // migraciones 026/056 — ninguna de las dos es "el texto puro" por sí sola).
+        // Para rodeos importados por Control de Gestión ANTES de la corrección
+        // "Punto 9/11" de controlGestion.js, comentario_monitor quedó guardado con
+        // el bloque compuesto completo (Rodeo:/Fecha:/N° situaciones:/Categorías:/
+        // Comentario del monitor:), que construirComentarioCompacto() ya NO genera
+        // (fue retirada de ese archivo) pero cuyo resultado histórico sigue en la
+        // base de datos tal cual. Ese bloque SIEMPRE termina con el marcador literal
+        // fijo "Comentario del monitor:" seguido del texto puro — se extrae
+        // solamente lo que sigue a la ÚLTIMA aparición de ese marcador exacto,
+        // nunca otra cosa. Para datos nuevos (ya sin composición, por esa misma
+        // corrección) el marcador no existe y el valor se usa directamente, sin
+        // ningún recorte — igual que antes.
+        const MARCADOR_COMENTARIO_MONITOR_LEGADO = 'Comentario del monitor:';
+        const extraerComentarioMonitorPuro = (valor) => {
+            if (typeof valor !== 'string') return null;
+            const idx = valor.lastIndexOf(MARCADOR_COMENTARIO_MONITOR_LEGADO);
+            const texto = idx >= 0 ? valor.slice(idx + MARCADOR_COMENTARIO_MONITOR_LEGADO.length) : valor;
+            const limpio = texto.trim();
+            return limpio !== '' ? limpio : null;
+        };
+
         for (const f of filas) {
             const puntajeOficial  = `${fmtP(f.puntaje_oficial_1er)} - ${fmtP(f.puntaje_oficial_2do)} - ${fmtP(f.puntaje_oficial_3er)}`;
             const puntajeRevisado = `${fmtP(f.puntaje_analista_1er)} - ${fmtP(f.puntaje_analista_2do)} - ${fmtP(f.puntaje_analista_3er)}`;
 
-            // comentario_monitor íntegro, sin trim ni resumen; vacío/NULL → celda vacía.
-            const obsMonitor = (typeof f.obs_monitor === 'string' && f.obs_monitor.trim() !== '') ? f.obs_monitor : null;
+            // comentario_monitor PURO (ver extraerComentarioMonitorPuro arriba); vacío/NULL → celda vacía.
+            const obsMonitor = extraerComentarioMonitorPuro(f.obs_monitor);
 
             const row = ws1.addRow({
                 fecha:            fmtFecha(f.fecha),

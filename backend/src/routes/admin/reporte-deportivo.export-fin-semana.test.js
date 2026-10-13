@@ -18,6 +18,10 @@ const ID_SAN_CARLOS = '5e0d7828-ae39-47ad-b8ed-7f955b43f4a0';
 const ID_PUCON = 'f5300d3f-6810-471d-8a8b-e0de5672bd78';
 const ID_SIN_COMENTARIO = '60842ab4-02ae-4be5-96aa-10bb69dc7d6f';
 
+// Formato LEGADO: rodeos importados por Control de Gestión ANTES de la
+// corrección "Punto 9/11" de controlGestion.js, cuyo comentario_monitor quedó
+// guardado con el bloque compuesto completo (no existe columna separada con
+// el texto puro — ver extraerComentarioMonitorPuro en reporte-deportivo.js).
 const COMENTARIO_SAN_CARLOS =
     'Nota manual previa del monitor: buen estado de la pista.\n\n---\n\n' +
     'Rodeo: SAN CARLOS - ÑUBLE; Fecha: 18/09/2026\n' +
@@ -26,12 +30,22 @@ const COMENTARIO_SAN_CARLOS =
     '- Servicios básicos / logística crítica\n' +
     '- Accidente de jinete\n' +
     'Comentario del monitor: Se informaron dos situaciones durante la jornada.';
+const MONITOREO_PURO_SAN_CARLOS = 'Se informaron dos situaciones durante la jornada.';
 const COMENTARIO_PUCON =
     'Rodeo: PUCON - CAUTÍN; Fecha: 19/09/2026\n' +
     'N° situaciones: 0\n' +
     'Categorías:\n' +
     '- Sin situaciones relevantes\n' +
     'Comentario del monitor: Rodeo finalizado sin novedad, según lo informado por el jurado.';
+const MONITOREO_PURO_PUCON = 'Rodeo finalizado sin novedad, según lo informado por el jurado.';
+// Caso real reportado por el usuario (Combarbalá) — mismo formato legado.
+const COMENTARIO_COMBARBALA =
+    'Rodeo: COMBARBALA - LIMARÍ; Fecha: 03/10/2026\n' +
+    'N° situaciones: 1\n' +
+    'Categorías:\n' +
+    '- Atraso de inicio\n' +
+    'Comentario del monitor: Inicio a las 10:00, una hora después de lo programado, por demora en el proceso y programa de inscripción.';
+const MONITOREO_PURO_COMBARBALA = 'Inicio a las 10:00, una hora después de lo programado, por demora en el proceso y programa de inscripción.';
 
 // Usado solo para /export-directorio (NO cambia en esta tarea).
 const HEADERS_14 = [
@@ -231,32 +245,46 @@ describe('GET /export-fin-semana', () => {
         expect(ws1.getRow(4).getCell(9).value).toBe('—'); // LA CELIA, sin evaluación
     });
 
-    test('H/J: San Carlos exporta el comentario de Monitoreo COMPLETO con saltos de línea (manual previo + bloque CG)', async () => {
+    test('H/J (corrección posterior): San Carlos exporta SOLO el texto puro del comentario de Monitoreo, nunca el bloque compuesto completo', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const obs = ws1.getRow(2).values.slice(1)[11]; // L = Monitoreo (índice 11, 0-based)
-        expect(obs).toBe(COMENTARIO_SAN_CARLOS);
-        expect(obs.split('\n').length).toBe(COMENTARIO_SAN_CARLOS.split('\n').length);
+        expect(obs).toBe(MONITOREO_PURO_SAN_CARLOS);
+        expect(obs).not.toBe(COMENTARIO_SAN_CARLOS);
+        for (const metadato of ['Rodeo:', 'Fecha:', 'N° situaciones:', 'Categorías:', 'Comentario del monitor:', 'Nota manual previa']) {
+            expect(obs).not.toContain(metadato);
+        }
     });
 
-    test('Pucón con 0 situaciones exporta su comentario de Monitoreo completo (no depende de control_gestion_situaciones)', async () => {
+    test('Pucón (corrección posterior): exporta solo el texto puro de Monitoreo (no depende de control_gestion_situaciones)', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        expect(ws1.getRow(3).values.slice(1)[11]).toBe(COMENTARIO_PUCON);
+        expect(ws1.getRow(3).values.slice(1)[11]).toBe(MONITOREO_PURO_PUCON);
         expect(supabase.from.mock.calls.map(c => c[0])).not.toContain('control_gestion_situaciones');
     });
 
-    test('PRUEBA 6: L (Monitoreo) es SOLAMENTE el comentario_monitor íntegro — nunca etiquetas/metadatos compuestos', async () => {
+    test('PRUEBA 6 (corrección posterior): L (Monitoreo) es SOLAMENTE el texto puro del comentario del monitor — nunca el bloque compuesto con etiquetas/metadatos', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const monitoreo = ws1.getRow(3).getCell(12).value; // Pucón
-        expect(monitoreo).toBe(COMENTARIO_PUCON);
-        // El valor es exactamente el comentario_monitor crudo del fixture — nunca una
-        // composición nueva con las etiquetas que el reporte general SÍ usa en otro lado.
-        for (const etiquetaProhibida of ['N° situaciones:', 'Categorías:']) {
-            // Estas etiquetas SÍ existen en el propio comentario_monitor del fixture (texto libre
-            // que el monitor pudo haber escrito así) — lo que se prueba es que la celda es
-            // EXACTAMENTE comentario_monitor, no una plantilla nueva generada por este endpoint.
-            expect(typeof monitoreo).toBe('string');
+        expect(monitoreo).toBe(MONITOREO_PURO_PUCON);
+        expect(monitoreo).not.toBe(respuestas.datos_monitor_rodeo.data[1].comentario_monitor);
+        for (const metadato of ['Rodeo:', 'Fecha:', 'N° situaciones:', 'Categorías:', 'Comentario del monitor:']) {
+            expect(monitoreo).not.toContain(metadato);
         }
-        expect(monitoreo).toBe(respuestas.datos_monitor_rodeo.data[1].comentario_monitor);
+    });
+
+    test('caso real reportado (Combarbalá): L (Monitoreo) contiene EXACTAMENTE el texto puro, sin ningún metadato', async () => {
+        respuestas.datos_monitor_rodeo.data[0].comentario_monitor = COMENTARIO_COMBARBALA;
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        const monitoreo = ws1.getRow(2).getCell(12).value; // San Carlos, ahora con el comentario de Combarbalá
+        expect(monitoreo).toBe(MONITOREO_PURO_COMBARBALA);
+        for (const metadato of ['Rodeo:', 'Fecha:', 'N° situaciones:', 'Categorías:', 'Comentario del monitor:']) {
+            expect(monitoreo).not.toContain(metadato);
+        }
+    });
+
+    test('comentario_monitor ya puro (datos nuevos, sin marcador legado) se usa DIRECTAMENTE, sin ningún recorte', async () => {
+        respuestas.datos_monitor_rodeo.data[0].comentario_monitor = 'Rodeo sin novedades, transcurrió con normalidad.';
+        const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
+        expect(ws1.getRow(2).getCell(12).value).toBe('Rodeo sin novedades, transcurrió con normalidad.');
     });
 
     test('comentario_monitor NULL, vacío o solo espacios → celda vacía (sin placeholders)', async () => {
@@ -274,7 +302,9 @@ describe('GET /export-fin-semana', () => {
         expect(v === null || v === undefined || v === '').toBe(true);
     });
 
-    test('Monitoreo (L) con wrapText y alineación superior; altura crece con el contenido', async () => {
+    test('Monitoreo (L) con wrapText y alineación superior; altura crece con el contenido largo', async () => {
+        respuestas.datos_monitor_rodeo.data[0].comentario_monitor =
+            'Comentario del monitor: ' + 'Texto largo del monitor que debe ocupar varias líneas de ancho dentro de la celda de Monitoreo. '.repeat(3);
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const c = ws1.getRow(2).getCell(12);
         expect(c.alignment.wrapText).toBe(true);
@@ -348,7 +378,7 @@ describe('GET /export-fin-semana', () => {
         const { ws1, wb } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const wsDetalle = wb.getWorksheet('Detalle');
 
-        expect(ws1.getRow(2).getCell(12).value).toBe(COMENTARIO_SAN_CARLOS); // L, solo monitor
+        expect(ws1.getRow(2).getCell(12).value).toBe(MONITOREO_PURO_SAN_CARLOS); // L, solo el texto puro del monitor
 
         const colObs = wsDetalle.getRow(1).values.slice(1)
             .indexOf('Observaciones (Jurado / Analista / Jefe / Monitor / Admin)') + 1;
