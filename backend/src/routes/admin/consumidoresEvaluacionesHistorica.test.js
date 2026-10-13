@@ -118,7 +118,7 @@ describe('guarda de regresión: cada consulta a evaluaciones fue revisada semán
     const ESPERADO = {
         'routes/admin/evaluaciones.js': [18, 5],            // listado (filtra), rodeos-disponibles y crear-masivo (semántica propia); el resto opera por id/estado
         'routes/admin/reportes.js': [2, 2],                 // dashboard/CSV: filtra
-        'routes/admin/reporte-deportivo.js': [2, 1],        // reporte: filtra; la 2ª lee comentario_jefe por id ya filtrado
+        'routes/admin/reporte-deportivo.js': [3, 1],        // reporte: filtra; la 2ª y 3ª leen comentario_jefe por id ya filtrado (export-detalle y export-fin-semana, misma semántica)
         'routes/admin/hojavida.js': [3, 2],                 // "Ver evaluación"/"Altera resultado": filtra; calcularSituaciones cuenta casos (histórica = 0)
         'routes/admin/rodeos.js': [1, 2],                   // detalle: separa evaluacion / evaluacion_historica
         'routes/usuario/evaluaciones.js': [6, 4],           // portal del jurado: no ve históricas (listado, detalle, resultado, comentar)

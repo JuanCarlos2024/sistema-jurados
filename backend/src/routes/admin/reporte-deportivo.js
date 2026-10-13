@@ -4,7 +4,6 @@ const supabase = require('../../config/supabase');
 const ExcelJS = require('exceljs');
 const { obtenerCollerasCompletas } = require('../../services/colleras-completas');
 const { cargarComparativaColleras } = require('../../services/informeGestion/collerasComparativa');
-const { generarGraficoComparativoColleras } = require('../../services/informeGestion/graficoColleras');
 
 const HEADER_STYLE = {
     font: { bold: true, color: { argb: 'FFFFFFFF' } },
@@ -1043,22 +1042,29 @@ router.get('/export-directorio', async (req, res) => {
     }
 });
 
-// ── Reporte Fin de Semana — mismo contenido que el Reporte Directorio vía
-// obtenerDatos() (mismos filtros), EXCEPTO que aquí se eliminan 4 columnas
-// (Caseta Jurado, Faltas Disciplinarias/Reglamentarias, Ganado Fuera del Peso
-// Reglamentario, Movimiento a la Rienda) y se agregan, justo después de
-// "Resultado Alterado", "Puntaje Serie Campeones 1° - 2° - 3°" y "Revisión
-// Puntaje 1° - 2° - 3°" — misma fuente/lógica/formato que usa hoy el Reporte
-// Deportivo Detalle (fmtP + "1er - 2do - 3er" con '—' para null/vacío; ver
-// `/export-detalle` más arriba), duplicada aquí a propósito en vez de
-// exportar un helper compartido, para no tocar ese endpoint. Los campos
-// crudos (puntaje_oficial_1er/2do/3er, puntaje_analista_1er/2do/3er) ya
-// vienen en `filas` porque ambos endpoints usan la misma obtenerDatos(): sin
-// queries nuevas. Después de esto: + "Obs. Monitor" (columna visible,
-// datos_monitor_rodeo.comentario_monitor tal cual) + columna técnica oculta
-// "Rodeo ID". Endpoint independiente: /export-directorio NO se modifica (es
-// la base del flujo GPT → Control de Gestión). La Hoja 2 se replica a
-// propósito en vez de refactorizar el endpoint estable. ────────────────────
+// ── Reporte Fin de Semana — 3 hojas fijas: "Reporte Fin de Semana" (12
+// columnas, A:L), "Detalle" (27 columnas, A:AA, idénticas a las de
+// /export-detalle) y "Colleras completas". Usa obtenerDatos() (mismos
+// filtros que el resto de este archivo) para la Hoja 1 y como base de la
+// Hoja 2. Endpoint independiente: /export, /export-detalle y
+// /export-directorio NO se modifican — toda la lógica de Hoja 1/Hoja 2 se
+// duplica aquí a propósito en vez de extraer un helper compartido, mismo
+// criterio que ya usa este archivo (ver comentario de /export-directorio).
+//
+// Hoja 1 — columnas y fuentes exactas:
+//   Fecha/Club/Asociación/Tipo Rodeo/Jurado(s): obtenerDatos() tal cual.
+//   Resultado Alterado: evaluaciones.resultados_alterados → "Sí"/"No".
+//   Puntaje Serie Campeones / Revisión Puntaje: mismos campos y formato
+//     (fmtP + "1er - 2do - 3er") que usa /export-detalle.
+//   Descripción de lo observado: evaluaciones.comentario_resultados_
+//     alterados tal cual (NUNCA observacion_general ni ningún otro
+//     comentario) — es el campo "Comentario sobre la alteración" de
+//     Evaluación Técnica.
+//   Total Situaciones / Serie Campeones - 2 Vueltas: obtenerDatos() tal cual.
+//   Monitoreo: datos_monitor_rodeo.comentario_monitor íntegro, sin trim ni
+//     resumen ni composición con otros datos (NUNCA la cadena consolidada
+//     "Rodeo:/Fecha:/N° situaciones:/Categorías:" que arma /export general)
+//     — vacío/NULL → celda vacía.
 const ANCHO_OBS_MONITOR = 60;
 
 router.get('/export-fin-semana', async (req, res) => {
@@ -1094,9 +1100,7 @@ router.get('/export-fin-semana', async (req, res) => {
             { header: 'Descripción de lo observado',                key: 'descripcion_observado', width: 44 },
             { header: 'Total Situaciones',                          key: 'total_situaciones', width: 15 },
             { header: 'Serie Campeones - 2 Vueltas',                 key: 'serie_campeones',  width: 20 },
-            { header: 'Acciones Área Deportiva',                     key: 'acciones_area_deportiva', width: 44 },
-            { header: 'Obs. Monitor',                                key: 'obs_monitor',      width: ANCHO_OBS_MONITOR },
-            { header: 'Rodeo ID', key: 'rodeo_id', width: 38, hidden: true },
+            { header: 'Monitoreo',                                   key: 'obs_monitor',      width: ANCHO_OBS_MONITOR },
         ];
 
         ws1.getRow(1).eachCell(cell => {
@@ -1107,16 +1111,15 @@ router.get('/export-fin-semana', async (req, res) => {
         });
         ws1.getRow(1).height = 26;
         ws1.views = [{ state: 'frozen', ySplit: 1 }];
-        ws1.autoFilter = { from: 'A1', to: 'M1' };
+        ws1.autoFilter = { from: 'A1', to: 'L1' };
 
-        const WRAP_COLS = new Set(['descripcion_observado', 'acciones_area_deportiva', 'obs_monitor']);
+        const WRAP_COLS = new Set(['descripcion_observado', 'obs_monitor']);
 
         // Mismo formateo que /export-detalle (fmtP) para Puntaje Serie Campeones /
         // Revisión Puntaje — duplicado a propósito (ver comentario de cabecera).
         const fmtP = (v) => (v != null && v !== '') ? String(v) : '—';
 
         for (const f of filas) {
-            const accionesTxt = (f.obs_admin || '').trim() || 'No aplica';
             const puntajeOficial  = `${fmtP(f.puntaje_oficial_1er)} - ${fmtP(f.puntaje_oficial_2do)} - ${fmtP(f.puntaje_oficial_3er)}`;
             const puntajeRevisado = `${fmtP(f.puntaje_analista_1er)} - ${fmtP(f.puntaje_analista_2do)} - ${fmtP(f.puntaje_analista_3er)}`;
 
@@ -1135,9 +1138,7 @@ router.get('/export-fin-semana', async (req, res) => {
                 descripcion_observado: f.comentario_resultados_alterados?.trim() || '—',
                 total_situaciones: f.c1_total + f.c2_total,
                 serie_campeones:   f.cartilla_serie_campeones_2_vueltas || '—',
-                acciones_area_deportiva: accionesTxt,
                 obs_monitor:      obsMonitor,
-                rodeo_id: f.rodeo_id,
             });
 
             row.eachCell({ includeEmpty: true }, (cell, colNum) => {
@@ -1159,7 +1160,235 @@ router.get('/export-fin-semana', async (req, res) => {
             if (f.resultados_alterados) row.getCell('resultado_alterado').font = ROJO_FONT;
         }
 
-        // ── Hoja 2: Colleras completas (réplica exacta de /export-directorio) ──
+        // ── Hoja 2: Detalle — misma estructura/lógica/27 columnas que
+        // "Reporte Deportivo Detalle" de /export-detalle (réplica a propósito,
+        // ese endpoint NO se modifica). Reutiliza `filas` ya obtenida arriba
+        // (misma obtenerDatos(), sin repetir esa consulta) + las mismas
+        // consultas adicionales de casos/ciclos/comentario del jefe que usa
+        // /export-detalle (no vienen en obtenerDatos()).
+        const evalIdsDetalle = filas.filter(f => f.eval_id).map(f => f.eval_id);
+
+        const cicloMap = {};
+        if (evalIdsDetalle.length > 0) {
+            const { data: ciclos } = await supabase
+                .from('evaluacion_ciclos')
+                .select('id, evaluacion_id, numero_ciclo')
+                .in('evaluacion_id', evalIdsDetalle);
+            for (const c of (ciclos || [])) cicloMap[c.id] = c;
+        }
+
+        const cicloIdsDetalle = Object.keys(cicloMap);
+        const casosByEval = {};
+        if (cicloIdsDetalle.length > 0) {
+            const { data: casos } = await supabase
+                .from('evaluacion_casos')
+                .select(`
+                    id, ciclo_id, evaluacion_id, numero_caso,
+                    tipo_caso, descripcion, video_url,
+                    descuento_puntos, resolucion_final,
+                    comentario_analista, decision_analista,
+                    comentario_comision, decision_comision,
+                    anulado
+                `)
+                .in('ciclo_id', cicloIdsDetalle)
+                .eq('anulado', false)
+                .order('ciclo_id')
+                .order('numero_caso', { ascending: true });
+            for (const c of (casos || [])) {
+                if (!casosByEval[c.evaluacion_id]) casosByEval[c.evaluacion_id] = [];
+                casosByEval[c.evaluacion_id].push(c);
+            }
+        }
+
+        const comentJefeByEval = {};
+        if (evalIdsDetalle.length > 0) {
+            const { data: evJefe } = await supabase
+                .from('evaluaciones')
+                .select('id, comentario_jefe')
+                .in('id', evalIdsDetalle);
+            for (const e of (evJefe || [])) comentJefeByEval[e.id] = e.comentario_jefe || '';
+        }
+
+        const fmtGanadoDetalle = (f) => {
+            if (f.cartilla_hubo_ganado_fuera_peso !== 'Sí') return '—';
+            const partes = [];
+            if (f.cartilla_clasificacion_peso) partes.push(`Clasificación: ${f.cartilla_clasificacion_peso}`);
+            for (const fg of (f.cartilla_filas_ganado || [])) {
+                const linea = [
+                    fg.serie ? `Serie: ${fg.serie}` : '',
+                    fg.cantidad ? `Cant: ${fg.cantidad}` : '',
+                    fg.porcentaje ? `%: ${fg.porcentaje}` : '',
+                    fg.observacion ? `Obs: ${fg.observacion}` : ''
+                ].filter(Boolean).join(' — ');
+                if (linea) partes.push(linea);
+            }
+            return partes.join('\n') || 'Sí (sin registros)';
+        };
+        const fmtRiendaDetalle = (f) => {
+            if (f.cartilla_hubo_movimiento_rienda !== 'Sí') return '—';
+            const partes = (f.cartilla_registros_rienda || []).map(rr => [
+                rr.nombre_socio ? `${rr.nombre_socio}${rr.rut_socio ? ' (' + rr.rut_socio + ')' : ''}` : '',
+                rr.nro_socio ? `N° socio: ${rr.nro_socio}` : '',
+                rr.nombre_equino ? `Equino: ${rr.nombre_equino}${rr.nro_inscripcion ? ' (N° ' + rr.nro_inscripcion + ')' : ''}` : '',
+                rr.categoria ? `Categoría: ${rr.categoria}` : '',
+                rr.sistema ? `Sistema: ${rr.sistema}` : '',
+                rr.puntaje ? `Puntaje: ${rr.puntaje}` : ''
+            ].filter(Boolean).join(' — ')).filter(Boolean);
+            return partes.join('\n') || 'Sí (sin registros)';
+        };
+
+        const TIPO_CASO_LABEL_DETALLE = {
+            interpretativa: 'Apreciación',
+            reglamentaria:  'Reglamentaria',
+            informativo:    'Conceptual/Informativo'
+        };
+        const RESOL_LABEL_DETALLE = {
+            sin_descuento:               'Sin descuento (revertido)',
+            interpretativa_confirmada:   'Apreciación confirmada',
+            reglamentaria_confirmada:    'Reglamentaria confirmada',
+            apelacion_acogida:           'Apelación acogida',
+            apelacion_rechazada:         'Apelación rechazada'
+        };
+
+        const excelRowsDetalle = [];
+        for (const f of filas) {
+            const casos = f.eval_id ? (casosByEval[f.eval_id] || []) : [];
+            const cJefe = f.eval_id ? (comentJefeByEval[f.eval_id] || '') : '';
+
+            const fmtP = (v) => (v != null && v !== '') ? String(v) : '—';
+            const puntajeOficial  = `${fmtP(f.puntaje_oficial_1er)} - ${fmtP(f.puntaje_oficial_2do)} - ${fmtP(f.puntaje_oficial_3er)}`;
+            const puntajeRevisado = `${fmtP(f.puntaje_analista_1er)} - ${fmtP(f.puntaje_analista_2do)} - ${fmtP(f.puntaje_analista_3er)}`;
+
+            const obsPartes = [];
+            if (f.obs_jurado?.trim())   obsPartes.push(`JURADO: ${f.obs_jurado.trim()}`);
+            if (f.obs_analista?.trim()) obsPartes.push(`ANALISTA: ${f.obs_analista.trim()}`);
+            if (cJefe?.trim())          obsPartes.push(`JEFE DEPORTIVO: ${cJefe.trim()}`);
+            if (f.obs_monitor?.trim())  obsPartes.push(`MONITOR: ${f.obs_monitor.trim()}`);
+            if (f.obs_admin?.trim())    obsPartes.push(`ADMINISTRADOR: ${f.obs_admin.trim()}`);
+            const obsConsolidadas = obsPartes.join('\n') || '—';
+
+            const altTexto = f.resultados_alterados
+                ? `Sí${f.comentario_resultados_alterados ? ': ' + f.comentario_resultados_alterados : ''}`
+                : 'No';
+
+            const base = {
+                club_asociacion:  `${f.club || ''} - ${f.asociacion || ''}`,
+                fecha:            fmtFecha(f.fecha),
+                tipo_rodeo:       f.tipo_rodeo || '—',
+                jurados:          f.jurados   || '—',
+                delegados:        f.delegados || '—',
+                puntaje_oficial:  puntajeOficial,
+                puntaje_revisado: puntajeRevisado,
+                analisis:         f.obs_analista || '—',
+                resultado_alterado: altTexto,
+                observaciones:    obsConsolidadas,
+                cartilla_hora_inicio:               f.cartilla_hora_inicio || '—',
+                cartilla_serie_campeones_2_vueltas: f.cartilla_serie_campeones_2_vueltas || '—',
+                cartilla_caseta_adecuada:           f.cartilla_caseta_adecuada || '—',
+                cartilla_hubo_faltas:               f.cartilla_hubo_faltas || '—',
+                cartilla_descripcion_faltas:        f.cartilla_hubo_faltas === 'Sí' ? (f.cartilla_descripcion_faltas || '—') : '—',
+                cartilla_hubo_ganado_fuera_peso:    f.cartilla_hubo_ganado_fuera_peso || '—',
+                cartilla_detalle_ganado:            fmtGanadoDetalle(f),
+                cartilla_hubo_movimiento_rienda:    f.cartilla_hubo_movimiento_rienda || '—',
+                cartilla_detalle_rienda:            fmtRiendaDetalle(f)
+            };
+
+            if (casos.length === 0) {
+                excelRowsDetalle.push({ ...base, ciclo_caso: '—', video_url: '—', descripcion_caso: '—', tipo_situacion: '—', resolucion: '—', descuento: '—', comentario_analista: '—', comentario_comision: '—' });
+            } else {
+                for (const caso of casos) {
+                    const cicloNum = cicloMap[caso.ciclo_id]?.numero_ciclo ?? '?';
+                    excelRowsDetalle.push({
+                        ...base,
+                        ciclo_caso:           `C${cicloNum}-${caso.numero_caso}`,
+                        video_url:            caso.video_url          || '—',
+                        descripcion_caso:     caso.descripcion        || '—',
+                        tipo_situacion:       TIPO_CASO_LABEL_DETALLE[caso.tipo_caso] || caso.tipo_caso || '—',
+                        resolucion:           RESOL_LABEL_DETALLE[caso.resolucion_final] || caso.resolucion_final || '—',
+                        descuento:            caso.descuento_puntos   ?? 0,
+                        comentario_analista:  caso.comentario_analista  || '—',
+                        comentario_comision:  caso.comentario_comision  || '—'
+                    });
+                }
+            }
+        }
+
+        const wsDetalle = wb.addWorksheet('Detalle');
+        wsDetalle.columns = [
+            { header: 'Club / Asociación',                          key: 'club_asociacion',    width: 38 },
+            { header: 'Fecha',                                       key: 'fecha',              width: 13 },
+            { header: 'Tipo de Rodeo',                               key: 'tipo_rodeo',         width: 26 },
+            { header: 'Jurado(s)',                                   key: 'jurados',            width: 34 },
+            { header: 'Delegado Rentado',                            key: 'delegados',          width: 28 },
+            { header: 'Puntaje Serie Campeones 1° - 2° - 3°',       key: 'puntaje_oficial',    width: 24, style: { numFmt: '@' } },
+            { header: 'Revisión Puntaje 1° - 2° - 3°',              key: 'puntaje_revisado',   width: 24, style: { numFmt: '@' } },
+            { header: 'Análisis de la Jura',                         key: 'analisis',           width: 48 },
+            { header: 'Resultado Alterado',                          key: 'resultado_alterado', width: 20 },
+            { header: 'Caso',                                        key: 'ciclo_caso',         width: 10 },
+            { header: 'Enlace a Situación / Video',                  key: 'video_url',          width: 46, style: { numFmt: '@' } },
+            { header: 'Comentario / Descripción',                    key: 'descripcion_caso',   width: 46 },
+            { header: 'Tipo Situación',                              key: 'tipo_situacion',     width: 20 },
+            { header: 'Resolución Final',                            key: 'resolucion',         width: 26 },
+            { header: 'Desc. Pts',                                   key: 'descuento',          width: 10 },
+            { header: 'Comentario Analista',                         key: 'comentario_analista',width: 44 },
+            { header: 'Comentario Comisión',                         key: 'comentario_comision',width: 44 },
+            { header: 'Observaciones (Jurado / Analista / Jefe / Monitor / Admin)', key: 'observaciones', width: 60 },
+            { header: 'Hora de Inicio',                       key: 'cartilla_hora_inicio',               width: 14 },
+            { header: 'Serie Campeones - 2 Vueltas',          key: 'cartilla_serie_campeones_2_vueltas',  width: 20 },
+            { header: 'Caseta Adecuada',                      key: 'cartilla_caseta_adecuada',            width: 16 },
+            { header: 'Faltas Disciplinarias/Reglamentarias', key: 'cartilla_hubo_faltas',                width: 24 },
+            { header: 'Descripción de la Falta',              key: 'cartilla_descripcion_faltas',         width: 46 },
+            { header: 'Ganado Fuera del Peso Reglamentario',  key: 'cartilla_hubo_ganado_fuera_peso',     width: 26 },
+            { header: 'Detalle Ganado Fuera de Peso',         key: 'cartilla_detalle_ganado',             width: 46 },
+            { header: 'Movimiento a la Rienda',               key: 'cartilla_hubo_movimiento_rienda',     width: 20 },
+            { header: 'Detalle Movimiento a la Rienda',       key: 'cartilla_detalle_rienda',             width: 50 },
+        ];
+
+        wsDetalle.getRow(1).eachCell(cell => {
+            cell.font      = HEADER_STYLE.font;
+            cell.fill      = HEADER_STYLE.fill;
+            cell.alignment = HEADER_STYLE.alignment;
+            cell.border    = HEADER_STYLE.border;
+        });
+        wsDetalle.getRow(1).height = 28;
+        wsDetalle.views = [{ state: 'frozen', ySplit: 1 }];
+
+        const CELL_BORDER_DETALLE = {
+            top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+            right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
+        };
+        const ROJO_FILL_DETALLE = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBD0' } };
+        const ALT_TEXT_COLS_DETALLE = new Set([
+            'analisis', 'descripcion_caso', 'comentario_analista', 'comentario_comision', 'observaciones',
+            'cartilla_descripcion_faltas', 'cartilla_detalle_ganado', 'cartilla_detalle_rienda'
+        ]);
+        const LINK_COL_DETALLE = 'video_url';
+
+        for (const r of excelRowsDetalle) {
+            const row = wsDetalle.addRow(r);
+            row.height = 16;
+            const isAlt = r.resultado_alterado && r.resultado_alterado.startsWith('Sí');
+
+            row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+                const colKey = wsDetalle.columns[colNum - 1]?.key;
+                cell.border    = CELL_BORDER_DETALLE;
+                cell.alignment = {
+                    vertical: 'top',
+                    wrapText: ALT_TEXT_COLS_DETALLE.has(colKey) || colKey === LINK_COL_DETALLE
+                };
+                if (isAlt) cell.fill = ROJO_FILL_DETALLE;
+
+                if (colKey === LINK_COL_DETALLE && r.video_url && r.video_url !== '—' && r.video_url.startsWith('http')) {
+                    cell.value = { text: r.video_url, hyperlink: r.video_url };
+                    cell.font  = { color: { argb: 'FF1e3a5f' }, underline: true };
+                    if (isAlt) cell.font = { ...cell.font, color: { argb: 'FF1e3a5f' } };
+                }
+            });
+        }
+
+        // ── Hoja 3: Colleras completas (réplica exacta de /export-directorio) ──
         const ws2 = wb.addWorksheet('Colleras completas');
         ws2.columns = [
             { width: 24 }, { width: 24 }, { width: 16 }, { width: 7 }, { width: 6 }, { width: 6 },
@@ -1226,18 +1455,14 @@ router.get('/export-fin-semana', async (req, res) => {
             : '—');
         r++;
 
-        // Gráfico de líneas con marcadores (imagen PNG: ExcelJS 4.4.0 no soporta charts nativos — ver
-        // graficoPng.js). Si no hay ningún punto que graficar, se deja un aviso de texto y el reporte
-        // sigue sin romperse (nunca bloquea la exportación).
-        const pngComparativa = generarGraficoComparativoColleras(comparativa);
-        if (pngComparativa) {
-            const imageId = wb.addImage({ buffer: pngComparativa, extension: 'png' });
-            ws2.addImage(imageId, { tl: { col: 0, row: r - 1 }, ext: { width: 900, height: 430 } });
-            r += 23; // filas en blanco reservadas para que la tabla no quede tapada por la imagen flotante
-        } else {
-            ws2.getCell(r, 1).value = 'Sin datos suficientes para graficar la comparativa.';
-            r += 2;
-        }
+        // Corrección posterior (a pedido del usuario): esta hoja NUNCA debe
+        // llevar gráficos — a diferencia de /export-directorio (que SÍ inserta
+        // el PNG de comparativa vía generarGraficoComparativoColleras, sin
+        // cambios ahí), esta réplica para Reporte Fin de Semana se queda
+        // deliberadamente sin llamar a esa función ni a wb.addImage/
+        // ws2.addImage. La información comparativa en texto (Temporada
+        // actual/anterior/Diferencia/Variación, ya escrita arriba) se
+        // conserva íntegra — solo se omite el gráfico.
         r++;
 
         const headerRowNum = r;

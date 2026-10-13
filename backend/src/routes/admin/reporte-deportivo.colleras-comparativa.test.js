@@ -130,34 +130,32 @@ describe('FASE 2.6 — bloque comparativo numérico', () => {
         expect(texto).not.toContain('999');   // el valor de la temporada excluida tampoco se filtra
     });
 
-    test('C/H: se incrusta una imagen (PNG) con el gráfico, antes de la tabla', async () => {
+    test('C/H (corrección posterior: sin gráficos): NUNCA se incrusta ninguna imagen en esta hoja, con o sin datos de comparativa', async () => {
         const { wb } = await cargar('/export-fin-semana', 'Colleras completas');
         const ws2 = wb.getWorksheet('Colleras completas');
-        const imgs = ws2.getImages();
-        expect(imgs.length).toBe(1);
-        const media = wb.model.media[imgs[0].imageId];
-        expect(media.type).toBe('image');
-        expect(media.extension).toBe('png');
-        expect(media.buffer.slice(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))).toBe(true);   // firma PNG válida
-
+        expect(ws2.getImages().length).toBe(0);
+        expect(wb.model.media.length).toBe(0);
+        // La tabla sigue existiendo y queda después del bloque comparativo en texto, sin un
+        // gráfico de por medio.
+        const filaComp = buscarFilaConValor(ws2, 1, `COMPARATIVA COLLERAS COMPLETAS AL ${fmtFecha(HOY)}`);
         const filaHeaderTabla = buscarFilaConValor(ws2, 1, 'CABALLO 1');
-        expect(imgs[0].range.tl.row).toBeLessThan(filaHeaderTabla - 1);   // ancla antes de la tabla (0-based)
+        expect(filaHeaderTabla).toBeGreaterThan(filaComp + 4);
     });
 
-    test('sin histórico ni snapshots (solo el dato en vivo de hoy): "sin dato histórico comparable", igual dibuja la serie actual, no revienta', async () => {
+    test('sin histórico ni snapshots (solo el dato en vivo de hoy): "sin dato histórico comparable" en texto, sin gráfico, no revienta', async () => {
         respuestas.historico_colleras_medicion = { data: [], error: null };
         respuestas.colleras_completas_snapshots = { data: [], error: null };
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
         expect(res.statusCode).toBe(200);
         const texto = textoCompletoHoja(ws);
         expect(texto).toContain('Sin dato histórico comparable');
-        expect(ws.getImages().length).toBe(1);   // igual grafica la serie actual (1 punto: el dato en vivo de hoy)
+        expect(ws.getImages().length).toBe(0);
         const filaHeaderTabla = buscarFilaConValor(ws, 1, 'CABALLO 1');
         expect(filaHeaderTabla).toBeGreaterThan(0);
         expect(ws.getCell(filaHeaderTabla + 1, 1).value).toBe('A');
     });
 
-    test('I/J: sin ningún dato (ni actual, ni histórico, ni snapshots): aviso controlado, 200, tabla detalle intacta', async () => {
+    test('I/J (corrección posterior): sin ningún dato (ni actual, ni histórico, ni snapshots): 200, bloque comparativo con "—", tabla detalle intacta, cero gráficos', async () => {
         obtenerCollerasCompletas.mockResolvedValue({
             filas: [{ caballo1: 'A', caballo2: 'B', sexoCriadero: 'M', ptj: 1, r: 1, c: 1, jinetes: 'X', zona: 'Sur', asociacion: 'ÑUBLE', zonaClasif: 'S' }],
             resumen: { totalCompletas: null, zonaNorte: null, centroNorte: null, zonaCentro: null, centroSur: null, zonaSur: null }
@@ -166,20 +164,19 @@ describe('FASE 2.6 — bloque comparativo numérico', () => {
         respuestas.colleras_completas_snapshots = { data: [], error: null };
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
         expect(res.statusCode).toBe(200);
-        const texto = textoCompletoHoja(ws);
-        expect(texto).toMatch(/Sin datos suficientes para graficar/);
         expect(ws.getImages().length).toBe(0);
         const filaHeaderTabla = buscarFilaConValor(ws, 1, 'CABALLO 1');
         expect(filaHeaderTabla).toBeGreaterThan(0);
         expect(ws.getCell(filaHeaderTabla + 1, 1).value).toBe('A');
     });
 
-    test('sin temporada resuelta (tabla temporadas vacía): no revienta, bloque queda con "—" y sin gráfico', async () => {
+    test('sin temporada resuelta (tabla temporadas vacía): no revienta, sin gráfico (nunca se intenta graficar), tabla detalle intacta', async () => {
         respuestas.temporadas = { data: [], error: null };
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
         expect(res.statusCode).toBe(200);
+        expect(ws.getImages().length).toBe(0);
         const texto = textoCompletoHoja(ws);
-        expect(texto).toMatch(/Sin datos suficientes para graficar/);
+        expect(texto).toContain('Temporada actual (—):');
         const filaHeaderTabla = buscarFilaConValor(ws, 1, 'CABALLO 1');
         expect(filaHeaderTabla).toBeGreaterThan(0);
     });
