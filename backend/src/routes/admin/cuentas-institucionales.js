@@ -94,27 +94,39 @@ async function resolverPassword({ password_mode, password }) {
     return { error: { status: 400, body: { error: 'password_mode debe ser "generar" o "manual".' } } };
 }
 
-// ─── POST /para-asociacion-existente — Opción A del pedido ────────────────
+const ROLES_INSTITUCIONALES_VALIDOS = ['delegado_asociacion', 'comision_asociacion'];
+function rolInstitucionalValido(body) {
+    const rol = (body?.rol_institucional || 'delegado_asociacion').toString();
+    return ROLES_INSTITUCIONALES_VALIDOS.includes(rol) ? rol : null;
+}
+
+// ─── POST /para-asociacion-existente — Opción A del pedido. Comisión de
+// Asociación (079): mismo endpoint, ahora parametrizado por rol_institucional
+// (DEFAULT delegado_asociacion, compatible con cualquier llamador existente
+// que no lo envíe) — reutiliza la RPC ya endurecida, nunca duplica rutas. ──
 router.post('/para-asociacion-existente', async (req, res) => {
     const asociacionId = req.body?.asociacion_id;
     const email = (req.body?.email || '').toString().trim().toLowerCase();
+    const rolInstitucional = rolInstitucionalValido(req.body);
 
     if (!asociacionId) return res.status(400).json({ error: 'La asociación es obligatoria.' });
     if (!emailValido(email)) return res.status(400).json({ error: 'El correo institucional no es válido.' });
+    if (!rolInstitucional) return res.status(400).json({ error: 'rol_institucional debe ser "delegado_asociacion" o "comision_asociacion".' });
 
     const resolucion = await resolverPassword(req.body || {});
     if (resolucion.error) return res.status(resolucion.error.status).json(resolucion.error.body);
 
-    // crear_cuenta_institucional_con_auditoria (migración 078): valida que
-    // la asociación exista, esté activa y no sea especial (riesgo real
-    // corregido en revisión posterior — caso de referencia: Federación del
-    // Rodeo Chileno), que no tenga ya una cuenta, inserta + audita en una
-    // sola transacción. Nunca devuelve password_hash.
+    // crear_cuenta_institucional_con_auditoria (migración 078, parametrizada
+    // en 079): valida que la asociación exista, esté activa y no sea
+    // especial (caso de referencia: Federación del Rodeo Chileno), que no
+    // tenga ya una cuenta del MISMO rol, inserta + audita en una sola
+    // transacción. Nunca devuelve password_hash.
     const { data, error } = await supabase.rpc('crear_cuenta_institucional_con_auditoria', {
         p_asociacion_id: asociacionId,
         p_email: email,
         p_password_hash: resolucion.hash,
-        p_administrador_id: req.usuario.id
+        p_administrador_id: req.usuario.id,
+        p_rol_institucional: rolInstitucional
     });
 
     if (error) {
@@ -128,7 +140,7 @@ router.post('/para-asociacion-existente', async (req, res) => {
             return res.status(409).json({ error: 'Esta es una asociación especial del catálogo (no una asociación ordinaria). No corresponde crear una cuenta institucional por este módulo.', code: 'ASOCIACION_ESPECIAL' });
         }
         if (error.message?.includes('CUENTA_YA_EXISTE_PARA_ASOCIACION') || error.code === '23505') {
-            return res.status(409).json({ error: 'Esta asociación ya tiene una cuenta institucional.', code: 'CUENTA_YA_EXISTE' });
+            return res.status(409).json({ error: `Esta asociación ya tiene una cuenta de ${rolInstitucional === 'comision_asociacion' ? 'Comisión de Asociación' : 'Delegado de Asociación'}.`, code: 'CUENTA_YA_EXISTE' });
         }
         if (error.message?.includes('CORREO_YA_REGISTRADO')) {
             return res.status(409).json({ error: 'Ya existe una cuenta institucional con ese correo.', code: 'CORREO_DUPLICADO' });
@@ -137,7 +149,7 @@ router.post('/para-asociacion-existente', async (req, res) => {
     }
 
     res.status(201).json({
-        cuenta: { id: data.id, email: data.email, asociacion_id: data.asociacion_id, estado: 'activa' },
+        cuenta: { id: data.id, email: data.email, asociacion_id: data.asociacion_id, rol_institucional: data.rol_institucional, estado: 'activa' },
         // Se muestra UNA sola vez — nunca queda accesible por un GET posterior.
         password_temporal: resolucion.passwordTextoPlano
     });
@@ -148,9 +160,11 @@ router.post('/nueva-asociacion', async (req, res) => {
     const nombre = (req.body?.nombre || '').toString().trim();
     const zona = req.body?.zona ? req.body.zona.toString().trim() : null;
     const email = (req.body?.email || '').toString().trim().toLowerCase();
+    const rolInstitucional = rolInstitucionalValido(req.body);
 
     if (!nombre) return res.status(400).json({ error: 'El nombre de la asociación es obligatorio.' });
     if (!emailValido(email)) return res.status(400).json({ error: 'El correo institucional no es válido.' });
+    if (!rolInstitucional) return res.status(400).json({ error: 'rol_institucional debe ser "delegado_asociacion" o "comision_asociacion".' });
 
     const resolucion = await resolverPassword(req.body || {});
     if (resolucion.error) return res.status(resolucion.error.status).json(resolucion.error.body);
@@ -189,7 +203,8 @@ router.post('/nueva-asociacion', async (req, res) => {
         p_zona: zona,
         p_email: email,
         p_password_hash: resolucion.hash,
-        p_administrador_id: req.usuario.id
+        p_administrador_id: req.usuario.id,
+        p_rol_institucional: rolInstitucional
     });
 
     if (error) {
@@ -203,7 +218,7 @@ router.post('/nueva-asociacion', async (req, res) => {
     }
 
     res.status(201).json({
-        cuenta: { id: data.id, email: data.email, asociacion_id: data.asociacion_id, estado: 'activa' },
+        cuenta: { id: data.id, email: data.email, asociacion_id: data.asociacion_id, rol_institucional: data.rol_institucional, estado: 'activa' },
         password_temporal: resolucion.passwordTextoPlano
     });
 });

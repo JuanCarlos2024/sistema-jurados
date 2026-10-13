@@ -7,7 +7,7 @@
 // real produciría).
 jest.mock('../config/supabase', () => ({ from: jest.fn() }));
 
-const { generarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('./auth');
+const { generarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, soloRolInstitucional } = require('./auth');
 const supabase = require('../config/supabase');
 
 function fakeRes() {
@@ -236,6 +236,44 @@ describe('exigirCambioPasswordSiPrimerLogin — bloquea rutas de negocio mientra
         const next = jest.fn();
         expect(() => exigirCambioPasswordSiPrimerLogin(req, res, next)).not.toThrow();
         expect(next).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('soloRolInstitucional (Comisión de Asociación, 079) — aislamiento Delegado vs. Comisión', () => {
+    test('rol_institucional="delegado_asociacion" pasa soloRolInstitucional("delegado_asociacion")', () => {
+        const req = { usuario: { rol_institucional: 'delegado_asociacion' } };
+        const res = fakeRes();
+        const next = jest.fn();
+        soloRolInstitucional('delegado_asociacion')(req, res, next);
+        expect(next).toHaveBeenCalledTimes(1);
+        expect(res.status).not.toHaveBeenCalled();
+    });
+
+    test('rol_institucional="comision_asociacion" es rechazado por soloRolInstitucional("delegado_asociacion")', () => {
+        const req = { usuario: { rol_institucional: 'comision_asociacion' } };
+        const res = fakeRes();
+        const next = jest.fn();
+        soloRolInstitucional('delegado_asociacion')(req, res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    test('rol_institucional="delegado_asociacion" es rechazado por soloRolInstitucional("comision_asociacion")', () => {
+        const req = { usuario: { rol_institucional: 'delegado_asociacion' } };
+        const res = fakeRes();
+        const next = jest.fn();
+        soloRolInstitucional('comision_asociacion')(req, res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    test('sin rol_institucional (nunca debería pasar, pero fail-closed) -> 403', () => {
+        const req = { usuario: {} };
+        const res = fakeRes();
+        const next = jest.fn();
+        soloRolInstitucional('delegado_asociacion')(req, res, next);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(403);
     });
 });
 

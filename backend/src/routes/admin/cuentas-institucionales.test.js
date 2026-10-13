@@ -98,6 +98,26 @@ describe('POST /para-asociacion-existente — Opción A', () => {
         expect(JSON.stringify(res.jsonBody)).not.toContain(llamadaRpc[1].p_password_hash);
     });
 
+    test('Comisión de Asociación (079): sin rol_institucional en el body, la RPC recibe DEFAULT delegado_asociacion', async () => {
+        supabase.rpc.mockResolvedValue({ data: CUENTA_RPC_OK, error: null });
+        await llamar({ metodo: 'POST', url: '/para-asociacion-existente', body: { asociacion_id: 'asoc-1', email: 'x@y.com', password_mode: 'generar' } });
+        expect(supabase.rpc.mock.calls[0][1].p_rol_institucional).toBe('delegado_asociacion');
+    });
+
+    test('Comisión de Asociación (079): rol_institucional=comision_asociacion se propaga a la RPC', async () => {
+        supabase.rpc.mockResolvedValue({ data: { ...CUENTA_RPC_OK, rol_institucional: 'comision_asociacion' }, error: null });
+        const res = await llamar({ metodo: 'POST', url: '/para-asociacion-existente', body: { asociacion_id: 'asoc-1', email: 'comision@ferochi.com', password_mode: 'generar', rol_institucional: 'comision_asociacion' } });
+        expect(res.statusCode).toBe(201);
+        expect(supabase.rpc.mock.calls[0][1].p_rol_institucional).toBe('comision_asociacion');
+        expect(res.jsonBody.cuenta.rol_institucional).toBe('comision_asociacion');
+    });
+
+    test('Comisión de Asociación (079): rol_institucional inválido -> 400, nunca llama la RPC', async () => {
+        const res = await llamar({ metodo: 'POST', url: '/para-asociacion-existente', body: { asociacion_id: 'asoc-1', email: 'x@y.com', password_mode: 'generar', rol_institucional: 'otro_rol' } });
+        expect(res.statusCode).toBe(400);
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
     test('ASOCIACION_NO_ENCONTRADA -> 404', async () => {
         supabase.rpc.mockResolvedValue({ data: null, error: { message: 'ASOCIACION_NO_ENCONTRADA' } });
         const res = await llamar({ metodo: 'POST', url: '/para-asociacion-existente', body: { asociacion_id: 'asoc-x', email: 'x@y.com', password_mode: 'generar' } });

@@ -28,6 +28,9 @@
             <button class="login-tab" id="tab-institucional" onclick="mostrarTab('institucional')">
                 Delegado de Asociación
             </button>
+            <button class="login-tab" id="tab-comision" onclick="mostrarTab('comision')">
+                Comisión de Asociación
+            </button>
         </div>
 
         <!-- Formulario Admin -->
@@ -91,6 +94,24 @@
                 Iniciar Sesión
             </button>
         </form>
+
+        <!-- Formulario Cuenta Institucional (Comisión de Asociación) -->
+        <form id="form-comision" class="oculto" onsubmit="loginComision(event)">
+            <div class="form-grupo">
+                <label class="form-label">Correo institucional</label>
+                <input type="email" id="comis-email" class="form-control"
+                       placeholder="comision-osorno@ferochi.cl" required autocomplete="username">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Contraseña</label>
+                <input type="password" id="comis-password" class="form-control"
+                       placeholder="••••••••" required autocomplete="current-password">
+            </div>
+            <div id="comis-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
+            <button type="submit" class="btn btn-primario w-100" id="btn-comis-login">
+                Iniciar Sesión
+            </button>
+        </form>
     </div>
 </div>
 
@@ -108,8 +129,14 @@
                 else if (u.rol_evaluacion === 'capacitador') window.location.href = '/admin/capacitaciones.html';
                 else window.location.href = '/admin/dashboard.html';
             } else if (u.tipo === 'cuenta_institucional') {
-                // Fase 3.3: entra directo a Mis Rodeos, sin pasar por Mi Panel (eliminado).
-                window.location.href = '/institucional/rodeos.html';
+                // Comisión de Asociación (079): perfil institucional nuevo,
+                // independiente del Delegado — redirección propia por rol_institucional.
+                if (u.rol_institucional === 'comision_asociacion') {
+                    window.location.href = '/institucional/comision/rodeos.html';
+                } else {
+                    // Fase 3.3: entra directo a Mis Rodeos, sin pasar por Mi Panel (eliminado).
+                    window.location.href = '/institucional/rodeos.html';
+                }
             } else {
                 window.location.href = '/usuario/dashboard.html';
             }
@@ -120,9 +147,11 @@
         document.getElementById('form-admin').classList.toggle('oculto', tab !== 'admin');
         document.getElementById('form-usuario').classList.toggle('oculto', tab !== 'usuario');
         document.getElementById('form-institucional').classList.toggle('oculto', tab !== 'institucional');
+        document.getElementById('form-comision').classList.toggle('oculto', tab !== 'comision');
         document.getElementById('tab-admin').classList.toggle('activo', tab === 'admin');
         document.getElementById('tab-usuario').classList.toggle('activo', tab === 'usuario');
         document.getElementById('tab-institucional').classList.toggle('activo', tab === 'institucional');
+        document.getElementById('tab-comision').classList.toggle('activo', tab === 'comision');
     }
 
     // ── Helper: fetch con signal para los handlers de login ──────────────────
@@ -230,6 +259,32 @@
         await institucionalLoginHandler.login({
             email:    document.getElementById('inst-email').value.trim(),
             password: document.getElementById('inst-password').value,
+        });
+    }
+
+    // ── Handler: login de Cuenta Institucional (Comisión de Asociación) ─────
+    // Mismo endpoint que Delegado de Asociación (una sola tabla de cuentas,
+    // migración 079) — la redirección se decide por rol_institucional, nunca
+    // por cuál pestaña se usó para entrar.
+    const comisionLoginHandler = LoginUX.createLoginHandler({
+        apiFetch: makeFetchLogin('/institucional/auth/login'),
+        onStateChange: makeStateHandler('btn-comis-login', 'comis-error'),
+        onSuccess: function(data) {
+            api.guardarSesion(data.token, data.usuario);
+            if (data.usuario.primer_login) {
+                window.location.href = '/institucional/perfil.html?primer_login=1';
+            } else {
+                window.location.href = '/institucional/comision/rodeos.html';
+            }
+        },
+    });
+
+    async function loginComision(e) {
+        e.preventDefault();
+        if (document.getElementById('btn-comis-login').disabled) return;
+        await comisionLoginHandler.login({
+            email:    document.getElementById('comis-email').value.trim(),
+            password: document.getElementById('comis-password').value,
         });
     }
 </script>

@@ -5,12 +5,17 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('../../middleware/auth');
+const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, soloRolInstitucional } = require('../../middleware/auth');
 
 router.use(soloCuentaInstitucional);
 // Gestión de acceso institucional (078): cambio de contraseña de primer
 // ingreso obligatorio ANTES de poder usar esta ruta de negocio.
 router.use(exigirCambioPasswordSiPrimerLogin);
+// Comisión de Asociación (079): este catálogo alimenta la selección de
+// responsable de la Cartilla de Delegado — exclusivo del Delegado de
+// Asociación. Una cuenta de Comisión nunca debe poder leerlo ni usarlo,
+// aunque llame directamente por URL/HTTP sin pasar por el frontend.
+router.use(soloRolInstitucional('delegado_asociacion'));
 
 // GET /api/institucional/delegados — solo delegados activos Y certificados
 // (ver migración 064: certificado != activo) de la asociación del token.

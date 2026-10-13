@@ -16,7 +16,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('../../middleware/auth');
+const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, soloRolInstitucional } = require('../../middleware/auth');
 const { resolverTemporada } = require('../../services/informeGestion/cargaDatos');
 const { construirIndiceCatalogo, resolverAsociacion } = require('../../services/informeGestion/asociaciones');
 const auditoria = require('../../services/auditoria');
@@ -247,7 +247,10 @@ router.get('/', async (req, res) => {
 // sola fila ganadora, sin importar qué tan rápido lleguen ni en qué orden
 // las procese Node. Esta ruta solo decide qué código HTTP devolver según
 // si la fila devuelta coincide o no con lo que esta llamada pidió.
-router.post('/:rodeo_id/seleccionar-delegado', async (req, res) => {
+// Comisión de Asociación (079): seleccionar delegado es exclusivo del
+// Delegado de Asociación — GET / (listado de rodeos) sigue compartido entre
+// ambos roles (la Comisión necesita ver sus rodeos para evaluar jurados).
+router.post('/:rodeo_id/seleccionar-delegado', soloRolInstitucional('delegado_asociacion'), async (req, res) => {
     const { delegado_asociacion_id } = req.body;
     if (!delegado_asociacion_id) return res.status(400).json({ error: 'delegado_asociacion_id es requerido.' });
 

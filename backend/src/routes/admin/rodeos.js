@@ -216,7 +216,17 @@ router.get('/:id/notas-secundarias', soloNoAnalista, soloNoComisionTecnica, asyn
 });
 
 // PUT /api/admin/rodeos/:id/notas-secundarias
-// Accesible para Admin pleno, Monitor y Director (Jefe Deportivo)
+// Accesible para Admin pleno, Monitor y Director (Jefe Deportivo).
+//
+// Comisión de Asociación (079): ya NO hace un upsert directo — delega en
+// actualizar_notas_secundarias_con_auditoria, que actualiza Comisión y
+// Delegado de forma INDEPENDIENTE (nunca uno limpia al otro), exige
+// confirmación explícita para sobrescribir una Nota Comisión protegida
+// (histórica/completa/corregida — ver estado_nota_comision) y rechaza si el
+// rodeo tiene una revisión administrativa pendiente (debe resolverse primero
+// por POST /:id/resolver-revision-comision). p_actualizar_* se infiere de
+// qué claves manda el body — el formulario actual de admin/rodeos.html sigue
+// enviando ambas cada vez (compatible, sin cambios de contrato).
 router.put('/:id/notas-secundarias', async (req, res) => {
     const rolEval    = req.usuario.rol_evaluacion || null;
     const esAdminPleno = !rolEval;
@@ -225,6 +235,13 @@ router.put('/:id/notas-secundarias', async (req, res) => {
 
     if (!esAdminPleno && !esMonitor && !esDirector) {
         return res.status(403).json({ error: 'Solo Admin, Monitor o Jefe Deportivo pueden guardar notas secundarias' });
+    }
+    // Hallazgo 7 (Comisión de Asociación, 079): sobrescribir una Nota
+    // Comisión PROTEGIDA (histórica/completa/corregida) es exclusivo de
+    // administrador pleno — Monitor y Director nunca pueden confirmarlo,
+    // aunque sí pueden seguir editando notas NO protegidas como siempre.
+    if (req.body.confirma_sobrescritura_historica && !esAdminPleno) {
+        return res.status(403).json({ error: 'Solo el administrador pleno puede sobrescribir una Nota Comisión protegida.' });
     }
 
     const toNota = (v) => {
@@ -243,40 +260,52 @@ router.put('/:id/notas-secundarias', async (req, res) => {
         return res.status(400).json({ error: err.message });
     }
 
-    const { data: anterior } = await supabase
-        .from('rodeo_notas_secundarias')
-        .select('nota_comision, nota_delegado')
-        .eq('rodeo_id', req.params.id)
-        .maybeSingle();
+    const actualizarComision = Object.prototype.hasOwnProperty.call(req.body, 'nota_comision');
+    const actualizarDelegado = Object.prototype.hasOwnProperty.call(req.body, 'nota_delegado');
+    const confirmaSobrescritura = !!req.body.confirma_sobrescritura_historica;
+    const motivoReal = (req.body.motivo || '').toString().trim();
 
-    const payload = {
-        rodeo_id:        req.params.id,
-        nota_comision,
-        nota_delegado,
-        actualizado_por: String(req.usuario.id),
-        actualizado_en:  new Date().toISOString(),
-        updated_at:      new Date().toISOString()
-    };
+    // Hallazgo 7: al sobrescribir una Nota Comisión protegida, el motivo
+    // debe ser un texto REAL ingresado por el administrador — nunca el
+    // texto genérico que se usa para una edición normal/no protegida (ese
+    // genérico siempre sería no-vacío y burlaría la exigencia de la RPC).
+    if (confirmaSobrescritura && !motivoReal) {
+        return res.status(400).json({ error: 'El motivo es obligatorio para sobrescribir una Nota Comisión protegida.' });
+    }
 
-    const { data, error } = await supabase
-        .from('rodeo_notas_secundarias')
-        .upsert(payload, { onConflict: 'rodeo_id' })
-        .select()
-        .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-
-    await auditoria.registrar({
-        tabla: 'rodeo_notas_secundarias',
-        registro_id: req.params.id,
-        accion: anterior ? 'editar' : 'crear',
-        datos_anteriores: anterior || null,
-        datos_nuevos: { nota_comision, nota_delegado },
-        actor_id: req.usuario.id,
-        actor_tipo: 'administrador',
-        descripcion: `Notas secundarias rodeo ${req.params.id}: comisión=${nota_comision}, delegado=${nota_delegado}`,
-        ip_address: req.ip
+    const { data, error } = await supabase.rpc('actualizar_notas_secundarias_con_auditoria', {
+        p_rodeo_id: req.params.id,
+        p_actualizar_comision: actualizarComision,
+        p_nota_comision: nota_comision,
+        p_actualizar_delegado: actualizarDelegado,
+        p_nota_delegado: nota_delegado,
+        p_confirma_sobrescritura_historica: confirmaSobrescritura,
+        p_motivo: motivoReal || `Notas secundarias rodeo ${req.params.id}: comisión=${nota_comision}, delegado=${nota_delegado}`,
+        p_administrador_id: req.usuario.id
     });
+
+    if (error) {
+        if (error.message?.includes('RODEO_NO_ENCONTRADO')) return res.status(404).json({ error: 'Rodeo no encontrado.' });
+        if (error.message?.includes('REQUIERE_RESOLUCION_ADMINISTRATIVA_PRIMERO')) {
+            return res.status(409).json({
+                error: 'Este rodeo tiene una revisión administrativa pendiente (cambio de nómina después de publicada la Nota Comisión). Resuélvala primero.',
+                code: 'REQUIERE_RESOLUCION_ADMINISTRATIVA_PRIMERO'
+            });
+        }
+        if (error.message?.includes('MOTIVO_OBLIGATORIO')) {
+            return res.status(400).json({ error: 'El motivo es obligatorio para sobrescribir una Nota Comisión protegida.' });
+        }
+        if (error.message?.includes('NOTA_FUERA_DE_RANGO')) {
+            return res.status(400).json({ error: 'La Nota Comisión debe estar entre 1.0 y 7.0.' });
+        }
+        if (error.message?.includes('NOTA_COMISION_PROTEGIDA_REQUIERE_CONFIRMACION')) {
+            return res.status(409).json({
+                error: 'Esta Nota Comisión está protegida (histórica, completa o ya corregida). Confirme explícitamente para sobrescribirla.',
+                code: 'NOTA_COMISION_PROTEGIDA_REQUIERE_CONFIRMACION'
+            });
+        }
+        return res.status(500).json({ error: error.message });
+    }
 
     res.json(data);
 });

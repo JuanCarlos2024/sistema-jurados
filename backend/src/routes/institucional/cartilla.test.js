@@ -112,6 +112,9 @@ function crearResFake() {
 function tokenInstitucional(asociacion_id = ASOC_OSORNO) {
     return jwt.sign({ id: 'inst-1', tipo: 'cuenta_institucional', rol_institucional: 'delegado_asociacion', asociacion_id }, JWT_SECRET, { expiresIn: '8h' });
 }
+function tokenComision(asociacion_id = ASOC_OSORNO) {
+    return jwt.sign({ id: 'com-1', tipo: 'cuenta_institucional', rol_institucional: 'comision_asociacion', asociacion_id }, JWT_SECRET, { expiresIn: '8h' });
+}
 function llamar(method, ruta, body = {}, headers = {}) {
     return new Promise((resolve, reject) => {
         const req = { method, url: ruta, originalUrl: ruta, body, params: {}, headers, query: {}, ip: '127.0.0.1' };
@@ -124,6 +127,13 @@ function llamar(method, ruta, body = {}, headers = {}) {
     });
 }
 const auth = (asoc) => ({ authorization: `Bearer ${tokenInstitucional(asoc)}` });
+
+describe('Comisión de Asociación (079): aislamiento de rol', () => {
+    test('una cuenta de Comisión NUNCA puede leer ni escribir Cartillas de Delegado, aunque llame directo por HTTP', async () => {
+        const res = await llamar('GET', '/rodeo/rodeo-1', {}, { authorization: `Bearer ${tokenComision()}` });
+        expect(res.statusCode).toBe(403);
+    });
+});
 
 describe('GET /institucional/cartilla/rodeo/:rodeo_id', () => {
     test('rodeo de otra asociación -> 404 (nunca expone el rodeo)', async () => {

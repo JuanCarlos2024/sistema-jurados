@@ -129,6 +129,24 @@ function exigirCambioPasswordSiPrimerLogin(req, res, next) {
     next();
 }
 
+// Middleware factory: restringe por rol_institucional dentro de una cuenta
+// institucional (Delegado de Asociación vs. Comisión de Asociación —
+// migración 079). Mismo patrón que soloRolEvaluacion, pero SIN el caso
+// "null = admin pleno" (acá no existe tal cosa: toda cuenta institucional
+// tiene siempre un rol_institucional concreto). Debe ir SIEMPRE después de
+// soloCuentaInstitucional (usa req.usuario, ya verificado y revalidado
+// contra la BD). No reemplaza ninguna de las comprobaciones existentes de
+// cuenta activa, asociación activa, primer_login o password_version — es
+// una capa adicional, no un sustituto.
+function soloRolInstitucional(...roles) {
+    return function (req, res, next) {
+        if (!roles.includes(req.usuario.rol_institucional)) {
+            return res.status(403).json({ error: 'Esta operación no corresponde a su perfil institucional' });
+        }
+        next();
+    };
+}
+
 // Middleware: admin o el propio usuario
 function adminOPropioUsuario(req, res, next) {
     verificarToken(req, res, () => {
@@ -191,4 +209,4 @@ function soloNoComisionTecnica(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };
+module.exports = { verificarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloRolInstitucional, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };

@@ -108,6 +108,9 @@ function crearResFake() {
 function tokenInstitucional(asociacion_id) {
     return jwt.sign({ id: 'inst-1', tipo: 'cuenta_institucional', rol_institucional: 'delegado_asociacion', asociacion_id }, JWT_SECRET, { expiresIn: '8h' });
 }
+function tokenComision(asociacion_id) {
+    return jwt.sign({ id: 'com-1', tipo: 'cuenta_institucional', rol_institucional: 'comision_asociacion', asociacion_id }, JWT_SECRET, { expiresIn: '8h' });
+}
 
 function llamar(headers = {}) {
     return new Promise((resolve, reject) => {
@@ -445,6 +448,11 @@ describe('POST /institucional/rodeos/:rodeo_id/seleccionar-delegado (Fase 3.3)',
         const res = await llamarPost('/rodeo-osorno-1/seleccionar-delegado', { delegado_asociacion_id: 'del-1' }, { authorization: `Bearer ${tokenInstitucional(ID_OSORNO)}` });
         expect(res.statusCode).toBe(200);
         expect(res.jsonBody.seleccion).toEqual({ rodeo_id: 'rodeo-osorno-1', delegado_asociacion_id: 'del-1', nombre: 'Ana Soto', designacion_id: 'desig-1' });
+    });
+
+    test('Comisión de Asociación (079): una cuenta de Comisión NUNCA puede seleccionar delegado, aunque llame directo por HTTP', async () => {
+        const res = await llamarPost('/rodeo-osorno-1/seleccionar-delegado', { delegado_asociacion_id: 'del-1' }, { authorization: `Bearer ${tokenComision(ID_OSORNO)}` });
+        expect(res.statusCode).toBe(403);
     });
 
     test('sin delegado_asociacion_id -> 400', async () => {

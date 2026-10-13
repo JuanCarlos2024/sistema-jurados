@@ -52,6 +52,9 @@ function tokenInstitucional(asociacion_id = ASOCIACION_OSORNO) {
 function tokenUsuario() {
     return jwt.sign({ id: 'usr-1', tipo: 'usuario_pagado', tipo_persona: 'delegado_rentado' }, JWT_SECRET, { expiresIn: '8h' });
 }
+function tokenComision(asociacion_id = ASOCIACION_OSORNO) {
+    return jwt.sign({ id: 'com-1', tipo: 'cuenta_institucional', rol_institucional: 'comision_asociacion', asociacion_id }, JWT_SECRET, { expiresIn: '8h' });
+}
 
 function llamar(method, ruta, body = {}, headers = {}) {
     return new Promise((resolve, reject) => {
@@ -92,6 +95,11 @@ describe('GET /institucional/delegados', () => {
         respuestas.cuentas_institucionales = { data: { activo: false, asociaciones: { activa: true } }, error: null };
         const res = await llamar('GET', '/', {}, { authorization: `Bearer ${tokenInstitucional()}` });
         expect(res.statusCode).toBe(401);
+    });
+
+    test('Comisión de Asociación (079): una cuenta de Comisión NUNCA puede leer este catálogo de Delegado, aunque llame directo por HTTP', async () => {
+        const res = await llamar('GET', '/', {}, { authorization: `Bearer ${tokenComision()}` });
+        expect(res.statusCode).toBe(403);
     });
 });
 

@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Rodeos — Comisión de Asociación</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .filtros-grid { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 10px; align-items: end; }
+        @media (max-width: 900px) { .filtros-grid { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 560px) { .filtros-grid { grid-template-columns: 1fr; } }
+        .filtros-grid .form-label { font-size: 12px; margin-bottom: 4px; }
+        #filtros-resultado { font-size: 13px; color: #666; margin-top: 10px; }
+        .fila-jurado { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+        .fila-jurado:last-child { border-bottom: none; }
+        .criterios-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+        .criterio-botones { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .criterio-boton { width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--gris-borde); background: #fff; cursor: pointer; font-weight: 600; }
+        .criterio-boton.activo { background: var(--azul); color: #fff; border-color: var(--azul); }
+        .criterio-label { font-weight: 600; font-size: 14px; }
+        .criterio-desc { font-size: 12px; color: #777; margin-top: 2px; }
+        .resumen-box { background: #f7f9fc; border: 1px solid var(--gris-borde); border-radius: 8px; padding: 12px; font-size: 13px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados</h2></div>
+        <nav class="sidebar-nav">
+            <a href="/institucional/comision/rodeos.html" class="nav-item activo"><span class="icon">📋</span> Mis Rodeos</a>
+            <a href="#" class="nav-item" onclick="abrirModalEvaluadores(); return false;"><span class="icon">🧑‍⚖️</span> Evaluadores</a>
+            <a href="/institucional/perfil.html" class="nav-item"><span class="icon">👤</span> Mi Perfil</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-usr"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <div>
+                    <h1>Mis Rodeos — Comisión de Asociación</h1>
+                    <div id="info-asociacion-discreta" style="font-size:12px;color:#888;margin-top:2px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="card">
+                <div class="card-titulo">Filtros</div>
+                <div class="filtros-grid">
+                    <div><label class="form-label">Fecha desde</label><input type="date" id="f-fecha-desde" class="form-control" onchange="aplicarFiltros()"></div>
+                    <div><label class="form-label">Fecha hasta</label><input type="date" id="f-fecha-hasta" class="form-control" onchange="aplicarFiltros()"></div>
+                    <div><label class="form-label">Club</label><select id="f-club" class="form-control" onchange="aplicarFiltros()"><option value="">Todos los clubes</option></select></div>
+                    <div><label class="form-label">Estado de evaluación</label>
+                        <select id="f-estado" class="form-control" onchange="aplicarFiltros()">
+                            <option value="">Todos</option>
+                            <option value="sin_evaluar">Pendiente de evaluación</option>
+                            <option value="parcial">Parcialmente evaluado</option>
+                            <option value="completa">Evaluado</option>
+                            <option value="historica_sin_desglose">Nota Comisión histórica</option>
+                        </select>
+                    </div>
+                    <div><button type="button" class="btn btn-secundario" onclick="limpiarFiltros()">Limpiar filtros</button></div>
+                </div>
+                <div id="filtros-resultado"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-titulo" id="titulo-temporada">Rodeos de la temporada vigente</div>
+                <div id="tabla-rodeos" class="tabla-wrap"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: formulario "Evaluación del Jurado — Comisión de Asociación" -->
+<div class="modal-overlay oculto" id="modal-evaluacion">
+<div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+        <h3>Evaluación del Jurado — Comisión de Asociación</h3>
+        <button class="modal-cerrar" onclick="cerrarModalEvaluacion()">&times;</button>
+    </div>
+    <div class="modal-body">
+        <div id="eval-encabezado" class="resumen-box" style="margin-bottom:16px;"></div>
+
+        <div class="form-grupo">
+            <label class="form-label">Evaluador</label>
+            <select id="eval-evaluador" class="form-control"></select>
+            <div style="margin-top:6px;"><a href="#" onclick="abrirModalEvaluadores(); return false;">+ Nuevo evaluador</a></div>
+        </div>
+
+        <div class="criterios-grid" id="eval-criterios" style="margin-top:12px;"></div>
+
+        <div class="form-grupo" style="margin-top:16px;">
+            <label class="criterio-label">¿Hubo Movimiento a la Rienda?</label>
+            <div class="criterio-botones">
+                <button type="button" class="criterio-boton" id="rienda-si" onclick="toggleHuboRienda(true)">Sí</button>
+                <button type="button" class="criterio-boton activo" id="rienda-no" onclick="toggleHuboRienda(false)">No</button>
+            </div>
+            <div id="eval-rienda-nota" class="oculto" style="margin-top:10px;">
+                <div class="criterio-label">Jura del Movimiento a la Rienda</div>
+                <div class="criterio-botones" id="botones-rienda"></div>
+            </div>
+        </div>
+
+        <div class="form-grupo" style="margin-top:16px;">
+            <label class="criterio-label">¿Consideras que el desempeño del jurado afectó el resultado final del rodeo?</label>
+            <div class="criterio-botones">
+                <button type="button" class="criterio-boton" id="afecto-si" onclick="toggleAfecto(true)">Sí</button>
+                <button type="button" class="criterio-boton activo" id="afecto-no" onclick="toggleAfecto(false)">No</button>
+            </div>
+        </div>
+
+        <div class="form-grupo" style="margin-top:16px;">
+            <label class="form-label">Comentario general (opcional)</label>
+            <textarea id="eval-comentario" class="form-control" rows="3" maxlength="5000"></textarea>
+        </div>
+
+        <div id="eval-resumen" class="resumen-box oculto" style="margin-top:16px;"></div>
+        <div id="eval-error" class="alerta alerta-error oculto" style="margin-top:12px;"></div>
+    </div>
+    <div class="modal-footer">
+        <button class="btn btn-secundario" onclick="cerrarModalEvaluacion()">Cancelar</button>
+        <button class="btn btn-secundario" id="btn-ver-resumen" onclick="mostrarResumenEvaluacion()">Ver resumen</button>
+        <button class="btn btn-primario" id="btn-enviar-evaluacion" onclick="enviarEvaluacionDefinitiva()" disabled>Enviar evaluación definitiva</button>
+    </div>
+</div>
+</div>
+
+<!-- Modal: Evaluadores (listar + registrar nuevo) -->
+<div class="modal-overlay oculto" id="modal-evaluadores">
+<div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+        <h3>Evaluadores de mi Asociación</h3>
+        <button class="modal-cerrar" onclick="document.getElementById('modal-evaluadores').classList.add('oculto')">&times;</button>
+    </div>
+    <div class="modal-body">
+        <div id="lista-evaluadores" style="margin-bottom:18px;"></div>
+        <div class="card-titulo" style="margin-bottom:8px;">+ Nuevo evaluador</div>
+        <div class="form-grupo"><label class="form-label">Nombre</label><input type="text" id="nuevo-ev-nombre" class="form-control"></div>
+        <div class="form-grupo"><label class="form-label">Apellidos</label><input type="text" id="nuevo-ev-apellidos" class="form-control"></div>
+        <div class="form-grupo"><label class="form-label">RUT</label><input type="text" id="nuevo-ev-rut" class="form-control" placeholder="12345678-9"></div>
+        <div class="form-grupo"><label class="form-label">Teléfono (opcional)</label><input type="text" id="nuevo-ev-telefono" class="form-control"></div>
+        <div class="form-grupo"><label class="form-label">Correo (opcional)</label><input type="email" id="nuevo-ev-email" class="form-control"></div>
+        <div id="nuevo-ev-error" class="alerta alerta-error oculto"></div>
+    </div>
+    <div class="modal-footer">
+        <button class="btn btn-primario" onclick="registrarEvaluador()">Registrar evaluador</button>
+    </div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script>
+protegerRuta('cuenta_institucional');
+// Aislamiento de rol (079) — defensa adicional en el cliente; el backend
+// (soloRolInstitucional) ya rechaza esto de todos modos.
+if (api.getUsuario()?.rol_institucional !== 'comision_asociacion') {
+    window.location.href = '/institucional/rodeos.html';
+}
+document.getElementById('nombre-usr').textContent = api.getUsuario()?.asociacion_nombre ? `Comisión de ${api.getUsuario().asociacion_nombre}` : '';
+
+const CRITERIOS = [
+    { key: 'apinadero', label: 'Apiñadero — 20%', desc: 'Sanciona correctamente las faltas de apiñadero.' },
+    { key: 'cancha', label: 'Cancha — 30%', desc: 'Sanciona correctamente las faltas en la cancha, incluida la zona de postura.' },
+    { key: 'atajadas', label: 'Atajadas — 40%', desc: 'Identifica las atajadas válidas, justifica las no válidas y sanciona correctamente las faltas producidas en la atajada.' },
+    { key: 'cuarta', label: 'Cuarta carrera — 10%', desc: 'Sanciona correctamente las faltas de la cuarta carrera y entrega del novillo.' }
+];
+
+const ETIQUETA_ESTADO_NOTA = {
+    historica_sin_desglose: 'Nota Comisión histórica',
+    sin_evaluar: 'Pendiente de evaluación',
+    parcial: 'Rodeo parcialmente evaluado',
+    completa: 'Rodeo evaluado',
+    corregida_admin: 'Corregida por administrador'
+};
+const BADGE_ESTADO_NOTA = {
+    historica_sin_desglose: 'badge-inactivo',
+    sin_evaluar: 'badge-pendiente',
+    parcial: 'badge-pendiente',
+    completa: 'badge-activo',
+    corregida_admin: 'badge-activo'
+};
+
+function fmtFechaRodeo(fecha) {
+    if (!fecha) return '—';
+    const [y, m, d] = fecha.split('T')[0].split('-');
+    return `${d}-${m}-${y}`;
+}
+function fechaComparable(fecha) { return fecha ? fecha.split('T')[0] : ''; }
+
+let _rodeosActuales = [];
+let _rodeosFiltrados = [];
+let _evaluadores = [];
+let _evalActual = null; // { rodeo, jurado }
+let _huboRienda = false;
+let _afecto = false;
+let _valores = {};
+let _valorRienda = null;
+
+function celdaJurados(r) {
+    if (!r.jurados || r.jurados.length === 0) return '<span class="badge badge-pendiente">Sin jurados designados</span>';
+    return r.jurados.map(j => {
+        const estado = j.evaluado
+            ? `<span class="badge badge-activo" title="${j.evaluador_nombre ? sanitizar(j.evaluador_nombre) : ''}">Evaluado · ${j.nota_individual != null ? j.nota_individual.toFixed(1) : '—'}</span>`
+            : (r.evaluacion_disponible
+                ? `<button class="btn btn-primario btn-pequeño" onclick="abrirModalEvaluacion('${r.id}','${j.asignacion_id}')">Evaluar</button>`
+                : `<span class="badge badge-inactivo">No disponible</span>`);
+        return `<div class="fila-jurado"><span>${sanitizar(j.nombre)}</span>${estado}</div>`;
+    }).join('');
+}
+
+function celdaNotaComision(r) {
+    const badge = `<span class="badge ${BADGE_ESTADO_NOTA[r.estado_nota_comision] || 'badge-inactivo'}">${ETIQUETA_ESTADO_NOTA[r.estado_nota_comision] || r.estado_nota_comision}</span>`;
+    const nota = r.nota_comision != null ? `<br><strong>${r.nota_comision.toFixed(1)}</strong>` : '';
+    const revision = r.requiere_revision_admin ? '<br><span class="badge badge-anulado" title="Hubo un cambio de nómina después de publicada esta nota. Pendiente de resolución administrativa.">⚠ Requiere revisión admin.</span>' : '';
+    return badge + nota + revision;
+}
+
+function renderFilaRodeo(r) {
+    return `<tr>
+        <td>${fmtFechaRodeo(r.fecha)}</td>
+        <td>${sanitizar(r.club)}</td>
+        <td>${sanitizar(r.tipo_rodeo || '—')}</td>
+        <td>${celdaJurados(r)}</td>
+        <td>${celdaNotaComision(r)}</td>
+    </tr>`;
+}
+
+function renderTabla() {
+    const div = document.getElementById('tabla-rodeos');
+    const resultadoDiv = document.getElementById('filtros-resultado');
+    if (_rodeosActuales.length === 0) {
+        div.innerHTML = `<div class="tabla-vacia">No hay rodeos registrados para su asociación en esta temporada.</div>`;
+        resultadoDiv.textContent = '';
+        return;
+    }
+    resultadoDiv.textContent = `${_rodeosFiltrados.length} de ${_rodeosActuales.length} rodeo(s) encontrado(s).`;
+    if (_rodeosFiltrados.length === 0) {
+        div.innerHTML = `<div class="tabla-vacia">Ningún rodeo coincide con los filtros aplicados.</div>`;
+        return;
+    }
+    div.innerHTML = `<div style="overflow-x:auto;"><table>
+        <thead><tr><th>Fecha</th><th>Club</th><th>Tipo</th><th>Jurados</th><th>Nota Comisión</th></tr></thead>
+        <tbody>${_rodeosFiltrados.map(renderFilaRodeo).join('')}</tbody>
+    </table></div>`;
+}
+
+function poblarSelectClub() {
+    const clubes = [...new Set(_rodeosActuales.map(r => r.club).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+    document.getElementById('f-club').innerHTML = `<option value="">Todos los clubes</option>` + clubes.map(c => `<option value="${sanitizar(c)}">${sanitizar(c)}</option>`).join('');
+}
+
+function aplicarFiltros() {
+    const desde = document.getElementById('f-fecha-desde').value;
+    const hasta = document.getElementById('f-fecha-hasta').value;
+    const club = document.getElementById('f-club').value;
+    const estado = document.getElementById('f-estado').value;
+    _rodeosFiltrados = _rodeosActuales.filter(r => {
+        const f = fechaComparable(r.fecha);
+        if (desde && f < desde) return false;
+        if (hasta && f > hasta) return false;
+        if (club && r.club !== club) return false;
+        if (estado && r.estado_nota_comision !== estado) return false;
+        return true;
+    });
+    renderTabla();
+}
+function limpiarFiltros() {
+    document.getElementById('f-fecha-desde').value = '';
+    document.getElementById('f-fecha-hasta').value = '';
+    document.getElementById('f-club').value = '';
+    document.getElementById('f-estado').value = '';
+    _rodeosFiltrados = [..._rodeosActuales];
+    renderTabla();
+}
+
+// ── Modal de Evaluadores ───────────────────────────────────────────────────
+async function cargarEvaluadores() {
+    const { evaluadores } = await api.get('/institucional/comision/evaluadores');
+    _evaluadores = evaluadores || [];
+}
+function abrirModalEvaluadores() {
+    renderListaEvaluadores();
+    document.getElementById('modal-evaluadores').classList.remove('oculto');
+}
+function renderListaEvaluadores() {
+    const div = document.getElementById('lista-evaluadores');
+    if (_evaluadores.length === 0) {
+        div.innerHTML = '<div class="tabla-vacia">Todavía no hay evaluadores registrados.</div>';
+        return;
+    }
+    div.innerHTML = _evaluadores.map(e =>
+        `<div class="fila-jurado"><span>${sanitizar(e.nombre)} ${sanitizar(e.apellidos)}</span><span class="badge ${e.activo ? 'badge-activo' : 'badge-inactivo'}">${e.activo ? 'Activo' : 'Suspendido'}</span></div>`
+    ).join('');
+}
+async function registrarEvaluador() {
+    const errorDiv = document.getElementById('nuevo-ev-error');
+    errorDiv.classList.add('oculto');
+    const nombre = document.getElementById('nuevo-ev-nombre').value.trim();
+    const apellidos = document.getElementById('nuevo-ev-apellidos').value.trim();
+    const rut = document.getElementById('nuevo-ev-rut').value.trim();
+    const telefono = document.getElementById('nuevo-ev-telefono').value.trim();
+    const email = document.getElementById('nuevo-ev-email').value.trim();
+    try {
+        await api.post('/institucional/comision/evaluadores', { nombre, apellidos, rut, telefono: telefono || null, email: email || null });
+        document.getElementById('nuevo-ev-nombre').value = '';
+        document.getElementById('nuevo-ev-apellidos').value = '';
+        document.getElementById('nuevo-ev-rut').value = '';
+        document.getElementById('nuevo-ev-telefono').value = '';
+        document.getElementById('nuevo-ev-email').value = '';
+        await cargarEvaluadores();
+        renderListaEvaluadores();
+        poblarSelectEvaluador();
+        mostrarToast('Evaluador registrado correctamente.', 'success');
+    } catch (err) {
+        errorDiv.textContent = err?.data?.error || err.message || 'No se pudo registrar el evaluador.';
+        errorDiv.classList.remove('oculto');
+    }
+}
+function poblarSelectEvaluador() {
+    const sel = document.getElementById('eval-evaluador');
+    const activos = _evaluadores.filter(e => e.activo);
+    sel.innerHTML = activos.length
+        ? activos.map(e => `<option value="${e.id}">${sanitizar(e.nombre)} ${sanitizar(e.apellidos)}</option>`).join('')
+        : '<option value="">— No hay evaluadores activos —</option>';
+}
+
+// ── Modal de Evaluación ─────────────────────────────────────────────────────
+function abrirModalEvaluacion(rodeoId, asignacionId) {
+    const rodeo = _rodeosActuales.find(r => r.id === rodeoId);
+    const jurado = rodeo?.jurados.find(j => j.asignacion_id === asignacionId);
+    if (!rodeo || !jurado) return;
+    _evalActual = { rodeo, jurado };
+    _huboRienda = false; _afecto = false; _valores = {}; _valorRienda = null;
+
+    document.getElementById('eval-encabezado').innerHTML =
+        `<strong>${sanitizar(rodeo.club)}</strong> · ${fmtFechaRodeo(rodeo.fecha)} · ${sanitizar(rodeo.tipo_rodeo || '')}<br>
+         Jurado evaluado: <strong>${sanitizar(jurado.nombre)}</strong>`;
+
+    poblarSelectEvaluador();
+
+    document.getElementById('eval-criterios').innerHTML = CRITERIOS.map(c => `
+        <div>
+            <div class="criterio-label">${c.label}</div>
+            <div class="criterio-desc">${c.desc}</div>
+            <div class="criterio-botones" id="criterio-${c.key}">
+                ${[1,2,3,4,5,6,7].map(n => `<button type="button" class="criterio-boton" onclick="seleccionarCriterio('${c.key}',${n})">${n}</button>`).join('')}
+            </div>
+        </div>
+    `).join('');
+
+    document.getElementById('botones-rienda').innerHTML = [1,2,3,4,5,6,7].map(n =>
+        `<button type="button" class="criterio-boton" onclick="seleccionarRienda(${n})">${n}</button>`).join('');
+
+    toggleHuboRienda(false);
+    toggleAfecto(false);
+    document.getElementById('eval-comentario').value = '';
+    document.getElementById('eval-resumen').classList.add('oculto');
+    document.getElementById('eval-error').classList.add('oculto');
+    document.getElementById('btn-enviar-evaluacion').disabled = true;
+    document.getElementById('modal-evaluacion').classList.remove('oculto');
+}
+function cerrarModalEvaluacion() { document.getElementById('modal-evaluacion').classList.add('oculto'); }
+
+function seleccionarCriterio(key, valor) {
+    _valores[key] = valor;
+    document.querySelectorAll(`#criterio-${key} .criterio-boton`).forEach((btn, i) => btn.classList.toggle('activo', i + 1 === valor));
+    document.getElementById('eval-resumen').classList.add('oculto');
+}
+function seleccionarRienda(valor) {
+    _valorRienda = valor;
+    document.querySelectorAll('#botones-rienda .criterio-boton').forEach((btn, i) => btn.classList.toggle('activo', i + 1 === valor));
+    document.getElementById('eval-resumen').classList.add('oculto');
+}
+function toggleHuboRienda(valor) {
+    _huboRienda = valor;
+    document.getElementById('rienda-si').classList.toggle('activo', valor === true);
+    document.getElementById('rienda-no').classList.toggle('activo', valor === false);
+    document.getElementById('eval-rienda-nota').classList.toggle('oculto', !valor);
+    if (!valor) _valorRienda = null;
+    document.getElementById('eval-resumen').classList.add('oculto');
+}
+function toggleAfecto(valor) {
+    _afecto = valor;
+    document.getElementById('afecto-si').classList.toggle('activo', valor === true);
+    document.getElementById('afecto-no').classList.toggle('activo', valor === false);
+    document.getElementById('eval-resumen').classList.add('oculto');
+}
+
+function calcularNotaPreview() {
+    const { apinadero, cancha, atajadas, cuarta } = _valores;
+    if ([apinadero, cancha, atajadas, cuarta].some(v => v === undefined)) return null;
+    if (_huboRienda && _valorRienda === null) return null;
+    let nota;
+    if (_huboRienda) {
+        nota = apinadero * 0.16 + cancha * 0.24 + atajadas * 0.32 + cuarta * 0.08 + _valorRienda * 0.20;
+    } else {
+        nota = apinadero * 0.20 + cancha * 0.30 + atajadas * 0.40 + cuarta * 0.10;
+    }
+    // Vista previa únicamente — la nota OFICIAL siempre la recalcula el backend.
+    return Math.round(nota * 10) / 10;
+}
+
+function mostrarResumenEvaluacion() {
+    const errorDiv = document.getElementById('eval-error');
+    errorDiv.classList.add('oculto');
+    const evaluadorId = document.getElementById('eval-evaluador').value;
+    if (!evaluadorId) { errorDiv.textContent = 'Seleccione un evaluador.'; errorDiv.classList.remove('oculto'); return; }
+    const preview = calcularNotaPreview();
+    if (preview === null) { errorDiv.textContent = 'Complete todos los criterios obligatorios.'; errorDiv.classList.remove('oculto'); return; }
+
+    const resumen = document.getElementById('eval-resumen');
+    resumen.innerHTML = `
+        <strong>Resumen de la evaluación</strong><br>
+        Nota individual estimada: <strong>${preview.toFixed(1)}</strong><br>
+        ¿Hubo Movimiento a la Rienda?: ${_huboRienda ? 'Sí (' + _valorRienda + ')' : 'No'}<br>
+        ¿Afectó el resultado final?: ${_afecto ? 'Sí' : 'No'}<br><br>
+        <em>Esta evaluación quedará registrada definitivamente. No podrá modificarla posteriormente. Solo un administrador autorizado podrá realizar correcciones.</em>
+    `;
+    resumen.classList.remove('oculto');
+    document.getElementById('btn-enviar-evaluacion').disabled = false;
+}
+
+async function enviarEvaluacionDefinitiva() {
+    const errorDiv = document.getElementById('eval-error');
+    errorDiv.classList.add('oculto');
+    const btn = document.getElementById('btn-enviar-evaluacion');
+    const evaluadorId = document.getElementById('eval-evaluador').value;
+    const { apinadero, cancha, atajadas, cuarta } = _valores;
+
+    const confirmado = await confirmar('Esta evaluación quedará registrada definitivamente. ¿Confirma el envío?');
+    if (!confirmado) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    try {
+        const resultado = await api.post('/institucional/comision/evaluaciones', {
+            rodeo_id: _evalActual.rodeo.id,
+            asignacion_id: _evalActual.jurado.asignacion_id,
+            evaluador_id: evaluadorId,
+            nota_apinadero: apinadero, nota_cancha: cancha, nota_atajadas: atajadas, nota_cuarta_carrera: cuarta,
+            hubo_movimiento_rienda: _huboRienda,
+            nota_rienda: _huboRienda ? _valorRienda : null,
+            afecto_resultado_final: _afecto,
+            comentario: document.getElementById('eval-comentario').value.trim() || null
+        });
+        mostrarToast(`Evaluación registrada. Nota individual: ${resultado.evaluacion.nota_individual_calculada}`, 'success');
+        cerrarModalEvaluacion();
+        await init();
+    } catch (err) {
+        errorDiv.textContent = err?.data?.error || err.message || 'No se pudo enviar la evaluación.';
+        errorDiv.classList.remove('oculto');
+        btn.disabled = false;
+        btn.textContent = 'Enviar evaluación definitiva';
+    }
+}
+
+async function cargarInfoAsociacion() {
+    try {
+        const perfil = await api.get('/institucional/perfil');
+        document.getElementById('info-asociacion-discreta').textContent = `${perfil.asociacion_nombre || '—'} · ${perfil.email || ''}`;
+    } catch { /* informativo */ }
+}
+
+async function init() {
+    const div = document.getElementById('tabla-rodeos');
+    cargarInfoAsociacion();
+    try {
+        const [{ rodeos, temporada, mensaje }] = await Promise.all([
+            api.get('/institucional/comision/rodeos'),
+            cargarEvaluadores()
+        ]);
+        document.getElementById('titulo-temporada').textContent = temporada ? `Rodeos de la temporada ${temporada.nombre}` : 'Rodeos';
+        if (mensaje) { div.innerHTML = `<div class="alerta alerta-info">${sanitizar(mensaje)}</div>`; return; }
+        _rodeosActuales = rodeos;
+        _rodeosFiltrados = [...rodeos];
+        poblarSelectClub();
+        renderTabla();
+    } catch (err) {
+        div.innerHTML = '';
+        mostrarError(err);
+    }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -20,6 +20,11 @@ describe('index.html — tercera pestaña de login institucional, sin tocar las 
         expect(index).toMatch(/mostrarTab\('institucional'\)/);
     });
 
+    test('Comisión de Asociación (079): existe la 4ª pestaña, sin tocar las 3 anteriores', () => {
+        expect(index).toMatch(/mostrarTab\('comision'\)/);
+        expect(index).toMatch(/makeFetchLogin\('\/institucional\/auth\/login'\)/); // mismo endpoint que Delegado
+    });
+
     test('el login institucional llama a POST /institucional/auth/login (namespace separado, nunca /auth/usuario/login)', () => {
         expect(index).toMatch(/makeFetchLogin\('\/institucional\/auth\/login'\)/);
     });
@@ -32,7 +37,15 @@ describe('index.html — tercera pestaña de login institucional, sin tocar las 
     });
 
     test('Fase 3.3 — sesión ya iniciada con tipo="cuenta_institucional" redirige DIRECTO a Mis Rodeos (no a Mi Panel, no al de usuario/admin)', () => {
-        expect(index).toMatch(/u\.tipo === 'cuenta_institucional'[\s\S]{0,150}'\/institucional\/rodeos\.html'/);
+        // Comisión de Asociación (079): se agregó una rama por rol_institucional
+        // ANTES del destino de Delegado — ventana ampliada (no debilitada) para
+        // seguir cubriendo el mismo caso real, ahora un poco más lejos en el texto.
+        expect(index).toMatch(/u\.tipo === 'cuenta_institucional'[\s\S]{0,550}'\/institucional\/rodeos\.html'/);
+    });
+
+    test('Comisión de Asociación (079): sesión ya iniciada con rol_institucional="comision_asociacion" redirige a su propio portal, nunca al de Delegado', () => {
+        const bloque = index.slice(index.indexOf("u.tipo === 'cuenta_institucional'"), index.indexOf("u.tipo === 'cuenta_institucional'") + 400);
+        expect(bloque).toMatch(/rol_institucional === 'comision_asociacion'[\s\S]{0,60}'\/institucional\/comision\/rodeos\.html'/);
     });
 
     test('mostrarTab() también oculta/activa el formulario institucional (no queda huérfano)', () => {

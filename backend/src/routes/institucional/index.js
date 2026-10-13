@@ -11,5 +11,8 @@ router.use('/delegados', require('./delegados'));
 router.use('/rodeos', require('./rodeos'));
 router.use('/perfil', require('./perfil'));
 router.use('/cartilla', require('./cartilla'));
+// Comisión de Asociación (079) — perfil institucional nuevo, independiente
+// del Delegado (ver soloRolInstitucional dentro de este router).
+router.use('/comision', require('./comision'));
 
 module.exports = router;

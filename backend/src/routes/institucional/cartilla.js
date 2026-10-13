@@ -18,7 +18,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin } = require('../../middleware/auth');
+const { soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, soloRolInstitucional } = require('../../middleware/auth');
 const { construirIndiceCatalogo, resolverAsociacion } = require('../../services/informeGestion/asociaciones');
 const {
     validarAspectosDesempeno, calcularPromedioDesempeno, sincronizarNotaDelegado
@@ -106,6 +106,14 @@ router.use(soloCuentaInstitucional);
 // Gestión de acceso institucional (078): cambio de contraseña de primer
 // ingreso obligatorio ANTES de poder usar esta ruta de negocio.
 router.use(exigirCambioPasswordSiPrimerLogin);
+// Comisión de Asociación (079): crear/editar/enviar Cartillas de Delegado es
+// exclusivo del Delegado de Asociación. Una cuenta de Comisión NUNCA debe
+// poder tocar esta tabla, aunque llame directamente por URL/HTTP — el gate
+// es de backend, no solo de que el frontend no muestre el botón. Esto NO
+// afecta a rodeoDeMiAsociacion/delegadoValido/estadoBloqueoCartillaDelegadoAdjunta,
+// que institucional/rodeos.js reutiliza como funciones JS planas (no pasan
+// por esta cadena de middlewares de Express).
+router.use(soloRolInstitucional('delegado_asociacion'));
 
 // Confirma que el rodeo pertenece a la asociación del token — SIEMPRE server-side,
 // resolviendo por catálogo+alias real (nunca ILIKE), igual que institucional/rodeos.js.

@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comisiones de Asociación — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .badge-sin-cuenta { background: #f4f4f4; color: #666; border: 1px solid #ddd; }
+        .password-temporal-caja { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 12px; background: #f8f9fa; border: 1px solid var(--gris-claro); border-radius: 6px; }
+        .password-temporal-caja code { font-size: 15px; font-weight: 600; word-break: break-all; }
+        .subtabs { display: flex; gap: 8px; margin-bottom: 16px; }
+        .subtab { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--gris-borde); background: #fff; cursor: pointer; font-size: 14px; }
+        .subtab.activo { background: var(--azul); color: #fff; border-color: var(--azul); }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Comisiones de Asociación</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="subtabs">
+                <button class="subtab activo" id="st-cuentas" onclick="mostrarSubtab('cuentas')">Cuentas</button>
+                <button class="subtab" id="st-evaluadores" onclick="mostrarSubtab('evaluadores')">Evaluadores</button>
+                <button class="subtab" id="st-revision" onclick="mostrarSubtab('revision')">Requiere revisión</button>
+            </div>
+
+            <div id="vista-cuentas">
+                <div class="filtros-barra">
+                    <div class="form-grupo">
+                        <label class="form-label">Buscar asociación</label>
+                        <input type="text" id="f-buscar-asoc" class="form-control" placeholder="Nombre de la asociación" oninput="debounce(cargarAsociaciones, 400)()">
+                    </div>
+                    <button class="btn btn-secundario" onclick="document.getElementById('f-buscar-asoc').value=''; cargarAsociaciones();">Limpiar</button>
+                </div>
+                <div class="card">
+                    <div id="tabla-asociaciones" class="tabla-wrap"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+                </div>
+            </div>
+
+            <div id="vista-evaluadores" class="oculto">
+                <div class="card">
+                    <div id="tabla-evaluadores" class="tabla-wrap"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+                </div>
+            </div>
+
+            <div id="vista-revision" class="oculto">
+                <div class="card">
+                    <div class="card-titulo">Rodeos que requieren revisión administrativa</div>
+                    <div class="form-hint" style="margin-bottom:12px;">La nómina de jurados cambió DESPUÉS de publicada la Nota Comisión de estos rodeos. La nota consolidada se conserva intacta hasta que resuelva explícitamente cada caso.</div>
+                    <div id="tabla-revision" class="tabla-wrap"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal">
+    <div class="modal-header">
+        <h3 id="modal-titulo">Comisión de Asociación</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-contenido"></div>
+</div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre_completo || api.getUsuario()?.email || '';
+const _esAdminPleno = !api.getUsuario()?.rol_evaluacion;
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+
+function mostrarSubtab(tab) {
+    ['cuentas', 'evaluadores', 'revision'].forEach(t => {
+        document.getElementById('vista-' + t).classList.toggle('oculto', t !== tab);
+        document.getElementById('st-' + t).classList.toggle('activo', t === tab);
+    });
+    if (tab === 'evaluadores') cargarEvaluadores();
+    if (tab === 'revision') cargarRevision();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Vista 1: Cuentas de Comisión por asociación (mismo patrón que
+// admin/delegados-asociacion.html — gestión de acceso institucional,
+// migración 078, parametrizada en 079 por rol_institucional).
+// ═══════════════════════════════════════════════════════════════════════
+let _asociacionesMap = {};
+
+function celdaEstadoAcceso(cuenta) {
+    if (!cuenta) return '<span class="badge badge-sin-cuenta">Sin cuenta</span>';
+    if (!cuenta.activo) return '<span class="badge badge-inactivo">Suspendida</span>';
+    if (cuenta.primer_login) return '<span class="badge badge-pendiente">Primer ingreso pendiente</span>';
+    return '<span class="badge badge-activo">Activa</span>';
+}
+
+async function cargarAsociaciones() {
+    const div = document.getElementById('tabla-asociaciones');
+    const buscar = (document.getElementById('f-buscar-asoc').value || '').toLowerCase().trim();
+    try {
+        const { asociaciones } = await api.get('/admin/comisiones-asociacion/asociaciones');
+        _asociacionesMap = {};
+        const filtradas = (asociaciones || []).filter(a => !a.es_especial && (!buscar || a.nombre.toLowerCase().includes(buscar)));
+        filtradas.forEach(a => { _asociacionesMap[a.id] = a; });
+
+        if (filtradas.length === 0) {
+            div.innerHTML = '<div class="tabla-vacia">No se encontraron asociaciones.</div>';
+            return;
+        }
+        div.innerHTML = `<div style="overflow-x:auto;"><table>
+            <thead><tr><th>Asociación</th><th>Zona</th><th>Estado de cuenta</th><th>Acciones</th></tr></thead>
+            <tbody>${filtradas.map(a => `
+                <tr>
+                    <td>${sanitizar(a.nombre)}</td>
+                    <td>${sanitizar(a.zona || '—')}</td>
+                    <td>${celdaEstadoAcceso(a.cuenta_comision)}</td>
+                    <td><button class="btn btn-secundario btn-pequeño" onclick="abrirModalGestionAcceso('${a.id}')">Gestionar acceso</button></td>
+                </tr>`).join('')}</tbody>
+        </table></div>`;
+    } catch (err) {
+        div.innerHTML = '';
+        mostrarError(err);
+    }
+}
+
+function bloqueOpcionesPassword() {
+    return `
+    <div class="form-grupo">
+        <label class="form-label">Contraseña <span class="req">*</span></label>
+        <div style="display:flex; gap:20px; margin-bottom:8px; font-size:13px;">
+            <label style="font-weight:400;"><input type="radio" name="password_mode" value="generar" checked onchange="togglePasswordManual(this)"> Generar automáticamente</label>
+            <label style="font-weight:400;"><input type="radio" name="password_mode" value="manual" onchange="togglePasswordManual(this)"> Ingresar manualmente</label>
+        </div>
+        <div class="password-manual-cont oculto">
+            <div style="position:relative;">
+                <input type="password" name="password" class="form-control input-password-manual" placeholder="Mínimo 12 caracteres: mayúsculas, minúsculas, números y símbolos" minlength="12" style="padding-right:42px;">
+                <button type="button" class="btn-icono" style="position:absolute; right:2px; top:2px;" onclick="toggleVerPassword(this)" title="Mostrar/ocultar contraseña">👁</button>
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Confirmar contraseña</label>
+                <input type="password" name="password_confirmar" class="form-control">
+            </div>
+        </div>
+    </div>`;
+}
+function togglePasswordManual(radio) {
+    const cont = radio.closest('form').querySelector('.password-manual-cont');
+    cont.classList.toggle('oculto', radio.value !== 'manual');
+}
+function toggleVerPassword(btn) {
+    const input = btn.previousElementSibling;
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+function leerDatosPassword(form) {
+    const fd = new FormData(form);
+    const password_mode = fd.get('password_mode');
+    if (password_mode === 'manual') {
+        const password = fd.get('password') || '';
+        const confirmarPwd = fd.get('password_confirmar') || '';
+        if (password !== confirmarPwd) throw new Error('La contraseña y su confirmación no coinciden.');
+        return { password_mode, password };
+    }
+    return { password_mode };
+}
+function mostrarPasswordTemporalResultado(passwordTemporal, tituloExito) {
+    document.getElementById('modal-titulo').textContent = tituloExito;
+    document.getElementById('modal-contenido').innerHTML = `
+        <p>${sanitizar(tituloExito)}. Comunique esta contraseña por un medio seguro — <strong>no volverá a mostrarse</strong>.</p>
+        <div class="password-temporal-caja">
+            <code id="password-temporal-valor">${sanitizar(passwordTemporal)}</code>
+            <button type="button" class="btn btn-pequeño btn-outline" onclick="copiarPasswordTemporal()">Copiar</button>
+        </div>
+        <div class="form-hint" style="margin-top:8px;">La cuenta deberá cambiarla obligatoriamente en su próximo ingreso.</div>
+        <div class="form-acciones" style="margin-top:16px;">
+            <button type="button" class="btn btn-primario" onclick="cerrarModal(); cargarAsociaciones();">Listo</button>
+        </div>`;
+}
+async function copiarPasswordTemporal() {
+    const valor = document.getElementById('password-temporal-valor').textContent;
+    try { await navigator.clipboard.writeText(valor); mostrarToast('Contraseña copiada al portapapeles', 'success'); }
+    catch (e) { mostrarToast('No se pudo copiar automáticamente — selecciónela manualmente', 'error'); }
+}
+
+function abrirModalGestionAcceso(asociacionId) {
+    const a = _asociacionesMap[asociacionId];
+    if (!a) return;
+    document.getElementById('modal-titulo').textContent = 'Gestionar acceso de Comisión — ' + a.nombre;
+    document.getElementById('modal-contenido').innerHTML = renderGestionAccesoContenido(a);
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+function renderGestionAccesoContenido(a) {
+    const cuenta = a.cuenta_comision;
+    if (!cuenta) {
+        return `
+        <p style="margin-bottom:12px;">Esta asociación todavía no tiene una cuenta de Comisión de Asociación.</p>
+        <form onsubmit="guardarCuentaComision(event, '${a.id}')">
+            <div class="form-grupo">
+                <label class="form-label">Correo institucional <span class="req">*</span></label>
+                <input type="email" name="email" class="form-control" required placeholder="comision-${(a.nombre || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')}@ferochi.cl">
+            </div>
+            ${bloqueOpcionesPassword()}
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Crear cuenta</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    }
+    return `
+    <div style="margin-bottom:16px; font-size:14px; line-height:2;">
+        <div><strong>Asociación:</strong> ${sanitizar(a.nombre)}</div>
+        <div><strong>Correo institucional:</strong> ${sanitizar(cuenta.email)}</div>
+        <div><strong>Estado:</strong> ${celdaEstadoAcceso(cuenta)}</div>
+        <div><strong>Último acceso:</strong> ${cuenta.ultimo_acceso_en ? fmtFechaChile(cuenta.ultimo_acceso_en) : 'Nunca'}</div>
+    </div>
+    <div class="form-acciones" style="flex-wrap:wrap;">
+        ${cuenta.activo
+            ? `<button class="btn" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="suspenderCuentaComision('${cuenta.id}', '${a.id}')">Suspender cuenta</button>`
+            : `<button class="btn btn-success" onclick="reactivarCuentaComision('${cuenta.id}', '${a.id}')">Reactivar cuenta</button>`}
+        <button class="btn btn-secundario" onclick="abrirFormResetearPassword('${cuenta.id}')">Restablecer contraseña</button>
+        <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cerrar</button>
+    </div>`;
+}
+async function guardarCuentaComision(e, asociacionId) {
+    e.preventDefault();
+    const form = e.target;
+    let datosPassword;
+    try { datosPassword = leerDatosPassword(form); } catch (err) { mostrarToast(err.message, 'error'); return; }
+    const ok = await confirmar('¿Crear la cuenta de Comisión de Asociación para esta asociación?');
+    if (!ok) return;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    const fd = new FormData(form);
+    try {
+        const resultado = await api.post('/admin/cuentas-institucionales/para-asociacion-existente', {
+            asociacion_id: asociacionId, email: fd.get('email'), rol_institucional: 'comision_asociacion', ...datosPassword
+        });
+        mostrarPasswordTemporalResultado(resultado.password_temporal, 'Cuenta de Comisión creada correctamente');
+    } catch (err) { mostrarError(err); btn.disabled = false; }
+}
+async function suspenderCuentaComision(cuentaId, asociacionId) {
+    const a = _asociacionesMap[asociacionId];
+    const ok = await confirmar(`¿Suspender el acceso de Comisión de Asociación de ${a?.nombre || 'esta asociación'}? No podrá iniciar sesión hasta que se reactive.`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/cuentas-institucionales/${cuentaId}/suspender`, {});
+        mostrarToast('Cuenta de Comisión suspendida', 'success');
+        cerrarModal(); cargarAsociaciones();
+    } catch (err) { mostrarError(err); }
+}
+async function reactivarCuentaComision(cuentaId, asociacionId) {
+    const a = _asociacionesMap[asociacionId];
+    const ok = await confirmar(`¿Reactivar el acceso de Comisión de Asociación de ${a?.nombre || 'esta asociación'}?`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/cuentas-institucionales/${cuentaId}/reactivar`, {});
+        mostrarToast('Cuenta de Comisión reactivada', 'success');
+        cerrarModal(); cargarAsociaciones();
+    } catch (err) { mostrarError(err); }
+}
+function abrirFormResetearPassword(cuentaId) {
+    document.getElementById('modal-titulo').textContent = 'Restablecer contraseña';
+    document.getElementById('modal-contenido').innerHTML = `
+    <form onsubmit="guardarResetearPassword(event, '${cuentaId}')">
+        ${bloqueOpcionesPassword()}
+        <div class="form-hint" style="margin-bottom:12px;">La cuenta deberá cambiar esta contraseña obligatoriamente en su próximo ingreso. Cualquier sesión abierta se cerrará de inmediato.</div>
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">Restablecer</button>
+            <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>
+    </form>`;
+}
+async function guardarResetearPassword(e, cuentaId) {
+    e.preventDefault();
+    const form = e.target;
+    let datosPassword;
+    try { datosPassword = leerDatosPassword(form); } catch (err) { mostrarToast(err.message, 'error'); return; }
+    const ok = await confirmar('¿Restablecer la contraseña de esta cuenta? Cerrará de inmediato cualquier sesión que tuviera abierta.');
+    if (!ok) return;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+        const resultado = await api.post(`/admin/cuentas-institucionales/${cuentaId}/resetear-password`, datosPassword);
+        mostrarPasswordTemporalResultado(resultado.password_temporal, 'Contraseña restablecida correctamente');
+    } catch (err) { mostrarError(err); btn.disabled = false; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Vista 2: Evaluadores (supervisión)
+// ═══════════════════════════════════════════════════════════════════════
+async function cargarEvaluadores() {
+    const div = document.getElementById('tabla-evaluadores');
+    try {
+        const { evaluadores } = await api.get('/admin/comisiones-asociacion/evaluadores');
+        if (!evaluadores || evaluadores.length === 0) {
+            div.innerHTML = '<div class="tabla-vacia">No hay evaluadores registrados todavía.</div>';
+            return;
+        }
+        div.innerHTML = `<div style="overflow-x:auto;"><table>
+            <thead><tr><th>Nombre</th><th>RUT</th><th>Asociación</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>${evaluadores.map(e => `
+                <tr>
+                    <td>${sanitizar(e.nombre)} ${sanitizar(e.apellidos)}</td>
+                    <td>${sanitizar(e.rut)}</td>
+                    <td>${sanitizar(e.asociacion_nombre || '—')}</td>
+                    <td>${e.activo ? '<span class="badge badge-activo">Activo</span>' : '<span class="badge badge-inactivo">Suspendido</span>'}</td>
+                    <td>${e.activo
+                        ? `<button class="btn btn-secundario btn-pequeño" onclick="suspenderEvaluador('${e.id}')">Suspender</button>`
+                        : `<button class="btn btn-secundario btn-pequeño" onclick="reactivarEvaluador('${e.id}')">Reactivar</button>`}</td>
+                </tr>`).join('')}</tbody>
+        </table></div>`;
+    } catch (err) { div.innerHTML = ''; mostrarError(err); }
+}
+async function suspenderEvaluador(id) {
+    const ok = await confirmar('¿Suspender a este evaluador? No podrá seleccionarse para nuevas evaluaciones.');
+    if (!ok) return;
+    try { await api.patch(`/admin/comisiones-asociacion/evaluadores/${id}/suspender`, {}); mostrarToast('Evaluador suspendido', 'success'); cargarEvaluadores(); }
+    catch (err) { mostrarError(err); }
+}
+async function reactivarEvaluador(id) {
+    try { await api.patch(`/admin/comisiones-asociacion/evaluadores/${id}/reactivar`, {}); mostrarToast('Evaluador reactivado', 'success'); cargarEvaluadores(); }
+    catch (err) { mostrarError(err); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Vista 3: Requiere revisión administrativa
+// ═══════════════════════════════════════════════════════════════════════
+async function cargarRevision() {
+    const div = document.getElementById('tabla-revision');
+    try {
+        const { rodeos } = await api.get('/admin/comisiones-asociacion/rodeos-requieren-revision');
+        if (!rodeos || rodeos.length === 0) {
+            div.innerHTML = '<div class="tabla-vacia">No hay rodeos pendientes de revisión.</div>';
+            return;
+        }
+        div.innerHTML = `<div style="overflow-x:auto;"><table>
+            <thead><tr><th>Fecha</th><th>Club</th><th>Asociación</th><th>Nota Comisión actual</th><th>Motivo</th><th>Acciones</th></tr></thead>
+            <tbody>${rodeos.map(r => `
+                <tr>
+                    <td>${r.fecha || '—'}</td>
+                    <td>${sanitizar(r.club || '—')}</td>
+                    <td>${sanitizar(r.asociacion || '—')}</td>
+                    <td>${r.nota_comision_actual != null ? r.nota_comision_actual.toFixed(1) : '—'}</td>
+                    <td style="max-width:260px;font-size:12px;">${sanitizar(r.motivo || '')}</td>
+                    <td><button class="btn btn-primario btn-pequeño" onclick="abrirModalResolverRevision('${r.rodeo_id}')">Resolver</button></td>
+                </tr>`).join('')}</tbody>
+        </table></div>`;
+    } catch (err) { div.innerHTML = ''; mostrarError(err); }
+}
+async function abrirModalResolverRevision(rodeoId) {
+    document.getElementById('modal-titulo').textContent = 'Resolver revisión administrativa';
+    document.getElementById('modal-contenido').innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('modal-overlay').classList.remove('oculto');
+    try {
+        const detalle = await api.get(`/admin/comisiones-asociacion/rodeos/${encodeURIComponent(rodeoId)}/revision`);
+        document.getElementById('modal-contenido').innerHTML = `
+        <div style="margin-bottom:14px;font-size:13px;">
+            <strong>Nómina evaluada originalmente:</strong><br>
+            ${(detalle.nomina_original_evaluada || []).map(n => `${sanitizar(n.nombre)} — nota ${n.nota_individual.toFixed(1)}`).join('<br>') || '—'}
+        </div>
+        <div style="margin-bottom:14px;font-size:13px;">
+            <strong>Nómina vigente actual:</strong><br>
+            ${(detalle.nomina_actual_vigente || []).map(n => sanitizar(n.nombre)).join('<br>') || '—'}
+        </div>
+        <div style="margin-bottom:14px;font-size:13px;">
+            <strong>Nota Comisión general actual:</strong> ${detalle.notas_secundarias?.nota_comision != null ? Number(detalle.notas_secundarias.nota_comision).toFixed(1) : '—'}
+        </div>
+        <form onsubmit="guardarResolverRevision(event, '${rodeoId}')">
+            <div class="form-grupo">
+                <label style="font-weight:400; display:block;"><input type="radio" name="decision" value="mantener" checked onchange="toggleDecisionCorregir(this)"> Mantener la nota actual sin cambios</label>
+                <label style="font-weight:400; display:block;"><input type="radio" name="decision" value="corregir" onchange="toggleDecisionCorregir(this)"> Corregir la Nota Comisión general</label>
+            </div>
+            <div class="form-grupo oculto" id="bloque-nota-corregida">
+                <label class="form-label">Nueva Nota Comisión (1.0 – 7.0)</label>
+                <input type="number" name="nota_comision_nueva" class="form-control" min="1" max="7" step="0.1">
+            </div>
+            <div class="form-grupo">
+                <label class="form-label">Motivo <span class="req">*</span></label>
+                <textarea name="motivo" class="form-control" rows="3" required></textarea>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Guardar resolución</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    } catch (err) {
+        document.getElementById('modal-contenido').innerHTML = '';
+        mostrarError(err);
+    }
+}
+function toggleDecisionCorregir(radio) {
+    document.getElementById('bloque-nota-corregida').classList.toggle('oculto', radio.value !== 'corregir');
+}
+async function guardarResolverRevision(e, rodeoId) {
+    e.preventDefault();
+    const form = e.target;
+    const fd = new FormData(form);
+    const decision = fd.get('decision');
+    const motivo = (fd.get('motivo') || '').trim();
+    if (!motivo) { mostrarToast('El motivo es obligatorio.', 'error'); return; }
+    const ok = await confirmar(decision === 'corregir'
+        ? '¿Confirma la corrección de la Nota Comisión general de este rodeo? Quedará registrada en el historial de correcciones.'
+        : '¿Confirma mantener la Nota Comisión general sin cambios y cerrar esta revisión?');
+    if (!ok) return;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+        await api.post(`/admin/comisiones-asociacion/rodeos/${encodeURIComponent(rodeoId)}/resolver-revision`, {
+            decision, motivo, nota_comision_nueva: decision === 'corregir' ? Number(fd.get('nota_comision_nueva')) : null
+        });
+        mostrarToast('Revisión resuelta correctamente', 'success');
+        cerrarModal();
+        cargarRevision();
+    } catch (err) { mostrarError(err); btn.disabled = false; }
+}
+
+cargarAsociaciones();
+</script>
+</body>
+</html>
