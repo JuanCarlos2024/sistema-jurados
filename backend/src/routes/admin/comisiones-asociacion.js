@@ -18,6 +18,19 @@ const { soloRolEvaluacion } = require('../../middleware/auth');
 
 router.use(soloRolEvaluacion());
 
+// Comisión de Asociación (080): notas con un decimal (coma o punto), 1.0-7.0.
+// Rechaza (nunca redondea) más de un decimal — ver la misma función en
+// routes/institucional/comision.js, duplicada a propósito (endpoints
+// independientes, mismo criterio que el resto del módulo).
+function normalizarNotaComision(valor) {
+    if (valor === undefined || valor === null || valor === '') return null;
+    const texto = valor.toString().trim().replace(',', '.');
+    if (!/^\d+(\.\d)?$/.test(texto)) return null;
+    const n = parseFloat(texto);
+    if (n < 1.0 || n > 7.0) return null;
+    return n;
+}
+
 // ─── GET /asociaciones — catálogo + estado de su cuenta de Comisión ──────
 // Mismo criterio que admin/delegados-asociacion.js (join directo con
 // cuentas_institucionales), pero filtrado a rol_institucional='comision_asociacion'
@@ -172,22 +185,32 @@ router.patch('/evaluaciones/:id/corregir', async (req, res) => {
     const motivoReal = (motivo || '').toString().trim();
     if (!motivoReal) return res.status(400).json({ error: 'El motivo es obligatorio.' });
 
-    const notasObligatorias = [nota_apinadero, nota_cancha, nota_atajadas, nota_cuarta_carrera];
-    if (notasObligatorias.some(n => n === undefined || n === null || Number(n) < 1 || Number(n) > 7 || !Number.isInteger(Number(n)))) {
-        return res.status(400).json({ error: 'Las cuatro notas de criterio son obligatorias y deben ser enteros entre 1 y 7.' });
+    const notaApinaderoNorm = normalizarNotaComision(nota_apinadero);
+    const notaCanchaNorm    = normalizarNotaComision(nota_cancha);
+    const notaAtajadasNorm  = normalizarNotaComision(nota_atajadas);
+    const notaCuartaNorm    = normalizarNotaComision(nota_cuarta_carrera);
+    if ([notaApinaderoNorm, notaCanchaNorm, notaAtajadasNorm, notaCuartaNorm].some(n => n === null)) {
+        return res.status(400).json({ error: 'Las cuatro notas de criterio son obligatorias y deben ser números entre 1.0 y 7.0 con un máximo de un decimal (ej. 6, 6,5 o 6.5).' });
     }
     if (typeof hubo_movimiento_rienda !== 'boolean') {
         return res.status(400).json({ error: '¿Hubo Movimiento a la Rienda? es obligatorio.' });
     }
+    let notaRiendaNorm = null;
+    if (hubo_movimiento_rienda) {
+        notaRiendaNorm = normalizarNotaComision(nota_rienda);
+        if (notaRiendaNorm === null) {
+            return res.status(400).json({ error: 'La nota de Movimiento a la Rienda es obligatoria y debe ser un número entre 1.0 y 7.0 con un máximo de un decimal (ej. 6, 6,5 o 6.5).' });
+        }
+    }
 
     const { data, error } = await supabase.rpc('corregir_evaluacion_individual_comision_con_auditoria', {
         p_evaluacion_id: req.params.id,
-        p_nota_apinadero: Number(nota_apinadero),
-        p_nota_cancha: Number(nota_cancha),
-        p_nota_atajadas: Number(nota_atajadas),
-        p_nota_cuarta_carrera: Number(nota_cuarta_carrera),
+        p_nota_apinadero: notaApinaderoNorm,
+        p_nota_cancha: notaCanchaNorm,
+        p_nota_atajadas: notaAtajadasNorm,
+        p_nota_cuarta_carrera: notaCuartaNorm,
         p_hubo_movimiento_rienda: hubo_movimiento_rienda,
-        p_nota_rienda: hubo_movimiento_rienda ? Number(nota_rienda) : null,
+        p_nota_rienda: hubo_movimiento_rienda ? notaRiendaNorm : null,
         p_motivo: motivoReal,
         p_administrador_id: req.usuario.id
     });

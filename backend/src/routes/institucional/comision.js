@@ -20,6 +20,22 @@ router.use(soloCuentaInstitucional);
 router.use(exigirCambioPasswordSiPrimerLogin);
 router.use(soloRolInstitucional('comision_asociacion'));
 
+// Comisión de Asociación (080): notas con un decimal (coma o punto), 1.0-7.0.
+// Rechaza (nunca redondea) más de un decimal — la columna NUMERIC(2,1) de la
+// 080 sí redondearía silenciosamente un valor con más precisión, por eso esta
+// validación vive acá, antes de llamar a la RPC (mismo criterio del proyecto:
+// el backend nunca confía en que la base de datos corrija un dato mal
+// formado). Devuelve null ante cualquier entrada inválida (vacía, con texto,
+// con más de un decimal o fuera de 1.0-7.0) — nunca lanza.
+function normalizarNotaComision(valor) {
+    if (valor === undefined || valor === null || valor === '') return null;
+    const texto = valor.toString().trim().replace(',', '.');
+    if (!/^\d+(\.\d)?$/.test(texto)) return null;
+    const n = parseFloat(texto);
+    if (n < 1.0 || n > 7.0) return null;
+    return n;
+}
+
 // ─── GET /rodeos — "Mis Rodeos", Comisión de Asociación ───────────────────
 // Mismo criterio de pertenencia (resolverAsociacion, nunca ILIKE) que
 // institucional/rodeos.js, pero la forma de la respuesta es propia de este
@@ -192,12 +208,23 @@ router.post('/evaluaciones', async (req, res) => {
     if (!rodeo_id || !asignacion_id || !evaluador_id) {
         return res.status(400).json({ error: 'rodeo_id, asignacion_id y evaluador_id son requeridos.' });
     }
-    const notasObligatorias = [nota_apinadero, nota_cancha, nota_atajadas, nota_cuarta_carrera];
-    if (notasObligatorias.some(n => n === undefined || n === null || Number(n) < 1 || Number(n) > 7 || !Number.isInteger(Number(n)))) {
-        return res.status(400).json({ error: 'Las cuatro notas de criterio son obligatorias y deben ser enteros entre 1 y 7.' });
+    // Comisión de Asociación (080): notas con un decimal (coma o punto), 1.0-7.0.
+    const notaApinaderoNorm = normalizarNotaComision(nota_apinadero);
+    const notaCanchaNorm    = normalizarNotaComision(nota_cancha);
+    const notaAtajadasNorm  = normalizarNotaComision(nota_atajadas);
+    const notaCuartaNorm    = normalizarNotaComision(nota_cuarta_carrera);
+    if ([notaApinaderoNorm, notaCanchaNorm, notaAtajadasNorm, notaCuartaNorm].some(n => n === null)) {
+        return res.status(400).json({ error: 'Las cuatro notas de criterio son obligatorias y deben ser números entre 1.0 y 7.0 con un máximo de un decimal (ej. 6, 6,5 o 6.5).' });
     }
     if (typeof hubo_movimiento_rienda !== 'boolean') {
         return res.status(400).json({ error: '¿Hubo Movimiento a la Rienda? es obligatorio.' });
+    }
+    let notaRiendaNorm = null;
+    if (hubo_movimiento_rienda) {
+        notaRiendaNorm = normalizarNotaComision(nota_rienda);
+        if (notaRiendaNorm === null) {
+            return res.status(400).json({ error: 'La nota de Movimiento a la Rienda es obligatoria y debe ser un número entre 1.0 y 7.0 con un máximo de un decimal (ej. 6, 6,5 o 6.5).' });
+        }
     }
     if (typeof afecto_resultado_final !== 'boolean') {
         return res.status(400).json({ error: 'La pregunta sobre si el desempeño afectó el resultado final es obligatoria.' });
@@ -217,12 +244,12 @@ router.post('/evaluaciones', async (req, res) => {
         p_asociacion_id: req.usuario.asociacion_id,
         p_evaluador_id: evaluador_id,
         p_cuenta_institucional_id: req.usuario.id,
-        p_nota_apinadero: Number(nota_apinadero),
-        p_nota_cancha: Number(nota_cancha),
-        p_nota_atajadas: Number(nota_atajadas),
-        p_nota_cuarta_carrera: Number(nota_cuarta_carrera),
+        p_nota_apinadero: notaApinaderoNorm,
+        p_nota_cancha: notaCanchaNorm,
+        p_nota_atajadas: notaAtajadasNorm,
+        p_nota_cuarta_carrera: notaCuartaNorm,
         p_hubo_movimiento_rienda: hubo_movimiento_rienda,
-        p_nota_rienda: hubo_movimiento_rienda ? Number(nota_rienda) : null,
+        p_nota_rienda: hubo_movimiento_rienda ? notaRiendaNorm : null,
         p_afecto_resultado_final: afecto_resultado_final,
         p_comentario: comentario || null
     });

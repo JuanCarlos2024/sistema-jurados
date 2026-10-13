@@ -18,6 +18,7 @@
         .criterio-botones { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
         .criterio-boton { width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--gris-borde); background: #fff; cursor: pointer; font-weight: 600; }
         .criterio-boton.activo { background: var(--azul); color: #fff; border-color: var(--azul); }
+        .criterio-nota-input { max-width: 110px; margin-top: 6px; }
         .criterio-label { font-weight: 600; font-size: 14px; }
         .criterio-desc { font-size: 12px; color: #777; margin-top: 2px; }
         .resumen-box { background: #f7f9fc; border: 1px solid var(--gris-borde); border-radius: 8px; padding: 12px; font-size: 13px; }
@@ -350,14 +351,14 @@ function abrirModalEvaluacion(rodeoId, asignacionId) {
         <div>
             <div class="criterio-label">${c.label}</div>
             <div class="criterio-desc">${c.desc}</div>
-            <div class="criterio-botones" id="criterio-${c.key}">
-                ${[1,2,3,4,5,6,7].map(n => `<button type="button" class="criterio-boton" onclick="seleccionarCriterio('${c.key}',${n})">${n}</button>`).join('')}
-            </div>
+            <input type="text" inputmode="decimal" class="form-control criterio-nota-input" id="criterio-input-${c.key}"
+                   placeholder="1.0 a 7.0" maxlength="4" oninput="actualizarCriterio('${c.key}', this.value)">
         </div>
     `).join('');
 
-    document.getElementById('botones-rienda').innerHTML = [1,2,3,4,5,6,7].map(n =>
-        `<button type="button" class="criterio-boton" onclick="seleccionarRienda(${n})">${n}</button>`).join('');
+    document.getElementById('botones-rienda').innerHTML =
+        `<input type="text" inputmode="decimal" class="form-control criterio-nota-input" id="rienda-input"
+                placeholder="1.0 a 7.0" maxlength="4" oninput="actualizarRienda(this.value)">`;
 
     toggleHuboRienda(false);
     toggleAfecto(false);
@@ -369,14 +370,41 @@ function abrirModalEvaluacion(rodeoId, asignacionId) {
 }
 function cerrarModalEvaluacion() { document.getElementById('modal-evaluacion').classList.add('oculto'); }
 
-function seleccionarCriterio(key, valor) {
-    _valores[key] = valor;
-    document.querySelectorAll(`#criterio-${key} .criterio-boton`).forEach((btn, i) => btn.classList.toggle('activo', i + 1 === valor));
+// Comisión de Asociación (080): notas con un decimal (coma o punto), 1.0-7.0.
+// Rechaza (nunca redondea) más de un decimal — misma regla que el backend
+// (routes/institucional/comision.js), duplicada a propósito en el cliente
+// solo para feedback inmediato; la validación real sigue siendo del backend.
+function normalizarNotaComisionFrontend(texto) {
+    if (texto === undefined || texto === null) return null;
+    const limpio = texto.toString().trim().replace(',', '.');
+    if (limpio === '') return null;
+    if (!/^\d+(\.\d)?$/.test(limpio)) return null;
+    const n = parseFloat(limpio);
+    if (n < 1.0 || n > 7.0) return null;
+    return n;
+}
+function actualizarCriterio(key, texto) {
+    const valor = normalizarNotaComisionFrontend(texto);
+    const input = document.getElementById(`criterio-input-${key}`);
+    if (valor === null) {
+        delete _valores[key];
+        input.classList.toggle('error', texto.trim() !== '');
+    } else {
+        _valores[key] = valor;
+        input.classList.remove('error');
+    }
     document.getElementById('eval-resumen').classList.add('oculto');
 }
-function seleccionarRienda(valor) {
-    _valorRienda = valor;
-    document.querySelectorAll('#botones-rienda .criterio-boton').forEach((btn, i) => btn.classList.toggle('activo', i + 1 === valor));
+function actualizarRienda(texto) {
+    const valor = normalizarNotaComisionFrontend(texto);
+    const input = document.getElementById('rienda-input');
+    if (valor === null) {
+        _valorRienda = null;
+        if (input) input.classList.toggle('error', texto.trim() !== '');
+    } else {
+        _valorRienda = valor;
+        if (input) input.classList.remove('error');
+    }
     document.getElementById('eval-resumen').classList.add('oculto');
 }
 function toggleHuboRienda(valor) {
@@ -384,7 +412,11 @@ function toggleHuboRienda(valor) {
     document.getElementById('rienda-si').classList.toggle('activo', valor === true);
     document.getElementById('rienda-no').classList.toggle('activo', valor === false);
     document.getElementById('eval-rienda-nota').classList.toggle('oculto', !valor);
-    if (!valor) _valorRienda = null;
+    if (!valor) {
+        _valorRienda = null;
+        const input = document.getElementById('rienda-input');
+        if (input) { input.value = ''; input.classList.remove('error'); }
+    }
     document.getElementById('eval-resumen').classList.add('oculto');
 }
 function toggleAfecto(valor) {

@@ -234,11 +234,58 @@ describe('POST /comision/evaluaciones', () => {
         expect(res.jsonBody.code).toBe('NOTA_COMISION_HISTORICA_PROTEGIDA');
     });
 
-    test('hubo_movimiento_rienda=true sin nota_rienda -> la RPC rechaza y se traduce a 400', async () => {
+    test('hubo_movimiento_rienda=true sin nota_rienda -> 400 directo en Express (080), nunca llama a la RPC', async () => {
+        // Con la validación de decimales (080), la ausencia/invalidez de nota_rienda
+        // se detecta ANTES de llamar a la RPC — ya no depende de que la RPC
+        // responda NOTA_RIENDA_REQUERIDA (ese código sigue existiendo como
+        // backstop de la propia RPC, pero este camino específico ya no lo alcanza).
         respuestas.rodeos = { data: { id: 'rodeo-1', club: 'X', asociacion: 'OSORNO', fecha: '2026-09-18', estado: 'activo', tipo_rodeo_nombre: 'Provincial' }, error: null };
-        supabase.rpc.mockResolvedValue({ data: null, error: { message: 'NOTA_RIENDA_REQUERIDA' } });
         const res = await llamar('POST', '/evaluaciones', datosValidos({ hubo_movimiento_rienda: true, nota_rienda: null }), authComision());
         expect(res.statusCode).toBe(400);
-        expect(res.jsonBody.code).toBe('NOTA_RIENDA_REQUERIDA');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    describe('Migración 080 — notas con un decimal', () => {
+        test('acepta "6", "6,5" y "6.5" (coma o punto), normalizando a número con un decimal', async () => {
+            respuestas.rodeos = { data: { id: 'rodeo-1', club: 'X', asociacion: 'OSORNO', fecha: '2026-09-18', estado: 'activo', tipo_rodeo_nombre: 'Provincial' }, error: null };
+            supabase.rpc.mockResolvedValue({ data: { id: 'eval-1', nota_individual_calculada: 5.1, estado: 'enviada' }, error: null });
+            const res = await llamar('POST', '/evaluaciones', datosValidos({
+                nota_apinadero: '6', nota_cancha: '6,5', nota_atajadas: 6.5, nota_cuarta_carrera: '7,0'
+            }), authComision());
+            expect(res.statusCode).toBe(201);
+            const args = supabase.rpc.mock.calls[0][1];
+            expect(args.p_nota_apinadero).toBe(6);
+            expect(args.p_nota_cancha).toBe(6.5);
+            expect(args.p_nota_atajadas).toBe(6.5);
+            expect(args.p_nota_cuarta_carrera).toBe(7);
+        });
+
+        test('acepta nota_rienda con coma cuando hubo_movimiento_rienda=true', async () => {
+            respuestas.rodeos = { data: { id: 'rodeo-1', club: 'X', asociacion: 'OSORNO', fecha: '2026-09-18', estado: 'activo', tipo_rodeo_nombre: 'Provincial' }, error: null };
+            supabase.rpc.mockResolvedValue({ data: { id: 'eval-1', nota_individual_calculada: 5.5, estado: 'enviada' }, error: null });
+            const res = await llamar('POST', '/evaluaciones', datosValidos({ hubo_movimiento_rienda: true, nota_rienda: '6,5' }), authComision());
+            expect(res.statusCode).toBe(201);
+            expect(supabase.rpc.mock.calls[0][1].p_nota_rienda).toBe(6.5);
+        });
+
+        test.each([
+            ['texto', 'seis'],
+            ['más de un decimal', '6,55'],
+            ['fuera de rango por arriba', '7,5'],
+            ['fuera de rango por abajo', '0,5'],
+            ['vacío', ''],
+            ['cero', '0']
+        ])('rechaza nota_apinadero inválida (%s: %j) -> 400, nunca llama a la RPC', async (_desc, valor) => {
+            const res = await llamar('POST', '/evaluaciones', datosValidos({ nota_apinadero: valor }), authComision());
+            expect(res.statusCode).toBe(400);
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
+
+        test('rechaza nota_rienda con más de un decimal aunque las otras 4 notas sean válidas', async () => {
+            respuestas.rodeos = { data: { id: 'rodeo-1', club: 'X', asociacion: 'OSORNO', fecha: '2026-09-18', estado: 'activo', tipo_rodeo_nombre: 'Provincial' }, error: null };
+            const res = await llamar('POST', '/evaluaciones', datosValidos({ hubo_movimiento_rienda: true, nota_rienda: '6,55' }), authComision());
+            expect(res.statusCode).toBe(400);
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
     });
 });

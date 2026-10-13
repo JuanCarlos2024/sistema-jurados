@@ -133,6 +133,51 @@ describe('PATCH /evaluaciones/:id/corregir (Hallazgo 10)', () => {
         expect(res.statusCode).toBe(403);
         expect(supabase.rpc).not.toHaveBeenCalled();
     });
+
+    describe('Migración 080 — notas con un decimal', () => {
+        test('acepta "6", "6,5" y "6.5" (coma o punto), normalizando a número con un decimal', async () => {
+            supabase.rpc.mockResolvedValue({ data: { id: 'eval-1', nota_individual_calculada: 5.1, estado: 'corregida_admin' }, error: null });
+            const res = await llamar('PATCH', '/evaluaciones/eval-1/corregir', datosValidos({
+                nota_apinadero: '6', nota_cancha: '6,5', nota_atajadas: 6.5, nota_cuarta_carrera: '7,0'
+            }));
+            expect(res.statusCode).toBe(200);
+            const args = supabase.rpc.mock.calls[0][1];
+            expect(args.p_nota_apinadero).toBe(6);
+            expect(args.p_nota_cancha).toBe(6.5);
+            expect(args.p_nota_atajadas).toBe(6.5);
+            expect(args.p_nota_cuarta_carrera).toBe(7);
+        });
+
+        test('acepta nota_rienda con coma cuando hubo_movimiento_rienda=true', async () => {
+            supabase.rpc.mockResolvedValue({ data: { id: 'eval-1', nota_individual_calculada: 5.5, estado: 'corregida_admin' }, error: null });
+            const res = await llamar('PATCH', '/evaluaciones/eval-1/corregir', datosValidos({ hubo_movimiento_rienda: true, nota_rienda: '6,5' }));
+            expect(res.statusCode).toBe(200);
+            expect(supabase.rpc.mock.calls[0][1].p_nota_rienda).toBe(6.5);
+        });
+
+        test.each([
+            ['texto', 'seis'],
+            ['más de un decimal', '6,55'],
+            ['fuera de rango por arriba', '7,5'],
+            ['vacío', '']
+        ])('rechaza nota_apinadero inválida (%s: %j) -> 400, nunca llama a la RPC', async (_desc, valor) => {
+            const res = await llamar('PATCH', '/evaluaciones/eval-1/corregir', datosValidos({ nota_apinadero: valor }));
+            expect(res.statusCode).toBe(400);
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
+
+        test('rechaza nota_rienda con más de un decimal aunque las otras 4 notas sean válidas', async () => {
+            const res = await llamar('PATCH', '/evaluaciones/eval-1/corregir', datosValidos({ hubo_movimiento_rienda: true, nota_rienda: '6,55' }));
+            expect(res.statusCode).toBe(400);
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
+
+        test('hubo_movimiento_rienda=true sin nota_rienda -> 400 directo en Express, nunca llama a la RPC', async () => {
+            const res = await llamar('PATCH', '/evaluaciones/eval-1/corregir', datosValidos({ hubo_movimiento_rienda: true, nota_rienda: null }));
+            expect(res.statusCode).toBe(400);
+            expect(supabase.rpc).not.toHaveBeenCalled();
+        });
+    });
 });
 
 describe('POST /rodeos/:rodeo_id/autorizar-evaluacion (ronda 3, punto 4)', () => {

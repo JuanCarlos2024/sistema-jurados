@@ -28,7 +28,8 @@ const MIGRACIONES = [
     '061_cuentas_institucionales.sql',
     '078_gestion_acceso_cuentas_institucionales.sql',
     '028_rodeo_notas_secundarias.sql',
-    '079_comision_asociacion.sql'
+    '079_comision_asociacion.sql',
+    '080_notas_decimales_comision.sql'
 ];
 
 let db;
@@ -1128,5 +1129,107 @@ describe('13) Ronda 4 — reactivación indebida, identidad de la autorización,
         await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j2, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id });
         fila = (await db.query('select estado_nota_comision from rodeo_notas_secundarias where rodeo_id=$1', [rodeo])).rows[0];
         expect(fila.estado_nota_comision).toBe('completa'); // ahora sí, con los 2
+    });
+});
+
+describe('15) Migración 080 — notas con un decimal (1.0-7.0) en los 5 criterios', () => {
+    test('fn_calcular_nota_individual_comision acepta decimales y pondera igual que con enteros (sin rienda)', async () => {
+        // 6.5*0.20 + 5.5*0.30 + 4.5*0.40 + 3.5*0.10 = 1.3+1.65+1.8+0.35 = 5.1
+        const { rows } = await db.query('select fn_calcular_nota_individual_comision(6.5,5.5,4.5,3.5,false,null) as n');
+        expect(Number(rows[0].n)).toBeCloseTo(5.1, 5);
+    });
+
+    test('fn_calcular_nota_individual_comision acepta decimales con rienda decimal', async () => {
+        // 6.5*0.16 + 5.5*0.24 + 4.5*0.32 + 3.5*0.08 + 7.0*0.20 = 1.04+1.32+1.44+0.28+1.4 = 5.48 -> 5.5
+        const { rows } = await db.query('select fn_calcular_nota_individual_comision(6.5,5.5,4.5,3.5,true,7.0) as n');
+        expect(Number(rows[0].n)).toBeCloseTo(5.5, 5);
+    });
+
+    test('un valor de rienda decimal distinto (6.5 en vez de 7) cambia el resultado respecto al caso de referencia 6,5,4,3,7 -> 5.1 (demuestra que el decimal realmente se usa, no se trunca)', async () => {
+        // 6*0.16 + 5*0.24 + 4*0.32 + 3*0.08 + 6.5*0.20 = 0.96+1.2+1.28+0.24+1.3 = 4.98 -> 5.0
+        const { rows } = await db.query('select fn_calcular_nota_individual_comision(6,5,4,3,true,6.5) as n');
+        expect(Number(rows[0].n)).toBeCloseTo(5.0, 5);
+    });
+
+    test('enviar_evaluacion_comision_jurado_con_auditoria acepta los 5 criterios con decimal y los guarda exactos (NUMERIC(2,1))', async () => {
+        const asoc = await crearAsociacion();
+        const comision = await crearCuenta(asoc, 'comision_asociacion');
+        const ev = await crearEvaluador(asoc, comision.id, 'cuenta_institucional');
+        const rodeo = await crearRodeo();
+        const j1 = await crearJurado(rodeo, 'Jurado Decimal');
+        const res = await enviarEvaluacion({
+            rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id,
+            apinadero: 6.5, cancha: 5.5, atajadas: 4.5, cuarta: 3.5, huboRienda: true, rienda: 7.0
+        });
+        expect(Number(res.nota_individual_calculada)).toBeCloseTo(5.5, 5);
+
+        const { rows } = await db.query(
+            'select nota_apinadero, nota_cancha, nota_atajadas, nota_cuarta_carrera, nota_rienda from comision_evaluaciones_jurado where id=$1',
+            [res.id]
+        );
+        expect(Number(rows[0].nota_apinadero)).toBe(6.5);
+        expect(Number(rows[0].nota_cancha)).toBe(5.5);
+        expect(Number(rows[0].nota_atajadas)).toBe(4.5);
+        expect(Number(rows[0].nota_cuarta_carrera)).toBe(3.5);
+        expect(Number(rows[0].nota_rienda)).toBe(7.0);
+    });
+
+    test('la consolidación promedia correctamente notas individuales con decimales', async () => {
+        const asoc = await crearAsociacion();
+        const comision = await crearCuenta(asoc, 'comision_asociacion');
+        const ev = await crearEvaluador(asoc, comision.id, 'cuenta_institucional');
+        const rodeo = await crearRodeo();
+        const j1 = await crearJurado(rodeo, 'Jurado Uno Decimal');
+        const j2 = await crearJurado(rodeo, 'Jurado Dos Decimal');
+
+        // 6.5*0.20+5.5*0.30+4.5*0.40+3.5*0.10 = 5.1
+        await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6.5, cancha: 5.5, atajadas: 4.5, cuarta: 3.5 });
+        // 7,7,7,7 sin rienda -> 7.0
+        await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j2, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 7, cancha: 7, atajadas: 7, cuarta: 7 });
+
+        const { rows } = await db.query('select estado_nota_comision, nota_comision from rodeo_notas_secundarias where rodeo_id=$1', [rodeo]);
+        expect(rows[0].estado_nota_comision).toBe('completa');
+        // avg(5.1, 7.0) = 6.05 -> round(6.05, 1) = 6.1 (Postgres redondea la mitad hacia arriba),
+        // mismo round() final de siempre en fn_recalcular_consolidacion_comision_rodeo, sin cambios.
+        expect(Number(rows[0].nota_comision)).toBeCloseTo(6.1, 5);
+    });
+
+    test('corregir_evaluacion_individual_comision_con_auditoria acepta decimales y recalcula server-side', async () => {
+        const asoc = await crearAsociacion();
+        const comision = await crearCuenta(asoc, 'comision_asociacion');
+        const ev = await crearEvaluador(asoc, comision.id, 'cuenta_institucional');
+        const rodeo = await crearRodeo();
+        const j1 = await crearJurado(rodeo);
+        const original = await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 });
+        expect(Number(original.nota_individual_calculada)).toBeCloseTo(4.6, 5);
+
+        const { rows } = await db.query(
+            "select * from corregir_evaluacion_individual_comision_con_auditoria($1,6.5,5.5,4.5,3.5,false,null,'corrección con decimales',$2)",
+            [original.id, ADMIN_ID]
+        );
+        expect(Number(rows[0].nota_individual_calculada)).toBeCloseTo(5.1, 5);
+        expect(rows[0].estado).toBe('corregida_admin');
+    });
+
+    test('las evaluaciones enteras ya existentes (6,5,4,3 etc.) siguen funcionando igual tras la 080 — compatibilidad hacia atrás', async () => {
+        const asoc = await crearAsociacion();
+        const comision = await crearCuenta(asoc, 'comision_asociacion');
+        const ev = await crearEvaluador(asoc, comision.id, 'cuenta_institucional');
+        const rodeo = await crearRodeo();
+        const j1 = await crearJurado(rodeo);
+        const res = await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 });
+        expect(Number(res.nota_individual_calculada)).toBeCloseTo(4.6, 5);
+        const { rows } = await db.query('select nota_apinadero from comision_evaluaciones_jurado where id=$1', [res.id]);
+        expect(Number(rows[0].nota_apinadero)).toBe(6); // entero almacenado como NUMERIC(2,1) = 6.0, mismo valor
+    });
+
+    test('rechaza notas fuera de rango incluso con decimal (p.ej. 7.5, por encima de 7.0) — vía el CHECK existente, sin cambios', async () => {
+        const asoc = await crearAsociacion();
+        const comision = await crearCuenta(asoc, 'comision_asociacion');
+        const ev = await crearEvaluador(asoc, comision.id, 'cuenta_institucional');
+        const rodeo = await crearRodeo();
+        const j1 = await crearJurado(rodeo);
+        await expect(enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 7.5, cancha: 5, atajadas: 4, cuarta: 3 }))
+            .rejects.toThrow(/constraint|check/i);
     });
 });
