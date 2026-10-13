@@ -1463,44 +1463,14 @@ router.get('/export-fin-semana', async (req, res) => {
         // ws2.addImage. La información comparativa en texto (Temporada
         // actual/anterior/Diferencia/Variación, ya escrita arriba) se
         // conserva íntegra — solo se omite el gráfico.
-        r++;
-
-        const headerRowNum = r;
-        const HEADERS_CC = ['CABALLO 1', 'CABALLO 2', 'SEXO (CRIADERO)', 'PTJ', 'R', 'C', 'JINETES', 'ZONA', 'ASOCIACIÓN', 'ZONA CLASIF.'];
-        HEADERS_CC.forEach((h, i) => { ws2.getCell(headerRowNum, i + 1).value = h; });
-        ws2.getRow(headerRowNum).eachCell(cell => {
-            cell.font      = HEADER_STYLE.font;
-            cell.fill      = HEADER_STYLE.fill;
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            cell.border    = HEADER_STYLE.border;
-        });
-        ws2.getRow(headerRowNum).height = 26;
-        ws2.views = [{ state: 'frozen', ySplit: headerRowNum }];
-        ws2.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: headerRowNum, column: 10 } };
-
-        const CELL_BORDER_CC = {
-            top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
-            bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
-            left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
-            right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
-        };
-
-        r++;
-        for (const c of colleras.filas) {
-            const valores = [c.caballo1, c.caballo2, c.sexoCriadero, c.ptj, c.r, c.c, c.jinetes, c.zona, c.asociacion, c.zonaClasif];
-            const row = ws2.getRow(r);
-            row.values = valores;
-            row.eachCell({ includeEmpty: true }, cell => {
-                cell.alignment = { wrapText: true, vertical: 'top' };
-                cell.border = CELL_BORDER_CC;
-            });
-            const maxLineas = valores.reduce((max, v) => {
-                const n = (String(v ?? '').match(/\n/g) || []).length + 1;
-                return Math.max(max, n);
-            }, 1);
-            row.height = Math.max(15, maxLineas * 14);
-            r++;
-        }
+        //
+        // Corrección posterior (a pedido del usuario): esta hoja, SOLO en
+        // Reporte Fin de Semana, se queda exclusivamente con el resumen
+        // superior + la comparativa en texto — se quita la tabla completa de
+        // colleras (encabezados CABALLO 1/CABALLO 2/SEXO (CRIADERO)/PTJ/R/C/
+        // JINETES/ZONA/ASOCIACIÓN/ZONA CLASIF. y cada fila individual).
+        // /export-directorio conserva esa tabla sin cambios (código propio,
+        // no tocado).
 
         const fecha = new Date().toISOString().slice(0, 10);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

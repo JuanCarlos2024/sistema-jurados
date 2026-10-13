@@ -358,16 +358,32 @@ describe('GET /export-fin-semana', () => {
         expect(wsDetalle.getRow(2).getCell(18).value).not.toBe(COMENTARIO_SAN_CARLOS);
     });
 
-    test('PRUEBA 12: Hoja "Colleras completas" presente con resumen, comparativa y tabla dinámica (sin cambios respecto al Directorio)', async () => {
+    test('PRUEBA 12 (corrección posterior): Hoja "Colleras completas" presente solo con resumen superior + comparativa en texto — SIN la tabla completa de colleras', async () => {
         const { wb } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         const ws2 = wb.getWorksheet('Colleras completas');
         expect(ws2).toBeDefined();
         expect(ws2.getCell(1, 1).value).toBe('1 COLLERAS COMPLETAS AL ' + ws2.getCell(1, 1).value.split(' AL ')[1]);
-        const filaHeader = buscarFilaConValor(ws2, 1, 'CABALLO 1');
-        expect(filaHeader).toBeGreaterThan(8);
-        expect(ws2.getCell(filaHeader, 10).value).toBe('ZONA CLASIF.');
-        expect(ws2.getCell(filaHeader + 1, 1).value).toBe('A');
-        expect(ws2.getRow(filaHeader).values.slice(1).length).toBe(10);
+
+        const texto = [];
+        ws2.eachRow(row => row.eachCell({ includeEmpty: false }, cell => { if (typeof cell.value === 'string') texto.push(cell.value); }));
+        const textoCompleto = texto.join(' | ');
+        expect(textoCompleto).toContain('Total colleras completas:');
+        expect(textoCompleto).toContain('Total zona norte:');
+        expect(textoCompleto).toContain('Total zona centro:');
+        expect(textoCompleto).toContain('Total zona sur:');
+        expect(textoCompleto).toContain('Colleras centro norte:');
+        expect(textoCompleto).toContain('Colleras centro sur:');
+        expect(textoCompleto).toMatch(/COMPARATIVA COLLERAS COMPLETAS AL/);
+        expect(textoCompleto).toMatch(/Temporada actual/);
+        expect(textoCompleto).toMatch(/Temporada anterior/);
+        expect(textoCompleto).toContain('Diferencia:');
+        expect(textoCompleto).toContain('Variación:');
+
+        // Sin tabla de detalle: ningún encabezado ni fila individual de colleras.
+        for (const header of ['CABALLO 1', 'CABALLO 2', 'SEXO (CRIADERO)', 'PTJ', 'JINETES', 'ZONA CLASIF.']) {
+            expect(textoCompleto).not.toContain(header);
+        }
+        expect(buscarFilaConValor(ws2, 1, 'CABALLO 1')).toBe(-1);
     });
 
     test('PRUEBA 13 (corrección posterior): Colleras completas NO contiene ningún gráfico/imagen — CERO, siempre', async () => {

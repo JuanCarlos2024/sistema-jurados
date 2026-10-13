@@ -103,7 +103,7 @@ function textoCompletoHoja(ws) {
 }
 
 describe('FASE 2.6 — bloque comparativo numérico', () => {
-    test('B/D: aparece ANTES de la tabla detalle, con temporada actual, anterior, diferencia y variación', async () => {
+    test('B/D: temporada actual, anterior, diferencia y variación, en texto, sin la tabla de detalle', async () => {
         const { wb } = await cargar('/export-fin-semana', 'Colleras completas');
         const ws2 = wb.getWorksheet('Colleras completas');
         const filaComp = buscarFilaConValor(ws2, 1, `COMPARATIVA COLLERAS COMPLETAS AL ${fmtFecha(HOY)}`);
@@ -117,8 +117,9 @@ describe('FASE 2.6 — bloque comparativo numérico', () => {
         expect(ws2.getCell(filaComp + 4, 1).value).toBe('Variación:');
         expect(ws2.getCell(filaComp + 4, 2).value).toBe('+20.6%');
 
-        const filaHeaderTabla = buscarFilaConValor(ws2, 1, 'CABALLO 1');
-        expect(filaHeaderTabla).toBeGreaterThan(filaComp + 4);   // el bloque queda antes de la tabla
+        // Corrección posterior (a pedido del usuario): en Reporte Fin de Semana esta hoja
+        // ya NO lleva la tabla completa de colleras (eso queda exclusivo de /export-directorio).
+        expect(buscarFilaConValor(ws2, 1, 'CABALLO 1')).toBe(-1);
     });
 
     test('G: solo se comparan 2 temporadas (2026-2027 y 2025-2026); temporadas más antiguas no aparecen en ningún lado de la hoja', async () => {
@@ -135,14 +136,9 @@ describe('FASE 2.6 — bloque comparativo numérico', () => {
         const ws2 = wb.getWorksheet('Colleras completas');
         expect(ws2.getImages().length).toBe(0);
         expect(wb.model.media.length).toBe(0);
-        // La tabla sigue existiendo y queda después del bloque comparativo en texto, sin un
-        // gráfico de por medio.
-        const filaComp = buscarFilaConValor(ws2, 1, `COMPARATIVA COLLERAS COMPLETAS AL ${fmtFecha(HOY)}`);
-        const filaHeaderTabla = buscarFilaConValor(ws2, 1, 'CABALLO 1');
-        expect(filaHeaderTabla).toBeGreaterThan(filaComp + 4);
     });
 
-    test('sin histórico ni snapshots (solo el dato en vivo de hoy): "sin dato histórico comparable" en texto, sin gráfico, no revienta', async () => {
+    test('sin histórico ni snapshots (solo el dato en vivo de hoy): "sin dato histórico comparable" en texto, sin gráfico, sin tabla, no revienta', async () => {
         respuestas.historico_colleras_medicion = { data: [], error: null };
         respuestas.colleras_completas_snapshots = { data: [], error: null };
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
@@ -150,12 +146,10 @@ describe('FASE 2.6 — bloque comparativo numérico', () => {
         const texto = textoCompletoHoja(ws);
         expect(texto).toContain('Sin dato histórico comparable');
         expect(ws.getImages().length).toBe(0);
-        const filaHeaderTabla = buscarFilaConValor(ws, 1, 'CABALLO 1');
-        expect(filaHeaderTabla).toBeGreaterThan(0);
-        expect(ws.getCell(filaHeaderTabla + 1, 1).value).toBe('A');
+        expect(buscarFilaConValor(ws, 1, 'CABALLO 1')).toBe(-1);
     });
 
-    test('I/J (corrección posterior): sin ningún dato (ni actual, ni histórico, ni snapshots): 200, bloque comparativo con "—", tabla detalle intacta, cero gráficos', async () => {
+    test('I/J (corrección posterior): sin ningún dato (ni actual, ni histórico, ni snapshots): 200, bloque comparativo con "—", sin tabla, cero gráficos', async () => {
         obtenerCollerasCompletas.mockResolvedValue({
             filas: [{ caballo1: 'A', caballo2: 'B', sexoCriadero: 'M', ptj: 1, r: 1, c: 1, jinetes: 'X', zona: 'Sur', asociacion: 'ÑUBLE', zonaClasif: 'S' }],
             resumen: { totalCompletas: null, zonaNorte: null, centroNorte: null, zonaCentro: null, centroSur: null, zonaSur: null }
@@ -165,27 +159,24 @@ describe('FASE 2.6 — bloque comparativo numérico', () => {
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
         expect(res.statusCode).toBe(200);
         expect(ws.getImages().length).toBe(0);
-        const filaHeaderTabla = buscarFilaConValor(ws, 1, 'CABALLO 1');
-        expect(filaHeaderTabla).toBeGreaterThan(0);
-        expect(ws.getCell(filaHeaderTabla + 1, 1).value).toBe('A');
+        expect(buscarFilaConValor(ws, 1, 'CABALLO 1')).toBe(-1);
     });
 
-    test('sin temporada resuelta (tabla temporadas vacía): no revienta, sin gráfico (nunca se intenta graficar), tabla detalle intacta', async () => {
+    test('sin temporada resuelta (tabla temporadas vacía): no revienta, sin gráfico (nunca se intenta graficar), sin tabla de detalle', async () => {
         respuestas.temporadas = { data: [], error: null };
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
         expect(res.statusCode).toBe(200);
         expect(ws.getImages().length).toBe(0);
         const texto = textoCompletoHoja(ws);
         expect(texto).toContain('Temporada actual (—):');
-        const filaHeaderTabla = buscarFilaConValor(ws, 1, 'CABALLO 1');
-        expect(filaHeaderTabla).toBeGreaterThan(0);
+        expect(buscarFilaConValor(ws, 1, 'CABALLO 1')).toBe(-1);
     });
 
     test('la tabla "historico_colleras_medicion" inexistente (error de BD) no rompe el reporte (leerOpcional)', async () => {
         respuestas.historico_colleras_medicion = { data: null, error: { message: 'relation "historico_colleras_medicion" does not exist' } };
         const { res, ws } = await cargar('/export-fin-semana', 'Colleras completas');
         expect(res.statusCode).toBe(200);
-        expect(buscarFilaConValor(ws, 1, 'CABALLO 1')).toBeGreaterThan(0);
+        expect(textoCompletoHoja(ws)).toMatch(/COMPARATIVA COLLERAS COMPLETAS AL/);
     });
 
     test('el archivo generado no queda corrupto: se reabre sin lanzar y conserva la Hoja 1', async () => {
