@@ -210,9 +210,9 @@ function celdaJurados(r) {
     return r.jurados.map(j => {
         const estado = j.evaluado
             ? `<span class="badge badge-activo" title="${j.evaluador_nombre ? sanitizar(j.evaluador_nombre) : ''}">Evaluado · ${j.nota_individual != null ? j.nota_individual.toFixed(1) : '—'}</span>`
-            : (r.evaluacion_disponible
+            : (j.evaluacion_disponible
                 ? `<button class="btn btn-primario btn-pequeño" onclick="abrirModalEvaluacion('${r.id}','${j.asignacion_id}')">Evaluar</button>`
-                : `<span class="badge badge-inactivo">No disponible</span>`);
+                : `<span class="badge badge-inactivo" title="Esta Nota Comisión ya está cerrada o en revisión administrativa. Solo un administrador puede autorizar una nueva evaluación.">No disponible</span>`);
         return `<div class="fila-jurado"><span>${sanitizar(j.nombre)}</span>${estado}</div>`;
     }).join('');
 }

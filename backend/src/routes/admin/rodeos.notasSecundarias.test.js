@@ -78,6 +78,35 @@ describe('Inferencia de p_actualizar_* desde las claves del body', () => {
         expect(args.p_actualizar_delegado).toBe(false);
     });
 
+    // Corrección (bug reportado en producción, rodeos AGUANEGRA LOS NICHES y
+    // QUILPOCO DE RAUCO): el formulario REAL de admin/rodeos.html SIEMPRE
+    // envía las dos claves en el body (nunca omite una), aunque el campo
+    // correspondiente esté vacío — a diferencia de los tests de arriba, que
+    // simulaban un body "ideal" con solo una clave presente. Antes, usar
+    // hasOwnProperty trataba esto como "Comisión fue editada" sin importar
+    // su valor, marcando corregida_admin con nota_comision=NULL sin que
+    // nadie la hubiera tocado realmente.
+    test('BUG REAL: body con AMBAS claves pero nota_comision vacía (como siempre la envía el formulario real) -> NUNCA toca Comisión', async () => {
+        await llamar({ nota_comision: '', nota_delegado: 6.0 });
+        const args = supabase.rpc.mock.calls[0][1];
+        expect(args.p_actualizar_comision).toBe(false);
+        expect(args.p_actualizar_delegado).toBe(true);
+    });
+
+    test('BUG REAL: body con AMBAS claves pero nota_comision null (JSON explícito) -> NUNCA toca Comisión', async () => {
+        await llamar({ nota_comision: null, nota_delegado: 6.0 });
+        const args = supabase.rpc.mock.calls[0][1];
+        expect(args.p_actualizar_comision).toBe(false);
+        expect(args.p_actualizar_delegado).toBe(true);
+    });
+
+    test('BUG REAL, simétrico: body con AMBAS claves pero nota_delegado vacía -> NUNCA toca Delegado', async () => {
+        await llamar({ nota_comision: 5.5, nota_delegado: '' });
+        const args = supabase.rpc.mock.calls[0][1];
+        expect(args.p_actualizar_comision).toBe(true);
+        expect(args.p_actualizar_delegado).toBe(false);
+    });
+
     test('confirma_sobrescritura_historica se propaga a la RPC (con motivo real, ya exigido por Hallazgo 7)', async () => {
         await llamar({ nota_comision: 5.5, confirma_sobrescritura_historica: true, motivo: 'corrección deportiva autorizada' });
         expect(supabase.rpc.mock.calls[0][1].p_confirma_sobrescritura_historica).toBe(true);

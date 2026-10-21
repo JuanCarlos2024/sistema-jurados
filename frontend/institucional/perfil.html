@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Perfil — Delegado de Asociación</title>
+    <title>Mi Perfil — Portal Institucional</title>
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -12,7 +12,7 @@
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados</h2></div>
         <nav class="sidebar-nav">
-            <a href="/institucional/rodeos.html" class="nav-item"><span class="icon">📋</span> Mis Rodeos</a>
+            <a href="/institucional/rodeos.html" class="nav-item" id="link-mis-rodeos"><span class="icon">📋</span> Mis Rodeos</a>
             <a href="/institucional/perfil.html" class="nav-item activo"><span class="icon">👤</span> Mi Perfil</a>
         </nav>
         <div class="sidebar-footer">
@@ -48,7 +48,7 @@
                 </div>
                 <div class="form-grupo">
                     <label class="form-label">Tipo de usuario</label>
-                    <input type="text" value="Delegado de Asociación" class="form-control" readonly style="background:#f4f6f9;">
+                    <input type="text" id="inp-tipo-usuario" value="Delegado de Asociación" class="form-control" readonly style="background:#f4f6f9;">
                 </div>
                 <div class="form-grupo">
                     <label class="form-label">Estado de la cuenta</label>
@@ -88,7 +88,21 @@
 <script src="/js/utils.js"></script>
 <script>
 protegerRuta('cuenta_institucional');
-document.getElementById('nombre-usr').textContent = api.getUsuario()?.asociacion_nombre ? `Delegado de ${api.getUsuario().asociacion_nombre}` : '';
+
+// Comisión de Asociación (migración 079) — esta pantalla es compartida por
+// los dos roles institucionales (nunca se duplica); todo lo que distingue a
+// uno del otro se resuelve acá, una sola vez, a partir de rol_institucional.
+const _usuarioInst = api.getUsuario();
+const _esComision = _usuarioInst?.rol_institucional === 'comision_asociacion';
+const _rutaMisRodeos = _esComision ? '/institucional/comision/rodeos.html' : '/institucional/rodeos.html';
+const _etiquetaTipo = _esComision ? 'Comisión de Asociación' : 'Delegado de Asociación';
+const _etiquetaIdentificacion = _usuarioInst?.asociacion_nombre
+    ? `${_esComision ? 'Comisión' : 'Delegado'} de ${_usuarioInst.asociacion_nombre}`
+    : '';
+
+document.getElementById('nombre-usr').textContent = _etiquetaIdentificacion;
+document.getElementById('link-mis-rodeos').href = _rutaMisRodeos;
+document.getElementById('inp-tipo-usuario').value = _etiquetaTipo;
 
 const params = getQueryParams();
 let esPrimerLogin = params.primer_login === '1';
@@ -129,7 +143,7 @@ async function cambiarPassword(e) {
         });
         mostrarToast('Contraseña actualizada correctamente', 'success');
         if (esPrimerLogin) {
-            setTimeout(() => { window.location.href = '/institucional/rodeos.html'; }, 1200);
+            setTimeout(() => { window.location.href = _rutaMisRodeos; }, 1200);
         } else {
             document.getElementById('inp-pass-actual').value = '';
             document.getElementById('inp-pass-nueva').value = '';

@@ -260,8 +260,15 @@ router.put('/:id/notas-secundarias', async (req, res) => {
         return res.status(400).json({ error: err.message });
     }
 
-    const actualizarComision = Object.prototype.hasOwnProperty.call(req.body, 'nota_comision');
-    const actualizarDelegado = Object.prototype.hasOwnProperty.call(req.body, 'nota_delegado');
+    // Corrección (reportada en producción): el formulario de admin/rodeos.html
+    // SIEMPRE envía ambas claves nota_comision/nota_delegado en el body (aunque
+    // una esté vacía) — usar hasOwnProperty acá las trataba como "editada" sin
+    // importar su valor, así que guardar SOLO la Nota Delegado marcaba también
+    // la Nota Comisión como 'corregida_admin' con valor NULL (nunca hubo
+    // intención real de tocarla). La intención real se refleja en si el valor
+    // YA PARSEADO es un número real, no en si la clave existe en el body.
+    const actualizarComision = nota_comision !== null;
+    const actualizarDelegado = nota_delegado !== null;
     const confirmaSobrescritura = !!req.body.confirma_sobrescritura_historica;
     const motivoReal = (req.body.motivo || '').toString().trim();
 

@@ -72,29 +72,41 @@ router.get('/rodeos', async (req, res) => {
         let juradosPorRodeo = new Map(); // rodeo_id -> [{asignacion_id, nombre}]
         let evaluacionesPorAsignacion = new Map(); // asignacion_id -> fila de comision_evaluaciones_jurado
         let notasPorRodeo = new Map(); // rodeo_id -> fila de rodeo_notas_secundarias
+        let asignacionesAutorizadas = new Set(); // asignacion_id con autorización administrativa 'pendiente' (ronda 3, punto 4)
         if (propios.length > 0) {
             const idsPropios = propios.map(r => r.id);
             const [
                 { data: jurados, error: errJur },
                 { data: evaluaciones, error: errEval },
-                { data: notas, error: errNotas }
+                { data: notas, error: errNotas },
+                { data: autorizaciones, error: errAut }
             ] = await Promise.all([
                 supabase.from('asignaciones').select('id, rodeo_id, usuario_pagado_id, nombre_importado, usuarios_pagados(nombre_completo)')
                     .in('rodeo_id', idsPropios)
                     .eq('tipo_persona', 'jurado')
                     .eq('estado', 'activo')
                     .eq('publicado', true)
-                    .neq('estado_designacion', 'rechazado'),
+                    // Hallazgo (corrección posterior): NULL-segura — una asignación con
+                    // estado_designacion aún NULL (pendiente, nunca rechazada) es vigente
+                    // igual que el resto del sistema nuevo de este módulo (ver fn_designacion_
+                    // vigente de la migración 079). El `<>` desnudo excluía esas filas sin
+                    // querer (NULL <> 'rechazado' nunca es TRUE en Postgres/PostgREST).
+                    .or('estado_designacion.neq.rechazado,estado_designacion.is.null'),
                 supabase.from('comision_evaluaciones_jurado')
                     .select('asignacion_id, nota_individual_calculada, estado, enviada_en, evaluadores_comision(nombre, apellidos)')
                     .in('rodeo_id', idsPropios),
                 supabase.from('rodeo_notas_secundarias')
                     .select('rodeo_id, nota_comision, estado_nota_comision, requiere_revision_admin')
+                    .in('rodeo_id', idsPropios),
+                supabase.from('comision_autorizaciones_evaluacion')
+                    .select('asignacion_id')
                     .in('rodeo_id', idsPropios)
+                    .eq('estado', 'pendiente')
             ]);
             if (errJur) return res.status(500).json({ error: errJur.message });
             if (errEval) return res.status(500).json({ error: errEval.message });
             if (errNotas) return res.status(500).json({ error: errNotas.message });
+            if (errAut) return res.status(500).json({ error: errAut.message });
 
             for (const j of (jurados || [])) {
                 const nombre = j.usuarios_pagados?.nombre_completo || j.nombre_importado || null;
@@ -104,27 +116,40 @@ router.get('/rodeos', async (req, res) => {
             }
             for (const e of (evaluaciones || [])) evaluacionesPorAsignacion.set(e.asignacion_id, e);
             for (const n of (notas || [])) notasPorRodeo.set(n.rodeo_id, n);
+            for (const a of (autorizaciones || [])) asignacionesAutorizadas.add(a.asignacion_id);
         }
 
         const rodeos = propios.map(r => {
+            const notas = notasPorRodeo.get(r.id) || null;
+            const estadoNotaComision = notas?.estado_nota_comision || 'sin_evaluar';
+            // Corrección posterior: antes solo excluía 'historica_sin_desglose' —
+            // ofrecía "Evaluar" también sobre rodeos 'completa'/'corregida_admin' o
+            // con requiere_revision_admin=true, acciones que la RPC real SIEMPRE
+            // rechaza (NOTA_COMISION_CERRADA / REQUIERE_RESOLUCION_ADMINISTRATIVA_
+            // PRIMERO) salvo que exista una autorización administrativa específica
+            // para ESA asignación — esa excepción se aplica por jurado, no por rodeo.
+            const cerradoParaNuevosEnvios = r.estado === 'anulado'
+                || estadoNotaComision === 'historica_sin_desglose'
+                || estadoNotaComision === 'completa'
+                || estadoNotaComision === 'corregida_admin'
+                || !!notas?.requiere_revision_admin;
+
             const jurados = (juradosPorRodeo.get(r.id) || []).map(j => {
                 const ev = evaluacionesPorAsignacion.get(j.asignacion_id) || null;
+                const evaluado = !!ev;
                 return {
                     asignacion_id: j.asignacion_id,
                     nombre: j.nombre,
-                    evaluado: !!ev,
+                    evaluado,
                     nota_individual: ev ? Number(ev.nota_individual_calculada) : null,
                     evaluador_nombre: ev?.evaluadores_comision ? `${ev.evaluadores_comision.nombre} ${ev.evaluadores_comision.apellidos}` : null,
-                    enviada_en: ev?.enviada_en || null
+                    enviada_en: ev?.enviada_en || null,
+                    // Nunca true para un jurado ya evaluado (UNIQUE real igual lo
+                    // rechazaría) ni para un rodeo histórico (sin excepción posible).
+                    evaluacion_disponible: !evaluado && estadoNotaComision !== 'historica_sin_desglose'
+                        && (!cerradoParaNuevosEnvios || asignacionesAutorizadas.has(j.asignacion_id))
                 };
             });
-            const notas = notasPorRodeo.get(r.id) || null;
-            const estadoNotaComision = notas?.estado_nota_comision || 'sin_evaluar';
-            // Nunca se ofrece evaluar un rodeo con Nota Comisión histórica
-            // protegida (sección 10 del pedido) — el backend ya lo rechaza
-            // también en la RPC; esto es solo para que el frontend no
-            // muestre la acción.
-            const evaluacionDisponible = r.estado !== 'anulado' && estadoNotaComision !== 'historica_sin_desglose';
 
             return {
                 id: r.id,
@@ -137,7 +162,10 @@ router.get('/rodeos', async (req, res) => {
                 estado_nota_comision: estadoNotaComision,
                 nota_comision: notas?.nota_comision != null ? Number(notas.nota_comision) : null,
                 requiere_revision_admin: !!notas?.requiere_revision_admin,
-                evaluacion_disponible: evaluacionDisponible
+                // Se conserva a nivel de rodeo (compatibilidad: caso general, sin
+                // contemplar autorizaciones puntuales por jurado) — el frontend usa
+                // el campo por jurado de arriba para la decisión real del botón.
+                evaluacion_disponible: !cerradoParaNuevosEnvios
             };
         });
 

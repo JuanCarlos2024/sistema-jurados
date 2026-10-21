@@ -22,7 +22,7 @@ const CATALOGO = [
 let respuestas;
 function crearChain(tabla) {
     const chain = {};
-    ['select', 'gte', 'lte', 'limit', 'order', 'in', 'neq', 'insert'].forEach(m => { chain[m] = () => chain; });
+    ['select', 'gte', 'lte', 'limit', 'order', 'in', 'neq', 'or', 'insert'].forEach(m => { chain[m] = () => chain; });
     chain.eq = () => chain;
     chain.single = () => Promise.resolve(respuestas[tabla]?.single ?? respuestas[tabla] ?? { data: null, error: null });
     chain.maybeSingle = () => Promise.resolve(respuestas[tabla]?.maybeSingle ?? respuestas[tabla] ?? { data: null, error: null });
@@ -40,6 +40,7 @@ beforeEach(() => {
         asignaciones: { data: [], error: null },
         comision_evaluaciones_jurado: { data: [], error: null },
         rodeo_notas_secundarias: { data: [], error: null },
+        comision_autorizaciones_evaluacion: { data: [], error: null },
         evaluadores_comision: { data: [], error: null }
     };
     supabase.from.mockReset();
@@ -106,10 +107,67 @@ describe('GET /comision/rodeos', () => {
         expect(res.jsonBody.rodeos.length).toBe(1); // solo el de OSORNO
         const r = res.jsonBody.rodeos[0];
         expect(r.jurados).toEqual([
-            { asignacion_id: 'asig-1', nombre: 'Juan Jurado', evaluado: true, nota_individual: 4.6, evaluador_nombre: 'Ana Soto', enviada_en: '2026-09-19T00:00:00Z' },
-            { asignacion_id: 'asig-2', nombre: 'Pedro Pagado', evaluado: false, nota_individual: null, evaluador_nombre: null, enviada_en: null }
+            { asignacion_id: 'asig-1', nombre: 'Juan Jurado', evaluado: true, nota_individual: 4.6, evaluador_nombre: 'Ana Soto', enviada_en: '2026-09-19T00:00:00Z', evaluacion_disponible: false },
+            { asignacion_id: 'asig-2', nombre: 'Pedro Pagado', evaluado: false, nota_individual: null, evaluador_nombre: null, enviada_en: null, evaluacion_disponible: true }
         ]);
         expect(r.estado_nota_comision).toBe('parcial');
+    });
+
+    // Corrección (bug reportado, caso real AGUANEGRA): la asignación de un
+    // jurado puede tener estado_designacion=NULL (pendiente, nunca rechazada)
+    // — el `.neq('estado_designacion','rechazado')` anterior lo excluía sin
+    // querer (en Postgres/PostgREST, NULL <> 'rechazado' nunca es TRUE).
+    test('jurado con estado_designacion=NULL (nunca rechazado) SÍ aparece en el listado', async () => {
+        respuestas.rodeos = { data: [{ id: 'rodeo-1', fecha: '2026-09-18', club: 'Club A', asociacion: 'OSORNO', tipo_rodeo_nombre: 'Provincial', estado: 'activo' }], error: null };
+        respuestas.asignaciones = {
+            data: [{ id: 'asig-null', rodeo_id: 'rodeo-1', usuario_pagado_id: null, nombre_importado: 'Jurado Sin Designacion Explicita', usuarios_pagados: null }],
+            error: null
+        };
+        const res = await llamar('GET', '/rodeos', {}, authComision());
+        const r = res.jsonBody.rodeos.find(x => x.id === 'rodeo-1');
+        expect(r.jurados.map(j => j.nombre)).toContain('Jurado Sin Designacion Explicita');
+    });
+
+    // Corrección (bug reportado): antes se ofrecía "Evaluar" sobre un rodeo
+    // 'completa'/'corregida_admin'/con revisión pendiente, acción que la RPC
+    // real SIEMPRE rechaza (NOTA_COMISION_CERRADA / REQUIERE_RESOLUCION_
+    // ADMINISTRATIVA_PRIMERO) salvo autorización específica por asignación.
+    describe('evaluacion_disponible por jurado — nunca ofrece una acción que la RPC rechazaría', () => {
+        function prepararRodeoCerrado(estadoNotaComision, requiereRevision = false) {
+            respuestas.rodeos = { data: [{ id: 'rodeo-1', fecha: '2026-09-18', club: 'Club A', asociacion: 'OSORNO', tipo_rodeo_nombre: 'Provincial', estado: 'activo' }], error: null };
+            respuestas.asignaciones = {
+                data: [{ id: 'asig-1', rodeo_id: 'rodeo-1', usuario_pagado_id: null, nombre_importado: 'Jurado Sin Evaluar', usuarios_pagados: null }],
+                error: null
+            };
+            respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'rodeo-1', nota_comision: null, estado_nota_comision: estadoNotaComision, requiere_revision_admin: requiereRevision }], error: null };
+        }
+
+        test.each(['completa', 'corregida_admin'])('estado_nota_comision=%s, sin autorización -> evaluacion_disponible=false para el jurado sin evaluar', async (estado) => {
+            prepararRodeoCerrado(estado);
+            const res = await llamar('GET', '/rodeos', {}, authComision());
+            const j = res.jsonBody.rodeos[0].jurados[0];
+            expect(j.evaluado).toBe(false);
+            expect(j.evaluacion_disponible).toBe(false);
+        });
+
+        test('requiere_revision_admin=true, sin autorización -> evaluacion_disponible=false', async () => {
+            prepararRodeoCerrado('parcial', true);
+            const res = await llamar('GET', '/rodeos', {}, authComision());
+            expect(res.jsonBody.rodeos[0].jurados[0].evaluacion_disponible).toBe(false);
+        });
+
+        test('estado_nota_comision=corregida_admin PERO con autorización pendiente para ESA asignación -> evaluacion_disponible=true', async () => {
+            prepararRodeoCerrado('corregida_admin');
+            respuestas.comision_autorizaciones_evaluacion = { data: [{ asignacion_id: 'asig-1' }], error: null };
+            const res = await llamar('GET', '/rodeos', {}, authComision());
+            expect(res.jsonBody.rodeos[0].jurados[0].evaluacion_disponible).toBe(true);
+        });
+
+        test('estado_nota_comision=sin_evaluar (normal, nunca cerrado) -> evaluacion_disponible=true', async () => {
+            prepararRodeoCerrado('sin_evaluar');
+            const res = await llamar('GET', '/rodeos', {}, authComision());
+            expect(res.jsonBody.rodeos[0].jurados[0].evaluacion_disponible).toBe(true);
+        });
     });
 
     test('un rodeo con Nota Comisión histórica -> evaluacion_disponible=false', async () => {
