@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evaluación de Desempeño Jurados — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* ── Filtros (mismo patrón visual que Matriz de Participación) ── */
+        .ed-filtros {
+            display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+            background: #f8f9fa; border: 1px solid var(--gris-borde); border-radius: 8px;
+            padding: 12px 16px; margin-bottom: 14px;
+        }
+        .ed-filtros > div { display: flex; flex-direction: column; gap: 4px; }
+        .ed-label { font-size: 11px; color: var(--gris); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+        .ed-sel { border: 1px solid var(--gris-borde); border-radius: 6px; padding: 5px 10px; font-size: 13px; background: #fff; }
+
+        /* ── Tabla: mismo criterio de scroll ya probado en Matriz de Participación
+           (overflow-x:auto sin overflow-y/max-height, thead sticky top:0, columnas
+           fijas con ancho EXACTO en px para que el left acumulado nunca se desalinee). ── */
+        .ed-tabla-wrap { overflow-x: auto; overflow-y: visible; border: 1px solid var(--gris-borde); border-radius: 8px; }
+        .ed-tabla { border-collapse: collapse; min-width: 100%; font-size: 12px; background: #fff; }
+        .ed-tabla thead { position: sticky; top: 0; z-index: 20; box-shadow: 0 2px 4px rgba(0,0,0,.07); }
+        .ed-tabla thead tr { background: #f5f7fa; }
+
+        :root { --ed-zona-fija-ancho: 352px; }
+        .ed-th-fija, .ed-td-fija { position: sticky; box-sizing: border-box; background: #fff; }
+        .ed-th-fija { background: #1a3c6e; color: #fff; z-index: 25; }
+        .ed-td-fija { z-index: 6; }
+        .ed-col-n         { left: 0px;   width: 48px;  min-width: 48px;  max-width: 48px; }
+        .ed-col-jurado    { left: 48px;  width: 220px; min-width: 220px; max-width: 220px; }
+        .ed-col-categoria { left: 268px; width: 84px;  min-width: 84px;  max-width: 84px; }
+        .ed-th-fija.ed-col-categoria { border-right: 2px solid #0f2547; }
+        .ed-td-fija.ed-col-categoria { border-right: 2px solid #d5dae0; box-shadow: 3px 0 6px rgba(0,0,0,.08); }
+
+        .ed-tabla th { padding: 8px 10px; white-space: nowrap; font-size: 11px; cursor: pointer; user-select: none; }
+        .ed-tabla th.ed-th-fija { cursor: default; }
+        .ed-tabla th.sortable:hover { background: #e8eef7; }
+        .ed-arrow { font-size: 9px; margin-left: 2px; opacity: .7; }
+        .ed-tabla td { padding: 7px 10px; vertical-align: top; }
+        .ed-tabla tbody tr { border-bottom: 1px solid #f0f0f0; }
+        .ed-tabla tbody tr:hover { background: #fafbfc; }
+        .ed-tabla tbody tr:hover .ed-td-fija { background: #f7f8fb; }
+
+        .ed-badge { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+        .ed-ni { color: #bbb; font-style: italic; }
+        .ed-editable { cursor: pointer; border-bottom: 1px dashed #aaa; }
+        .ed-editable:hover { background: #fff6e0; }
+
+        .ed-resumen { font-size: 12px; color: var(--gris); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+        .ed-nota-metodologica { font-size: 11px; color: var(--gris); background: #f8f9fa; border: 1px solid var(--gris-borde); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; line-height: 1.5; }
+        .ed-empty { text-align: center; padding: 48px 20px; color: var(--gris); }
+        .ed-empty-icon { font-size: 40px; margin-bottom: 10px; }
+        .ed-spinner { text-align: center; padding: 40px; color: var(--gris); font-size: 13px; }
+
+        .ed-modal-textarea { width: 100%; min-height: 160px; font-family: inherit; font-size: 13px; padding: 8px; border: 1px solid var(--gris-borde); border-radius: 6px; resize: vertical; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Evaluación de Desempeño Jurados</h1>
+            </div>
+            <div class="topbar-acciones">
+                <span style="font-size:12px;color:var(--gris);">Consolidado de desempeño por jurado en el período</span>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="ed-filtros">
+                <div>
+                    <label class="ed-label">Desde</label>
+                    <input type="date" id="ed-desde" class="ed-sel">
+                </div>
+                <div>
+                    <label class="ed-label">Hasta</label>
+                    <input type="date" id="ed-hasta" class="ed-sel">
+                </div>
+                <div>
+                    <label class="ed-label">Categoría</label>
+                    <select id="ed-cat" class="ed-sel">
+                        <option value="">Todas las categorías</option>
+                        <option value="A">Categoría A</option>
+                        <option value="B">Categoría B</option>
+                        <option value="C">Categoría C</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="ed-label">Buscar jurado</label>
+                    <input type="text" id="ed-search" class="ed-sel" placeholder="Nombre..." style="width:200px;"
+                        onkeydown="if(event.key==='Enter') cargarReporte()">
+                </div>
+                <div style="display:flex;align-items:flex-end;gap:6px;">
+                    <button class="btn btn-primario btn-pequeño" onclick="cargarReporte()">Cargar reporte</button>
+                </div>
+            </div>
+
+            <div id="ed-area">
+                <div class="ed-empty">
+                    <div class="ed-empty-icon">🧮</div>
+                    <p>Seleccione un período y presione <strong>Cargar reporte</strong>.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Análisis Técnico -->
+<div class="modal-overlay oculto" id="ed-modal-analisis">
+    <div class="modal-confirmar" style="max-width:560px;text-align:left;">
+        <h3 style="margin-top:0;" id="ed-modal-titulo">Análisis técnico</h3>
+        <div style="font-size:12px;color:var(--gris);margin-bottom:10px;" id="ed-modal-subtitulo"></div>
+        <textarea class="ed-modal-textarea" id="ed-modal-texto" maxlength="8000" placeholder="Escriba el análisis técnico del desempeño de este jurado en el período..."></textarea>
+        <div id="ed-modal-error" class="alerta alerta-error oculto" style="margin-top:8px;"></div>
+        <div class="modal-acciones">
+            <button class="btn btn-secundario" onclick="cerrarModalAnalisis()">Cancelar</button>
+            <button class="btn btn-primario" id="ed-modal-guardar" onclick="guardarAnalisisTecnico()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+
+// ─── Período por defecto: año calendario en curso hasta hoy ───────────────
+(function poblarPeriodoDefault() {
+    const hoy = new Date().toISOString().slice(0, 10);
+    document.getElementById('ed-desde').value = hoy.slice(0, 4) + '-01-01';
+    document.getElementById('ed-hasta').value = hoy;
+})();
+
+const COLORES_CAT = { A: '#2980b9', B: '#27ae60', C: '#e67e22' };
+
+let _reporteData = null;
+let _reporteParams = null;
+let _orderActual = 'total_rodeos_desc';
+
+const COLUMNAS = [
+    { key: 'altera_resultado',       label: 'Altera resultado',          ordKey: 'altera_resultado' },
+    { key: 'total_rodeos',           label: 'Total rodeos período',       ordKey: 'total_rodeos' },
+    { key: 'pct_alterado_individual',label: '% rodeos alterados 1-3 L.', ordKey: 'pct_alterado' },
+    { key: 'pct_alterado_categoria', label: '% alterado por categoría',   ordKey: 'pct_categoria' },
+    { key: 'wsp',                    label: 'Total consultas WSP',        ordKey: 'wsp_total' },
+    { key: 'mal_jurado',             label: 'Mal jurado',                 ordKey: 'mal_jurado' },
+    { key: 'nota_delegado_promedio', label: 'Nota prom. Delegado',        ordKey: 'nota_delegado' },
+    { key: 'nota_comision_promedio', label: 'Nota prom. Comisión',        ordKey: 'nota_comision' },
+    { key: 'promedio_d_com',         label: 'Promedio D + Com.',          ordKey: 'promedio_d_com' },
+    { key: 'nota_ad_promedio',       label: 'Nota prom. Área Deportiva',  ordKey: 'nota_ad' },
+    { key: 'promedio_categoria_ad',  label: 'Promedio categoría (AD)',    ordKey: 'promedio_categoria_ad' },
+    { key: 'analisis_tecnico',       label: 'Análisis técnico',           ordKey: null }
+];
+
+async function cargarReporte() {
+    const area = document.getElementById('ed-area');
+    const desde = document.getElementById('ed-desde').value;
+    const hasta = document.getElementById('ed-hasta').value;
+    if (!desde || !hasta) { alert('Seleccione un período (Desde / Hasta).'); return; }
+
+    area.innerHTML = '<div class="ed-spinner">Cargando reporte...</div>';
+
+    const categoria = document.getElementById('ed-cat').value || '';
+    const search = document.getElementById('ed-search').value.trim() || '';
+
+    const params = new URLSearchParams({ desde, hasta, order: _orderActual });
+    if (categoria) params.set('categoria', categoria);
+    if (search) params.set('search', search);
+    _reporteParams = params.toString();
+
+    try {
+        const d = await api.get(`/admin/evaluacion-desempeno?${_reporteParams}`);
+        _reporteData = d;
+        renderReporte(d);
+    } catch (e) {
+        area.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar el reporte')}</div>`;
+    }
+}
+
+function cambiarOrden(ordKey) {
+    if (!ordKey) return;
+    const actualAsc = _orderActual === ordKey + '_asc';
+    _orderActual = actualAsc ? ordKey + '_desc' : ordKey + '_asc';
+    cargarReporte();
+}
+
+function flechaOrden(ordKey) {
+    if (!ordKey) return '';
+    if (_orderActual === ordKey + '_asc') return '<span class="ed-arrow">▲</span>';
+    if (_orderActual === ordKey + '_desc') return '<span class="ed-arrow">▼</span>';
+    return '<span class="ed-arrow" style="opacity:.25;">⇅</span>';
+}
+
+function fmtNota(v) {
+    return (v === null || v === undefined) ? '<span class="ed-ni">N.I.</span>' : v.toFixed(1);
+}
+function fmtPct(v) {
+    return (v === null || v === undefined) ? '<span class="ed-ni">N.I.</span>' : v.toFixed(1) + '%';
+}
+
+function renderReporte(d) {
+    const area = document.getElementById('ed-area');
+    const { filas, periodo } = d;
+
+    if (!filas || filas.length === 0) {
+        area.innerHTML = `<div class="ed-empty"><div class="ed-empty-icon">🔍</div><p>Sin jurados para los filtros seleccionados.</p></div>`;
+        return;
+    }
+
+    let thFijas = `
+        <th class="ed-th-fija ed-col-n">N°</th>
+        <th class="ed-th-fija ed-col-jurado">Jurado</th>
+        <th class="ed-th-fija ed-col-categoria">Categoría</th>`;
+    let thMoviles = COLUMNAS.map(c => {
+        if (c.key === 'wsp') {
+            // Columna combinada ("18 (2 rodeos)") — permite ordenar por total de
+            // consultas O por cantidad de rodeos con consultas por separado,
+            // sin duplicar la columna visible (pedido explícito).
+            return `<th>${c.label}<br>
+                <span class="sortable" style="font-size:9px;" onclick="event.stopPropagation(); cambiarOrden('wsp_total')">Total${flechaOrden('wsp_total')}</span>
+                &nbsp;|&nbsp;
+                <span class="sortable" style="font-size:9px;" onclick="event.stopPropagation(); cambiarOrden('wsp_rodeos')">N° rodeos${flechaOrden('wsp_rodeos')}</span>
+            </th>`;
+        }
+        return `<th class="${c.ordKey ? 'sortable' : ''}" onclick="cambiarOrden(${c.ordKey ? `'${c.ordKey}'` : 'null'})">${c.label}${flechaOrden(c.ordKey)}</th>`;
+    }).join('');
+
+    const filasHtml = filas.map((f, i) => {
+        const col = COLORES_CAT[f.categoria] || '#aaa';
+        const wspTxt = `${f.consultas_wsp_total} (${f.consultas_wsp_rodeos} rodeo${f.consultas_wsp_rodeos === 1 ? '' : 's'})`;
+        const malJuradoTxt = f.mal_jurado ?? '<span class="ed-ni">Sin registrar</span>';
+        const analisisBtn = f.analisis_tecnico
+            ? `<button class="btn btn-pequeño btn-outline" onclick='abrirModalAnalisis(${JSON.stringify(f.usuario_pagado_id)}, ${JSON.stringify(f.nombre)}, ${JSON.stringify(f.analisis_tecnico)}, ${JSON.stringify(f.manual_actualizado_en)})'>Modificar</button>`
+            : `<button class="btn btn-pequeño btn-primario" onclick='abrirModalAnalisis(${JSON.stringify(f.usuario_pagado_id)}, ${JSON.stringify(f.nombre)}, null, ${JSON.stringify(f.manual_actualizado_en)})'>Ingresar</button>`;
+        const analisisPreview = f.analisis_tecnico
+            ? `<div style="font-size:10px;color:var(--gris);max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${sanitizar(f.analisis_tecnico)}</div>`
+            : '';
+
+        return `<tr>
+            <td class="ed-td-fija ed-col-n" style="text-align:center;color:var(--gris);">${i + 1}</td>
+            <td class="ed-td-fija ed-col-jurado" style="font-weight:600;">${sanitizar(f.nombre)}</td>
+            <td class="ed-td-fija ed-col-categoria">
+                ${f.categoria ? `<span class="ed-badge" style="background:${col}22;color:${col};">${f.categoria}</span>` : '<span class="ed-ni">—</span>'}
+            </td>
+            <td style="text-align:center;">${f.altera_resultado}</td>
+            <td style="text-align:center;">${f.total_rodeos}</td>
+            <td style="text-align:center;">${fmtPct(f.pct_alterado_individual)}</td>
+            <td style="text-align:center;">${fmtPct(f.pct_alterado_categoria)}</td>
+            <td style="white-space:nowrap;">${wspTxt}</td>
+            <td class="ed-editable" style="text-align:center;" onclick='editarMalJurado(${JSON.stringify(f.usuario_pagado_id)}, ${f.mal_jurado ?? 'null'}, ${JSON.stringify(f.manual_actualizado_en)}, this)'>${malJuradoTxt}</td>
+            <td style="text-align:center;">${fmtNota(f.nota_delegado_promedio)}</td>
+            <td style="text-align:center;">${fmtNota(f.nota_comision_promedio)}</td>
+            <td style="text-align:center;font-weight:600;">${fmtNota(f.promedio_d_com)}</td>
+            <td style="text-align:center;">${fmtNota(f.nota_ad_promedio)}</td>
+            <td style="text-align:center;">${fmtNota(f.promedio_categoria_ad)}</td>
+            <td style="min-width:160px;">${analisisBtn}${analisisPreview}</td>
+        </tr>`;
+    }).join('');
+
+    const fmtFecha = x => x ? x.slice(8, 10) + '/' + x.slice(5, 7) + '/' + x.slice(0, 4) : '';
+
+    area.innerHTML = `
+    <div class="ed-nota-metodologica">
+        <strong>Nota metodológica:</strong> "Altera resultado" y "Consultas WSP" provienen de un registro POR RODEO (no por jurado individual)
+        y se atribuyen a cada jurado que participó en ese rodeo — no implican responsabilidad personal ni que la consulta fue dirigida a él.
+        "Nota Delegado" también es una nota del rodeo completo, atribuida igual a cada participante. "Nota Comisión" y "Nota Área Deportiva"
+        sí son evaluaciones individuales por jurado. "% alterado por categoría" se calcula según la metodología documentada en el pedido original
+        (suma de rodeos alterados de la categoría / suma de rodeos de la categoría), pendiente de verificación contra una fuente oficial externa.
+    </div>
+    <div class="ed-resumen">
+        <div><strong>${filas.length}</strong> jurado(s) &nbsp;·&nbsp; Período: ${fmtFecha(periodo.desde)} al ${fmtFecha(periodo.hasta)}</div>
+        <button class="btn btn-exito btn-pequeño" onclick="exportarExcel()" style="font-size:12px;background:#1e8449;color:#fff;">⬇ Exportar Excel</button>
+    </div>
+    <div class="ed-tabla-wrap">
+        <table class="ed-tabla">
+            <thead><tr>${thFijas}${thMoviles}</tr></thead>
+            <tbody>${filasHtml}</tbody>
+        </table>
+    </div>`;
+}
+
+async function exportarExcel() {
+    if (!_reporteParams) return;
+    const fecha = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    try {
+        await api.descargar(`/admin/evaluacion-desempeno/excel?${_reporteParams}`, `Evaluacion_Desempeno_Jurados_${fecha}.xlsx`);
+    } catch (e) {
+        alert('Error al exportar Excel: ' + (e.message || e));
+    }
+}
+
+// ─── Mal jurado: edición inline ────────────────────────────────────────────
+function editarMalJurado(usuarioId, valorActual, actualizadoEnEsperado, celda) {
+    if (celda.querySelector('input')) return; // ya está en edición
+    const original = celda.innerHTML;
+    celda.innerHTML = `<input type="number" min="0" step="1" value="${valorActual ?? ''}"
+        style="width:60px;text-align:center;" class="ed-sel">`;
+    const input = celda.querySelector('input');
+    input.focus();
+    input.select();
+
+    const confirmar = async () => {
+        const raw = input.value.trim();
+        if (raw !== '' && (!/^\d+$/.test(raw))) {
+            alert('Mal jurado debe ser un entero mayor o igual a cero.');
+            celda.innerHTML = original;
+            return;
+        }
+        try {
+            const resultado = await api.put(`/admin/evaluacion-desempeno/manual/${usuarioId}`, {
+                periodo_desde: document.getElementById('ed-desde').value,
+                periodo_hasta: document.getElementById('ed-hasta').value,
+                actualizar_mal_jurado: true,
+                mal_jurado: raw === '' ? null : Number(raw),
+                actualizar_analisis_tecnico: false,
+                actualizado_en_esperado: actualizadoEnEsperado
+            });
+            celda.textContent = resultado.mal_jurado ?? '';
+            celda.setAttribute('onclick', `editarMalJurado(${JSON.stringify(usuarioId)}, ${resultado.mal_jurado ?? 'null'}, ${JSON.stringify(resultado.actualizado_en)}, this)`);
+            if (resultado.mal_jurado === null || resultado.mal_jurado === undefined) {
+                celda.innerHTML = '<span class="ed-ni">Sin registrar</span>';
+            }
+        } catch (e) {
+            alert(e.message || 'Error al guardar Mal jurado');
+            celda.innerHTML = original;
+        }
+    };
+
+    input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') confirmar();
+        if (ev.key === 'Escape') celda.innerHTML = original;
+    });
+    input.addEventListener('blur', confirmar);
+}
+
+// ─── Análisis técnico: modal ────────────────────────────────────────────────
+let _analisisCtx = null;
+function abrirModalAnalisis(usuarioId, nombre, textoActual, actualizadoEnEsperado) {
+    _analisisCtx = { usuarioId, actualizadoEnEsperado };
+    document.getElementById('ed-modal-titulo').textContent = textoActual ? 'Modificar análisis técnico' : 'Ingresar análisis técnico';
+    document.getElementById('ed-modal-subtitulo').textContent =
+        `${nombre} — Período: ${document.getElementById('ed-desde').value} a ${document.getElementById('ed-hasta').value}`;
+    document.getElementById('ed-modal-texto').value = textoActual || '';
+    document.getElementById('ed-modal-error').classList.add('oculto');
+    document.getElementById('ed-modal-analisis').classList.remove('oculto');
+}
+function cerrarModalAnalisis() {
+    document.getElementById('ed-modal-analisis').classList.add('oculto');
+    _analisisCtx = null;
+}
+async function guardarAnalisisTecnico() {
+    if (!_analisisCtx) return;
+    const texto = document.getElementById('ed-modal-texto').value;
+    const errEl = document.getElementById('ed-modal-error');
+    errEl.classList.add('oculto');
+    try {
+        await api.put(`/admin/evaluacion-desempeno/manual/${_analisisCtx.usuarioId}`, {
+            periodo_desde: document.getElementById('ed-desde').value,
+            periodo_hasta: document.getElementById('ed-hasta').value,
+            actualizar_mal_jurado: false,
+            actualizar_analisis_tecnico: true,
+            analisis_tecnico: texto.trim() === '' ? null : texto,
+            actualizado_en_esperado: _analisisCtx.actualizadoEnEsperado
+        });
+        cerrarModalAnalisis();
+        cargarReporte();
+    } catch (e) {
+        errEl.textContent = e.message || 'Error al guardar el análisis técnico';
+        errEl.classList.remove('oculto');
+    }
+}
+</script>
+</body>
+</html>

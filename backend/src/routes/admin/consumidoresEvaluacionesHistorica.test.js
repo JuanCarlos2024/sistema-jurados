@@ -123,6 +123,7 @@ describe('guarda de regresión: cada consulta a evaluaciones fue revisada semán
         'routes/admin/rodeos.js': [1, 2],                   // detalle: separa evaluacion / evaluacion_historica
         'routes/usuario/evaluaciones.js': [6, 4],           // portal del jurado: no ve históricas (listado, detalle, resultado, comentar)
         'services/informeGestion/cargaDatos.js': [1, 1],    // Informe de Gestión: base de evaluaciones
+        'services/evaluacionDesempenoJurados.js': [1, 1],   // Evaluación de Desempeño Jurados: filtra es_historica_importacion=false (y anulada=false) — un rodeo histórico importado no tiene evaluación técnica real detrás, no debe contar como "altera resultado" ni aportar casos_whatsapp
         'services/motorPropuestaDesignacion.js': [1, 1],    // métricas de rendimiento: histórica ≠ "sin alteración"
         'services/evaluacionCreacion.js': [2, 3],           // creación/conversión: necesita ver la histórica
         'services/importacionHistorica.js': [1, 0],         // importación: DEBE ver históricas y normales para comparar Casos por WhatsApp

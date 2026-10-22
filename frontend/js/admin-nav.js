@@ -7,6 +7,7 @@
         { s: 'Principal' },
         { href: '/admin/dashboard.html',               icon: '📊', label: 'Dashboard' },
         { href: '/admin/matriz-participacion.html',    icon: '🗂️', label: 'Matriz de Participación' },
+        { href: '/admin/evaluacion-desempeno.html',    icon: '🧮', label: 'Evaluación de Desempeño Jurados' },
         { s: 'Personas' },
         { href: '/admin/usuarios.html',            icon: '👥', label: 'Jurados y Delegados' },
         { href: '/admin/delegados-asociacion.html', icon: '🏛️', label: 'Delegados de Asociación' },

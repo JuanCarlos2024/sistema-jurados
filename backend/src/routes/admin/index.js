@@ -40,6 +40,7 @@ router.use('/analisis-preguntas', require('./analisis-preguntas'));
 router.use('/capacitaciones', require('./capacitaciones'));
 router.use('/reportes', require('./reportes'));
 router.use('/dashboard', require('./dashboard'));
+router.use('/evaluacion-desempeno', require('./evaluacion-desempeno'));
 router.use('/adjuntos', require('./adjuntos'));
 router.use('/cartillas-jurado', require('./cartillas-jurado'));
 router.use('/cartillas-delegado', require('./cartillas-delegado'));
