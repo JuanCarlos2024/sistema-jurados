@@ -29,7 +29,8 @@ const MIGRACIONES = [
     '078_gestion_acceso_cuentas_institucionales.sql',
     '028_rodeo_notas_secundarias.sql',
     '079_comision_asociacion.sql',
-    '080_notas_decimales_comision.sql'
+    '080_notas_decimales_comision.sql',
+    '082_comision_promedio_simple.sql'
 ];
 
 let db;
@@ -205,14 +206,19 @@ describe('2) Evaluadores de Comisión', () => {
     });
 });
 
-describe('3) Fórmula Movimiento a la Rienda — casos de referencia', () => {
-    test('sin rienda: 6,5,4,3 -> 4.6', async () => {
+describe('3) Fórmula promedio simple (082) — casos de referencia', () => {
+    // Hasta la migración 082 esta fórmula usaba ponderación fija (20/30/40/10
+    // sin rienda, 16/24/32/8/20 con rienda) y estos mismos casos daban 4.6/5.1
+    // (ver comentario histórico en 079). Desde 082, todos los criterios
+    // puntuables pesan lo mismo (promedio simple) — ver
+    // comisionPromedioSimple.rpc.test.js para la cobertura dedicada.
+    test('sin rienda: 6,5,4,3 -> 4.5 (promedio de 4)', async () => {
         const { rows } = await db.query('select fn_calcular_nota_individual_comision(6,5,4,3,false,null) as n');
-        expect(Number(rows[0].n)).toBeCloseTo(4.6, 5);
+        expect(Number(rows[0].n)).toBeCloseTo(4.5, 5);
     });
-    test('con rienda: 6,5,4,3,7 -> 5.1', async () => {
+    test('con rienda: 6,5,4,3,7 -> 5.0 (promedio de 5)', async () => {
         const { rows } = await db.query('select fn_calcular_nota_individual_comision(6,5,4,3,true,7) as n');
-        expect(Number(rows[0].n)).toBeCloseTo(5.1, 5);
+        expect(Number(rows[0].n)).toBeCloseTo(5.0, 5);
     });
 });
 
@@ -226,7 +232,7 @@ describe('4) Envío de evaluación individual y consolidación', () => {
         await crearJurado(rodeo, 'Jurado Dos'); // segundo jurado vigente, aún sin evaluar
 
         const res = await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id });
-        expect(Number(res.nota_individual_calculada)).toBeCloseTo(4.6, 5);
+        expect(Number(res.nota_individual_calculada)).toBeCloseTo(4.5, 5); // (6+5+4+3)/4
 
         const { rows } = await db.query('select estado_nota_comision, nota_comision from rodeo_notas_secundarias where rodeo_id=$1', [rodeo]);
         expect(rows[0].estado_nota_comision).toBe('parcial');
@@ -241,12 +247,12 @@ describe('4) Envío de evaluación individual y consolidación', () => {
         const j1 = await crearJurado(rodeo, 'Jurado A');
         const j2 = await crearJurado(rodeo, 'Jurado B');
 
-        await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 }); // 4.6
+        await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 }); // 4.5
         await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j2, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 7, cancha: 7, atajadas: 7, cuarta: 7 }); // 7.0
 
         const { rows } = await db.query('select estado_nota_comision, nota_comision from rodeo_notas_secundarias where rodeo_id=$1', [rodeo]);
         expect(rows[0].estado_nota_comision).toBe('completa');
-        expect(Number(rows[0].nota_comision)).toBeCloseTo(5.8, 5); // avg(4.6, 7.0) = 5.8
+        expect(Number(rows[0].nota_comision)).toBeCloseTo(5.8, 5); // avg(4.5, 7.0) = 5.75 -> round(5.75,1) = 5.8
     });
 
     test('rechaza una segunda evaluación para la MISMA asignación (409 / unique_violation) — rodeo con 2 jurados, nunca llega a "completa"', async () => {
@@ -644,7 +650,7 @@ describe('10) Corrección administrativa de evaluación individual (Hallazgo 10)
         const rodeo = await crearRodeo();
         const j1 = await crearJurado(rodeo);
         const original = await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 });
-        expect(Number(original.nota_individual_calculada)).toBeCloseTo(4.6, 5);
+        expect(Number(original.nota_individual_calculada)).toBeCloseTo(4.5, 5); // (6+5+4+3)/4
 
         const notaGeneralAntes = (await db.query('select nota_comision from rodeo_notas_secundarias where rodeo_id=$1', [rodeo])).rows[0].nota_comision;
 
@@ -931,7 +937,7 @@ describe('13) Ronda 4 — reactivación indebida, identidad de la autorización,
         // Permanece desvinculada, con su contenido histórico intacto (nunca se tocó).
         fila = (await db.query('select estado, nota_individual_calculada from comision_evaluaciones_jurado where id=$1', [original.id])).rows[0];
         expect(fila.estado).toBe('desvinculada_por_cambio_designacion');
-        expect(Number(fila.nota_individual_calculada)).toBeCloseTo(4.6, 5); // nunca cambió a 7
+        expect(Number(fila.nota_individual_calculada)).toBeCloseTo(4.5, 5); // (6+5+4+3)/4, nunca cambió a 7
 
         // Y nunca participa de nuevo en una futura consolidación.
         const cuentaComoDefinitiva = await db.query(
@@ -1133,22 +1139,26 @@ describe('13) Ronda 4 — reactivación indebida, identidad de la autorización,
 });
 
 describe('15) Migración 080 — notas con un decimal (1.0-7.0) en los 5 criterios', () => {
-    test('fn_calcular_nota_individual_comision acepta decimales y pondera igual que con enteros (sin rienda)', async () => {
-        // 6.5*0.20 + 5.5*0.30 + 4.5*0.40 + 3.5*0.10 = 1.3+1.65+1.8+0.35 = 5.1
+    // Nota (082): fn_calcular_nota_individual_comision pasó de ponderación fija
+    // a promedio simple — los valores esperados de esta sección ya reflejan
+    // esa fórmula (ver comisionPromedioSimple.rpc.test.js para la cobertura
+    // dedicada del cambio de fórmula en sí).
+    test('fn_calcular_nota_individual_comision acepta decimales y promedia igual que con enteros (sin rienda)', async () => {
+        // (6.5+5.5+4.5+3.5)/4 = 20/4 = 5.0
         const { rows } = await db.query('select fn_calcular_nota_individual_comision(6.5,5.5,4.5,3.5,false,null) as n');
-        expect(Number(rows[0].n)).toBeCloseTo(5.1, 5);
+        expect(Number(rows[0].n)).toBeCloseTo(5.0, 5);
     });
 
     test('fn_calcular_nota_individual_comision acepta decimales con rienda decimal', async () => {
-        // 6.5*0.16 + 5.5*0.24 + 4.5*0.32 + 3.5*0.08 + 7.0*0.20 = 1.04+1.32+1.44+0.28+1.4 = 5.48 -> 5.5
+        // (6.5+5.5+4.5+3.5+7.0)/5 = 27/5 = 5.4
         const { rows } = await db.query('select fn_calcular_nota_individual_comision(6.5,5.5,4.5,3.5,true,7.0) as n');
-        expect(Number(rows[0].n)).toBeCloseTo(5.5, 5);
+        expect(Number(rows[0].n)).toBeCloseTo(5.4, 5);
     });
 
-    test('un valor de rienda decimal distinto (6.5 en vez de 7) cambia el resultado respecto al caso de referencia 6,5,4,3,7 -> 5.1 (demuestra que el decimal realmente se usa, no se trunca)', async () => {
-        // 6*0.16 + 5*0.24 + 4*0.32 + 3*0.08 + 6.5*0.20 = 0.96+1.2+1.28+0.24+1.3 = 4.98 -> 5.0
+    test('un valor de rienda decimal distinto (6.5 en vez de 7) cambia el resultado respecto al caso de referencia 6,5,4,3,7 -> 5.4 (demuestra que el decimal realmente se usa, no se trunca)', async () => {
+        // (6+5+4+3+6.5)/5 = 24.5/5 = 4.9
         const { rows } = await db.query('select fn_calcular_nota_individual_comision(6,5,4,3,true,6.5) as n');
-        expect(Number(rows[0].n)).toBeCloseTo(5.0, 5);
+        expect(Number(rows[0].n)).toBeCloseTo(4.9, 5);
     });
 
     test('enviar_evaluacion_comision_jurado_con_auditoria acepta los 5 criterios con decimal y los guarda exactos (NUMERIC(2,1))', async () => {
@@ -1161,7 +1171,7 @@ describe('15) Migración 080 — notas con un decimal (1.0-7.0) en los 5 criteri
             rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id,
             apinadero: 6.5, cancha: 5.5, atajadas: 4.5, cuarta: 3.5, huboRienda: true, rienda: 7.0
         });
-        expect(Number(res.nota_individual_calculada)).toBeCloseTo(5.5, 5);
+        expect(Number(res.nota_individual_calculada)).toBeCloseTo(5.4, 5);
 
         const { rows } = await db.query(
             'select nota_apinadero, nota_cancha, nota_atajadas, nota_cuarta_carrera, nota_rienda from comision_evaluaciones_jurado where id=$1',
@@ -1182,16 +1192,17 @@ describe('15) Migración 080 — notas con un decimal (1.0-7.0) en los 5 criteri
         const j1 = await crearJurado(rodeo, 'Jurado Uno Decimal');
         const j2 = await crearJurado(rodeo, 'Jurado Dos Decimal');
 
-        // 6.5*0.20+5.5*0.30+4.5*0.40+3.5*0.10 = 5.1
+        // (6.5+5.5+4.5+3.5)/4 = 5.0
         await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6.5, cancha: 5.5, atajadas: 4.5, cuarta: 3.5 });
         // 7,7,7,7 sin rienda -> 7.0
         await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j2, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 7, cancha: 7, atajadas: 7, cuarta: 7 });
 
         const { rows } = await db.query('select estado_nota_comision, nota_comision from rodeo_notas_secundarias where rodeo_id=$1', [rodeo]);
         expect(rows[0].estado_nota_comision).toBe('completa');
-        // avg(5.1, 7.0) = 6.05 -> round(6.05, 1) = 6.1 (Postgres redondea la mitad hacia arriba),
-        // mismo round() final de siempre en fn_recalcular_consolidacion_comision_rodeo, sin cambios.
-        expect(Number(rows[0].nota_comision)).toBeCloseTo(6.1, 5);
+        // avg(5.0, 7.0) = 6.0 -> round(6.0, 1) = 6.0, mismo round() final de siempre en
+        // fn_recalcular_consolidacion_comision_rodeo (sin cambios: sigue promediando la
+        // columna YA almacenada, nunca recalcula desde los criterios crudos).
+        expect(Number(rows[0].nota_comision)).toBeCloseTo(6.0, 5);
     });
 
     test('corregir_evaluacion_individual_comision_con_auditoria acepta decimales y recalcula server-side', async () => {
@@ -1201,24 +1212,24 @@ describe('15) Migración 080 — notas con un decimal (1.0-7.0) en los 5 criteri
         const rodeo = await crearRodeo();
         const j1 = await crearJurado(rodeo);
         const original = await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 });
-        expect(Number(original.nota_individual_calculada)).toBeCloseTo(4.6, 5);
+        expect(Number(original.nota_individual_calculada)).toBeCloseTo(4.5, 5); // (6+5+4+3)/4
 
         const { rows } = await db.query(
             "select * from corregir_evaluacion_individual_comision_con_auditoria($1,6.5,5.5,4.5,3.5,false,null,'corrección con decimales',$2)",
             [original.id, ADMIN_ID]
         );
-        expect(Number(rows[0].nota_individual_calculada)).toBeCloseTo(5.1, 5);
+        expect(Number(rows[0].nota_individual_calculada)).toBeCloseTo(5.0, 5); // (6.5+5.5+4.5+3.5)/4
         expect(rows[0].estado).toBe('corregida_admin');
     });
 
-    test('las evaluaciones enteras ya existentes (6,5,4,3 etc.) siguen funcionando igual tras la 080 — compatibilidad hacia atrás', async () => {
+    test('las evaluaciones enteras ya existentes (6,5,4,3 etc.) siguen funcionando igual tras la 080/082 — compatibilidad hacia atrás', async () => {
         const asoc = await crearAsociacion();
         const comision = await crearCuenta(asoc, 'comision_asociacion');
         const ev = await crearEvaluador(asoc, comision.id, 'cuenta_institucional');
         const rodeo = await crearRodeo();
         const j1 = await crearJurado(rodeo);
         const res = await enviarEvaluacion({ rodeoId: rodeo, asignacionId: j1, asociacionId: asoc, evaluadorId: ev.id, cuentaId: comision.id, apinadero: 6, cancha: 5, atajadas: 4, cuarta: 3 });
-        expect(Number(res.nota_individual_calculada)).toBeCloseTo(4.6, 5);
+        expect(Number(res.nota_individual_calculada)).toBeCloseTo(4.5, 5); // (6+5+4+3)/4
         const { rows } = await db.query('select nota_apinadero from comision_evaluaciones_jurado where id=$1', [res.id]);
         expect(Number(rows[0].nota_apinadero)).toBe(6); // entero almacenado como NUMERIC(2,1) = 6.0, mismo valor
     });

@@ -167,11 +167,14 @@ if (api.getUsuario()?.rol_institucional !== 'comision_asociacion') {
 }
 document.getElementById('nombre-usr').textContent = api.getUsuario()?.asociacion_nombre ? `Comisión de ${api.getUsuario().asociacion_nombre}` : '';
 
+// Comisión de Asociación (082): todos los criterios puntuables pesan lo
+// mismo (promedio simple) — por eso ya no se muestra ninguna ponderación
+// junto al nombre de cada pregunta. Ver fn_calcular_nota_individual_comision.
 const CRITERIOS = [
-    { key: 'apinadero', label: 'Apiñadero — 20%', desc: 'Sanciona correctamente las faltas de apiñadero.' },
-    { key: 'cancha', label: 'Cancha — 30%', desc: 'Sanciona correctamente las faltas en la cancha, incluida la zona de postura.' },
-    { key: 'atajadas', label: 'Atajadas — 40%', desc: 'Identifica las atajadas válidas, justifica las no válidas y sanciona correctamente las faltas producidas en la atajada.' },
-    { key: 'cuarta', label: 'Cuarta carrera — 10%', desc: 'Sanciona correctamente las faltas de la cuarta carrera y entrega del novillo.' }
+    { key: 'apinadero', label: 'Apiñadero', desc: 'Sanciona correctamente las faltas de apiñadero.' },
+    { key: 'cancha', label: 'Cancha', desc: 'Sanciona correctamente las faltas en la cancha, incluida la zona de postura.' },
+    { key: 'atajadas', label: 'Atajadas', desc: 'Identifica las atajadas válidas, justifica las no válidas y sanciona correctamente las faltas producidas en la atajada.' },
+    { key: 'cuarta', label: 'Cuarta carrera', desc: 'Sanciona correctamente las faltas de la cuarta carrera y entrega del novillo.' }
 ];
 
 const ETIQUETA_ESTADO_NOTA = {
@@ -430,14 +433,15 @@ function calcularNotaPreview() {
     const { apinadero, cancha, atajadas, cuarta } = _valores;
     if ([apinadero, cancha, atajadas, cuarta].some(v => v === undefined)) return null;
     if (_huboRienda && _valorRienda === null) return null;
-    let nota;
-    if (_huboRienda) {
-        nota = apinadero * 0.16 + cancha * 0.24 + atajadas * 0.32 + cuarta * 0.08 + _valorRienda * 0.20;
-    } else {
-        nota = apinadero * 0.20 + cancha * 0.30 + atajadas * 0.40 + cuarta * 0.10;
-    }
-    // Vista previa únicamente — la nota OFICIAL siempre la recalcula el backend.
-    return Math.round(nota * 10) / 10;
+    // Comisión de Asociación (082): promedio simple — todos los criterios
+    // puntuables pesan lo mismo (1/4 sin Rienda, 1/5 con Rienda), calculado
+    // dinámicamente (suma / cantidad), nunca con porcentajes fijos.
+    // Vista previa únicamente — la nota OFICIAL siempre la recalcula el
+    // backend (fn_calcular_nota_individual_comision).
+    let suma = apinadero + cancha + atajadas + cuarta;
+    let cantidad = 4;
+    if (_huboRienda) { suma += _valorRienda; cantidad = 5; }
+    return Math.round((suma / cantidad) * 10) / 10;
 }
 
 function mostrarResumenEvaluacion() {
