@@ -302,6 +302,7 @@
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/rodeoDesignarResumen.js"></script>
+<script src="/js/notasSecundariasSobrescritura.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
 protegerRuta('administrador');
@@ -1084,8 +1085,54 @@ async function guardarDatosMonitor(rodeoId) {
     }
 }
 
-async function guardarNotasSecundarias(rodeoId) {
+// Modal de corrección administrativa de una Nota Comisión protegida
+// (histórica/completa/ya corregida) — mismo patrón visual que
+// confirmarDesignacionConAdvertencia, pero exige un MOTIVO real en vez de
+// un checkbox: el backend (actualizar_notas_secundarias_con_auditoria,
+// Hallazgo 7) rechaza la sobrescritura si el motivo viene vacío o es un
+// texto genérico — nunca se permite "confirmar" sin una razón escrita por
+// el administrador. Devuelve el motivo (string) o null si canceló.
+function confirmarSobrescrituraNotaComision({ comisionAntes, comisionDespues, delegadoAntes, delegadoDespues, cambiaDelegado }) {
+    return new Promise(resolve => {
+        const fmt = (v) => (v === null || v === undefined) ? '—' : Number(v).toFixed(1);
+        const lineaDelegado = cambiaDelegado
+            ? `<div style="font-size:13px; margin-top:6px;">Nota Delegado (se guardará junto con esta corrección): <strong>${fmt(delegadoAntes)} → ${fmt(delegadoDespues)}</strong></div>`
+            : '';
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-confirmar" style="max-width:480px; text-align:left;">
+                <div style="font-size:16px; font-weight:700; color:#c0392b; margin-bottom:10px;">⚠ Nota Comisión protegida</div>
+                <div style="font-size:13px; margin-bottom:4px;">Esta Nota Comisión ya se encuentra registrada (histórica, completa o ya corregida).</div>
+                <div style="font-size:13px; margin-top:8px;">Nota actual: <strong>${fmt(comisionAntes)}</strong></div>
+                <div style="font-size:13px;">Nueva nota: <strong>${fmt(comisionDespues)}</strong></div>
+                ${lineaDelegado}
+                <label class="form-label" style="display:block; margin-top:14px;">Motivo de la corrección <span style="color:var(--gris); font-weight:400;">(obligatorio)</span></label>
+                <textarea id="ns-motivo-sobrescritura" class="form-control" rows="3" placeholder="Explique por qué corrige esta nota manualmente..."></textarea>
+                <div id="ns-motivo-error" class="alerta alerta-error oculto" style="margin-top:8px;">El motivo es obligatorio.</div>
+                <div class="modal-acciones">
+                    <button class="btn btn-secundario" id="btn-ns-cancelar">Cancelar</button>
+                    <button class="btn btn-peligro" id="btn-ns-confirmar">Confirmar cambio</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#btn-ns-cancelar').onclick = () => { overlay.remove(); resolve(null); };
+        overlay.querySelector('#btn-ns-confirmar').onclick = () => {
+            const motivo = overlay.querySelector('#ns-motivo-sobrescritura').value.trim();
+            if (!NotasSecundariasSobrescritura.motivoValido(motivo)) {
+                overlay.querySelector('#ns-motivo-error').classList.remove('oculto');
+                return;
+            }
+            overlay.remove();
+            resolve(motivo);
+        };
+    });
+}
+
+async function guardarNotasSecundarias(rodeoId, confirmaSobrescritura = false, motivo = null) {
     const getNum = (id) => { const v = document.getElementById(id)?.value.trim(); if (!v) return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const inputComision = document.getElementById('ns-comision');
+    const inputDelegado = document.getElementById('ns-delegado');
     const nota_comision = getNum('ns-comision');
     const nota_delegado = getNum('ns-delegado');
     if (nota_comision !== null && (nota_comision < 1 || nota_comision > 7)) {
@@ -1095,9 +1142,32 @@ async function guardarNotasSecundarias(rodeoId) {
         return mostrarError({ message: 'Nota Delegado debe estar entre 1.0 y 7.0' });
     }
     try {
-        await api.put(`/admin/rodeos/${rodeoId}/notas-secundarias`, { nota_comision, nota_delegado });
+        const body = NotasSecundariasSobrescritura.construirPayload({
+            notaComision: nota_comision, notaDelegado: nota_delegado, confirmaSobrescritura, motivo
+        });
+        await api.put(`/admin/rodeos/${rodeoId}/notas-secundarias`, body);
         mostrarToast('Notas secundarias guardadas', 'success');
     } catch (e) {
+        const accion = NotasSecundariasSobrescritura.decidirAccionError({
+            codigo: e?.data?.code, esMonitor, esDirector
+        });
+        if (accion === 'error_bloqueado_rol') {
+            return mostrarError({ message: 'Esta Nota Comisión está protegida. Solo un administrador pleno puede sobrescribirla.' });
+        }
+        if (accion === 'pedir_confirmacion') {
+            // Valor "antes" = el que trae el formulario al abrirse (defaultValue
+            // del input, nunca se altera al escribir); nunca una suposición.
+            const comisionAntesTexto = inputComision?.defaultValue?.trim();
+            const delegadoAntesTexto = inputDelegado?.defaultValue?.trim();
+            const comisionAntes = comisionAntesTexto ? parseFloat(comisionAntesTexto) : null;
+            const delegadoAntes = delegadoAntesTexto ? parseFloat(delegadoAntesTexto) : null;
+            const cambiaDelegado = NotasSecundariasSobrescritura.cambioDelegado({ delegadoAntes, delegadoDespues: nota_delegado });
+            const motivoConfirmado = await confirmarSobrescrituraNotaComision({
+                comisionAntes, comisionDespues: nota_comision, delegadoAntes, delegadoDespues: nota_delegado, cambiaDelegado
+            });
+            if (motivoConfirmado === null) return; // canceló: no se guarda nada
+            return guardarNotasSecundarias(rodeoId, true, motivoConfirmado);
+        }
         mostrarError(e);
     }
 }
