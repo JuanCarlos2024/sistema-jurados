@@ -257,13 +257,16 @@ router.post('/regularizar-distancia', async (req, res) => {
         return res.json({ mensaje: 'No hay asignaciones activas con km. Nada que regularizar.', creados: 0, corregidos: 0, omitidos: 0 });
     }
 
-    // 3. Cargar bonos activos (no rechazados) de esas asignaciones
+    // 3. Cargar bonos activos (no rechazados, no desvinculados por un
+    // reemplazo de jurado — Fase 1B: esa fila congela al titular anterior,
+    // nunca se reescribe) de esas asignaciones
     const ids = asigs.map(a => a.id);
     const { data: bonos, error: errB } = await supabase
         .from('bonos_solicitados')
         .select('id, asignacion_id, estado, distancia_declarada, monto_solicitado')
         .in('asignacion_id', ids)
         .neq('estado', 'rechazado')
+        .neq('estado', 'desvinculado_por_cambio_designacion')
         .order('created_at', { ascending: false });
     if (errB) return res.status(500).json({ error: 'Error leyendo bonos_solicitados: ' + errB.message });
 

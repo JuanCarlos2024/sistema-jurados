@@ -32,12 +32,15 @@ async function upsertBonoDistanciaAdmin(asigId, usuarioPagadoId, km, ahora) {
     const monto   = config ? config.monto : 0;
     const nuevoEstado = esAuto ? 'aprobado_auto' : 'pendiente';
 
-    // Buscar bono activo (no rechazado) más reciente para esta asignación
+    // Buscar bono activo (no rechazado, no desvinculado por un reemplazo de
+    // jurado — Fase 1B: ese estado congela la fila del titular anterior,
+    // nunca debe reabrirse ni reescribirse aquí) más reciente para esta asignación
     const { data: bonosExist } = await supabase
         .from('bonos_solicitados')
         .select('id, estado, distancia_declarada')
         .eq('asignacion_id', asigId)
         .neq('estado', 'rechazado')
+        .neq('estado', 'desvinculado_por_cambio_designacion')
         .order('created_at', { ascending: false })
         .limit(1);
     const existing = bonosExist?.[0];
@@ -95,6 +98,58 @@ async function upsertBonoDistanciaAdmin(asigId, usuarioPagadoId, km, ahora) {
 
     console.log(`[BONO-ADMIN] asig=${asigId} km=${km} estado=${nuevoEstado} bono=${bonoCreado?.id} config=${config ? config.nombre + ' $' + monto : 'null'}`);
     return { mensajeBono, bonoCreado };
+}
+
+// ─── Helper: disponibilidad declarada + cruce de fechas con otro rodeo ────
+// Fase 1B — POST /:id/reemplazar: mismo criterio ya usado por POST / (crear
+// asignación) más abajo en este archivo, generalizado a un solo candidato +
+// excluyendo la propia asignación que se está reemplazando (su rodeo es el
+// mismo rodeo que se está validando, así que nunca debe contar como
+// "cruce"). El PATCH /:id anterior al reemplazo transaccional NUNCA
+// verificaba esto al cambiar de persona — se cierra ese vacío acá, en el
+// camino nuevo, sin tocar el PATCH (que ya no permite cambios de persona).
+async function validarDisponibilidadYCruceFechas(usuarioPagadoId, rodeoId, rodeoFecha, rodeoDuracionDias, asignacionIdExcluir) {
+    if (!rodeoFecha) return { ok: true };
+
+    const duracion = rodeoDuracionDias || 1;
+    const fechasRodeo = [];
+    const base = new Date(rodeoFecha + 'T00:00:00Z');
+    for (let i = 0; i < duracion; i++) {
+        const d = new Date(base);
+        d.setUTCDate(base.getUTCDate() + i);
+        fechasRodeo.push(d.toISOString().slice(0, 10));
+    }
+    const fechaFin = fechasRodeo[fechasRodeo.length - 1];
+
+    const { data: dispRows } = await supabase
+        .from('disponibilidad_usuarios')
+        .select('fecha')
+        .eq('usuario_pagado_id', usuarioPagadoId)
+        .in('fecha', fechasRodeo);
+    const dispSet = new Set((dispRows || []).map(d => d.fecha));
+    if (!fechasRodeo.every(f => dispSet.has(f))) {
+        return { ok: false, motivo: 'El jurado nuevo no tiene disponibilidad declarada para todas las fechas de este rodeo.' };
+    }
+
+    const { data: otrasAsig } = await supabase
+        .from('asignaciones')
+        .select('id, rodeos!inner(fecha, duracion_dias, club)')
+        .eq('usuario_pagado_id', usuarioPagadoId)
+        .neq('rodeo_id', rodeoId)
+        .neq('estado', 'anulado');
+    for (const a of (otrasAsig || [])) {
+        if (a.id === asignacionIdExcluir) continue;
+        const rf = a.rodeos?.fecha;
+        const rd = a.rodeos?.duracion_dias || 1;
+        if (!rf) continue;
+        const rfFin = new Date(rf + 'T00:00:00Z');
+        rfFin.setUTCDate(rfFin.getUTCDate() + rd - 1);
+        const rfFinStr = rfFin.toISOString().slice(0, 10);
+        if (rfFinStr >= rodeoFecha && rf <= fechaFin) {
+            return { ok: false, motivo: `El jurado nuevo ya está asignado a otro rodeo en fechas que se cruzan (${a.rodeos?.club || ''} — ${rf}).` };
+        }
+    }
+    return { ok: true };
 }
 
 // POST /api/admin/asignaciones — crear una o varias asignaciones para un rodeo
@@ -262,9 +317,28 @@ router.post('/', async (req, res) => {
     });
 });
 
+// GET /api/admin/asignaciones/motivos-designacion — catálogo de motivos
+// activos (Fase 1B), para poblar el selector del reemplazo transaccional.
+router.get('/motivos-designacion', async (req, res) => {
+    const { data, error } = await supabase
+        .from('catalogo_motivos_designacion')
+        .select('id, codigo, etiqueta')
+        .eq('activo', true)
+        .order('orden');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ motivos: data || [] });
+});
+
 // PATCH /api/admin/asignaciones/:id — editar una asignación
-// Acepta: usuario_pagado_id (cambio de persona), observacion, valor_diario_aplicado (override manual),
-//         distancia_km (genera/actualiza bono pendiente)
+// Acepta: observacion, valor_diario_aplicado (override manual), distancia_km
+// (genera/actualiza bono pendiente).
+//
+// Fase 1B: este PATCH YA NO acepta cambios de usuario_pagado_id — todo
+// cambio de persona debe pasar por POST /:id/reemplazar (requiere motivo,
+// queda registrado en bitacora_designaciones, atómico). Se cierra aquí el
+// camino que antes permitía cambiar la identidad del jurado sin historial.
+// El resto de los campos (observación, override de tarifa, km) sigue
+// funcionando exactamente igual que antes — nada de esto cambia.
 router.patch('/:id', async (req, res) => {
     const { usuario_pagado_id, observacion, valor_diario_aplicado, distancia_km } = req.body;
 
@@ -277,9 +351,16 @@ router.patch('/:id', async (req, res) => {
     if (!anterior) return res.status(404).json({ error: 'Asignación no encontrada' });
     if (anterior.estado === 'anulado') return res.status(400).json({ error: 'No se puede editar una asignación anulada' });
 
-    // Asignación HISTÓRICA importada (pago 0, ya pagada fuera del sistema): se bloquea todo lo que toque el pago — cambio de persona
-    // (recalcula categoría/tarifa/pago), override del valor diario y kilometraje (genera bono de distancia). La observación sigue editable.
-    const tocaPago = (usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id) || valor_diario_aplicado !== undefined || distancia_km !== undefined;
+    if (usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id) {
+        return res.status(409).json({
+            error: 'Para cambiar la persona asignada use el reemplazo transaccional (requiere motivo y queda registrado en la bitácora): POST /:id/reemplazar.',
+            code: 'USAR_ENDPOINT_REEMPLAZO'
+        });
+    }
+
+    // Asignación HISTÓRICA importada (pago 0, ya pagada fuera del sistema): se bloquea todo lo que toque el pago —
+    // override del valor diario y kilometraje (genera bono de distancia). La observación sigue editable.
+    const tocaPago = valor_diario_aplicado !== undefined || distancia_km !== undefined;
     if (tocaPago && await esAsignacionHistoricaImportada(supabase, anterior)) {
         return res.status(409).json({ error: MENSAJE_PAGO_ASIGNACION_HISTORICA });
     }
@@ -287,29 +368,7 @@ router.patch('/:id', async (req, res) => {
     const cambios = { updated_at: new Date().toISOString() };
     if (observacion !== undefined) cambios.observacion = observacion;
 
-    // Cambio de persona asignada
-    if (usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id) {
-        const { data: usuario } = await supabase
-            .from('usuarios_pagados')
-            .select('id, nombre_completo, tipo_persona, categoria, activo')
-            .eq('id', usuario_pagado_id)
-            .single();
-
-        if (!usuario || !usuario.activo) {
-            return res.status(400).json({ error: 'Usuario no encontrado o inactivo' });
-        }
-
-        const tarifas = await obtenerTarifas();
-        const duracion = anterior.rodeos?.duracion_dias || anterior.duracion_dias_aplicada;
-        const calculo = calcularPagoBase(usuario.tipo_persona, usuario.categoria, duracion, tarifas);
-
-        cambios.usuario_pagado_id = usuario_pagado_id;
-        cambios.tipo_persona = usuario.tipo_persona;
-        cambios.nombre_importado = usuario.nombre_completo;
-        cambios.categoria_aplicada = calculo.categoria_aplicada;
-        cambios.valor_diario_aplicado = calculo.valor_diario_aplicado;
-        cambios.pago_base_calculado = calculo.pago_base_calculado;
-    } else if (valor_diario_aplicado !== undefined) {
+    if (valor_diario_aplicado !== undefined) {
         // Override manual del valor diario (sin cambiar persona)
         const vd = parseFloat(valor_diario_aplicado);
         if (isNaN(vd) || vd < 0) return res.status(400).json({ error: 'valor_diario_aplicado inválido' });
@@ -323,12 +382,8 @@ router.patch('/:id', async (req, res) => {
         const km = parseInt(distancia_km);
         if (isNaN(km) || km <= 0) return res.status(400).json({ error: 'distancia_km debe ser un número positivo' });
         cambios.distancia_km = km;
-        // Si se cambió la persona, usar el nuevo usuario_pagado_id para el bono
-        const uidParaBono = (usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id)
-            ? usuario_pagado_id
-            : anterior.usuario_pagado_id;
         const ahora = new Date().toISOString();
-        const { mensajeBono } = await upsertBonoDistanciaAdmin(req.params.id, uidParaBono, km, ahora);
+        const { mensajeBono } = await upsertBonoDistanciaAdmin(req.params.id, anterior.usuario_pagado_id, km, ahora);
         mensajeKm = mensajeBono;
     }
 
@@ -348,13 +403,11 @@ router.patch('/:id', async (req, res) => {
         tabla: 'asignaciones',
         registro_id: req.params.id,
         accion: 'editar',
-        datos_anteriores: { usuario_pagado_id: anterior.usuario_pagado_id, pago_base_calculado: anterior.pago_base_calculado },
+        datos_anteriores: { pago_base_calculado: anterior.pago_base_calculado },
         datos_nuevos: cambios,
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: usuario_pagado_id && usuario_pagado_id !== anterior.usuario_pagado_id
-            ? `Persona reasignada en rodeo ${anterior.rodeo_id}`
-            : 'Asignación editada',
+        descripcion: 'Asignación editada',
         ip_address: req.ip
     });
 
@@ -363,6 +416,134 @@ router.patch('/:id', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/admin/asignaciones/:id/comentario-admin  (Monitor no puede)
+// POST /api/admin/asignaciones/:id/reemplazar — Fase 1B: reemplazo
+// transaccional de jurado con trazabilidad en bitacora_designaciones.
+//
+// A diferencia del PATCH de arriba (que sigue intacto, sin tocar, para no
+// romper ningún flujo existente), este endpoint es la UNICA vía que conecta
+// un cambio de jurado con la bitácora: la actualización de la asignación y
+// el registro histórico se confirman o fallan JUNTOS, en una sola
+// transacción de Postgres (RPC reemplazar_jurado_asignacion_con_bitacora,
+// migración 084). Requiere motivo del catálogo — nunca un reemplazo sin
+// motivo. Solo aplica a tipo_persona='jurado' (el Delegado Rentado sigue
+// usando exclusivamente el PATCH existente).
+//
+// body: { usuario_pagado_id_nuevo, motivo_codigo, motivo_detalle?,
+//          usuario_pagado_id_anterior_esperado?, tipo_movimiento?,
+//          fecha_efectiva?, operacion_id? }
+router.post('/:id/reemplazar', async (req, res) => {
+    const {
+        usuario_pagado_id_nuevo, motivo_codigo, motivo_detalle,
+        usuario_pagado_id_anterior_esperado, tipo_movimiento, fecha_efectiva, operacion_id
+    } = req.body;
+
+    if (!usuario_pagado_id_nuevo) return res.status(400).json({ error: 'usuario_pagado_id_nuevo es requerido' });
+    if (!motivo_codigo) return res.status(400).json({ error: 'motivo_codigo es requerido' });
+
+    const { data: anterior } = await supabase
+        .from('asignaciones')
+        .select('*, rodeos(fecha, duracion_dias)')
+        .eq('id', req.params.id)
+        .single();
+    if (!anterior) return res.status(404).json({ error: 'Asignación no encontrada' });
+    if (anterior.tipo_persona !== 'jurado') {
+        return res.status(400).json({ error: 'Este reemplazo transaccional solo aplica a asignaciones de jurado' });
+    }
+
+    const { data: motivo } = await supabase
+        .from('catalogo_motivos_designacion')
+        .select('id, activo')
+        .eq('codigo', motivo_codigo)
+        .maybeSingle();
+    if (!motivo || !motivo.activo) return res.status(400).json({ error: 'motivo_codigo inválido o inactivo' });
+
+    const { data: nuevoJurado } = await supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, tipo_persona, categoria, activo')
+        .eq('id', usuario_pagado_id_nuevo)
+        .single();
+    if (!nuevoJurado || !nuevoJurado.activo || nuevoJurado.tipo_persona !== 'jurado') {
+        return res.status(400).json({ error: 'Usuario no encontrado, inactivo, o no es jurado' });
+    }
+
+    const disponibilidad = await validarDisponibilidadYCruceFechas(
+        usuario_pagado_id_nuevo, anterior.rodeo_id, anterior.rodeos?.fecha, anterior.rodeos?.duracion_dias, req.params.id
+    );
+    if (!disponibilidad.ok) return res.status(409).json({ error: disponibilidad.motivo, code: 'CRUCE_DISPONIBILIDAD' });
+
+    let calculo;
+    try {
+        const tarifas = await obtenerTarifas();
+        const duracion = anterior.rodeos?.duracion_dias || anterior.duracion_dias_aplicada;
+        calculo = calcularPagoBase(nuevoJurado.tipo_persona, nuevoJurado.categoria, duracion, tarifas);
+    } catch (err) {
+        return res.status(500).json({ error: 'No se pudo calcular el pago: ' + err.message });
+    }
+
+    const { data, error } = await supabase.rpc('reemplazar_jurado_asignacion_con_bitacora', {
+        p_asignacion_id: req.params.id,
+        p_usuario_pagado_id_nuevo: usuario_pagado_id_nuevo,
+        p_categoria_aplicada_nueva: calculo.categoria_aplicada,
+        p_valor_diario_aplicado_nuevo: calculo.valor_diario_aplicado,
+        p_pago_base_calculado_nuevo: calculo.pago_base_calculado,
+        p_motivo_catalogo_id: motivo.id,
+        p_actor_id: req.usuario.id,
+        p_tipo_movimiento: tipo_movimiento || 'reemplazo',
+        p_usuario_pagado_id_anterior_esperado: usuario_pagado_id_anterior_esperado || null,
+        p_motivo_detalle: motivo_detalle || null,
+        p_fecha_efectiva: fecha_efectiva || null,
+        p_operacion_id: operacion_id || null
+    });
+
+    if (error) {
+        const msg = error.message || '';
+        if (msg.includes('ASIGNACION_NO_ENCONTRADA')) return res.status(404).json({ error: 'Asignación no encontrada' });
+        if (msg.includes('SOLO_JURADO')) return res.status(400).json({ error: 'Este reemplazo transaccional solo aplica a asignaciones de jurado' });
+        if (msg.includes('ASIGNACION_ANULADA')) return res.status(400).json({ error: 'No se puede reemplazar una asignación anulada' });
+        if (msg.includes('CONFLICTO_DESIGNACION_MODIFICADA')) {
+            return res.status(409).json({ error: 'La asignación ya fue modificada por otro administrador. Vuelva a cargar los datos e intente de nuevo.', code: 'CONFLICTO_DESIGNACION_MODIFICADA' });
+        }
+        if (msg.includes('MOTIVO_INVALIDO')) return res.status(400).json({ error: 'El motivo indicado no existe o está inactivo' });
+        if (msg.includes('JURADO_NUEVO_INVALIDO')) return res.status(400).json({ error: 'El jurado nuevo no existe, está inactivo, o no es jurado' });
+        if (msg.includes('JURADO_NUEVO_IGUAL_AL_ANTERIOR')) return res.status(400).json({ error: 'El jurado nuevo es el mismo que ya está designado' });
+        if (msg.includes('ANTECEDENTE_SENSIBLE_NOTA')) {
+            return res.status(409).json({ error: 'Esta asignación ya tiene una nota de rodeo registrada — el reemplazo requiere un procedimiento administrativo aparte, todavía no habilitado.', code: 'ANTECEDENTE_SENSIBLE_NOTA' });
+        }
+        if (msg.includes('ANTECEDENTE_SENSIBLE_BONO')) {
+            return res.status(409).json({ error: 'Esta asignación tiene un bono de distancia activo — el reemplazo requiere un procedimiento administrativo aparte, todavía no habilitado.', code: 'ANTECEDENTE_SENSIBLE_BONO' });
+        }
+        if (msg.includes('ANTECEDENTE_SENSIBLE_CARTILLA')) {
+            return res.status(409).json({ error: 'Esta asignación ya tiene una cartilla de jurado registrada — el reemplazo requiere un procedimiento administrativo aparte, todavía no habilitado.', code: 'ANTECEDENTE_SENSIBLE_CARTILLA' });
+        }
+        if (msg.includes('CRUCE_DISPONIBILIDAD')) {
+            // La propia RPC también puede detectar esto bajo su advisory lock
+            // (carrera real entre dos reemplazos concurrentes) — el chequeo
+            // de arriba en este endpoint es solo un aviso rápido, no la
+            // garantía; esta rama cubre el caso en que la RPC es quien lo detecta.
+            return res.status(409).json({ error: 'El jurado nuevo ya está asignado a otro rodeo en fechas que se cruzan.', code: 'CRUCE_DISPONIBILIDAD' });
+        }
+        if (msg.includes('JURADO_YA_DESIGNADO_EN_RODEO')) {
+            return res.status(409).json({ error: 'El jurado nuevo ya está designado vigente en este mismo rodeo, en otra asignación.', code: 'JURADO_YA_DESIGNADO_EN_RODEO' });
+        }
+        if (msg.includes('TIPO_MOVIMIENTO_NO_PERMITIDO')) return res.status(400).json({ error: 'tipo_movimiento inválido para un reemplazo transaccional' });
+        return res.status(500).json({ error: error.message });
+    }
+
+    await auditoria.registrar({
+        tabla: 'asignaciones',
+        registro_id: req.params.id,
+        accion: 'editar',
+        datos_anteriores: { usuario_pagado_id: data.usuario_pagado_id_anterior, nombre: data.nombre_anterior_snapshot },
+        datos_nuevos: { usuario_pagado_id: usuario_pagado_id_nuevo, nombre: nuevoJurado.nombre_completo, motivo: motivo_codigo },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Reemplazo transaccional de jurado (bitácora ${data.bitacora_id}) — motivo: ${motivo_codigo}`,
+        ip_address: req.ip
+    });
+
+    res.json({ asignacion: data.asignacion, bitacora_id: data.bitacora_id });
+});
+
 router.patch('/:id/comentario-admin', soloNoMonitor, async (req, res) => {
     const { comentario_admin } = req.body;
 

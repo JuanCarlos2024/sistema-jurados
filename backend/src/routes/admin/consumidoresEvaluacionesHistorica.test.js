@@ -170,8 +170,13 @@ describe('protección de pagos históricos: PATCH /admin/asignaciones/:id y PATC
     const patch = (body, url = '/AS1') => llamarRouter(router(), { metodo: 'PATCH', url, params: { id: 'AS1' }, body });
     const fila = () => mockDb.tablas.asignaciones[0];
 
+    // Fase 1B (revisión correctiva, punto 1): un cambio de usuario_pagado_id
+    // vía este PATCH ahora se rechaza SIEMPRE con USAR_ENDPOINT_REEMPLAZO,
+    // ANTES de llegar a verificar si la asignación es histórica — por eso
+    // ya no forma parte de este test.each (que prueba específicamente la
+    // protección de pagos históricos sobre los demás campos). Ver el test
+    // dedicado más abajo para la interacción histórica + cambio de jurado.
     test.each([
-        ['cambio de jurado (recalcula categoría, tarifa y pago)', { usuario_pagado_id: 'J2' }],
         ['override del valor diario', { valor_diario_aplicado: 60000 }],
         ['kilometraje (genera bono de distancia)', { distancia_km: 400 }],
         ['combinación con observación', { observacion: 'x', valor_diario_aplicado: 1 }]
@@ -183,6 +188,14 @@ describe('protección de pagos históricos: PATCH /admin/asignaciones/:id y PATC
         expect(fila()).toMatchObject({ pago_base_calculado: 0, valor_diario_aplicado: 0, usuario_pagado_id: 'J1', observacion: null, distancia_km: null });
         expect(mockDb.llamadas('asignaciones', 'update')).toEqual([]);
         expect(mockDb.tablas.bonos_solicitados).toEqual([]);
+    });
+    test('cambio de jurado vía este PATCH → siempre 409 USAR_ENDPOINT_REEMPLAZO, sea o no histórica (el guard corre antes del chequeo histórico)', async () => {
+        preparar(ASIG({ importacion_id: 'IMP-H' }));
+        const r = await patch({ usuario_pagado_id: 'J2' });
+        expect(r.statusCode).toBe(409);
+        expect(r.body.code).toBe('USAR_ENDPOINT_REEMPLAZO');
+        expect(fila().usuario_pagado_id).toBe('J1');
+        expect(mockDb.llamadas('asignaciones', 'update')).toEqual([]);
     });
     test('asignación histórica: los campos puramente administrativos NO se bloquean (observación; misma persona)', async () => {
         preparar(ASIG({ importacion_id: 'IMP-H' }));
@@ -196,16 +209,20 @@ describe('protección de pagos históricos: PATCH /admin/asignaciones/:id y PATC
         expect(r.statusCode).toBe(409); expect(r.body.error).toBe(MSG);
         expect(mockDb.tablas.bonos_solicitados).toEqual([]); expect(fila().distancia_km).toBeNull();
     });
-    test('asignación NORMAL: cambio de jurado, override de valor diario y /km siguen funcionando igual', async () => {
+    test('asignación NORMAL: override de valor diario y /km siguen funcionando igual que antes', async () => {
         preparar(ASIG({ pago_base_calculado: 50 }));
-        let r = await patch({ usuario_pagado_id: 'J2' });
-        expect(r.statusCode).toBe(200);
-        expect(fila()).toMatchObject({ usuario_pagado_id: 'J2', pago_base_calculado: 100000, valor_diario_aplicado: 50000 });
-        r = await patch({ valor_diario_aplicado: 30000 });
+        let r = await patch({ valor_diario_aplicado: 30000 });
         expect(r.statusCode).toBe(200);
         expect(fila()).toMatchObject({ valor_diario_aplicado: 30000, pago_base_calculado: 60000 });
         r = await patch({ distancia_km: 120 }, '/AS1/km');
         expect(r.statusCode).toBe(200); expect(fila().distancia_km).toBe(120);
+    });
+    test('asignación NORMAL: cambio de jurado vía PATCH → 409 USAR_ENDPOINT_REEMPLAZO (Fase 1B, punto 1) — nunca cambia la persona', async () => {
+        preparar(ASIG({ pago_base_calculado: 50 }));
+        const r = await patch({ usuario_pagado_id: 'J2' });
+        expect(r.statusCode).toBe(409);
+        expect(r.body.code).toBe('USAR_ENDPOINT_REEMPLAZO');
+        expect(fila().usuario_pagado_id).toBe('J1');
     });
     test('otro tipo de importación y origen importado sin importación histórica NO se bloquean por error', async () => {
         preparar(ASIG({ importacion_id: 'IMP-R', rodeos: { duracion_dias: 2, origen: 'importado' } }));

@@ -28,7 +28,8 @@ function estadoBono(estado) {
         aprobado:      { clase: 'bono-aprobado',     texto: 'Aprobado' },
         rechazado:     { clase: 'bono-rechazado',    texto: 'Rechazado' },
         modificado:    { clase: 'bono-modificado',   texto: 'Modificado' },
-        aprobado_auto: { clase: 'bono-aprobado-auto', texto: 'Sin bono ($0)' }
+        aprobado_auto: { clase: 'bono-aprobado-auto', texto: 'Sin bono ($0)' },
+        desvinculado_por_cambio_designacion: { clase: 'bono-rechazado', texto: 'Desvinculado (reemplazo de jurado)' }
     };
     return mapa[estado] || { clase: '', texto: estado };
 }

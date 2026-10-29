@@ -860,6 +860,7 @@ function htmlDetalle(r) {
             <td>
                 ${!esMonitor && !esComisionRodeos && a.estado === 'activo' ? `<div class="flex gap-8" style="flex-wrap:wrap;">
                     <button class="btn btn-pequeño btn-outline" onclick="abrirEditarAsignacion('${a.id}', '${r.id}')">Editar</button>
+                    ${a.tipo_persona === 'jurado' ? `<button class="btn btn-pequeño" style="background:#fdf2e9;color:#a04000;border:1px solid #f5cba7;" onclick="abrirReemplazarJurado('${a.id}', '${r.id}')" title="Reemplazar jurado con trazabilidad en bitácora">Reemplazar</button>` : ''}
                     <button class="btn btn-pequeño" style="background:#e8f4fd;color:#2980b9;border:1px solid #aed6f1;" onclick="abrirGestionarDesignacion('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${a.estado_designacion || 'null'}', '${r.id}')">Designación</button>
                     <button class="btn btn-pequeño" style="background:${a.comentario_admin ? '#fef9e7' : '#f8f9fa'};color:${a.comentario_admin ? '#7d6608' : '#555'};border:1px solid ${a.comentario_admin ? '#f9d423' : '#ccc'};" onclick="abrirComentarioAdmin('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${r.id}')" title="${a.comentario_admin ? 'Tiene comentario' : 'Sin comentario'}">📝${a.comentario_admin ? ' ·' : ''}</button>
                     <button class="btn btn-pequeño btn-peligro" onclick="confirmarEliminarAsignacion('${a.id}', '${sanitizar(a.usuarios_pagados?.nombre_completo || a.nombre_importado || '')}', '${r.id}')">Eliminar</button>
@@ -1697,19 +1698,11 @@ async function abrirEditarAsignacion(asigId, rodeoId) {
 
         <form onsubmit="guardarEdicionAsignacion(event, '${asigId}', '${rodeoId}')">
             <div class="form-grupo">
-                <label class="form-label">Cambiar persona asignada</label>
-                <input type="text" id="ea-buscar" class="form-control" placeholder="Buscar por nombre (dejar vacío para no cambiar)" oninput="buscarPersonaEditar(this.value)">
-                <div id="ea-resultados" style="margin-top:6px;"></div>
-                <input type="hidden" id="ea-usr-id" value="">
-                <div id="ea-persona-sel" class="alerta alerta-info oculto" style="margin-top:6px; margin-bottom:0;"></div>
-            </div>
-
-            <div class="form-grupo">
                 <label class="form-label">Override valor diario (opcional)</label>
                 <input type="number" id="ea-valor-diario" class="form-control"
                     placeholder="Ej: ${asig.valor_diario_aplicado} — dejar vacío para usar tarifa automática"
                     min="0">
-                <div class="form-hint">Solo aplica si no cambia la persona. Si cambia la persona, se usa su tarifa de categoría.</div>
+                <div class="form-hint">Para cambiar la persona asignada, use el botón "Reemplazar" (requiere motivo y queda registrado en la bitácora).</div>
             </div>
 
             <div class="form-grupo">
@@ -1732,53 +1725,22 @@ async function abrirEditarAsignacion(asigId, rodeoId) {
         </form>`;
 }
 
-let eaBuscarTimer;
-async function buscarPersonaEditar(q) {
-    clearTimeout(eaBuscarTimer);
-    const res = document.getElementById('ea-resultados');
-    if (q.length < 2) { res.innerHTML = ''; return; }
-    eaBuscarTimer = setTimeout(async () => {
-        const data = await api.get('/admin/usuarios?buscar=' + encodeURIComponent(q) + '&activo=true&limit=8');
-        if (!data?.data?.length) { res.innerHTML = '<div class="texto-gris" style="font-size:13px;">Sin resultados</div>'; return; }
-        res.innerHTML = data.data.map(u => `
-            <div onclick="seleccionarPersonaEditar('${u.id}','${sanitizar(u.nombre_completo)}','${u.tipo_persona}','${u.categoria||''}')"
-                 style="padding:8px 12px; cursor:pointer; border:1px solid var(--gris-borde); border-radius:6px; margin-bottom:4px; background:white;">
-                <strong>${sanitizar(u.nombre_completo)}</strong>
-                <span class="badge badge-${u.tipo_persona==='jurado'?'jurado':'delegado'}" style="margin-left:6px;">${u.tipo_persona==='jurado'?'Jurado':'Delegado'}</span>
-                ${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}" style="margin-left:4px;">${u.categoria}</span>` : ''}
-            </div>`).join('');
-    }, 300);
-}
-
-function seleccionarPersonaEditar(id, nombre, tipo, cat) {
-    document.getElementById('ea-usr-id').value = id;
-    document.getElementById('ea-buscar').value = nombre;
-    document.getElementById('ea-resultados').innerHTML = '';
-    document.getElementById('ea-valor-diario').disabled = true;
-    document.getElementById('ea-valor-diario').value = '';
-    const info = document.getElementById('ea-persona-sel');
-    info.textContent = `Nueva persona: ${nombre} (${tipo}${cat ? ', cat. '+cat : ''}) — el pago base se recalculará automáticamente`;
-    info.classList.remove('oculto');
-}
-
 async function guardarEdicionAsignacion(e, asigId, rodeoId) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true;
 
-    const usrId = document.getElementById('ea-usr-id').value.trim();
     const valorDiario = document.getElementById('ea-valor-diario').value.trim();
     const kmVal = document.getElementById('ea-km').value.trim();
     const obs = document.getElementById('ea-obs').value.trim();
 
     const asigActual = rodeoActual?.asignaciones?.find(a => a.id === asigId);
     const body = {};
-    if (usrId) body.usuario_pagado_id = usrId;
-    if (!usrId && valorDiario) body.valor_diario_aplicado = parseFloat(valorDiario);
+    if (valorDiario) body.valor_diario_aplicado = parseFloat(valorDiario);
     if (kmVal && parseInt(kmVal) !== (asigActual?.distancia_km || null)) body.distancia_km = parseInt(kmVal);
     if (obs !== undefined) body.observacion = obs;
 
-    if (!usrId && !valorDiario && !body.distancia_km && obs === (asigActual?.observacion || '')) {
+    if (!valorDiario && !body.distancia_km && obs === (asigActual?.observacion || '')) {
         mostrarToast('No hay cambios para guardar', 'error');
         btn.disabled = false;
         return;
@@ -1790,6 +1752,130 @@ async function guardarEdicionAsignacion(e, asigId, rodeoId) {
         mostrarToast(msg, 'success');
         verDetalle(rodeoId);
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
+}
+
+// ── REEMPLAZAR JURADO (Fase 1B — transaccional, con motivo y bitácora) ──
+let rjMotivosCache = null;
+let rjAnteriorId = null;
+async function abrirReemplazarJurado(asigId, rodeoId) {
+    const asig = (rodeoActual?.asignaciones || []).find(a => a.id === asigId);
+    if (!asig) { mostrarToast('No se encontró la asignación', 'error'); return; }
+    rjAnteriorId = asig.usuarios_pagados?.id || null;
+
+    if (!rjMotivosCache) {
+        try {
+            const r = await api.get('/admin/asignaciones/motivos-designacion');
+            rjMotivosCache = r.motivos || [];
+        } catch (err) { mostrarError(err); rjMotivosCache = []; }
+    }
+
+    document.getElementById('modal-titulo').textContent = 'Reemplazar jurado';
+    document.getElementById('modal-body').innerHTML = `
+        <div class="alerta alerta-info" style="margin-bottom:14px;">
+            <strong>Jurado actual:</strong> ${sanitizar(asig.usuarios_pagados?.nombre_completo || asig.nombre_importado || '—')}
+            &nbsp;·&nbsp; Cat. ${asig.categoria_aplicada || '—'}
+        </div>
+        <div class="alerta alerta-error" style="margin-bottom:14px;">
+            Este cambio queda registrado de forma permanente en la bitácora de designaciones, junto con el motivo. No se puede deshacer desde esta pantalla.
+        </div>
+
+        <form onsubmit="guardarReemplazoJurado(event, '${asigId}', '${rodeoId}')">
+            <div class="form-grupo">
+                <label class="form-label">Nuevo jurado</label>
+                <input type="text" id="rj-buscar" class="form-control" placeholder="Buscar jurado por nombre" oninput="buscarJuradoReemplazo(this.value)" autocomplete="off">
+                <div id="rj-resultados" style="margin-top:6px;"></div>
+                <input type="hidden" id="rj-usr-id" value="">
+                <div id="rj-persona-sel" class="alerta alerta-info oculto" style="margin-top:6px; margin-bottom:0;"></div>
+            </div>
+
+            <div class="form-grupo">
+                <label class="form-label">Motivo del reemplazo</label>
+                <select id="rj-motivo" class="form-control" required onchange="actualizarBotonConfirmarReemplazo()">
+                    <option value="">Seleccione un motivo…</option>
+                    ${rjMotivosCache.map(m => `<option value="${m.codigo}">${sanitizar(m.etiqueta)}</option>`).join('')}
+                </select>
+            </div>
+
+            <div class="form-grupo">
+                <label class="form-label">Comentario (opcional)</label>
+                <textarea id="rj-comentario" class="form-control" rows="2" placeholder="Detalle adicional sobre el reemplazo"></textarea>
+            </div>
+
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario" id="rj-btn-confirmar" disabled>Confirmar reemplazo</button>
+                <button type="button" class="btn btn-secundario" onclick="verDetalle('${rodeoId}')">Cancelar</button>
+            </div>
+        </form>`;
+}
+
+let rjBuscarTimer;
+async function buscarJuradoReemplazo(q) {
+    clearTimeout(rjBuscarTimer);
+    const res = document.getElementById('rj-resultados');
+    document.getElementById('rj-usr-id').value = '';
+    actualizarBotonConfirmarReemplazo();
+    if (q.length < 2) { res.innerHTML = ''; return; }
+    rjBuscarTimer = setTimeout(async () => {
+        const data = await api.get('/admin/usuarios?buscar=' + encodeURIComponent(q) + '&tipo=jurado&activo=true&limit=8');
+        const candidatos = (data?.data || []).filter(u => u.id !== rjAnteriorId);
+        if (!candidatos.length) { res.innerHTML = '<div class="texto-gris" style="font-size:13px;">Sin resultados</div>'; return; }
+        res.innerHTML = candidatos.map(u => `
+            <div onclick="seleccionarJuradoReemplazo('${u.id}','${sanitizar(u.nombre_completo)}','${u.categoria||''}')"
+                 style="padding:8px 12px; cursor:pointer; border:1px solid var(--gris-borde); border-radius:6px; margin-bottom:4px; background:white;">
+                <strong>${sanitizar(u.nombre_completo)}</strong>
+                ${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}" style="margin-left:4px;">${u.categoria}</span>` : ''}
+            </div>`).join('');
+    }, 300);
+}
+
+function seleccionarJuradoReemplazo(id, nombre, cat) {
+    document.getElementById('rj-usr-id').value = id;
+    document.getElementById('rj-buscar').value = nombre;
+    document.getElementById('rj-resultados').innerHTML = '';
+    const info = document.getElementById('rj-persona-sel');
+    info.textContent = `Reemplazante: ${nombre}${cat ? ' (cat. ' + cat + ')' : ''} — el pago base se recalculará con su propia tarifa.`;
+    info.classList.remove('oculto');
+    actualizarBotonConfirmarReemplazo();
+}
+
+// No permitir confirmaciones ambiguas: el botón solo se habilita con jurado Y motivo elegidos.
+function actualizarBotonConfirmarReemplazo() {
+    const btn = document.getElementById('rj-btn-confirmar');
+    if (!btn) return;
+    const usrId = document.getElementById('rj-usr-id')?.value;
+    const motivo = document.getElementById('rj-motivo')?.value;
+    btn.disabled = !usrId || !motivo;
+}
+
+async function guardarReemplazoJurado(e, asigId, rodeoId) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
+    const usrId = document.getElementById('rj-usr-id').value.trim();
+    const motivoCodigo = document.getElementById('rj-motivo').value;
+    const comentario = document.getElementById('rj-comentario').value.trim();
+
+    if (!usrId) { mostrarToast('Seleccione el jurado reemplazante', 'error'); return; }
+    if (!motivoCodigo) { mostrarToast('Seleccione un motivo', 'error'); return; }
+    if (!await confirmar('¿Confirma el reemplazo de jurado? Esta acción queda registrada en la bitácora y no se puede deshacer desde esta pantalla.')) return;
+
+    btn.disabled = true;
+    try {
+        await api.post(`/admin/asignaciones/${asigId}/reemplazar`, {
+            usuario_pagado_id_nuevo: usrId,
+            motivo_codigo: motivoCodigo,
+            motivo_detalle: comentario || undefined,
+            usuario_pagado_id_anterior_esperado: rjAnteriorId || undefined
+        });
+        mostrarToast('Jurado reemplazado correctamente', 'success');
+        verDetalle(rodeoId);
+    } catch (err) {
+        if (err.data?.code === 'CONFLICTO_DESIGNACION_MODIFICADA') {
+            mostrarToast('La designación fue modificada por otro administrador mientras usted editaba. Vuelva a abrir el detalle del rodeo e intente de nuevo.', 'error');
+            verDetalle(rodeoId);
+        } else {
+            mostrarError(err);
+        }
+    } finally { btn.disabled = false; }
 }
 
 // ── GESTIONAR DESIGNACIÓN (admin sin restricción de fecha) ───────
