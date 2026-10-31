@@ -280,6 +280,18 @@ router.put('/:id/notas-secundarias', async (req, res) => {
         return res.status(400).json({ error: 'El motivo es obligatorio para sobrescribir una Nota Comisión protegida.' });
     }
 
+    // Protección de Nota Delegado (088, ajuste final) — REGLA PRINCIPAL: el
+    // administrador SIEMPRE puede modificarla; el comentario solo se exige
+    // ante un CAMBIO EFECTIVO (valor numérico distinto del ya guardado).
+    // Esta ruta NO puede decidir eso sin leer el valor actual de la base —
+    // decidirlo acá igual (comparando contra lo que el cliente dice que
+    // "había antes") permitiría que una solicitud directa fabricara una
+    // corrección ficticia con un "antes" falso. Por eso la única autoridad
+    // es la RPC (candado FOR UPDATE sobre el valor real): se le envía el
+    // comentario tal como vino (o null) y es ella quien exige
+    // COMENTARIO_DELEGADO_OBLIGATORIO únicamente si detecta un cambio real.
+    const comentarioDelegadoReal = (req.body.comentario_delegado || '').toString().trim();
+
     const { data, error } = await supabase.rpc('actualizar_notas_secundarias_con_auditoria', {
         p_rodeo_id: req.params.id,
         p_actualizar_comision: actualizarComision,
@@ -288,7 +300,8 @@ router.put('/:id/notas-secundarias', async (req, res) => {
         p_nota_delegado: nota_delegado,
         p_confirma_sobrescritura_historica: confirmaSobrescritura,
         p_motivo: motivoReal || `Notas secundarias rodeo ${req.params.id}: comisión=${nota_comision}, delegado=${nota_delegado}`,
-        p_administrador_id: req.usuario.id
+        p_administrador_id: req.usuario.id,
+        p_comentario_delegado: actualizarDelegado ? comentarioDelegadoReal : null
     });
 
     if (error) {
@@ -301,6 +314,12 @@ router.put('/:id/notas-secundarias', async (req, res) => {
         }
         if (error.message?.includes('MOTIVO_OBLIGATORIO')) {
             return res.status(400).json({ error: 'El motivo es obligatorio para sobrescribir una Nota Comisión protegida.' });
+        }
+        if (error.message?.includes('COMENTARIO_DELEGADO_OBLIGATORIO')) {
+            return res.status(400).json({ error: 'El comentario es obligatorio para registrar o modificar la Nota Delegado.' });
+        }
+        if (error.message?.includes('NOTA_DELEGADO_FUERA_DE_RANGO')) {
+            return res.status(400).json({ error: 'La Nota Delegado debe estar entre 1.0 y 7.0.' });
         }
         if (error.message?.includes('NOTA_FUERA_DE_RANGO')) {
             return res.status(400).json({ error: 'La Nota Comisión debe estar entre 1.0 y 7.0.' });

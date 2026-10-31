@@ -119,3 +119,45 @@ describe('motivoValido — exige texto real, nunca vacío ni solo espacios', () 
         expect(N.motivoValido(texto)).toBe(esperado);
     });
 });
+
+// ─── Protección Nota Delegado (088) — comentario obligatorio, mecanismo
+// propio e independiente del de Nota Comisión (nunca usa CODIGO_PROTEGIDA).
+describe('construirPayload — comentario_delegado (088)', () => {
+    test('notaDelegado=null -> nunca incluye comentario_delegado, aunque se pase uno', () => {
+        const body = N.construirPayload({ notaComision: 5.8, notaDelegado: null, confirmaSobrescritura: false, motivo: null, comentarioDelegado: 'no debería usarse' });
+        expect(body).toEqual({ nota_comision: 5.8, nota_delegado: null });
+        expect(body.comentario_delegado).toBeUndefined();
+    });
+
+    test('notaDelegado con valor y comentario real -> el body incluye comentario_delegado', () => {
+        const body = N.construirPayload({ notaComision: null, notaDelegado: 6.3, confirmaSobrescritura: false, motivo: null, comentarioDelegado: 'cartilla digital revisada y corregida' });
+        expect(body).toEqual({ nota_comision: null, nota_delegado: 6.3, comentario_delegado: 'cartilla digital revisada y corregida' });
+    });
+
+    test('sin comentarioDelegado (no se pasa el parámetro) -> el body no agrega la clave, compatible con llamadas anteriores', () => {
+        const body = N.construirPayload({ notaComision: 5.2, notaDelegado: 5.8, confirmaSobrescritura: true, motivo: 'motivo' });
+        expect(Object.keys(body).sort()).toEqual(['confirma_sobrescritura_historica', 'motivo', 'nota_comision', 'nota_delegado'].sort());
+    });
+});
+
+describe('Cableado real de la protección de Nota Delegado en admin/rodeos.html', () => {
+    test('existe el campo de comentario obligatorio para Nota Delegado', () => {
+        expect(RODEOS_HTML).toContain('id="ns-comentario-delegado"');
+    });
+
+    test('guardarNotasSecundarias valida el comentario con NotasSecundariasSobrescritura.motivoValido (reutilizado, no reimplementado)', () => {
+        const cuerpo = RODEOS_HTML.match(/async function guardarNotasSecundarias\([\s\S]*?\n}/)[0];
+        expect(cuerpo).toMatch(/NotasSecundariasSobrescritura\.motivoValido\(comentarioDelegado\)/);
+    });
+
+    test('guardarNotasSecundarias muestra la nota anterior y la nueva antes de confirmar un cambio de Delegado', () => {
+        const cuerpo = RODEOS_HTML.match(/async function guardarNotasSecundarias\([\s\S]*?\n}/)[0];
+        expect(cuerpo).toMatch(/cambioDelegado/);
+        expect(cuerpo).toMatch(/await confirmar\(/);
+    });
+
+    test('el payload reenviado incluye comentarioDelegado', () => {
+        const cuerpo = RODEOS_HTML.match(/async function guardarNotasSecundarias\([\s\S]*?\n}/)[0];
+        expect(cuerpo).toMatch(/comentarioDelegado/);
+    });
+});

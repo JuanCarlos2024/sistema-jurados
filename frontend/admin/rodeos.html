@@ -201,8 +201,11 @@
     </div>
 </div>
 
-<!-- Modal Adjuntos -->
-<div class="modal-overlay oculto" id="modal-adj-overlay">
+<!-- Modal Adjuntos — z-index explícito por encima del Modal Rodeo (desde el
+     que se abre con el botón "Adjuntos"): ambos compartían el z-index base
+     1000 de .modal-overlay y, al estar el Modal Rodeo más abajo en el DOM,
+     terminaba tapando a Adjuntos en vez de al revés. -->
+<div class="modal-overlay oculto" id="modal-adj-overlay" style="z-index:1050;">
 <div class="modal" style="max-width:720px;">
     <div class="modal-header">
         <h3 id="modal-adj-titulo">Adjuntos</h3>
@@ -237,7 +240,7 @@
 
 <!-- Modal Rodeo -->
 <div class="modal-overlay oculto" id="modal-overlay">
-<div class="modal" style="max-width:700px;">
+<div class="modal" style="max-width:960px; width:94vw;">
     <div class="modal-header">
         <h3 id="modal-titulo">Nuevo rodeo</h3>
         <button class="modal-cerrar" onclick="cerrarModal()">×</button>
@@ -537,7 +540,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Delegado</th><th>Jurados</th>
             <th>Días</th><th>Asistencia J/D</th><th>Total pagos</th><th>Origen</th>
-            <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube">CJ/CD/VY</th>
+            <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital de Delegado Rentado/Asociación · VY=Video YouTube">CJ/CD/VY</th>
             <th>Acciones</th>
         </tr></thead>
         <tbody>
@@ -562,7 +565,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
                   (r.jurados   ? `<span style="color:#888; font-size:11px;">J:</span> ${jStr  || '<span style="color:#aaa; font-size:11px;">—</span>'} ` : '') +
                   (r.delegados ? `<span style="color:#888; font-size:11px;">D:</span> ${dStr  || '<span style="color:#aaa; font-size:11px;">—</span>'}` : '') +
                   `</div>` + badgePublicacion;
-            const ind = indicadores[r.id] || { cj: false, cd: false, vy: false, cd_estado: null };
+            const ind = indicadores[r.id] || { cj: false, cd: false, vy: false, cd_estado: null, cd_digital: null };
             const si = '<span style="color:#27ae60; font-weight:700;">✔</span>';
             const no = '<span style="color:#ccc;">✖</span>';
             // Auditoría (077): `cd` (✔/✖) no cambia — solo se agrega un
@@ -577,7 +580,31 @@ function renderTabla(rodeos, total, indicadores = {}) {
             const cdHtml = ind.cd
                 ? (TOOLTIP_CD[ind.cd_estado] ? `<span title="${TOOLTIP_CD[ind.cd_estado]}">${si}</span>` : si)
                 : no;
-            const indicHtml = `<span style="font-size:12px; white-space:nowrap;">CJ ${ind.cj?si:no} CD ${cdHtml} VY ${ind.vy?si:no}</span>`;
+            // Mejoras rodeos (ítem 3): badge ADITIVO junto a CD cuando existe
+            // una Cartilla de Delegado DIGITAL (cartillas_delegado) — nunca
+            // reemplaza el ✔/✖ de CD (ese sigue siendo solo sobre el
+            // documento adjunto, para no alterar el filtro ni la exportación
+            // a Excel). "No dar por enviada una en borrador": el texto del
+            // tooltip siempre refleja el estado real (p.ej. "Borrador (no
+            // enviada)"), nunca "Enviada" si todavía no se envió.
+            const ESTADO_DIGITAL_TXT = {
+                borrador: 'Borrador (no enviada)', enviada: 'Enviada', reenviada: 'Reenviada',
+                observada: 'Observada', aprobada: 'Aprobada', cerrada: 'Cerrada'
+            };
+            const ESTADO_DIGITAL_COLOR = {
+                borrador: '#aaa', enviada: '#27ae60', reenviada: '#1e8449',
+                observada: '#e67e22', aprobada: '#1a5276', cerrada: '#5d6d7e'
+            };
+            let digitalBadge = '';
+            if (ind.cd_digital) {
+                const esAsociacion = ind.cd_digital.modalidad === 'delegado_asociacion';
+                const origenTxt = esAsociacion ? 'Delegado de Asociación' : 'Delegado Rentado';
+                const letra = esAsociacion ? 'A' : 'R';
+                const color = ESTADO_DIGITAL_COLOR[ind.cd_digital.estado] || '#888';
+                const estadoTxt = ESTADO_DIGITAL_TXT[ind.cd_digital.estado] || ind.cd_digital.estado;
+                digitalBadge = ` <span style="font-size:10px; font-weight:700; color:${color}; border:1px solid ${color}; border-radius:3px; padding:0 3px;" title="Cartilla digital de ${origenTxt} — ${estadoTxt}">📱${letra}</span>`;
+            }
+            const indicHtml = `<span style="font-size:12px; white-space:nowrap;">CJ ${ind.cj?si:no} CD ${cdHtml}${digitalBadge} VY ${ind.vy?si:no}</span>`;
             return `<tr>
             <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
             <td>${sanitizar(r.club)}</td>
@@ -607,7 +634,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
             </td>
         </tr>`;}).join('')}
         </tbody>
-    </table><div style="padding:10px 14px; font-size:12px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; <span style="color:#27ae60;">●</span>=Aceptado <span style="color:#f39c12;">●</span>=Pendiente <span style="color:#e74c3c;">●</span>=Rechazado &nbsp;·&nbsp; J=Jurado D=Delegado &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado · VY=Video YouTube</div>`;
+    </table><div style="padding:10px 14px; font-size:12px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; <span style="color:#27ae60;">●</span>=Aceptado <span style="color:#f39c12;">●</span>=Pendiente <span style="color:#e74c3c;">●</span>=Rechazado &nbsp;·&nbsp; J=Jurado D=Delegado &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital registrada (Delegado Rentado/Asociación), color según estado · VY=Video YouTube</div>`;
 
     // Los data-* quedan en atributos HTML (sanitizados) para que el hover los lea
     // desde el DOM, evitando incrustar texto libre (nombres con comillas/tildes)
@@ -831,6 +858,7 @@ function htmlDetalle(r) {
     <div class="divider"></div>
     <div class="card-titulo">Personas asignadas (${asigs.length})</div>
     ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
+    <div class="tabla-wrap">
     <table>
         <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Cat.</th><th>Valor/día</th><th>Pago base</th><th>Asistencia</th><th>Acciones</th></tr></thead>
         <tbody>
@@ -869,6 +897,7 @@ function htmlDetalle(r) {
         </tr>`;}).join('')}
         </tbody>
     </table>
+    </div>
     <div style="text-align:right; padding:8px 0; font-weight:600;">Total pagos base: ${formatCLP(totalBase)}</div>`}
     <div class="divider"></div>
     <div class="card-titulo">Datos del monitor</div>
@@ -918,6 +947,10 @@ function htmlDetalle(r) {
                 <input type="number" id="ns-delegado" class="form-control" value="${sanitizar(fv(ns.nota_delegado))}" step="0.1" min="1" max="7" placeholder="—"${puedeEditar ? '' : ' disabled'}>
             </div>
         </div>
+        ${puedeEditar ? `<div class="form-grupo" style="margin-bottom:12px;">
+            <label class="form-label">Comentario de respaldo para Nota Delegado <span style="color:var(--gris);font-weight:400;">(obligatorio para registrarla o modificarla)</span></label>
+            <textarea id="ns-comentario-delegado" class="form-control" rows="2" placeholder="Explique el origen o motivo de esta Nota Delegado..."></textarea>
+        </div>` : ''}
         ${puedeEditar ? `<button class="btn btn-primario btn-pequeño" style="margin-bottom:14px;" onclick="guardarNotasSecundarias('${r.id}')">Guardar notas secundarias</button>` : ''}`;
     })()}
     <div class="form-acciones">
@@ -1142,9 +1175,36 @@ async function guardarNotasSecundarias(rodeoId, confirmaSobrescritura = false, m
     if (nota_delegado !== null && (nota_delegado < 1 || nota_delegado > 7)) {
         return mostrarError({ message: 'Nota Delegado debe estar entre 1.0 y 7.0' });
     }
+    // Protección Nota Delegado (088, ajuste final) — REGLA PRINCIPAL: el
+    // administrador siempre puede guardarla, pero el comentario (y la
+    // confirmación con nota anterior/nueva) solo se exige ante un CAMBIO
+    // REAL. Reenviar el mismo valor (p.ej. al guardar solo una corrección
+    // de Comisión, con Delegado sin tocar en el formulario) NUNCA debe
+    // generar una actualización de Delegado — se envía null explícitamente
+    // para que el backend ni siquiera la considere "tocada".
+    let comentarioDelegado = document.getElementById('ns-comentario-delegado')?.value.trim() || '';
+    let notaDelegadoParaEnviar = nota_delegado;
+    if (nota_delegado !== null) {
+        const delegadoAntesTexto = inputDelegado?.defaultValue?.trim();
+        const delegadoAntes = delegadoAntesTexto ? parseFloat(delegadoAntesTexto) : null;
+        const hayCambioDelegado = NotasSecundariasSobrescritura.cambioDelegado({ delegadoAntes, delegadoDespues: nota_delegado });
+        if (!hayCambioDelegado) {
+            notaDelegadoParaEnviar = null;
+            comentarioDelegado = '';
+        } else {
+            if (!NotasSecundariasSobrescritura.motivoValido(comentarioDelegado)) {
+                return mostrarError({ message: 'El comentario es obligatorio para registrar o modificar la Nota Delegado.' });
+            }
+            const fmt = (v) => (v === null || v === undefined) ? '—' : Number(v).toFixed(1);
+            const confirmaDelegado = await confirmar(
+                `¿Confirma guardar la Nota Delegado?\n\nNota actual: ${fmt(delegadoAntes)}\nNota nueva: ${fmt(nota_delegado)}\n\nQuedará registrada con el comentario ingresado.`
+            );
+            if (!confirmaDelegado) return;
+        }
+    }
     try {
         const body = NotasSecundariasSobrescritura.construirPayload({
-            notaComision: nota_comision, notaDelegado: nota_delegado, confirmaSobrescritura, motivo
+            notaComision: nota_comision, notaDelegado: notaDelegadoParaEnviar, confirmaSobrescritura, motivo, comentarioDelegado
         });
         await api.put(`/admin/rodeos/${rodeoId}/notas-secundarias`, body);
         mostrarToast('Notas secundarias guardadas', 'success');
@@ -3432,17 +3492,25 @@ async function renderAdjuntosAdmin() {
                                   : '#f39c12';
                 const estadoText  = { borrador:'Borrador', enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[cd.estado] || cd.estado;
                 const nombre      = cd.delegado?.nombre_completo || cd.delegado_nombre || 'Delegado';
+                // Mejoras rodeos (ítem 3): el backend ya distingue el origen
+                // (GET /admin/cartillas-delegado/by-rodeo, campo `origen` —
+                // Fase 3) pero la pantalla nunca lo mostraba.
+                const origenTxt   = cd.origen === 'delegado_asociacion' ? 'Delegado de Asociación' : 'Delegado Rentado';
                 const fechaStr    = cd.enviada_en
                     ? 'Enviada: ' + new Date(cd.enviada_en).toLocaleString('es-CL')
                     : 'Última modificación: ' + new Date(cd.updated_at).toLocaleString('es-CL');
                 const btnVer      = `<button class="btn btn-pequeño btn-outline" onclick="verCartillaDelegadoDigital('${cd.id}')">&#128203; Ver detalle</button>`;
+                const avisoConflicto = cd.conflicto_designacion_posterior
+                    ? '<div style="font-size:11px;color:#a04000;margin-top:2px;">&#9888; Hay una designación de Delegado Rentado vigente posterior a esta cartilla institucional — requiere resolución administrativa.</div>'
+                    : '';
                 html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid ' + estadoColor + ';margin-bottom:6px;">'
                     + '<div style="flex:1;min-width:0;">'
-                    + '<div style="font-size:13px;font-weight:600;color:#333;">' + sanitizar(nombre) + '</div>'
+                    + '<div style="font-size:13px;font-weight:600;color:#333;">' + sanitizar(nombre) + ' <span style="font-size:11px;font-weight:400;color:#888;">· ' + origenTxt + '</span></div>'
                     + '<div style="font-size:11px;color:#888;">'
                     + '<span style="font-weight:700;color:' + estadoColor + ';">' + estadoText + '</span>'
                     + ' &mdash; ' + sanitizar(fechaStr)
                     + '</div>'
+                    + avisoConflicto
                     + '</div>'
                     + btnVer
                     + '</div>';

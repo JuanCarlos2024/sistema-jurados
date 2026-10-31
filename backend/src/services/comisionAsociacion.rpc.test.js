@@ -30,7 +30,12 @@ const MIGRACIONES = [
     '028_rodeo_notas_secundarias.sql',
     '079_comision_asociacion.sql',
     '080_notas_decimales_comision.sql',
-    '082_comision_promedio_simple.sql'
+    '082_comision_promedio_simple.sql',
+    // Protección de Nota Delegado (088): reemplaza actualizar_notas_
+    // secundarias_con_auditoria agregando un parámetro (comentario
+    // obligatorio para Delegado) — este archivo debe seguir probando la
+    // función REAL tal como queda en producción, no una versión anterior.
+    '088_proteccion_nota_delegado.sql'
 ];
 
 let db;
@@ -486,7 +491,7 @@ describe('6) actualizar_notas_secundarias_con_auditoria — Comisión y Delegado
             [rodeo, ADMIN_ID]
         );
         await db.query(
-            "select * from actualizar_notas_secundarias_con_auditoria($1,false,null,true,6.5,false,'carga delegado',$2)",
+            "select * from actualizar_notas_secundarias_con_auditoria($1,false,null,true,6.5,false,'carga delegado',$2,'comentario real de prueba')",
             [rodeo, ADMIN_ID]
         );
         const fila = (await db.query('select nota_comision, nota_delegado from rodeo_notas_secundarias where rodeo_id=$1', [rodeo])).rows[0];

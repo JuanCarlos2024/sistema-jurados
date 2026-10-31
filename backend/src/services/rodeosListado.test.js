@@ -228,7 +228,7 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
         ], error: null };
         respuestas.rodeo_links = { data: [{ rodeo_id: 'r1' }], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
-        expect(ind.r1).toEqual({ cj: true, cd: true, vy: true, cd_estado: null });
+        expect(ind.r1).toEqual({ cj: true, cd: true, vy: true, cd_estado: null, cd_digital: null });
     });
     test('CASO 2 — con cartillas pero SIN video -> {cj:true, cd:true, vy:false}', async () => {
         respuestas.rodeo_adjuntos = { data: [
@@ -237,13 +237,13 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
         ], error: null };
         respuestas.rodeo_links = { data: [], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
-        expect(ind.r1).toEqual({ cj: true, cd: true, vy: false, cd_estado: null });
+        expect(ind.r1).toEqual({ cj: true, cd: true, vy: false, cd_estado: null, cd_digital: null });
     });
     test('CASO 3 — sin ningún adjunto ni link -> {cj:false, cd:false, vy:false}', async () => {
         respuestas.rodeo_adjuntos = { data: [], error: null };
         respuestas.rodeo_links = { data: [], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
-        expect(ind.r1).toEqual({ cj: false, cd: false, vy: false, cd_estado: null });
+        expect(ind.r1).toEqual({ cj: false, cd: false, vy: false, cd_estado: null, cd_digital: null });
     });
     test('tipo_adjunto legacy "cartilla" (sin sufijo) también cuenta como Cartilla Jurado — mismo criterio que GET /admin/adjuntos/resumen', async () => {
         respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla' }], error: null };
@@ -255,9 +255,9 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
         respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' }], error: null };
         respuestas.rodeo_links = { data: [{ rodeo_id: 'r2' }], error: null };
         const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1', 'r2', 'r3']);
-        expect(ind.r1).toEqual({ cj: true, cd: false, vy: false, cd_estado: null });
-        expect(ind.r2).toEqual({ cj: false, cd: false, vy: true, cd_estado: null });
-        expect(ind.r3).toEqual({ cj: false, cd: false, vy: false, cd_estado: null });
+        expect(ind.r1).toEqual({ cj: true, cd: false, vy: false, cd_estado: null, cd_digital: null });
+        expect(ind.r2).toEqual({ cj: false, cd: false, vy: true, cd_estado: null, cd_digital: null });
+        expect(ind.r3).toEqual({ cj: false, cd: false, vy: false, cd_estado: null, cd_digital: null });
     });
     test('array de ids vacío -> {} sin consultar BD', async () => {
         const ind = await cargarIndicadoresAdjuntosPorRodeo([]);
@@ -317,6 +317,66 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
             const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
             expect(ind.r1.cd).toBe(true);
             expect(ind.r1.cd_estado).toBeNull();
+        });
+    });
+
+    // ─── Mejoras rodeos (ítem 3) — cd_digital: Cartilla de Delegado DIGITAL
+    // (cartillas_delegado, migraciones 037/065), aditivo, nunca altera
+    // cj/cd/cd_estado (que siguen siendo exclusivamente sobre rodeo_adjuntos
+    // — mismo criterio que ya usan el filtro CJ/CD y la exportación a Excel).
+    describe('cd_digital — Cartilla de Delegado DIGITAL (Delegado Rentado / de Asociación), aditivo', () => {
+        test('sin ninguna fila en cartillas_delegado -> cd_digital=null', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital).toBeNull();
+        });
+
+        test('delegado_asociacion_id NULL -> modalidad "delegado_rentado"', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'enviada', delegado_asociacion_id: null }], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital).toEqual({ modalidad: 'delegado_rentado', estado: 'enviada' });
+        });
+
+        test('delegado_asociacion_id presente -> modalidad "delegado_asociacion"', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'aprobada', delegado_asociacion_id: 'da-1' }], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital).toEqual({ modalidad: 'delegado_asociacion', estado: 'aprobada' });
+        });
+
+        test('"No dar por enviada una cartilla que solo está en borrador": única fila en borrador -> estado="borrador", nunca "enviada"', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'borrador', delegado_asociacion_id: null }], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital.estado).toBe('borrador');
+        });
+
+        test('varias filas del mismo rodeo (cambio de delegado) -> se queda con el estado más avanzado (aprobada > enviada > borrador)', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [
+                { rodeo_id: 'r1', estado: 'borrador', delegado_asociacion_id: null },
+                { rodeo_id: 'r1', estado: 'aprobada', delegado_asociacion_id: null },
+                { rodeo_id: 'r1', estado: 'enviada', delegado_asociacion_id: null }
+            ], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital.estado).toBe('aprobada');
+        });
+
+        test('cd_digital no interfiere con cd/cd_estado (solo adjunto) — ambas señales conviven independientes', async () => {
+            respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente' }], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'aprobada', delegado_asociacion_id: 'da-1' }], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd).toBe(true);
+            expect(ind.r1.cd_estado).toBe('pendiente');
+            expect(ind.r1.cd_digital).toEqual({ modalidad: 'delegado_asociacion', estado: 'aprobada' });
         });
     });
 });

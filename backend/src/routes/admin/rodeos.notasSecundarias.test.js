@@ -41,7 +41,7 @@ describe('Permisos', () => {
     });
 
     test.each([null, 'monitor', 'director'])('rol_evaluacion=%s (admin pleno, monitor, director) -> permitido', async (rol) => {
-        const res = await llamar({ nota_comision: 5.5, nota_delegado: 6.0 }, { id: 'x', rol_evaluacion: rol });
+        const res = await llamar({ nota_comision: 5.5, nota_delegado: 6.0, comentario_delegado: 'comentario real' }, { id: 'x', rol_evaluacion: rol });
         expect(res.statusCode).toBe(200);
     });
 });
@@ -56,7 +56,7 @@ describe('Validación de rango', () => {
 
 describe('Inferencia de p_actualizar_* desde las claves del body', () => {
     test('body con ambas claves -> actualiza ambas', async () => {
-        await llamar({ nota_comision: 5.5, nota_delegado: 6.0 });
+        await llamar({ nota_comision: 5.5, nota_delegado: 6.0, comentario_delegado: 'comentario real' });
         const args = supabase.rpc.mock.calls[0][1];
         expect(args.p_actualizar_comision).toBe(true);
         expect(args.p_actualizar_delegado).toBe(true);
@@ -64,8 +64,8 @@ describe('Inferencia de p_actualizar_* desde las claves del body', () => {
         expect(args.p_nota_delegado).toBe(6.0);
     });
 
-    test('body con solo nota_delegado -> NUNCA toca Comisión (p_actualizar_comision=false)', async () => {
-        await llamar({ nota_delegado: 6.0 });
+    test('body con solo nota_delegado (con comentario) -> NUNCA toca Comisión (p_actualizar_comision=false)', async () => {
+        await llamar({ nota_delegado: 6.0, comentario_delegado: 'comentario real' });
         const args = supabase.rpc.mock.calls[0][1];
         expect(args.p_actualizar_comision).toBe(false);
         expect(args.p_actualizar_delegado).toBe(true);
@@ -87,14 +87,14 @@ describe('Inferencia de p_actualizar_* desde las claves del body', () => {
     // su valor, marcando corregida_admin con nota_comision=NULL sin que
     // nadie la hubiera tocado realmente.
     test('BUG REAL: body con AMBAS claves pero nota_comision vacía (como siempre la envía el formulario real) -> NUNCA toca Comisión', async () => {
-        await llamar({ nota_comision: '', nota_delegado: 6.0 });
+        await llamar({ nota_comision: '', nota_delegado: 6.0, comentario_delegado: 'comentario real' });
         const args = supabase.rpc.mock.calls[0][1];
         expect(args.p_actualizar_comision).toBe(false);
         expect(args.p_actualizar_delegado).toBe(true);
     });
 
     test('BUG REAL: body con AMBAS claves pero nota_comision null (JSON explícito) -> NUNCA toca Comisión', async () => {
-        await llamar({ nota_comision: null, nota_delegado: 6.0 });
+        await llamar({ nota_comision: null, nota_delegado: 6.0, comentario_delegado: 'comentario real' });
         const args = supabase.rpc.mock.calls[0][1];
         expect(args.p_actualizar_comision).toBe(false);
         expect(args.p_actualizar_delegado).toBe(true);
@@ -111,6 +111,58 @@ describe('Inferencia de p_actualizar_* desde las claves del body', () => {
         await llamar({ nota_comision: 5.5, confirma_sobrescritura_historica: true, motivo: 'corrección deportiva autorizada' });
         expect(supabase.rpc.mock.calls[0][1].p_confirma_sobrescritura_historica).toBe(true);
         expect(supabase.rpc.mock.calls[0][1].p_motivo).toBe('corrección deportiva autorizada');
+    });
+
+    test('comentario_delegado se propaga a la RPC como p_comentario_delegado', async () => {
+        await llamar({ nota_delegado: 6.0, comentario_delegado: '  corrección real con espacios  ' });
+        expect(supabase.rpc.mock.calls[0][1].p_comentario_delegado).toBe('corrección real con espacios');
+    });
+
+    test('p_comentario_delegado es null cuando no se está tocando Delegado, aunque el body traiga un comentario', async () => {
+        await llamar({ nota_comision: 5.5, comentario_delegado: 'no debería usarse' });
+        expect(supabase.rpc.mock.calls[0][1].p_comentario_delegado).toBeNull();
+    });
+});
+
+// ─── Protección Nota Delegado (088, ajuste final) — REGLA PRINCIPAL: el
+// administrador SIEMPRE puede modificarla; el comentario solo se exige ante
+// un CAMBIO EFECTIVO. Esta ruta YA NO decide eso (no puede, sin leer el
+// valor actual de la base) — solo reenvía nota_delegado/comentario_delegado
+// tal como vinieron y deja que la RPC (única autoridad, con el valor real
+// bajo candado) exija COMENTARIO_DELEGADO_OBLIGATORIO si corresponde.
+describe('Protección de Nota Delegado (088) — el comentario lo exige la RPC, no esta ruta', () => {
+    test('nota_delegado con valor y SIN comentario -> la ruta igual llama a la RPC, nunca rechaza localmente', async () => {
+        const res = await llamar({ nota_delegado: 6.0 });
+        expect(res.statusCode).toBe(200); // la RPC mockeada por defecto resuelve con éxito
+        expect(supabase.rpc.mock.calls[0][1].p_comentario_delegado).toBe('');
+    });
+
+    test('nota_delegado con comentario de solo espacios -> se reenvía recortado (vacío) tal cual, sin rechazo local', async () => {
+        const res = await llamar({ nota_delegado: 6.0, comentario_delegado: '   ' });
+        expect(res.statusCode).toBe(200);
+        expect(supabase.rpc.mock.calls[0][1].p_comentario_delegado).toBe('');
+    });
+
+    test('nota_delegado vacía (no se está tocando Delegado) -> nunca exige comentario', async () => {
+        const res = await llamar({ nota_comision: 5.5 });
+        expect(res.statusCode).toBe(200);
+    });
+
+    test('nota_delegado con comentario real -> permitido, incluso para Monitor/Director (nunca se bloquea por rol, a diferencia de Comisión protegida)', async () => {
+        const res = await llamar({ nota_delegado: 6.0, comentario_delegado: 'corrección real' }, { id: 'x', rol_evaluacion: 'monitor' });
+        expect(res.statusCode).toBe(200);
+    });
+
+    test('COMENTARIO_DELEGADO_OBLIGATORIO devuelto por la RPC (defensa en profundidad) -> 400', async () => {
+        supabase.rpc.mockResolvedValue({ data: null, error: { message: 'COMENTARIO_DELEGADO_OBLIGATORIO' } });
+        const res = await llamar({ nota_delegado: 6.0, comentario_delegado: 'x' });
+        expect(res.statusCode).toBe(400);
+    });
+
+    test('NOTA_DELEGADO_FUERA_DE_RANGO devuelto por la RPC -> 400', async () => {
+        supabase.rpc.mockResolvedValue({ data: null, error: { message: 'NOTA_DELEGADO_FUERA_DE_RANGO' } });
+        const res = await llamar({ nota_delegado: 6.0, comentario_delegado: 'x' });
+        expect(res.statusCode).toBe(400);
     });
 });
 

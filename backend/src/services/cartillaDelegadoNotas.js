@@ -78,24 +78,39 @@ function calcularPromedioDesempeno(dj) {
 }
 
 // ─── Sincroniza la Nota Promedio (ya calculada y validada) hacia
-// rodeo_notas_secundarias.nota_delegado — UPSERT por rodeo_id (UNIQUE),
-// preserva nota_comision intacta (no se incluye en el payload, así que el
-// UPDATE del conflicto nunca la toca). No hace nada si notaPromedio es null
-// (borrador incompleto) — nunca escribe 0 ni borra un valor previo por error.
+// rodeo_notas_secundarias.nota_delegado. Protección (088): delega en la RPC
+// sincronizar_nota_delegado_automatica, que verifica y escribe en una sola
+// transacción (nunca un SELECT+UPSERT separados desde Node, que dejarían una
+// ventana de condición de carrera frente a una corrección administrativa
+// concurrente). No hace nada si notaPromedio es null (borrador incompleto).
+//
+// La RPC distingue 4 resultados (nunca un solo booleano, AJUSTE 2 — Fase
+// 088 final): 'aplicada' (se sincronizó), 'omitida_borrador_incompleto'
+// (nada que sincronizar), 'omitida_proteccion_administrativa' (ya hay una
+// corrección del administrador) y 'omitida_historica_sin_clasificar' (nota
+// preexistente a la migración 088, de origen no verificado — nunca se
+// sobrescribe en silencio, igual que una corrección administrativa, pero
+// con un motivo distinguible). En los 3 casos "omitida_*" la cartilla ya
+// quedó guardada igual — esto nunca afecta el envío del informe.
+// @returns { resultado, notaDelegado } — notaDelegado es la nota que quedó
+// VIGENTE después de la llamada (la nueva si se aplicó, o la que ya había
+// si se omitió).
 async function sincronizarNotaDelegado(rodeoId, notaPromedio, actorId) {
-    if (notaPromedio === null || notaPromedio === undefined) return { sincronizado: false };
-    const ahora = new Date().toISOString();
-    const { error } = await supabase
-        .from('rodeo_notas_secundarias')
-        .upsert({
-            rodeo_id: rodeoId,
-            nota_delegado: notaPromedio,
-            actualizado_por: actorId ? String(actorId) : null,
-            actualizado_en: ahora,
-            updated_at: ahora
-        }, { onConflict: 'rodeo_id' });
+    if (notaPromedio === null || notaPromedio === undefined) {
+        return { resultado: 'omitida_borrador_incompleto', notaDelegado: null };
+    }
+    const { data, error } = await supabase.rpc('sincronizar_nota_delegado_automatica', {
+        p_rodeo_id: rodeoId,
+        p_nota_delegado: notaPromedio,
+        p_actor_id: actorId ? String(actorId) : null
+    });
     if (error) throw new Error('No se pudo sincronizar la Nota Delegado: ' + error.message);
-    return { sincronizado: true, nota_delegado: notaPromedio };
+    const fila = Array.isArray(data) ? data[0] : data;
+    const resultado = fila?.resultado || 'omitida_borrador_incompleto';
+    return {
+        resultado,
+        notaDelegado: resultado === 'aplicada' ? notaPromedio : (fila?.nota_delegado_vigente ?? null)
+    };
 }
 
 module.exports = {

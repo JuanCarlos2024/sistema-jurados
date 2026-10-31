@@ -5,7 +5,7 @@
 // undefined nunca se convierte en 0, y la sincronización hacia la MISMA
 // columna rodeo_notas_secundarias.nota_delegado que ya usan los reportes.
 // ═════════════════════════════════════════════════════════════════════════
-jest.mock('../config/supabase', () => ({ from: jest.fn() }));
+jest.mock('../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
 const supabase = require('../config/supabase');
 const {
     ASPECTOS_DESEMPENO_JURADO, validarAspectosDesempeno, calcularPromedioDesempeno,
@@ -85,34 +85,49 @@ describe('calcularPromedioDesempeno — (n1+n2+n3+n4)/4, automático', () => {
     });
 });
 
-describe('sincronizarNotaDelegado — alimenta rodeo_notas_secundarias.nota_delegado (fuente única, sin nota paralela)', () => {
-    let upsertMock;
+describe('sincronizarNotaDelegado — delega en la RPC sincronizar_nota_delegado_automatica (protección 088, atómica)', () => {
     beforeEach(() => {
-        upsertMock = jest.fn().mockResolvedValue({ error: null });
-        supabase.from.mockReset();
-        supabase.from.mockImplementation(tabla => ({ upsert: upsertMock }));
+        supabase.rpc.mockReset();
+        supabase.rpc.mockResolvedValue({
+            data: [{ resultado: 'aplicada', nota_delegado_vigente: null }],
+            error: null
+        });
     });
 
-    test('promedio válido -> hace upsert por rodeo_id con onConflict, sin tocar nota_comision', async () => {
+    test('promedio válido -> llama a la RPC con rodeo_id/nota/actor, sin tocar nota_comision', async () => {
         const r = await sincronizarNotaDelegado('rodeo-1', 6.3, 'delegado-1');
-        expect(r).toEqual({ sincronizado: true, nota_delegado: 6.3 });
-        expect(supabase.from).toHaveBeenCalledWith('rodeo_notas_secundarias');
-        const [payload, opts] = upsertMock.mock.calls[0];
-        expect(payload.rodeo_id).toBe('rodeo-1');
-        expect(payload.nota_delegado).toBe(6.3);
-        expect(payload.actualizado_por).toBe('delegado-1');
-        expect(payload).not.toHaveProperty('nota_comision'); // nunca se incluye -> el UPDATE del conflicto no la toca
-        expect(opts).toEqual({ onConflict: 'rodeo_id' });
+        expect(r).toEqual({ resultado: 'aplicada', notaDelegado: 6.3 });
+        expect(supabase.rpc).toHaveBeenCalledWith('sincronizar_nota_delegado_automatica', {
+            p_rodeo_id: 'rodeo-1', p_nota_delegado: 6.3, p_actor_id: 'delegado-1'
+        });
     });
 
-    test('promedio null (borrador incompleto) -> NO hace ninguna escritura', async () => {
+    test('promedio null (borrador incompleto) -> NO hace ninguna escritura, nunca llama a la RPC', async () => {
         const r = await sincronizarNotaDelegado('rodeo-1', null, 'delegado-1');
-        expect(r).toEqual({ sincronizado: false });
-        expect(supabase.from).not.toHaveBeenCalled();
+        expect(r).toEqual({ resultado: 'omitida_borrador_incompleto', notaDelegado: null });
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    test('nota protegida por una corrección administrativa -> resultado=omitida_proteccion_administrativa, conserva la nota vigente', async () => {
+        supabase.rpc.mockResolvedValue({
+            data: [{ resultado: 'omitida_proteccion_administrativa', nota_delegado_vigente: 4.2 }],
+            error: null
+        });
+        const r = await sincronizarNotaDelegado('rodeo-1', 6.3, 'delegado-1');
+        expect(r).toEqual({ resultado: 'omitida_proteccion_administrativa', notaDelegado: 4.2 });
+    });
+
+    test('nota histórica sin clasificar -> resultado=omitida_historica_sin_clasificar, conserva la nota vigente', async () => {
+        supabase.rpc.mockResolvedValue({
+            data: [{ resultado: 'omitida_historica_sin_clasificar', nota_delegado_vigente: 5.1 }],
+            error: null
+        });
+        const r = await sincronizarNotaDelegado('rodeo-1', 6.3, 'delegado-1');
+        expect(r).toEqual({ resultado: 'omitida_historica_sin_clasificar', notaDelegado: 5.1 });
     });
 
     test('error de BD -> lanza excepción con mensaje claro (para que la ruta la capture, sin romper el envío ya guardado)', async () => {
-        upsertMock.mockResolvedValue({ error: { message: 'fallo simulado' } });
+        supabase.rpc.mockResolvedValue({ data: null, error: { message: 'fallo simulado' } });
         await expect(sincronizarNotaDelegado('rodeo-1', 5.5, 'delegado-1')).rejects.toThrow(/fallo simulado/);
     });
 });

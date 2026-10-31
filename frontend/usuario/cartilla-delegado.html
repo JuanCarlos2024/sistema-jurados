@@ -2554,8 +2554,32 @@ async function enviarCartilla() {
             if (_esInstitucional) _version = r.cartilla.version;
         }
         if (_esInstitucional) datos.version = _version;
-        await api.post(`${_API_BASE}/${_cartillaId}/enviar`, datos);
+        const rEnvio = await api.post(`${_API_BASE}/${_cartillaId}/enviar`, datos);
         mostrarToast(esReenvio ? 'Informe reenviado correctamente' : 'Informe enviado correctamente', 'exito');
+        // Mejoras cartillas (ítem 4): el backend ya calcula y devuelve
+        // `nota_delegado_sincronizada` (false si falló la sincronización con
+        // rodeo_notas_secundarias.nota_delegado), pero la pantalla lo
+        // ignoraba — el delegado solo veía "enviado correctamente" aunque la
+        // nota no hubiera quedado sincronizada. Solo se avisa cuando las 4
+        // notas del desempeño del jurado estaban completas (si no lo
+        // estaban, nota_delegado_sincronizada=false es esperado — no hay
+        // nada que sincronizar — y avisar sería una falsa alarma).
+        const notasDesempenoCompletas = ASPECTOS_DESEMPENO_UI.every(a => {
+            const v = _dj[a.key];
+            return v !== null && v !== undefined && v !== '';
+        });
+        if (notasDesempenoCompletas && rEnvio && rEnvio.nota_delegado_sincronizada === false) {
+            // Protección (088, ajuste final): 3 motivos distintos de "no se
+            // sincronizó", cada uno con su propio mensaje — nunca uno
+            // genérico que confunda una situación normal con una falla real.
+            const MENSAJES_RESULTADO = {
+                omitida_proteccion_administrativa: 'El informe se envió correctamente. La Nota Delegado no fue actualizada automáticamente porque ya existe una corrección registrada por el Administrador; esa nota oficial se conserva sin cambios.',
+                omitida_historica_sin_clasificar: 'El informe se envió correctamente. La Nota Delegado de este rodeo es un registro anterior sin clasificar y no se actualiza automáticamente; si corresponde, pida al Administrador que la revise.',
+                error_tecnico: 'El informe se envió correctamente, pero la Nota Delegado no pudo sincronizarse automáticamente. Informe al Administrador para que la registre manualmente.'
+            };
+            const mensaje = MENSAJES_RESULTADO[rEnvio.nota_delegado_resultado_sincronizacion] || MENSAJES_RESULTADO.error_tecnico;
+            mostrarToast(mensaje, 'advertencia');
+        }
         setTimeout(() => init(), 1200);
     } catch (err) {
         if (err.data?.code === 'VERSION_DESACTUALIZADA') {

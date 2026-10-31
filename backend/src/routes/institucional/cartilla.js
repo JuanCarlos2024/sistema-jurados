@@ -561,18 +561,25 @@ router.post('/:id/enviar', async (req, res) => {
 
     const data_enviada = Array.isArray(data) ? data[0] : data;
 
-    let notaDelegadoSincronizada = false;
+    // Protección (088) — ver comentario equivalente en usuario/cartilla-delegado.js.
+    let notaDelegadoResultado = 'omitida_borrador_incompleto';
     if (notaPromedio !== null) {
         try {
-            await sincronizarNotaDelegado(cartilla.rodeo_id, notaPromedio, req.usuario.id);
-            notaDelegadoSincronizada = true;
+            const resSync = await sincronizarNotaDelegado(cartilla.rodeo_id, notaPromedio, req.usuario.id);
+            notaDelegadoResultado = resSync.resultado;
         } catch (errSync) {
             console.error('[CARTILLA-INSTITUCIONAL enviar] Error sincronizando Nota Delegado:', errSync.message);
+            notaDelegadoResultado = 'error_tecnico';
         }
     }
 
     const msg = esReenvio ? 'Cartilla reenviada correctamente.' : 'Cartilla enviada correctamente.';
-    res.json({ mensaje: msg, cartilla: data_enviada, nota_delegado_sincronizada: notaDelegadoSincronizada });
+    res.json({
+        mensaje: msg, cartilla: data_enviada,
+        nota_delegado_sincronizada: notaDelegadoResultado === 'aplicada',
+        nota_delegado_bloqueada_por_proteccion: notaDelegadoResultado === 'omitida_proteccion_administrativa',
+        nota_delegado_resultado_sincronizacion: notaDelegadoResultado
+    });
 });
 
 // Fase 3.4 — nombre de archivo claro y seguro: fecha SIN conversión de huso

@@ -290,17 +290,33 @@ async function cargarStatsAsignacionesPorRodeo(rodeoIds) {
 // cuentan como la cartilla real, pero sí hacen que `cd` sea true).
 // Prioridad al combinar varias filas del mismo rodeo: vigente > pendiente >
 // complementario.
-// @returns Map rodeo_id -> { cj, cd, vy, cd_estado: 'vigente'|'pendiente'|'complementario'|null }
+// Mejoras en Detalle de Rodeos (ítem 3): además del documento adjunto, el
+// administrador necesita saber si existe una Cartilla de Delegado DIGITAL
+// (tabla `cartillas_delegado`, migraciones 037/065) y de qué modalidad es —
+// Delegado Rentado (`delegado_id`) o Delegado de Asociación
+// (`delegado_asociacion_id`, mutuamente excluyentes por CHECK). Esto es
+// PURAMENTE informativo y ADITIVO (`cd_digital`): `cd`/`cd_estado` (arriba)
+// siguen significando exactamente lo mismo de siempre — "¿hay un archivo
+// rodeo_adjuntos tipo_adjunto='cartilla_delegado'?" — y el filtro CJ/CD de
+// la pantalla y la exportación a Excel siguen leyendo solo esos dos campos,
+// sin ningún cambio de semántica.
+// Prioridad al combinar varias filas del mismo rodeo (puede haber más de un
+// delegado histórico, p.ej. tras un cambio de designación): se muestra
+// siempre el estado más avanzado — aprobada > cerrada > reenviada > enviada
+// > observada > borrador — nunca se informa "enviada" si en realidad la
+// única fila existente sigue en borrador.
+// @returns Map rodeo_id -> { cj, cd, vy, cd_estado, cd_digital: {modalidad:'delegado_rentado'|'delegado_asociacion', estado}|null }
 async function cargarIndicadoresAdjuntosPorRodeo(rodeoIds) {
     if (!rodeoIds || rodeoIds.length === 0) return {};
 
-    const [adjRes, linkRes] = await Promise.all([
+    const [adjRes, linkRes, cdDigitalRes] = await Promise.all([
         supabase.from('rodeo_adjuntos').select('rodeo_id, tipo_adjunto, cartilla_clasificacion').in('rodeo_id', rodeoIds),
-        supabase.from('rodeo_links').select('rodeo_id').in('rodeo_id', rodeoIds)
+        supabase.from('rodeo_links').select('rodeo_id').in('rodeo_id', rodeoIds),
+        supabase.from('cartillas_delegado').select('rodeo_id, estado, delegado_asociacion_id').in('rodeo_id', rodeoIds)
     ]);
 
     const result = {};
-    rodeoIds.forEach(id => { result[id] = { cj: false, cd: false, vy: false, cd_estado: null }; });
+    rodeoIds.forEach(id => { result[id] = { cj: false, cd: false, vy: false, cd_estado: null, cd_digital: null }; });
 
     const PRIORIDAD = { vigente: 3, pendiente: 2, complementario: 1 };
     (adjRes.data || []).forEach(a => {
@@ -319,6 +335,18 @@ async function cargarIndicadoresAdjuntosPorRodeo(rodeoIds) {
     });
     (linkRes.data || []).forEach(l => {
         if (result[l.rodeo_id]) result[l.rodeo_id].vy = true;
+    });
+
+    const PRIORIDAD_DIGITAL = { aprobada: 6, cerrada: 5, reenviada: 4, enviada: 3, observada: 2, borrador: 1 };
+    (cdDigitalRes.data || []).forEach(c => {
+        if (!result[c.rodeo_id]) return;
+        const actual = result[c.rodeo_id].cd_digital;
+        if (!actual || (PRIORIDAD_DIGITAL[c.estado] || 0) > (PRIORIDAD_DIGITAL[actual.estado] || 0)) {
+            result[c.rodeo_id].cd_digital = {
+                modalidad: c.delegado_asociacion_id ? 'delegado_asociacion' : 'delegado_rentado',
+                estado: c.estado
+            };
+        }
     });
 
     return result;

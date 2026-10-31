@@ -336,13 +336,20 @@ router.post('/:id/enviar', async (req, res) => {
     // cartillaDelegadoNotas.js). Solo si las 4 notas quedaron completas y
     // válidas; si no, no se toca nada (la Nota Delegado existente, si la
     // hubiera, se preserva — nunca se sobrescribe con datos incompletos).
-    let notaDelegadoSincronizada = false;
+    // Protección (088): la RPC distingue 4 resultados — 'aplicada',
+    // 'omitida_borrador_incompleto', 'omitida_proteccion_administrativa'
+    // (ya hay una corrección del administrador) y 'omitida_historica_sin_
+    // clasificar' (nota preexistente a la migración, origen no verificado).
+    // En los 3 casos "omitida_*" la cartilla se acepta igual (nunca se
+    // revierte el envío) — solo cambia el mensaje que ve el delegado.
+    let notaDelegadoResultado = 'omitida_borrador_incompleto';
     if (notaPromedio !== null) {
         try {
-            await sincronizarNotaDelegado(cartilla.rodeo_id, notaPromedio, uid);
-            notaDelegadoSincronizada = true;
+            const resSync = await sincronizarNotaDelegado(cartilla.rodeo_id, notaPromedio, uid);
+            notaDelegadoResultado = resSync.resultado;
         } catch (errSync) {
             console.error('[CARTILLA-DELEGADO enviar] Error sincronizando Nota Delegado:', errSync.message);
+            notaDelegadoResultado = 'error_tecnico';
             // No se revierte el envío de la cartilla por esto — el informe ya
             // quedó guardado; se informa igual en la respuesta para que el
             // delegado sepa que la Nota Delegado no llegó a sincronizarse.
@@ -350,7 +357,15 @@ router.post('/:id/enviar', async (req, res) => {
     }
 
     const msg = esReenvio ? 'Cartilla reenviada correctamente.' : 'Cartilla enviada correctamente.';
-    res.json({ mensaje: msg, cartilla: data, nota_delegado_sincronizada: notaDelegadoSincronizada });
+    res.json({
+        mensaje: msg, cartilla: data,
+        // Campos compatibles con la respuesta anterior (derivados del
+        // resultado detallado) + el resultado detallado completo, para que
+        // el frontend pueda distinguir los 4 casos si lo necesita.
+        nota_delegado_sincronizada: notaDelegadoResultado === 'aplicada',
+        nota_delegado_bloqueada_por_proteccion: notaDelegadoResultado === 'omitida_proteccion_administrativa',
+        nota_delegado_resultado_sincronizacion: notaDelegadoResultado
+    });
 });
 
 // Fase 3 (Delegado de Asociación): expone las mismas 2 listas de campos como
