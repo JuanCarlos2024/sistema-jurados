@@ -49,7 +49,7 @@
 const express = require('express');
 const { calcularBloqueRodeo } = require('../../services/feriados'); // REAL, puro — solo para armar fixtures con forma real
 
-jest.mock('../../config/supabase', () => ({ from: jest.fn() }));
+jest.mock('../../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
 jest.mock('../../services/motorPropuestaDesignacion', () => {
     const real = jest.requireActual('../../services/motorPropuestaDesignacion');
     return {
@@ -134,7 +134,7 @@ function crearSupabaseMock(porTabla) {
     supabase.from.mockImplementation((tabla) => {
         llamadas[tabla] = llamadas[tabla] || { inserts: [], updates: [], deletes: 0 };
         const chain = {
-            select: () => chain, eq: () => chain, neq: () => chain, in: () => chain,
+            select: () => chain, eq: () => chain, neq: () => chain, in: () => chain, is: () => chain,
             ilike: () => chain, order: () => chain, limit: () => chain, range: () => chain,
             insert: (payload) => { llamadas[tabla].inserts.push(payload); return chain; },
             update: (payload) => { llamadas[tabla].updates.push(payload); return chain; },
@@ -1158,25 +1158,42 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
             disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }, { usuario_pagado_id: 'j2', fecha: '2026-05-10' }], error: null },
             configuracion_tarifas: { data: TARIFAS, error: null },
             asignaciones: [
-                { data: [], error: null }, // SELECT ya-designados
-                { data: [], error: null }, // SELECT otras fechas del jurado
-                { data: { id: 'asig-1' }, error: null }, // INSERT fila 1
-                { data: { id: 'asig-2' }, error: null }  // INSERT fila 2
+                { data: [], error: null }, // SELECT ya-aplicadas (propuesta_detalle_id)
+                { data: [], error: null }, // SELECT ya-designados (rodeo_id)
+                { data: [], error: null } // SELECT otras fechas del jurado
             ]
+        });
+        // Fase 2C (revisión correctiva) — la creación real pasa por UNA sola
+        // llamada a aplicar_propuesta_designacion_completa (086, lote
+        // atómico), nunca por supabase.from('asignaciones').insert() directo
+        // ni por una RPC separada por fila (ver propuestaDesignacionVersion
+        // Control.rpc.test.js para la cobertura de la RPC en sí, contra
+        // Postgres real, incluida la prueba de atomicidad 20/20).
+        supabase.rpc.mockResolvedValueOnce({
+            data: {
+                aplicadas: [
+                    { detalle_id: 'd1', asignacion_id: 'asig-1', rodeo_id: 'r1', usuario_pagado_id: 'j1', bitacora_id: 'bit-1' },
+                    { detalle_id: 'd2', asignacion_id: 'asig-2', rodeo_id: 'r2', usuario_pagado_id: 'j2', bitacora_id: 'bit-2' }
+                ]
+            },
+            error: null
         });
 
         const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-1/aplicar' });
 
         expect(status).toBe(200);
         expect(body.resumen).toEqual({ aplicadas: 2, conflictos: 0 });
-        expect(llamadas.asignaciones.inserts.length).toBe(2);
-        expect(llamadas.asignaciones.inserts[0]).toMatchObject({
-            rodeo_id: 'r1', usuario_pagado_id: 'j1', tipo_persona: 'jurado',
-            estado: 'activo', estado_designacion: 'pendiente', publicado: false,
-            propuesta_detalle_id: 'd1' // trazabilidad ESTRUCTURAL, misma sentencia (migración 055)
-        });
-        // MODIFICADO: se aplica jurado_id_seleccionado ('j2'), nunca un candidato recalculado.
-        expect(llamadas.asignaciones.inserts[1]).toMatchObject({ rodeo_id: 'r2', usuario_pagado_id: 'j2', publicado: false, propuesta_detalle_id: 'd2' });
+        expect(llamadas.asignaciones.inserts.length).toBe(0); // sin INSERT directo — todo vía RPC
+        expect(supabase.rpc).toHaveBeenCalledTimes(1); // UNA sola llamada para TODO el lote
+        expect(supabase.rpc).toHaveBeenCalledWith('aplicar_propuesta_designacion_completa', expect.objectContaining({
+            p_propuesta_id: 'prop-1',
+            p_aplicaciones: expect.arrayContaining([
+                expect.objectContaining({ detalle_id: 'd1', usuario_pagado_id: 'j1', categoria_aplicada: 'A' }),
+                expect.objectContaining({ detalle_id: 'd2', usuario_pagado_id: 'j2' })
+            ])
+        }));
+        expect(body.aplicadas[0].revisado_por_admin).toBe(true); // ACEPTADO
+        expect(body.aplicadas[1].revisado_por_admin).toBe(true); // MODIFICADO
 
         const auditsAsig = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
         expect(auditsAsig.length).toBe(2);
@@ -1186,7 +1203,7 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
 
         const auditResumen = llamadas.auditoria.inserts.find(a => a.tabla === 'propuestas_designacion');
         expect(auditResumen.accion).toBe('aplicar');
-        expect(auditResumen.datos_nuevos).toEqual({ aplicadas: 2, conflictos: 0 });
+        expect(auditResumen.datos_nuevos).toEqual({ aplicadas: 2, ya_aplicadas_antes: 0 });
     });
 
     test('propuesta no BORRADOR (CONFIRMADA) -> 409, no se consulta ni rodeos ni asignaciones', async () => {
@@ -1223,7 +1240,14 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
         expect(llamadas.asignaciones).toBeUndefined();
     });
 
-    test('CASO 6 — rodeo que ya tiene jurado designado (incluye doble aplicación de la misma propuesta): conflicto, NO sobrescribe, NO inserta', async () => {
+    // Fase 2C (revisión correctiva) — un conflicto detectado en el
+    // pre-chequeo ahora bloquea TODA la aplicación con 409 (nunca se llama
+    // a la RPC, nunca se aplica nada) — antes, un conflicto en una fila
+    // dejaba igual aplicarse las demás ("200, aplicadas:0, conflictos:1"
+    // solo tenía sentido cuando había una sola fila; con varias, las
+    // válidas sí se aplicaban). Ahora es todo o nada: cualquier conflicto
+    // detiene la aplicación completa.
+    test('CASO 6 — rodeo que ya tiene jurado designado (incluye doble aplicación de la misma propuesta): 409, NO aplica nada', async () => {
         const llamadas = crearSupabaseMock({
             propuestas_designacion: { data: { id: 'prop-4', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
             propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
@@ -1232,6 +1256,7 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
             disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }], error: null },
             configuracion_tarifas: { data: TARIFAS, error: null },
             asignaciones: [
+                { data: [], error: null }, // SELECT ya-aplicadas (propuesta_detalle_id) — ninguna
                 { data: [{ id: 'asig-existente', rodeo_id: 'r1' }], error: null }, // ya hay un jurado en r1
                 { data: [], error: null }
             ]
@@ -1239,14 +1264,15 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
 
         const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-4/aplicar' });
 
-        expect(status).toBe(200);
+        expect(status).toBe(409);
         expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
         expect(body.conflictos[0].motivo).toBe('Este rodeo ya tiene un jurado designado.');
+        expect(supabase.rpc).not.toHaveBeenCalled(); // nunca se intentó aplicar nada
         expect(llamadas.asignaciones.inserts.length).toBe(0);
-        expect(llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones').length).toBe(0);
+        expect(llamadas.auditoria).toBeUndefined(); // ni siquiera se intentó auditar nada — se abortó antes
     });
 
-    test('jurado sin disponibilidad declarada para la fecha del rodeo -> conflicto, no inserta', async () => {
+    test('jurado sin disponibilidad declarada para la fecha del rodeo -> 409, no aplica nada', async () => {
         const llamadas = crearSupabaseMock({
             propuestas_designacion: { data: { id: 'prop-5', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
             propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
@@ -1254,18 +1280,18 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
             usuarios_pagados: { data: [{ id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true }], error: null },
             disponibilidad_usuarios: { data: [], error: null }, // sin disponibilidad declarada
             configuracion_tarifas: { data: TARIFAS, error: null },
-            asignaciones: [{ data: [], error: null }, { data: [], error: null }]
+            asignaciones: [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }]
         });
 
         const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-5/aplicar' });
 
-        expect(status).toBe(200);
+        expect(status).toBe(409);
         expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
         expect(body.conflictos[0].motivo).toBe('El jurado ya no tiene disponibilidad declarada para estas fechas.');
         expect(llamadas.asignaciones.inserts.length).toBe(0);
     });
 
-    test('cruce de fechas con otra asignación activa del mismo jurado -> conflicto, no inserta', async () => {
+    test('cruce de fechas con otra asignación activa del mismo jurado -> 409, no aplica nada', async () => {
         const llamadas = crearSupabaseMock({
             propuestas_designacion: { data: { id: 'prop-6', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
             propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
@@ -1274,6 +1300,7 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
             disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }], error: null },
             configuracion_tarifas: { data: TARIFAS, error: null },
             asignaciones: [
+                { data: [], error: null }, // SELECT ya-aplicadas — ninguna
                 { data: [], error: null }, // sin designación previa en r1
                 { data: [{ id: 'asig-otro', usuario_pagado_id: 'j1', rodeo_id: 'r-otro', rodeos: { fecha: '2026-05-01', duracion_dias: 1, club: 'Club Z' } }], error: null }
             ]
@@ -1281,7 +1308,7 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
 
         const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-6/aplicar' });
 
-        expect(status).toBe(200);
+        expect(status).toBe(409);
         expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
         expect(body.conflictos[0].motivo).toBe('El jurado ya está asignado a otro rodeo en fechas que se cruzan.');
         expect(llamadas.asignaciones.inserts.length).toBe(0);

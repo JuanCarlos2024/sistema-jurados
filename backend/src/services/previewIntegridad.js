@@ -69,21 +69,35 @@ const DOMINIO = 'propuesta-designacion-preview-v1:';
 // Nota: el prefijo de dominio HMAC ("...preview-v1:") es un identificador de
 // PROPÓSITO fijo (separa esta firma de cualquier otro uso futuro de
 // JWT_SECRET) — no tiene relación con VERSION_SNAPSHOT (el formato del
-// payload en sí), que es el que subió de 1 a 2 en la Etapa 3.
-const VERSION_SNAPSHOT = 2;
+// payload en sí), que subió de 1 a 2 en la Etapa 3 (configuracion_version_id)
+// y de 2 a 3 en la Fase 2C (motor/fecha_corte_tecnica/cobertura_resumen —
+// ver firmarPreview más abajo): un token firmado con un motor/fecha de
+// corte distintos a los que finalmente se guarden nunca debe poder
+// confundirse, y un token v=2 (sin estos campos) se rechaza explícitamente,
+// nunca se le asume motor:'local' en silencio.
+const VERSION_SNAPSHOT = 3;
 
 function calcularFirma(payloadB64) {
     return crypto.createHmac('sha256', SECRETO).update(DOMINIO + payloadB64).digest('hex');
 }
 
 // ─── Firma un snapshot inmutable del resultado original del motor ────────
-// @param snapshot { temporada_id, configuracion_version_id, rodeos: [{ rodeo_id, estado, jurado_id_propuesto }] }
+// @param snapshot { temporada_id, configuracion_version_id, rodeos: [{ rodeo_id, estado, jurado_id_propuesto }],
+//   motor?: 'local'|'global', fecha_corte_tecnica?: string, cobertura_resumen?: object|null }
+// Fase 2C — motor/fecha_corte_tecnica/cobertura_resumen quedan firmados junto
+// al resto (nunca en req.body al guardar): "qué motor generó este resultado"
+// y "cuándo se leyeron los datos reales" son hechos históricos de ESTA
+// corrida, igual de inmutables que jurado_id_propuesto — todo ya visible en
+// la propia respuesta del dry-run, nada nuevo que no estuviera expuesto.
 // @returns preview_token (string opaco, firmado — no cifrado)
 function firmarPreview(snapshot) {
     const payload = {
         v: VERSION_SNAPSHOT,
         temporada_id: snapshot.temporada_id ?? null,
         configuracion_version_id: snapshot.configuracion_version_id,
+        motor: snapshot.motor === 'global' ? 'global' : 'local',
+        fecha_corte_tecnica: snapshot.fecha_corte_tecnica ?? null,
+        cobertura_resumen: snapshot.cobertura_resumen ?? null,
         rodeos: (snapshot.rodeos || []).map(r => ({
             rodeo_id: r.rodeo_id,
             estado: r.estado,

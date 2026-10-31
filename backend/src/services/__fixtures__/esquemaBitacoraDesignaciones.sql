@@ -31,8 +31,19 @@ CREATE TABLE asignaciones (
     estado TEXT NOT NULL DEFAULT 'activo', estado_designacion VARCHAR DEFAULT 'pendiente',
     propuesta_detalle_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     aceptado_en TIMESTAMPTZ, observacion_designacion TEXT, publicado BOOLEAN NOT NULL DEFAULT false, distancia_km INTEGER,
+    created_by UUID,
     CONSTRAINT asignaciones_estado_check CHECK (estado = ANY (ARRAY['activo','pendiente_revision','anulado'])),
     CONSTRAINT asignaciones_tipo_persona_check CHECK (tipo_persona = ANY (ARRAY['jurado','delegado_rentado']))
+);
+
+-- disponibilidad_usuarios — migración 008, usada por aplicar_propuesta_
+-- designacion_completa (086/Fase 2C) para revalidar disponibilidad dentro
+-- de la transacción.
+CREATE TABLE disponibilidad_usuarios (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    usuario_pagado_id UUID NOT NULL REFERENCES usuarios_pagados(id),
+    fecha DATE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- propuestas_designacion / propuestas_designacion_detalle — migración 047.
@@ -48,8 +59,12 @@ CREATE TABLE propuestas_designacion_detalle (
     rodeo_id UUID NOT NULL REFERENCES rodeos(id),
     jurado_id_propuesto UUID REFERENCES usuarios_pagados(id),
     jurado_id_seleccionado UUID REFERENCES usuarios_pagados(id),
-    estado_revision TEXT NOT NULL CHECK (estado_revision IN ('PENDIENTE', 'ACEPTADO', 'MODIFICADO', 'SIN_PROPUESTA', 'NO_EVALUABLE')),
+    estado_revision TEXT NOT NULL CHECK (estado_revision IN ('PENDIENTE', 'ACEPTADO', 'MODIFICADO', 'SIN_PROPUESTA', 'NO_EVALUABLE', 'SIN_JURADO_ACTUAL')),
     origen_seleccion TEXT CHECK (origen_seleccion IN ('MOTOR', 'MANUAL', 'MANUAL_CON_ADVERTENCIA')),
+    -- explicacion_json/metricas_json — migración 047 real (no usados por los
+    -- tests de 083/084, pero sí por la 086/Fase 2C: modificar_jurado_
+    -- propuesta_borrador lee/escribe metricas_json).
+    explicacion_json JSONB, metricas_json JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

@@ -908,7 +908,28 @@ async function cargarDatosMotor(rodeoIdsInput) {
 // consumidores reales desde el refactor de Etapa 2 — confirmado por grep en
 // Etapa 3 — y la consulta que la armaba se retiró de cargarDatosMotor.
 // ─────────────────────────────────────────────────────────────────────────
-function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfiguracionDefaultV1()) {
+// `opciones.forzarGanadorPorRodeo` (Fase 2A — Motor Global de Designaciones,
+// ver motorPropuestaDesignacionGlobal.js): Map(rodeo_id -> jurado_id)
+// OPCIONAL. Cuando el motor global determina que la única forma de cubrir
+// el 100% de los cupos exige, para algún rodeo, un jurado distinto al que
+// elegiría este motor local (greedy) por sí solo, el llamador puede forzarlo
+// acá — se busca DIRECTAMENTE en `candidatosValidos` (todos los elegibles,
+// sin la reducción a la categoría preferente ni el orden del comparador
+// jerárquico, que son criterios de PREFERENCIA, no de elegibilidad) y, si
+// sigue siendo elegible, pasa a ser el ganador de esa fila. Nunca se activa
+// en uso normal — ningún llamador existente (dry-run, revalidación al
+// guardar) pasa este parámetro, así que su comportamiento no cambia.
+//
+// `opciones.causasRelajadasPorForzado` (Fase 2B): Set OPCIONAL de códigos de
+// causa (ver ORDEN_CAUSA_PRINCIPAL) que, SOLO para un ganador forzado, no
+// impiden que se le acepte — p.ej. {'DISTANCIA_EXCEDIDA'} permite forzar a
+// un jurado a más de 600 km cuando esa es la única forma de cubrir el
+// rodeo. Nunca se aplica a causas fuera de esta whitelist explícita
+// (disponibilidad/categoría/misma asociación/mismo finde siguen siendo
+// absolutas) ni al ranking normal (grupo[0]) — solo decide si un ganador
+// FORZADO con causas puede igual aceptarse. Sin esta opción (default), el
+// comportamiento es idéntico al de Fase 2A: solo candidatosValidos.
+function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfiguracionDefaultV1(), opciones = {}) {
     const val = validarConfiguracion(configuracion);
     if (!val.valido) throw new Error(`Configuración de designación inválida: ${val.error}`);
 
@@ -1100,7 +1121,35 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
 
         const candidatosValidos = evaluaciones.filter(e => e.elegible);
 
-        if (candidatosValidos.length === 0) {
+        // Fase 2B — Motor Global: resuelve el ganador forzado ANTES del gate
+        // de SIN_PROPUESTA de abajo. Sin esto, un rodeo con CERO candidatos
+        // estrictamente elegibles (p.ej. el único candidato está a 750 km,
+        // una preferencia, no una restricción obligatoria) se declaraba
+        // SIN_PROPUESTA y nunca llegaba a evaluar el ganador forzado — que
+        // vivía más abajo, después de ese `continue`. Mismo criterio exacto
+        // que antes (ver comentario de ejecutarSimulacion más arriba): el
+        // forzado solo se acepta si ya era estrictamente válido, o si TODAS
+        // sus causas están en la whitelist opciones.causasRelajadasPorForzado.
+        // Sin esa opción (default, cualquier llamador existente), el
+        // comportamiento es IDÉNTICO al de antes.
+        let candidatoForzado = null;
+        let relajacionesUsadasGanador = [];
+        const juradoIdForzado = opciones.forzarGanadorPorRodeo && opciones.forzarGanadorPorRodeo.get(rodeo.id);
+        if (juradoIdForzado) {
+            candidatoForzado = candidatosValidos.find(e => e.jurado.id === juradoIdForzado) || null;
+            if (!candidatoForzado && opciones.causasRelajadasPorForzado) {
+                const evaluacionCompleta = evaluaciones.find(e => e.jurado.id === juradoIdForzado);
+                if (evaluacionCompleta) {
+                    const causasNoRelajables = evaluacionCompleta.causas.filter(c => !opciones.causasRelajadasPorForzado.has(c));
+                    if (causasNoRelajables.length === 0) {
+                        candidatoForzado = evaluacionCompleta;
+                        relajacionesUsadasGanador = evaluacionCompleta.causas.slice();
+                    }
+                }
+            }
+        }
+
+        if (candidatosValidos.length === 0 && !candidatoForzado) {
             resultados.push({
                 rodeo_id: rodeo.id, estado: 'SIN_PROPUESTA',
                 rodeo: { club: rodeo.club, fecha: rodeo.fecha, asociacion: rodeo.asociacion, clasificacion_codigo: rodeo.clasificacion_codigo },
@@ -1157,7 +1206,19 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             equidad_designaciones: construirEquidadDesignacionesCandidato(equidadDesignacionesAgregadaFila, e.jurado.categoria, e.designacionesAntes)
         }));
 
-        const ganador = grupo[0];
+        // `candidatoForzado` ya quedó resuelto arriba (antes del gate de
+        // SIN_PROPUESTA) — acá solo se decide si REALMENTE cambia al
+        // ganador natural (grupo[0]). `grupo` puede venir vacío si
+        // candidatosValidos estaba vacío (el único candidato vino por
+        // relajación) — en ese caso el ganador es directamente el forzado.
+        let ganador = grupo[0] || candidatoForzado;
+        let ganadorForzadoPorCobertura = false;
+        if (candidatoForzado && (!grupo[0] || candidatoForzado.jurado.id !== grupo[0].jurado.id)) {
+            ganador = candidatoForzado;
+            ganadorForzadoPorCobertura = true;
+        } else {
+            relajacionesUsadasGanador = []; // ganador natural — nunca hubo relajación real
+        }
         registrarAsignacionTemporal(ganador.jurado.id, rodeo, ganador.distanciaKm);
 
         // Equidad de Traslados — datos SOLO INFORMATIVOS del ganador (informe,
@@ -1190,7 +1251,28 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             zona_extrema: zonaExtremaInfo,
             jurado_propuesto: {
                 jurado_id: ganador.jurado.id,
+                // Fase 2A — true únicamente cuando el motor global forzó este
+                // ganador por sobre el que habría elegido el ranking local
+                // (ver opciones.forzarGanadorPorRodeo arriba). Siempre false
+                // en una corrida normal (dry-run, revalidación al guardar).
+                optimizacion_global_forzado: ganadorForzadoPorCobertura,
+                // Fase 2B — códigos de causa (p.ej. DISTANCIA_EXCEDIDA) que
+                // este ganador forzado SÍ tiene, pero que se permitieron por
+                // estar en la whitelist de preferencias relajables — nunca
+                // incluye una causa obligatoria (eso directamente impide que
+                // `forzado` se haya resuelto más arriba). [] cuando no hubo
+                // ninguna relajación (incluye el caso normal, no-forzado).
+                optimizacion_global_relajaciones: relajacionesUsadasGanador,
                 nombre: ganador.jurado.nombre_completo,
+                // Fase 2C — asociación del ganador (campo aditivo, nunca
+                // expuesto antes en jurado_propuesto): necesaria para
+                // reconstruir, con el mismo fingerprint que usa
+                // evaluarCambiosParaGuardar(), una advertencia
+                // ASOCIACION_REPETIDA_TEMPORADA pre-aceptada cuando este
+                // ganador fue forzado por el motor global con esa
+                // relajación — ver construirAdvertenciasPreaceptadas() en
+                // propuestaDesignacion.js.
+                asociacion: ganador.jurado.asociacion,
                 categoria: ganador.jurado.categoria,
                 categoria_preferente: ganador.categoriaOrdenPreferencia === 1,
                 comuna_canonica: ganador.comunaJurado?.nombre || null,

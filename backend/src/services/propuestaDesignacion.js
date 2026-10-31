@@ -60,6 +60,32 @@ function obtenerJuradoEfectivo(detalle) {
     }
 }
 
+// ─── Advertencias PRE-ACEPTADAS de un ganador forzado por el motor global ──
+// (Fase 2C). Cuando optimizacion_global_forzado=true, jurado_propuesto YA
+// tiene causas que normalmente exigirían confirmación manual explícita
+// (MANUAL_CON_ADVERTENCIA) — pero esa relajación la decidió el propio
+// optimizador, de forma visible (optimizacion_global_relajaciones), nunca
+// un administrador a ciegas. Reconstruye, con el MISMO shape que produce
+// evaluarSeleccion() en el router (origen:'REGLA_MOTOR', distancia_km,
+// categoria, asociacion) y por lo tanto el MISMO fingerprint que usa
+// evaluarCambiosParaGuardar(), la lista de advertencias que una fila
+// PENDIENTE sin tocar por el administrador debe traer PRE-ACEPTADA en
+// metricas_json — así "Guardar propuesta" en bloque no exige, fila por
+// fila, repetir una confirmación que el optimizador ya hizo y expuso. Nunca
+// se usa para causas OBLIGATORIAS (estructuralmente imposible: el motor
+// global nunca fuerza un ganador por una causa de CAUSAS_OBLIGATORIAS).
+// @param juradoPropuesto - el objeto jurado_propuesto de un resultado PROPUESTO
+// @returns advertencias [{ tipo, origen:'REGLA_MOTOR', distancia_km, categoria, asociacion }]
+function construirAdvertenciasPreaceptadas(juradoPropuesto) {
+    if (!juradoPropuesto?.optimizacion_global_forzado) return [];
+    return (juradoPropuesto.optimizacion_global_relajaciones || []).map(tipo => ({
+        tipo, origen: 'REGLA_MOTOR',
+        distancia_km: juradoPropuesto.distancia_km ?? null,
+        categoria: juradoPropuesto.categoria ?? null,
+        asociacion: juradoPropuesto.asociacion ?? null
+    }));
+}
+
 // ─── Construye la fila de detalle a partir de UN resultado de ────────────
 // ejecutarSimulacion() (el mismo objeto que ya devuelve el dry-run, sin
 // transformarlo). Es la única función que traduce "resultado de simulación"
@@ -67,6 +93,7 @@ function obtenerJuradoEfectivo(detalle) {
 // sin importar desde dónde se llame.
 function construirDetalleDesdeResultado(resultado) {
     if (resultado.estado === 'PROPUESTO') {
+        const advertenciasPreaceptadas = construirAdvertenciasPreaceptadas(resultado.jurado_propuesto);
         return {
             rodeo_id: resultado.rodeo_id,
             jurado_id_propuesto: resultado.jurado_propuesto.jurado_id,
@@ -84,7 +111,8 @@ function construirDetalleDesdeResultado(resultado) {
             metricas_json: {
                 candidatos_evaluados: resultado.candidatos_evaluados,
                 candidatos_potenciales_bd: resultado.candidatos_potenciales_bd,
-                descartes: resultado.descartes
+                descartes: resultado.descartes,
+                ...(advertenciasPreaceptadas.length > 0 ? { advertencias_aceptadas: advertenciasPreaceptadas } : {})
             }
         };
     }
@@ -310,10 +338,50 @@ function resumenPropuesta(filasDetalle) {
     };
 }
 
+// ─── Comparación V1 (motor) vs. estado actual + historial de cambios ─────
+// (Fase 2C, sección 4). V1 es SIEMPRE jurado_id_propuesto — inmutable desde
+// que se guardó la propuesta (nunca se reescribe, en ningún endpoint de este
+// módulo). El estado ACTUAL es obtenerJuradoEfectivo(detalle) — misma fuente
+// única de verdad que el resto del sistema. `movimientos` es la bitácora
+// filtrada por propuesta_detalle_id, en orden cronológico — cada fila ya
+// trae su propio motivo/actor/fecha (migración 083), así que esta función
+// NO recalcula nada de eso, solo arma la vista de comparación a partir de
+// datos ya reales.
+// @param detalle { jurado_id_propuesto, jurado_id_seleccionado, estado_revision }
+// @param movimientos [{ id, usuario_pagado_id_anterior, nombre_anterior_snapshot, usuario_pagado_id_nuevo, nombre_nuevo_snapshot, tipo_movimiento, motivo_detalle, created_at, fecha_efectiva, actor_id, catalogo_motivos_designacion:{etiqueta} }]
+// @param nombresPorId Map(usuario_pagado_id -> nombre_completo) para resolver V1/actual (puede no estar en la bitácora si nunca se modificó)
+function construirComparacionVersiones(detalle, movimientos, nombresPorId) {
+    const juradoActualId = obtenerJuradoEfectivo(detalle);
+    const nombrePorId = (id) => (id ? (nombresPorId?.get(id) || null) : null);
+    return {
+        v1: {
+            jurado_id: detalle.jurado_id_propuesto || null,
+            nombre: nombrePorId(detalle.jurado_id_propuesto)
+        },
+        actual: {
+            jurado_id: juradoActualId,
+            nombre: nombrePorId(juradoActualId)
+        },
+        modificado: !!detalle.jurado_id_propuesto && juradoActualId !== detalle.jurado_id_propuesto,
+        historial: (movimientos || []).map(m => ({
+            id: m.id,
+            tipo_movimiento: m.tipo_movimiento,
+            jurado_anterior: { id: m.usuario_pagado_id_anterior, nombre: m.nombre_anterior_snapshot },
+            jurado_nuevo: { id: m.usuario_pagado_id_nuevo, nombre: m.nombre_nuevo_snapshot },
+            motivo: m.catalogo_motivos_designacion?.etiqueta || null,
+            motivo_detalle: m.motivo_detalle || null,
+            actor_id: m.actor_id,
+            fecha_efectiva: m.fecha_efectiva,
+            created_at: m.created_at
+        }))
+    };
+}
+
 module.exports = {
     ESTADOS_REVISION, ORIGENES_SELECCION,
     obtenerJuradoEfectivo,
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
     resolverFilaALiberar,
-    fingerprintAdvertencia, evaluarCambiosParaGuardar
+    fingerprintAdvertencia, evaluarCambiosParaGuardar,
+    construirAdvertenciasPreaceptadas, construirComparacionVersiones
 };

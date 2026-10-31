@@ -100,10 +100,15 @@ describe('firmarPreview / verificarPreviewToken', () => {
         expect(verificarPreviewToken(tokenSinDominio)).toBeNull();
     });
 
-    test('el snapshot firmado no contiene campos ajenos a v/temporada_id/configuracion_version_id/rodeos (nada sensible)', () => {
+    // Fase 2C — el snapshot ahora incluye además motor/fecha_corte_tecnica/
+    // cobertura_resumen (VERSION_SNAPSHOT 2→3): todo ya visible en la propia
+    // respuesta del dry-run, nada sensible nuevo.
+    test('el snapshot firmado no contiene campos ajenos a los esperados (nada sensible)', () => {
         const token = firmarPreview(snapshotEjemplo);
         const verificado = verificarPreviewToken(token);
-        expect(Object.keys(verificado).sort()).toEqual(['configuracion_version_id', 'rodeos', 'temporada_id', 'v']);
+        expect(Object.keys(verificado).sort()).toEqual([
+            'cobertura_resumen', 'configuracion_version_id', 'fecha_corte_tecnica', 'motor', 'rodeos', 'temporada_id', 'v'
+        ]);
         verificado.rodeos.forEach(r => expect(Object.keys(r).sort()).toEqual(['estado', 'jurado_id_propuesto', 'rodeo_id']));
     });
 
@@ -163,11 +168,13 @@ describe('TEST C: token legacy (v=1, sin configuracion_version_id) es rechazado,
 
 // TEST D
 describe('TEST D: el payload no contiene secretos (repetido explícitamente para Etapa 3)', () => {
-    test('configuracion_version_id es solo un identificador, no un dato sensible, y no se agregó ningún otro campo', () => {
+    test('configuracion_version_id es solo un identificador, no un dato sensible', () => {
         const token = firmarPreview(snapshotEjemplo);
         const verificado = verificarPreviewToken(token);
         const claves = Object.keys(verificado).sort();
-        expect(claves).toEqual(['configuracion_version_id', 'rodeos', 'temporada_id', 'v']);
+        expect(claves).toEqual([
+            'cobertura_resumen', 'configuracion_version_id', 'fecha_corte_tecnica', 'motor', 'rodeos', 'temporada_id', 'v'
+        ]);
         expect(typeof verificado.configuracion_version_id).toBe('string');
     });
 });
@@ -186,6 +193,52 @@ describe('TEST E: el token conserva su versión aunque la configuración activa 
         expect(verificadoV1.configuracion_version_id).toBe('config-v1-uuid');
         expect(verificadoV2.configuracion_version_id).toBe('config-v2-uuid');
         expect(tokenV1).not.toBe(tokenV2);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// FASE 2C — motor/fecha_corte_tecnica/cobertura_resumen firmados (sección 1
+// del pedido: "selector de motor local/global" — acá la parte de integridad
+// del snapshot; la UI se cubre en el frontend).
+// ═════════════════════════════════════════════════════════════════════════
+describe('Fase 2C: motor/fecha_corte_tecnica/cobertura_resumen firmados', () => {
+    test('sin motor explícito, se firma como "local" por defecto', () => {
+        const token = firmarPreview(snapshotEjemplo);
+        expect(verificarPreviewToken(token).motor).toBe('local');
+    });
+
+    test('motor:"global" + fecha_corte_tecnica + cobertura_resumen quedan firmados intactos', () => {
+        const cobertura = { estado_busqueda: 'COBERTURA_COMPLETA', total_cupos: 3, cobertura_obtenida: 3, cupos_pendientes: 0 };
+        const token = firmarPreview({ ...snapshotEjemplo, motor: 'global', fecha_corte_tecnica: '2026-10-30T12:00:00.000Z', cobertura_resumen: cobertura });
+        const verificado = verificarPreviewToken(token);
+        expect(verificado.motor).toBe('global');
+        expect(verificado.fecha_corte_tecnica).toBe('2026-10-30T12:00:00.000Z');
+        expect(verificado.cobertura_resumen).toEqual(cobertura);
+    });
+
+    test('un valor de motor distinto a "global" nunca se firma como global (solo "global" exacto activa el motor global)', () => {
+        const token = firmarPreview({ ...snapshotEjemplo, motor: 'GLOBAL' });
+        expect(verificarPreviewToken(token).motor).toBe('local');
+    });
+
+    test('alterar motor de "local" a "global" sin refirmar → rechazado', () => {
+        const token = firmarPreview({ ...snapshotEjemplo, motor: 'local' });
+        const idx = token.lastIndexOf('.');
+        const payload = JSON.parse(Buffer.from(token.slice(0, idx), 'base64url').toString('utf8'));
+        payload.motor = 'global';
+        const payloadAlterado = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+        const tokenAlterado = payloadAlterado + '.' + token.slice(idx + 1);
+        expect(verificarPreviewToken(tokenAlterado)).toBeNull();
+    });
+
+    test('un token v=2 (Fase 2B, sin motor/fecha_corte_tecnica/cobertura_resumen) se rechaza, nunca se asume motor:"local"', () => {
+        const crypto = require('crypto');
+        const SECRETO = process.env.JWT_SECRET || 'fallback_secret_change_in_prod';
+        const DOMINIO = 'propuesta-designacion-preview-v1:';
+        const payloadV2 = { v: 2, temporada_id: 't1', configuracion_version_id: 'config-v1-uuid', rodeos: snapshotEjemplo.rodeos };
+        const payloadB64 = Buffer.from(JSON.stringify(payloadV2), 'utf8').toString('base64url');
+        const firma = crypto.createHmac('sha256', SECRETO).update(DOMINIO + payloadB64).digest('hex');
+        expect(verificarPreviewToken(`${payloadB64}.${firma}`)).toBeNull();
     });
 });
 

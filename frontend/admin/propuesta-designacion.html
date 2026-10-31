@@ -211,6 +211,19 @@
                     </div>
 
                     <div id="bd-footer" style="display:none; margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
+                        <!-- Fase 2C, sección 1 — selector de motor. "Motor actual" sigue
+                             siendo el valor predeterminado durante esta fase (nunca se activa
+                             el motor global por defecto). -->
+                        <div style="display:flex; gap:18px; align-items:center; margin-bottom:12px; font-size:13px;">
+                            <strong style="color:var(--gris);">Motor de designación:</strong>
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                                <input type="radio" name="motor-designacion" value="local" id="motor-local" checked> Motor actual
+                            </label>
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                                <input type="radio" name="motor-designacion" value="global" id="motor-global"> Motor global optimizado
+                            </label>
+                            <span style="color:var(--gris); font-size:12px;">(busca cubrir el 100% de los cupos, aun relajando preferencias de distancia/repetición/consecutividad cuando es la única forma de cubrir un rodeo)</span>
+                        </div>
                         <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
                             <span id="bd-contador" style="font-size:13px; color:var(--gris);">0 rodeos seleccionados</span>
                             <div class="form-acciones" style="margin:0;">
@@ -267,6 +280,17 @@
         <div class="mc-checks" id="mc-checks"></div>
         <div class="mc-contadores" id="mc-contadores"></div>
         <div class="mc-lista" id="mc-lista"></div>
+    </div>
+</div>
+
+<!-- Fase 2C, sección 4 — "Ver historial" (V1 vs. actual + movimientos sucesivos). -->
+<div class="modal-overlay oculto" id="modal-historial-overlay">
+    <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+            <h3>Historial de cambios — V1 vs. actual</h3>
+            <button class="modal-cerrar" onclick="cerrarModalHistorial()">×</button>
+        </div>
+        <div class="modal-body" id="mh-body"></div>
     </div>
 </div>
 
@@ -912,8 +936,9 @@ async function ejecutarDryRun() {
     const cont = document.getElementById('resultado-dryrun');
     btn.disabled = true;
     cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    const motorElegido = document.querySelector('input[name="motor-designacion"]:checked')?.value === 'global' ? 'global' : 'local';
     try {
-        const resp = await api.post('/admin/propuesta-designacion/dry-run', { rodeo_ids: [...seleccionMapa.keys()] });
+        const resp = await api.post('/admin/propuesta-designacion/dry-run', { rodeo_ids: [...seleccionMapa.keys()], motor: motorElegido });
         iniciarPreviewTemporal(resp);
         renderPreviewTemporal();
     } catch (err) {
@@ -928,15 +953,40 @@ async function ejecutarDryRun() {
 // propuesta ya guardada (construirDetalleDesdeResultado en el backend) —
 // es solo reestructuración de datos ya calculados por el motor, ninguna
 // regla nueva se decide acá.
+// Fase 2C — cuando el motor GLOBAL forzó este ganador por sobre el ranking
+// local (jp.optimizacion_global_forzado), las causas que se relajaron para
+// lograrlo (jp.optimizacion_global_relajaciones) quedan PRE-ACEPTADAS en
+// metricas_json.advertencias_aceptadas — mismo shape que produce
+// evaluarSeleccion() en el backend (tipo/origen/distancia_km/categoria/
+// asociacion), para que "Guardar propuesta" en bloque no vuelva a exigir,
+// fila por fila, una confirmación que el propio optimizador ya hizo y
+// expuso (ver construirAdvertenciasPreaceptadas en propuestaDesignacion.js,
+// backend — misma lógica, reflejada acá porque el preview es quien compone
+// el estado_temporal que se envía al guardar).
+function construirAdvertenciasPreaceptadas(jp) {
+    if (!jp?.optimizacion_global_forzado) return [];
+    return (jp.optimizacion_global_relajaciones || []).map(tipo => ({
+        tipo, origen: 'REGLA_MOTOR', distancia_km: jp.distancia_km ?? null, categoria: jp.categoria ?? null, asociacion: jp.asociacion ?? null
+    }));
+}
+
 function construirFilaPreviewDesdeResultado(r) {
     const base = { id: r.rodeo_id, rodeo_id: r.rodeo_id, rodeo: r.rodeo || null, origen_seleccion: null, jurado_id_seleccionado: null, nombre_seleccionado: null };
     if (r.estado === 'PROPUESTO') {
         const jp = r.jurado_propuesto;
+        const advertenciasPreaceptadas = construirAdvertenciasPreaceptadas(jp);
         return {
             ...base, jurado_id_propuesto: jp.jurado_id, nombre_propuesto: jp.nombre,
             estado_revision: 'PENDIENTE',
+            // Fase 2C, sección 1 — para distinguir visualmente una designación
+            // natural de una que necesitó reacomodo global (renderFilaDetallePropuesta).
+            optimizacion_global_forzado: !!jp.optimizacion_global_forzado,
+            optimizacion_global_relajaciones: jp.optimizacion_global_relajaciones || [],
             explicacion_json: { jurado_propuesto: jp, top_candidatos: r.top_candidatos || [], zona_extrema: r.zona_extrema || null },
-            metricas_json: { candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes },
+            metricas_json: {
+                candidatos_evaluados: r.candidatos_evaluados, candidatos_potenciales_bd: r.candidatos_potenciales_bd, descartes: r.descartes,
+                ...(advertenciasPreaceptadas.length > 0 ? { advertencias_aceptadas: advertenciasPreaceptadas } : {})
+            },
             jurado_efectivo: {
                 id: jp.jurado_id, nombre: jp.nombre, categoria: jp.categoria, categoria_preferente: jp.categoria_preferente,
                 comuna: jp.comuna_canonica, distancia_km: jp.distancia_km, designaciones_temporada_antes: jp.designaciones_temporada_antes,
@@ -981,6 +1031,14 @@ function iniciarPreviewTemporal(resp) {
         // Etapa 4, sección 41/43/44: resumen liviano de ESTA versión (la que
         // firmó el token) — para el indicador de versión y checks dinámicos.
         configuracion: resp.configuracion || null,
+        // Fase 2C, sección 1 — motor utilizado en ESTA corrida + resultado de
+        // cobertura del motor global (null si motor:'local', que no tiene
+        // búsqueda que reportar). Viaja también firmado dentro de
+        // preview_token (ver previewIntegridad.js) — acá solo para mostrarlo.
+        motor: resp.motor === 'GLOBAL' ? 'global' : 'local',
+        fecha_corte_tecnica: resp.fecha_corte_tecnica || null,
+        optimizacion_global: resp.optimizacion_global || null,
+        cobertura_completa: resp.cobertura_completa ?? null,
         cambiosPendientes: []
     };
 }
@@ -1001,6 +1059,37 @@ function previewResumen() {
     };
 }
 
+// Fase 2C, sección 1 — resumen de cobertura del motor global: total de
+// cupos, cubiertos, pendientes, % de cobertura, estado de búsqueda y
+// advertencias (ej. "límite de búsqueda alcanzado" — nunca se muestra como
+// si fuera una imposibilidad probada cuando no lo es). Nunca se renderiza
+// nada para el motor local (null).
+const ETIQUETAS_ESTADO_BUSQUEDA = {
+    COBERTURA_COMPLETA: '✓ Cobertura completa — el optimizador encontró una asignación para el 100% de los cupos',
+    INFACTIBLE_DEMOSTRADO: '✗ Infactible demostrado — no existe ninguna asignación válida que cubra el 100% de los cupos con los jurados disponibles',
+    LIMITE_ALCANZADO: '⚠ Límite de búsqueda alcanzado — se conserva el mejor resultado encontrado, SIN que esto pruebe que sea imposible cubrir el resto',
+    ERROR_TECNICO: '✗ Error técnico durante la búsqueda — revise el detalle antes de continuar'
+};
+function renderCoberturaGlobal(og, coberturaCompleta) {
+    if (!og) return '';
+    const pct = og.total_cupos ? Math.round((og.cobertura_obtenida / og.total_cupos) * 100) : 0;
+    const clase = coberturaCompleta ? 'verde' : (og.estado_busqueda === 'INFACTIBLE_DEMOSTRADO' || og.estado_busqueda === 'ERROR_TECNICO' ? 'rojo' : 'naranja');
+    const colorBorde = { verde: 'var(--verde)', rojo: 'var(--rojo)', naranja: 'var(--amarillo)' }[clase];
+    return `
+    <div class="card" style="padding:14px; margin-bottom:16px; border-left:4px solid ${colorBorde};">
+        <div style="font-weight:700; margin-bottom:6px;">🧮 Resultado del motor global optimizado</div>
+        <div class="kpi-grid" style="margin-bottom:8px;">
+            ${kpi(og.total_cupos ?? '—', 'Cupos requeridos')}
+            ${kpi(og.cobertura_obtenida ?? '—', 'Cupos cubiertos', 'verde')}
+            ${kpi(og.cupos_pendientes ?? 0, 'Cupos pendientes', og.cupos_pendientes > 0 ? 'naranja' : 'verde')}
+            ${kpi(pct + '%', 'Cobertura', clase)}
+        </div>
+        <div style="font-size:13px;">${sanitizar(ETIQUETAS_ESTADO_BUSQUEDA[og.estado_busqueda] || og.estado_busqueda || '—')}</div>
+        ${(og.advertencias && og.advertencias.length > 0) ? `<ul style="margin:8px 0 0 20px; font-size:12px; color:var(--gris);">${og.advertencias.map(a => `<li>${sanitizar(typeof a === 'string' ? a : JSON.stringify(a))}</li>`).join('')}</ul>` : ''}
+        ${!coberturaCompleta ? '<div style="margin-top:8px; font-size:12px; color:#CC6600;">Esta propuesta NO puede aplicarse como definitiva mientras queden cupos pendientes — complete manualmente los rodeos sin jurado antes de aplicar.</div>' : ''}
+    </div>`;
+}
+
 function renderPreviewTemporal() {
     const cont = document.getElementById('resultado-dryrun');
     if (!previewTemporal) { cont.innerHTML = ''; return; }
@@ -1015,8 +1104,10 @@ function renderPreviewTemporal() {
     let html = `
         <div class="aviso-simulacion">
             🧪 PROPUESTA SIN GUARDAR (DRY-RUN) — Temporada: ${sanitizar(previewTemporal.temporada || '—')} — Nada de esto está guardado todavía. Puede editarla libremente antes de guardar.
+            ${previewTemporal.motor === 'global' ? ' · Motor: <strong>global optimizado</strong>' : ''}
             ${indicadorConfiguracion(previewTemporal.configuracion)}
         </div>
+        ${renderCoberturaGlobal(previewTemporal.optimizacion_global, previewTemporal.cobertura_completa)}
         ${avisoCambios}
         <div class="kpi-grid" style="margin-bottom:16px;">
             ${kpi(r.total_rodeos, 'Rodeos')}
@@ -1207,6 +1298,20 @@ function cerrarVistaPropuesta() {
     document.getElementById('vista-propuesta').innerHTML = '';
 }
 
+// Fase 2C, sección 5 — exportación Excel/PDF. Reutiliza api.descargar (ya
+// existente en api.js, usado por el resto del proyecto para archivos con
+// autenticación JWT) — nunca un <a href> plano, que no llevaría el token.
+async function exportarPropuestaArchivo(formato) {
+    if (!propuestaAbierta) return;
+    const id = propuestaAbierta.propuesta.id;
+    const ext = formato === 'pdf' ? 'pdf' : 'xlsx';
+    try {
+        await api.descargar(`/admin/propuesta-designacion/propuestas/${id}/exportar/${formato}`, `Propuesta_Designacion_${id}.${ext}`);
+    } catch (err) {
+        mostrarError(err);
+    }
+}
+
 function renderVistaPropuesta() {
     const cont = document.getElementById('vista-propuesta');
     if (!propuestaAbierta) { cont.innerHTML = ''; return; }
@@ -1216,11 +1321,19 @@ function renderVistaPropuesta() {
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
             <div>
                 <div style="font-weight:700; font-size:15px;">Propuesta del ${new Date(propuesta.created_at).toLocaleString('es-CL')}</div>
-                <div style="font-size:12px; color:var(--gris);">Temporada: ${sanitizar(propuesta.temporada || '—')} · Estado: ${sanitizar(propuesta.estado)}</div>
+                <div style="font-size:12px; color:var(--gris);">Temporada: ${sanitizar(propuesta.temporada || '—')} · Estado: ${sanitizar(propuesta.estado)}
+                    · Motor: <strong>${propuesta.motor_usado === 'global' ? 'global optimizado' : 'actual'}</strong>
+                    ${propuesta.fecha_corte_tecnica ? ' · Corte técnico: ' + new Date(propuesta.fecha_corte_tecnica).toLocaleString('es-CL') : ''}
+                </div>
                 <div style="font-size:12px; color:var(--gris); margin-top:2px;">${indicadorConfiguracion(propuesta.configuracion, propuesta.configuracion_numero_version)}</div>
             </div>
-            <button class="btn btn-secundario btn-pequeño" onclick="cerrarVistaPropuesta()">Cerrar</button>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-outline btn-pequeño" onclick="exportarPropuestaArchivo('excel')">⬇ Excel</button>
+                <button class="btn btn-outline btn-pequeño" onclick="exportarPropuestaArchivo('pdf')">⬇ PDF</button>
+                <button class="btn btn-secundario btn-pequeño" onclick="cerrarVistaPropuesta()">Cerrar</button>
+            </div>
         </div>
+        ${renderCoberturaGlobal(propuesta.resultado_cobertura ? { ...propuesta.resultado_cobertura, advertencias: [] } : null, propuesta.resultado_cobertura?.cobertura_completa)}
         <div class="kpi-grid" style="margin-bottom:16px;">
             ${kpi(resumen.total_rodeos, 'Rodeos')}
             ${kpi(resumen.aceptados, 'Aceptados', 'verde')}
@@ -1497,6 +1610,14 @@ function renderFilaDetallePropuesta(d, modo) {
     const avisoAdvertencia = (advertenciasGuardadas && advertenciasGuardadas.length > 0)
         ? `<div style="font-size:14px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
         : '';
+    // Fase 2C, sección 1 — distingue visualmente una designación natural de
+    // una que necesitó reacomodo global (jurado_propuesto.optimizacion_
+    // global_forzado, guardado tal cual en explicacion_json tanto en
+    // preview como en un borrador ya persistido — nunca recalculado acá).
+    const forzadoGlobal = d.explicacion_json?.jurado_propuesto?.optimizacion_global_forzado;
+    const avisoForzadoGlobal = forzadoGlobal
+        ? `<div style="font-size:14px; color:#1a5276; margin-top:4px;">🧮 Designación obtenida por reacomodo del motor global${(d.explicacion_json.jurado_propuesto.optimizacion_global_relajaciones || []).length > 0 ? ' — relajó: ' + sanitizar(d.explicacion_json.jurado_propuesto.optimizacion_global_relajaciones.map(t => ETIQUETAS_CAUSA[t] || t).join(', ')) : ''}.</div>`
+        : '';
 
     // Reglas/"por qué ganó"/descartes — solo mientras el jurado efectivo
     // siga siendo el que el motor propuso originalmente (si se modificó
@@ -1567,6 +1688,14 @@ function renderFilaDetallePropuesta(d, modo) {
         // requiere una decisión administrativa nueva, no una simple confirmación.
         acciones = `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirModalCandidatos('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
     }
+    // Fase 2C, sección 4 — "Ver historial" (V1 vs. actual) solo tiene sentido
+    // sobre un borrador YA GUARDADO (el historial vive en bitacora_
+    // designaciones, atada a un propuesta_detalle_id real — un preview
+    // todavía no tiene uno) y solo cuando la fila MODIFICADO (jurado_id_
+    // seleccionado distinto del propuesto por el motor).
+    if (modo === 'borrador' && d.estado_revision === 'MODIFICADO') {
+        acciones += `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirHistorialDetalle('${d.id}')">🕘 Ver historial (V1 vs. actual)</button>`;
+    }
 
     return `<div class="resultado-rodeo-card" id="fila-detalle-${modo}-${d.id}">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
@@ -1605,6 +1734,7 @@ function renderFilaDetallePropuesta(d, modo) {
         </div>
         ${infoOrigen}
         ${avisoAdvertencia}
+        ${avisoForzadoGlobal}
         ${detallesExtra}
         <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">${acciones}</div>
     </div>`;
@@ -1929,7 +2059,10 @@ function renderModalLista(validos, descartados, totalOriginal) {
     lista.innerHTML = html;
 }
 
-async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, juradoNombre) {
+// Fase 2C, sección 3 — `motivo` es { motivo_catalogo_id, motivo_detalle } | null.
+// Solo se envía (y solo lo exige el backend) cuando la modificación es
+// MANUAL — el preview nunca lo necesita (nunca persiste nada).
+async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, juradoNombre, motivo) {
     if (modo === 'preview') {
         try {
             const resp = await api.post('/admin/propuesta-designacion/preview/seleccionar', {
@@ -1941,18 +2074,20 @@ async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, j
             cerrarModalCandidatos();
             renderPreviewTemporal();
         } catch (err) {
-            await manejarRespuestaSeleccion('preview', id, juradoId, err, juradoNombre);
+            await manejarRespuestaSeleccion('preview', id, juradoId, err, juradoNombre, confirmarAdvertencias);
         }
         return;
     }
     try {
-        const resp = await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/seleccionar`,
-            { jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias });
+        const resp = await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/seleccionar`, {
+            jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias,
+            motivo_catalogo_id: motivo?.motivo_catalogo_id || undefined, motivo_detalle: motivo?.motivo_detalle || undefined
+        });
         mostrarToast(resp.jurado_movido_desde ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección guardada.', 'success');
         cerrarModalCandidatos();
         await recargarPropuestaAbierta();
     } catch (err) {
-        await manejarRespuestaSeleccion('borrador', id, juradoId, err);
+        await manejarRespuestaSeleccion('borrador', id, juradoId, err, juradoNombre, confirmarAdvertencias);
     }
 }
 
@@ -1992,9 +2127,20 @@ function aplicarResultadoPreview(destino, origenLiberado, juradoNombre) {
 // la selección incumple una regla del motor o genera un conflicto interno con
 // otra fila ya aceptada/modificada de la MISMA propuesta. Nunca se guarda nada
 // en ese caso hasta que el administrador confirme explícitamente la excepción.
-async function manejarRespuestaSeleccion(modo, id, juradoId, err, juradoNombre) {
+async function manejarRespuestaSeleccion(modo, id, juradoId, err, juradoNombre, confirmarAdvertencias) {
     if (err.status === 409 && err.data?.requiereConfirmacion) {
         await mostrarConfirmacionAdvertencias(modo, id, juradoId || err.data.jurado?.id, err.data, juradoNombre);
+        return;
+    }
+    // Fase 2C, sección 3 — el backend respondió que esta modificación manual
+    // necesita un motivo del catálogo antes de guardarse (solo ocurre en
+    // modo 'borrador' — el preview nunca lo exige). Se pide, y si el
+    // administrador lo completa, se reintenta la MISMA selección con el
+    // motivo adjunto (preservando confirmarAdvertencias si ya se había
+    // confirmado una excepción antes de llegar aquí).
+    if (modo === 'borrador' && err.status === 409 && err.data?.requiereMotivo) {
+        const motivo = await pedirMotivoModificacion();
+        if (motivo) await seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, juradoNombre, motivo);
         return;
     }
     mostrarError(err);
@@ -2062,6 +2208,109 @@ async function revertirDetalle(modo, id) {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Fase 2C, sección 3 — motivo obligatorio para una modificación manual.
+// Reutiliza EXACTAMENTE el mismo catálogo que ya usa el reemplazo
+// transaccional de Fase 1B (GET /admin/asignaciones/motivos-designacion) —
+// nunca se crea un catálogo paralelo.
+// ═════════════════════════════════════════════════════════════════════════
+let _catalogoMotivosCache = null;
+async function cargarCatalogoMotivos() {
+    if (_catalogoMotivosCache) return _catalogoMotivosCache;
+    const resp = await api.get('/admin/asignaciones/motivos-designacion');
+    _catalogoMotivosCache = resp.motivos || [];
+    return _catalogoMotivosCache;
+}
+
+// Modal dinámico, mismo patrón (Promise-resolving) que confirmar() en utils.js.
+// @returns { motivo_catalogo_id, motivo_detalle } | null (null = canceló)
+async function pedirMotivoModificacion() {
+    let motivos = [];
+    try {
+        motivos = await cargarCatalogoMotivos();
+    } catch (err) {
+        mostrarError(err);
+        return null;
+    }
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-confirmar" style="text-align:left; min-width:360px;">
+                <p style="font-weight:700; margin-bottom:10px;">Motivo de la modificación manual</p>
+                <p style="font-size:13px; color:var(--gris); margin-bottom:12px;">
+                    Está cambiando el jurado propuesto por el motor — indique un motivo del catálogo.
+                    Queda registrado en la bitácora de designaciones, con su usuario y la fecha/hora.
+                </p>
+                <label class="form-label">Motivo <span class="req">*</span></label>
+                <select class="form-control" id="pm-motivo" style="margin-bottom:10px;">
+                    <option value="">Seleccione un motivo...</option>
+                    ${motivos.map(m => `<option value="${m.id}">${sanitizar(m.etiqueta)}</option>`).join('')}
+                </select>
+                <label class="form-label">Detalle (opcional)</label>
+                <textarea class="form-control" id="pm-detalle" rows="2" style="margin-bottom:10px;"></textarea>
+                <div class="modal-acciones">
+                    <button class="btn btn-secundario" id="pm-cancelar">Cancelar</button>
+                    <button class="btn btn-primario" id="pm-confirmar">Confirmar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#pm-cancelar').onclick = () => { overlay.remove(); resolve(null); };
+        overlay.querySelector('#pm-confirmar').onclick = () => {
+            const motivoCatalogoId = overlay.querySelector('#pm-motivo').value;
+            if (!motivoCatalogoId) { mostrarError('Debe seleccionar un motivo.'); return; }
+            const motivoDetalle = overlay.querySelector('#pm-detalle').value.trim();
+            overlay.remove();
+            resolve({ motivo_catalogo_id: motivoCatalogoId, motivo_detalle: motivoDetalle || undefined });
+        };
+    });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Fase 2C, sección 4 — "Ver historial" (V1 vs. actual + movimientos sucesivos).
+// ═════════════════════════════════════════════════════════════════════════
+async function abrirHistorialDetalle(detalleId) {
+    const overlay = document.getElementById('modal-historial-overlay');
+    const body = document.getElementById('mh-body');
+    overlay.classList.remove('oculto');
+    body.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const h = await api.get(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${detalleId}/historial`);
+        body.innerHTML = renderHistorialDetalle(h);
+    } catch (err) {
+        body.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
+    }
+}
+function cerrarModalHistorial() { document.getElementById('modal-historial-overlay').classList.add('oculto'); }
+
+function renderHistorialDetalle(h) {
+    let html = `
+        <div style="display:flex; gap:20px; margin-bottom:16px; flex-wrap:wrap;">
+            <div style="flex:1;">
+                <div style="font-size:12px; color:var(--gris); text-transform:uppercase; font-weight:700;">V1 — propuesto originalmente</div>
+                <div style="font-size:16px; font-weight:700;">${sanitizar(h.v1.nombre || 'Sin propuesta')}</div>
+            </div>
+            <div style="flex:1;">
+                <div style="font-size:12px; color:var(--gris); text-transform:uppercase; font-weight:700;">Actual</div>
+                <div style="font-size:16px; font-weight:700;">${sanitizar(h.actual.nombre || 'Sin jurado')}</div>
+            </div>
+        </div>`;
+    if (!h.modificado) {
+        html += `<div class="alerta alerta-info">Este rodeo conserva la propuesta original del motor — nunca fue modificado manualmente.</div>`;
+        return html;
+    }
+    html += `<div class="dash-seccion-titulo" style="border:none; padding:0; margin-bottom:8px;">Historial de modificaciones (${h.historial.length})</div>`;
+    html += h.historial.map(m => `
+        <div class="card" style="padding:10px; margin-bottom:8px;">
+            <div style="font-size:14px;"><strong>${sanitizar(m.jurado_anterior.nombre || 'Sin jurado')}</strong> → <strong>${sanitizar(m.jurado_nuevo.nombre || '—')}</strong></div>
+            <div style="font-size:12px; color:var(--gris); margin-top:4px;">
+                Motivo: ${sanitizar(m.motivo || '—')}${m.motivo_detalle ? ' — ' + sanitizar(m.motivo_detalle) : ''}<br>
+                Fecha: ${m.fecha_efectiva ? new Date(m.fecha_efectiva).toLocaleString('es-CL') : '—'}
+            </div>
+        </div>`).join('');
+    return html;
+}
 </script>
 </body>
 </html>
