@@ -1814,13 +1814,23 @@ async function guardarEdicionAsignacion(e, asigId, rodeoId) {
     } catch(err) { mostrarError(err); } finally { btn.disabled = false; }
 }
 
-// ── REEMPLAZAR JURADO (Fase 1B — transaccional, con motivo y bitácora) ──
+// ── REEMPLAZAR JURADO (Fase 1B — transaccional, con motivo y bitácora; ──
+// buscador enriquecido con historial/disponibilidad/conflictos de fechas,
+// reutilizando el diseño y los helpers ya aprobados de "Designar jurado"
+// — nunca oculta candidatos ocupados, los muestra con el motivo exacto). ──
 let rjMotivosCache = null;
 let rjAnteriorId = null;
+let _rjRodeoId = null;
+let _rjAsigId = null;
+let _rjCandidatos = [];
+let rjBuscarTimer;
+
 async function abrirReemplazarJurado(asigId, rodeoId) {
     const asig = (rodeoActual?.asignaciones || []).find(a => a.id === asigId);
     if (!asig) { mostrarToast('No se encontró la asignación', 'error'); return; }
     rjAnteriorId = asig.usuarios_pagados?.id || null;
+    _rjRodeoId = rodeoId;
+    _rjAsigId = asigId;
 
     if (!rjMotivosCache) {
         try {
@@ -1829,8 +1839,14 @@ async function abrirReemplazarJurado(asigId, rodeoId) {
         } catch (err) { mostrarError(err); rjMotivosCache = []; }
     }
 
+    // Mismo criterio que abrirDesignarJurado: reutiliza el rodeo ya cargado
+    // en pantalla solo si coincide el id; si no, lo pide con el endpoint
+    // existente y repinta el resumen (rdrHtmlResumen) cuando llegue.
+    const rodeoCtx = (rodeoActual && rodeoActual.id === rodeoId) ? rodeoActual : null;
     document.getElementById('modal-titulo').textContent = 'Reemplazar jurado';
     document.getElementById('modal-body').innerHTML = `
+        <div id="rj-contexto" style="position:sticky; top:0; z-index:2; background:#fff; padding-top:2px;">
+        ${rdrHtmlResumen(rodeoCtx)}
         <div class="alerta alerta-info" style="margin-bottom:14px;">
             <strong>Jurado actual:</strong> ${sanitizar(asig.usuarios_pagados?.nombre_completo || asig.nombre_importado || '—')}
             &nbsp;·&nbsp; Cat. ${asig.categoria_aplicada || '—'}
@@ -1838,16 +1854,25 @@ async function abrirReemplazarJurado(asigId, rodeoId) {
         <div class="alerta alerta-error" style="margin-bottom:14px;">
             Este cambio queda registrado de forma permanente en la bitácora de designaciones, junto con el motivo. No se puede deshacer desde esta pantalla.
         </div>
+        <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+            <input type="text" id="rj-buscar" class="form-control" placeholder="Buscar jurado reemplazante por nombre..."
+                style="flex:1; min-width:160px;" oninput="buscarJuradoReemplazo()" autocomplete="off">
+            <select id="rj-cat" class="form-control" style="max-width:140px;" onchange="buscarJuradoReemplazo()">
+                <option value="">Todas las cat.</option>
+                <option value="A">Cat. A</option>
+                <option value="B">Cat. B</option>
+                <option value="C">Cat. C</option>
+                <option value="D">Cat. D</option>
+            </select>
+        </div>
+        </div>
+        <div id="rj-resultados" style="max-height:clamp(140px, calc(90vh - 480px), 320px); overflow-y:auto; border:1px solid var(--gris-borde); border-radius:6px; margin-bottom:12px;">
+            <div class="spinner-wrap"><div class="spinner"></div></div>
+        </div>
+        <input type="hidden" id="rj-usr-id" value="">
+        <div id="rj-persona-sel" class="alerta alerta-info oculto" style="margin-top:0; margin-bottom:14px;"></div>
 
         <form onsubmit="guardarReemplazoJurado(event, '${asigId}', '${rodeoId}')">
-            <div class="form-grupo">
-                <label class="form-label">Nuevo jurado</label>
-                <input type="text" id="rj-buscar" class="form-control" placeholder="Buscar jurado por nombre" oninput="buscarJuradoReemplazo(this.value)" autocomplete="off">
-                <div id="rj-resultados" style="margin-top:6px;"></div>
-                <input type="hidden" id="rj-usr-id" value="">
-                <div id="rj-persona-sel" class="alerta alerta-info oculto" style="margin-top:6px; margin-bottom:0;"></div>
-            </div>
-
             <div class="form-grupo">
                 <label class="form-label">Motivo del reemplazo</label>
                 <select id="rj-motivo" class="form-control" required onchange="actualizarBotonConfirmarReemplazo()">
@@ -1866,26 +1891,135 @@ async function abrirReemplazarJurado(asigId, rodeoId) {
                 <button type="button" class="btn btn-secundario" onclick="verDetalle('${rodeoId}')">Cancelar</button>
             </div>
         </form>`;
+    if (!rodeoCtx) {
+        api.get('/admin/rodeos/' + rodeoId).then(r => {
+            const el = document.getElementById('dj-resumen');
+            if (r && r.id === rodeoId && _rjRodeoId === rodeoId && el) el.outerHTML = rdrHtmlResumen(r);
+        }).catch(() => {
+            const el = document.getElementById('dj-resumen');
+            if (el && _rjRodeoId === rodeoId) el.outerHTML = rdrHtmlResumen({ id: rodeoId });
+        });
+    }
+    await cargarCandidatosReemplazo();
 }
 
-let rjBuscarTimer;
-async function buscarJuradoReemplazo(q) {
+// Carga SIEMPRE la lista completa de candidatos (igual que Designar jurado:
+// no exige escribir nada para ver resultados) — a diferencia de
+// /jurados-disponibles, el backend NUNCA excluye a nadie por conflicto; los
+// incluye con el detalle exacto para que el administrador entienda por qué.
+async function cargarCandidatosReemplazo() {
+    const q   = document.getElementById('rj-buscar')?.value || '';
+    const cat = document.getElementById('rj-cat')?.value || '';
+    const qs  = new URLSearchParams();
+    qs.set('asignacion_id', _rjAsigId);
+    if (q.trim().length >= 2) qs.set('q', q.trim());
+    if (cat) qs.set('categoria', cat);
+    try {
+        const data = await api.get(`/admin/rodeos/${_rjRodeoId}/jurados-candidatos-reemplazo?${qs}`);
+        _rjCandidatos = data.candidatos || [];
+        renderCandidatosReemplazo();
+    } catch (err) {
+        const el = document.getElementById('rj-resultados');
+        if (el) el.innerHTML = `<div class="alerta alerta-error" style="margin:12px;">${err.message}</div>`;
+    }
+}
+
+// Escribir en el buscador SIEMPRE limpia la selección previa (evita
+// confirmar sobre un candidato que ya no es el que se está viendo) y
+// debounce antes de volver a consultar — mismo criterio que ya usaba este
+// modal, ahora aplicado a la consulta enriquecida.
+function buscarJuradoReemplazo() {
     clearTimeout(rjBuscarTimer);
-    const res = document.getElementById('rj-resultados');
     document.getElementById('rj-usr-id').value = '';
+    document.getElementById('rj-persona-sel').classList.add('oculto');
     actualizarBotonConfirmarReemplazo();
-    if (q.length < 2) { res.innerHTML = ''; return; }
-    rjBuscarTimer = setTimeout(async () => {
-        const data = await api.get('/admin/usuarios?buscar=' + encodeURIComponent(q) + '&tipo=jurado&activo=true&limit=8');
-        const candidatos = (data?.data || []).filter(u => u.id !== rjAnteriorId);
-        if (!candidatos.length) { res.innerHTML = '<div class="texto-gris" style="font-size:13px;">Sin resultados</div>'; return; }
-        res.innerHTML = candidatos.map(u => `
-            <div onclick="seleccionarJuradoReemplazo('${u.id}','${sanitizar(u.nombre_completo)}','${u.categoria||''}')"
-                 style="padding:8px 12px; cursor:pointer; border:1px solid var(--gris-borde); border-radius:6px; margin-bottom:4px; background:white;">
-                <strong>${sanitizar(u.nombre_completo)}</strong>
-                ${u.categoria ? `<span class="badge badge-${u.categoria.toLowerCase()}" style="margin-left:4px;">${u.categoria}</span>` : ''}
-            </div>`).join('');
-    }, 300);
+    rjBuscarTimer = setTimeout(cargarCandidatosReemplazo, 350);
+}
+
+function renderCandidatosReemplazo() {
+    const lista = document.getElementById('rj-resultados');
+    if (!lista) return;
+    if (_rjCandidatos.length === 0) {
+        lista.innerHTML = '<p class="tabla-vacia" style="padding:16px;">Sin resultados</p>';
+        return;
+    }
+    lista.innerHTML = _rjCandidatos.map(j => {
+        const badgeCat = j.categoria
+            ? `<span class="badge badge-${j.categoria.toLowerCase()}" style="margin-left:4px;">${j.categoria}</span>`
+            : '';
+        const bloqueado = j.ya_asignado_en_rodeo || j.conflictos.length > 0 || !j.disponibilidad_declarada;
+
+        let avisos = '';
+        if (j.ya_asignado_en_rodeo) {
+            avisos += `<div style="color:#c0392b; font-size:12px; font-weight:600; margin-top:4px;">⛔ Ya asignado en este rodeo</div>`;
+        }
+        if (j.conflictos.length > 0) {
+            avisos += `<div style="margin-top:4px;">
+                <div style="color:#c0392b; font-size:12px; font-weight:700;">⛔ YA DESIGNADO EN OTRO RODEO</div>
+                ${j.conflictos.map(c => `<div style="font-size:12px; color:#c0392b; margin-top:2px;">Club: ${sanitizar(c.club || '—')} · Asociación: ${sanitizar(c.asociacion || '—')} · Fechas: ${rdrFechaDDMMAAAA(c.fecha_inicio)} al ${rdrFechaDDMMAAAA(c.fecha_fin)}</div>`).join('')}
+                <div style="font-size:11px; color:#c0392b;">Este jurado presenta un conflicto de fechas con ${sanitizar(rodeoActual?.club || 'este rodeo')}.</div>
+            </div>`;
+        }
+        if (!j.disponibilidad_declarada) {
+            avisos += `<div style="color:#d35400; font-size:12px; font-weight:600; margin-top:4px;">⚠ Sin disponibilidad declarada para estas fechas</div>`;
+        }
+        const repiteHtml = j.repite_asociacion
+            ? `<span style="color:#d35400; font-size:11px; margin-left:6px;">⚠ repite asociación</span>`
+            : '';
+        const designacionesHtml = `<div style="margin-top:4px;"><span class="badge badge-jurado">${j.designaciones ?? 0} designaciones</span></div>`;
+        const asociacionTxt = j.asociacion ? sanitizar(j.asociacion) : 'Sin información';
+        const comunaTxt = j.comuna ? sanitizar(j.comuna) : 'Sin información';
+        const infoJuradoHtml = `<div style="font-size:12px; color:var(--gris); margin-top:3px;">Asociación: ${asociacionTxt} · Comuna: ${comunaTxt}</div>`;
+        const histHtml = j.historial.length > 0
+            ? `<div style="font-size:11px; color:var(--gris); margin-top:4px; line-height:1.6;">
+                <span style="font-weight:600;">Últimos:</span>
+                ${j.historial.map(h => `<br>${rdrLineaHistorial(h)}`).join('')}
+               </div>`
+            : '';
+        const btnStyle = bloqueado
+            ? `class="btn btn-pequeño btn-outline" disabled`
+            : `class="btn btn-pequeño btn-primario" onclick="seleccionarCandidatoReemplazo('${j.id}','${sanitizar(j.nombre_completo)}','${j.categoria||''}',${!!j.repite_asociacion})"`;
+        return `
+        <div style="padding:10px 14px; border-bottom:1px solid var(--gris-claro); display:flex; align-items:flex-start; justify-content:space-between; gap:8px;${bloqueado ? ' background:#fdf5f3;' : ''}">
+            <div style="flex:1; min-width:0;">
+                <div style="font-weight:600; font-size:14px;">
+                    ${sanitizar(j.nombre_completo)}${badgeCat}${repiteHtml}
+                </div>
+                ${designacionesHtml}
+                ${infoJuradoHtml}
+                ${avisos}
+                ${histHtml}
+            </div>
+            <button ${btnStyle}>${bloqueado ? 'No disponible' : 'Seleccionar'}</button>
+        </div>`;
+    }).join('');
+}
+
+// Antes de confirmar la selección, si el candidato repite asociación se
+// reutiliza la MISMA validación y el MISMO diálogo de advertencia que ya
+// usa designarJurado() — nunca una reimplementación paralela. El conflicto
+// de fechas y "ya asignado en este rodeo" NUNCA llegan hasta aquí con el
+// botón habilitado (quedan deshabilitados arriba), por eso solo se revisa
+// la advertencia de asociación/fecha consecutiva.
+async function seleccionarCandidatoReemplazo(id, nombre, categoria, repiteAsociacion) {
+    let val = null;
+    if (repiteAsociacion) {
+        try {
+            val = await api.post('/admin/asignaciones/validar-historial', {
+                usuario_pagado_id: id,
+                rodeo_id: _rjRodeoId
+            });
+        } catch (e) {
+            console.error('[seleccionarCandidatoReemplazo] error al validar historial:', e.message || e);
+        }
+        if (val && (val.repite_asociacion || val.fecha_consecutiva)) {
+            const ok = await confirmarDesignacionConAdvertencia(
+                construirContenidoAdvertenciaDesignacion(nombre, val)
+            );
+            if (!ok) return;
+        }
+    }
+    seleccionarJuradoReemplazo(id, nombre, categoria);
 }
 
 function seleccionarJuradoReemplazo(id, nombre, cat) {

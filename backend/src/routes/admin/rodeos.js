@@ -843,6 +843,119 @@ router.delete('/tipos/:id', async (req, res) => {
     res.json({ mensaje: 'Tipo de rodeo eliminado' });
 });
 
+// ── Helpers compartidos entre /jurados-disponibles (Designar jurado) y ──────
+// /jurados-candidatos-reemplazo (Reemplazar jurado) — extraídos tal cual
+// (mismo cálculo, mismas consultas) para que el nuevo buscador de reemplazo
+// reutilice exactamente la misma lógica de historial/designaciones sin
+// duplicarla, SIN alterar en nada el comportamiento ya aprobado de Designar.
+//
+// Rango de fechas de un rodeo (YYYY-MM-DD de cada día de su duración) + el
+// último día, usado tanto para la disponibilidad declarada como para
+// detectar solapamiento con otros rodeos.
+function _rangoFechasRodeo(fecha, duracionDias) {
+    const duracion    = duracionDias || 1;
+    const fechasRodeo = [];
+    const baseDate    = new Date(fecha + 'T00:00:00Z');
+    for (let i = 0; i < duracion; i++) {
+        const d = new Date(baseDate);
+        d.setUTCDate(baseDate.getUTCDate() + i);
+        fechasRodeo.push(d.toISOString().slice(0, 10));
+    }
+    return { fechas: fechasRodeo, fin: fechasRodeo[fechasRodeo.length - 1] };
+}
+
+// Historial completo (paginado) de asignaciones no anuladas de cada jurado de
+// `idsDisp`: conteo histórico de designaciones (rodeos distintos) y hasta 3
+// "últimos rodeos" con club/fecha/tipo/asociación/nota. Mismas consultas que
+// ya usaba /jurados-disponibles antes de esta extracción.
+async function _historialYDesignaciones(idsDisp) {
+    const PAGINA_HIST = 900;
+    let ultRodeos = [];
+    {
+        let offset = 0;
+        while (true) {
+            const { data: pagina, error: errHist } = await supabase
+                .from('asignaciones')
+                .select('id, usuario_pagado_id, rodeo_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
+                .in('usuario_pagado_id', idsDisp)
+                .neq('estado', 'anulado')
+                .order('created_at', { ascending: false })
+                .range(offset, offset + PAGINA_HIST - 1);
+            if (errHist) break;
+            const filas = pagina || [];
+            ultRodeos = ultRodeos.concat(filas);
+            if (filas.length < PAGINA_HIST) break;
+            offset += PAGINA_HIST;
+        }
+    }
+
+    const designacionesMap = {};
+    for (const a of ultRodeos) {
+        if (!designacionesMap[a.usuario_pagado_id]) designacionesMap[a.usuario_pagado_id] = new Set();
+        designacionesMap[a.usuario_pagado_id].add(a.rodeo_id);
+    }
+
+    const historialMap = {};
+    const asigIdsHistorial = [];
+    for (const a of ultRodeos) {
+        if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
+        if (historialMap[a.usuario_pagado_id].length < 3) {
+            historialMap[a.usuario_pagado_id].push({
+                _asig_id:  a.id,
+                club:       a.rodeos?.club,
+                fecha:      a.rodeos?.fecha,
+                tipo_rodeo: a.rodeos?.tipo_rodeo_nombre,
+                asociacion: a.rodeos?.asociacion || null,
+                nota:       null
+            });
+            asigIdsHistorial.push(a.id);
+        }
+    }
+
+    if (asigIdsHistorial.length > 0) {
+        const { data: notasData } = await supabase
+            .from('notas_rodeo')
+            .select('asignacion_id, nota')
+            .in('asignacion_id', asigIdsHistorial);
+
+        const notasPorAsig = {};
+        for (const n of (notasData || [])) {
+            notasPorAsig[n.asignacion_id] = n.nota;
+        }
+
+        for (const entradas of Object.values(historialMap)) {
+            for (const e of entradas) {
+                if (e._asig_id in notasPorAsig) {
+                    e.nota = notasPorAsig[e._asig_id];
+                }
+                delete e._asig_id;
+            }
+        }
+    } else {
+        for (const entradas of Object.values(historialMap)) {
+            for (const e of entradas) { delete e._asig_id; }
+        }
+    }
+
+    return { designacionesMap, historialMap };
+}
+
+// Jurados de `idsDisp` que ya tienen historial (no anulado) en la MISMA
+// asociación de `asociacionRodeo` — mismo criterio ya usado por "Designar
+// jurado" (advertencia simple de lista; el detalle completo para el diálogo
+// de confirmación sigue viniendo de POST /admin/asignaciones/validar-historial,
+// sin duplicarlo acá).
+async function _repiteAsociacionSet(idsDisp, asociacionRodeo) {
+    if (!asociacionRodeo) return new Set();
+    const { data } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id, rodeos!inner(asociacion)')
+        .in('usuario_pagado_id', idsDisp)
+        .eq('rodeos.asociacion', asociacionRodeo)
+        .neq('estado', 'anulado');
+    return new Set((data || []).map(a => a.usuario_pagado_id));
+}
+
 // GET /api/admin/rodeos/:id/jurados-disponibles?q=&categoria=
 // Lista jurados disponibles (con disponibilidad declarada y sin asignaciones cruzadas)
 router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
@@ -857,15 +970,7 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
 
     // Generar rango de fechas del rodeo
-    const duracion    = rodeo.duracion_dias || 1;
-    const fechasRodeo = [];
-    const baseDate    = new Date(rodeo.fecha + 'T00:00:00Z');
-    for (let i = 0; i < duracion; i++) {
-        const d = new Date(baseDate);
-        d.setUTCDate(baseDate.getUTCDate() + i);
-        fechasRodeo.push(d.toISOString().slice(0, 10));
-    }
-    const fechaRodeoFin = fechasRodeo[fechasRodeo.length - 1];
+    const { fechas: fechasRodeo, fin: fechaRodeoFin } = _rangoFechasRodeo(rodeo.fecha, rodeo.duracion_dias);
 
     // Cargar todos los jurados activos (con filtros de búsqueda)
     let query = supabase
@@ -945,93 +1050,11 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     const yaAsignadosSet = new Set((asigRodeo || []).map(a => a.usuario_pagado_id));
 
     // Historial previo en la misma asociación
-    let asigAsociacion = [];
-    if (rodeo.asociacion) {
-        const { data } = await supabase
-            .from('asignaciones')
-            .select('usuario_pagado_id, rodeos!inner(asociacion)')
-            .in('usuario_pagado_id', idsDisp)
-            .eq('rodeos.asociacion', rodeo.asociacion)
-            .neq('estado', 'anulado');
-        asigAsociacion = data || [];
-    }
-    const repiteAsocSet = new Set(asigAsociacion.map(a => a.usuario_pagado_id));
+    const repiteAsocSet = await _repiteAsociacionSet(idsDisp, rodeo.asociacion);
 
-    // Historial completo de asignaciones no anuladas de cada jurado (paginado para
-    // no depender del tope implícito de filas de PostgREST/Supabase — mismo patrón
-    // de paginación usado en analisis-preguntas.js). Sirve tanto para "Últimos"
-    // como para el contador histórico de designaciones (rodeos distintos).
-    const PAGINA_HIST = 900;
-    let ultRodeos = [];
-    {
-        let offset = 0;
-        while (true) {
-            const { data: pagina, error: errHist } = await supabase
-                .from('asignaciones')
-                .select('id, usuario_pagado_id, rodeo_id, rodeos!inner(club, fecha, tipo_rodeo_nombre, asociacion)')
-                .in('usuario_pagado_id', idsDisp)
-                .neq('estado', 'anulado')
-                .order('created_at', { ascending: false })
-                .range(offset, offset + PAGINA_HIST - 1);
-            if (errHist) break;
-            const filas = pagina || [];
-            ultRodeos = ultRodeos.concat(filas);
-            if (filas.length < PAGINA_HIST) break;
-            offset += PAGINA_HIST;
-        }
-    }
-
-    // Contador histórico de designaciones: rodeos distintos por jurado (evita que
-    // filas duplicadas para el mismo rodeo inflen el total).
-    const designacionesMap = {};
-    for (const a of ultRodeos) {
-        if (!designacionesMap[a.usuario_pagado_id]) designacionesMap[a.usuario_pagado_id] = new Set();
-        designacionesMap[a.usuario_pagado_id].add(a.rodeo_id);
-    }
-
-    // Construir historial (máx 3 por jurado) y recolectar los asignacion_ids usados
-    const historialMap = {};
-    const asigIdsHistorial = [];
-    for (const a of ultRodeos) {
-        if (!historialMap[a.usuario_pagado_id]) historialMap[a.usuario_pagado_id] = [];
-        if (historialMap[a.usuario_pagado_id].length < 3) {
-            historialMap[a.usuario_pagado_id].push({
-                _asig_id:  a.id,
-                club:       a.rodeos?.club,
-                fecha:      a.rodeos?.fecha,
-                tipo_rodeo: a.rodeos?.tipo_rodeo_nombre,
-                asociacion: a.rodeos?.asociacion || null,
-                nota:       null
-            });
-            asigIdsHistorial.push(a.id);
-        }
-    }
-
-    // Obtener notas en consulta separada (manual y publicadas por evaluación técnica)
-    if (asigIdsHistorial.length > 0) {
-        const { data: notasData } = await supabase
-            .from('notas_rodeo')
-            .select('asignacion_id, nota')
-            .in('asignacion_id', asigIdsHistorial);
-
-        const notasPorAsig = {};
-        for (const n of (notasData || [])) {
-            notasPorAsig[n.asignacion_id] = n.nota;
-        }
-
-        for (const entradas of Object.values(historialMap)) {
-            for (const e of entradas) {
-                if (e._asig_id in notasPorAsig) {
-                    e.nota = notasPorAsig[e._asig_id];
-                }
-                delete e._asig_id;
-            }
-        }
-    } else {
-        for (const entradas of Object.values(historialMap)) {
-            for (const e of entradas) { delete e._asig_id; }
-        }
-    }
+    // Historial completo (paginado) + contador de designaciones — helper
+    // compartido con /jurados-candidatos-reemplazo.
+    const { designacionesMap, historialMap } = await _historialYDesignaciones(idsDisp);
 
     const resultado = juradosDisp.map(j => ({
         id:                j.id,
@@ -1054,6 +1077,159 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     });
 
     res.json({ jurados: resultado, asociacion_rodeo: rodeo.asociacion });
+});
+
+// GET /api/admin/rodeos/:id/jurados-candidatos-reemplazo?asignacion_id=&q=&categoria=
+//
+// Buscador de reemplazo (mejora sobre el buscador genérico de "Reemplazar
+// jurado", que solo mostraba nombre y categoría). A diferencia de
+// /jurados-disponibles (Designar jurado), que EXCLUYE a los candidatos con
+// conflicto, este endpoint los INCLUYE siempre y describe exactamente por
+// qué no están disponibles — el administrador necesita verlos para entender
+// por qué no se pueden usar, no que desaparezcan de la lista.
+//
+// Reutiliza los mismos helpers de historial/designaciones/repetición de
+// asociación que /jurados-disponibles (ver arriba), y el mismo criterio de
+// solapamiento de fechas ya usado por POST /admin/asignaciones/:id/reemplazar
+// y por su RPC transaccional (migración 084) — nunca una reimplementación
+// distinta: si esta lectura dice "disponible", el reemplazo real debe poder
+// confirmarse; la RPC sigue siendo la única autoridad final (bajo su propio
+// candado), esto es solo para no sorprender al administrador con un 409.
+router.get('/:id/jurados-candidatos-reemplazo', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
+    const { q = '', categoria = '', asignacion_id = '' } = req.query;
+    if (!asignacion_id) return res.status(400).json({ error: 'asignacion_id es requerido' });
+
+    const { data: asigActual } = await supabase
+        .from('asignaciones')
+        .select('id, rodeo_id, usuario_pagado_id, tipo_persona')
+        .eq('id', asignacion_id)
+        .maybeSingle();
+    if (!asigActual) return res.status(404).json({ error: 'Asignación no encontrada' });
+    if (asigActual.rodeo_id !== req.params.id) {
+        return res.status(400).json({ error: 'La asignación indicada no pertenece a este rodeo' });
+    }
+    if (asigActual.tipo_persona !== 'jurado') {
+        return res.status(400).json({ error: 'Este buscador de reemplazo solo aplica a asignaciones de jurado' });
+    }
+
+    const { data: rodeo } = await supabase
+        .from('rodeos')
+        .select('id, asociacion, fecha, duracion_dias')
+        .eq('id', req.params.id)
+        .single();
+    if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado' });
+
+    const { fechas: fechasRodeo, fin: fechaRodeoFin } = _rangoFechasRodeo(rodeo.fecha, rodeo.duracion_dias);
+
+    let query = supabase
+        .from('usuarios_pagados')
+        .select('id, nombre_completo, categoria, codigo_interno, asociacion, comuna')
+        .eq('activo', true)
+        .eq('tipo_persona', 'jurado')
+        .neq('id', asigActual.usuario_pagado_id)   // no se puede "reemplazar" por la misma persona
+        .order('nombre_completo');
+
+    if (q.trim().length >= 2) query = query.ilike('nombre_completo', `%${q.trim()}%`);
+    if (categoria) query = query.eq('categoria', categoria);
+
+    const { data: candidatosBase, error: errJ } = await query.limit(200);
+    if (errJ) return res.status(500).json({ error: errJ.message });
+
+    if (!candidatosBase || candidatosBase.length === 0) {
+        return res.json({ candidatos: [], asociacion_rodeo: rodeo.asociacion });
+    }
+
+    const ids = candidatosBase.map(j => j.id);
+
+    // Disponibilidad declarada — se informa, NUNCA se usa para excluir a nadie.
+    const { data: dispData } = await supabase
+        .from('disponibilidad_usuarios')
+        .select('usuario_pagado_id, fecha')
+        .in('usuario_pagado_id', ids)
+        .in('fecha', fechasRodeo);
+    const dispMap = {};
+    for (const row of (dispData || [])) {
+        if (!dispMap[row.usuario_pagado_id]) dispMap[row.usuario_pagado_id] = new Set();
+        dispMap[row.usuario_pagado_id].add(row.fecha);
+    }
+
+    // Ya designado VIGENTE en este mismo rodeo (otra asignación) — mismo
+    // criterio exacto que la RPC reemplazar_jurado_asignacion_con_bitacora
+    // (estado='activo' y estado_designacion <> 'rechazado').
+    const { data: enEsteRodeo } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id, estado_designacion')
+        .eq('rodeo_id', req.params.id)
+        .eq('estado', 'activo')
+        .neq('id', asignacion_id)
+        .in('usuario_pagado_id', ids);
+    const yaAsignadoEnRodeoSet = new Set(
+        (enEsteRodeo || [])
+            .filter(a => (a.estado_designacion || 'pendiente') !== 'rechazado')
+            .map(a => a.usuario_pagado_id)
+    );
+
+    // Designaciones vigentes en OTROS rodeos que se cruzan en fecha — mismo
+    // criterio exacto que la RPC (estado <> 'anulado' + solapamiento de
+    // rango completo, no solo el primer día). A diferencia de
+    // /jurados-disponibles, se conserva el DETALLE de cada conflicto (no
+    // solo un booleano) para poder mostrar club/asociación/fechas.
+    const { data: otrasAsig } = await supabase
+        .from('asignaciones')
+        .select('usuario_pagado_id, estado_designacion, rodeos!inner(id, club, asociacion, fecha, duracion_dias, tipo_rodeo_nombre)')
+        .in('usuario_pagado_id', ids)
+        .neq('rodeo_id', req.params.id)
+        .neq('estado', 'anulado');
+    const conflictosMap = {};
+    for (const a of (otrasAsig || [])) {
+        const r = a.rodeos;
+        if (!r?.fecha) continue;
+        const { fin: rfFin } = _rangoFechasRodeo(r.fecha, r.duracion_dias || 1);
+        if (rfFin >= rodeo.fecha && r.fecha <= fechaRodeoFin) {
+            if (!conflictosMap[a.usuario_pagado_id]) conflictosMap[a.usuario_pagado_id] = [];
+            conflictosMap[a.usuario_pagado_id].push({
+                rodeo_id:          r.id,
+                club:              r.club || null,
+                asociacion:        r.asociacion || null,
+                fecha_inicio:      r.fecha,
+                fecha_fin:         rfFin,
+                tipo_rodeo:        r.tipo_rodeo_nombre || null,
+                estado_designacion: a.estado_designacion || 'pendiente'
+            });
+        }
+    }
+
+    const repiteAsocSet = await _repiteAsociacionSet(ids, rodeo.asociacion);
+    const { designacionesMap, historialMap } = await _historialYDesignaciones(ids);
+
+    const candidatos = candidatosBase.map(j => ({
+        id:                       j.id,
+        nombre_completo:          j.nombre_completo,
+        categoria:                j.categoria,
+        codigo_interno:           j.codigo_interno,
+        asociacion:               j.asociacion || null,
+        comuna:                   j.comuna || null,
+        designaciones:            designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
+        historial:                historialMap[j.id] || [],
+        repite_asociacion:        repiteAsocSet.has(j.id),
+        disponibilidad_declarada: fechasRodeo.every(f => dispMap[j.id]?.has(f)),
+        ya_asignado_en_rodeo:     yaAsignadoEnRodeoSet.has(j.id),
+        conflictos:               conflictosMap[j.id] || []
+    }));
+
+    // Orden: candidatos sin ningún impedimento real primero (mismas 3
+    // condiciones que bloquean el reemplazo real en el backend); dentro de
+    // cada grupo, menos designaciones primero y empate alfabético — mismo
+    // criterio de /jurados-disponibles.
+    candidatos.sort((a, b) => {
+        const bloqA = a.ya_asignado_en_rodeo || a.conflictos.length > 0 || !a.disponibilidad_declarada;
+        const bloqB = b.ya_asignado_en_rodeo || b.conflictos.length > 0 || !b.disponibilidad_declarada;
+        if (bloqA !== bloqB) return bloqA ? 1 : -1;
+        if (a.designaciones !== b.designaciones) return a.designaciones - b.designaciones;
+        return a.nombre_completo.localeCompare(b.nombre_completo, 'es');
+    });
+
+    res.json({ candidatos, asociacion_rodeo: rodeo.asociacion });
 });
 
 module.exports = router;
