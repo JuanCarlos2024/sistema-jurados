@@ -299,6 +299,7 @@
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script src="/js/candidatosFiltro.js"></script>
+<script src="/js/propuestaDesignacionGlobalUI.js"></script>
 <script>
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
@@ -1070,7 +1071,24 @@ const ETIQUETAS_ESTADO_BUSQUEDA = {
     LIMITE_ALCANZADO: '⚠ Límite de búsqueda alcanzado — se conserva el mejor resultado encontrado, SIN que esto pruebe que sea imposible cubrir el resto',
     ERROR_TECNICO: '✗ Error técnico durante la búsqueda — revise el detalle antes de continuar'
 };
-function renderCoberturaGlobal(og, coberturaCompleta) {
+// Corrección Fase 2C (validación post-producción) — cada advertencia del
+// motor global llega como objeto técnico { rodeo_id, club, fecha, jurado_id,
+// preferencias_cedidas: [tipo,...] }, nunca como texto — JSON.stringify(a)
+// se mostraba literal en pantalla. Se traduce a una frase en español usando
+// las mismas etiquetas (ETIQUETAS_CAUSA) que el resto de la pantalla ya usa
+// para estos mismos códigos. `detalleList` (el detalle de la propuesta/
+// preview, ya disponible en ambos llamadores) permite mostrar el NOMBRE del
+// jurado — la advertencia del motor solo trae jurado_id.
+function construirResumenAdvertenciaGlobal(a, detalleList) {
+    if (typeof a === 'string') return sanitizar(a); // formato legado, por si existiera
+    const datos = pdgDatosAdvertenciaGlobal(a, detalleList); // ver /js/propuestaDesignacionGlobalUI.js
+    if (!datos) return '';
+    const preferencias = datos.preferencias_cedidas.map(t => ETIQUETAS_CAUSA[t] || t).join(', ') || '—';
+    const fechaTxt = datos.fecha ? formatFecha(datos.fecha) : '—';
+    return `Rodeo <strong>${sanitizar(datos.club || '—')}</strong> (${fechaTxt}) — Jurado: <strong>${sanitizar(datos.jurado || '—')}</strong> — Preferencias relajadas: ${sanitizar(preferencias)}`;
+}
+
+function renderCoberturaGlobal(og, coberturaCompleta, detalleList) {
     if (!og) return '';
     const pct = og.total_cupos ? Math.round((og.cobertura_obtenida / og.total_cupos) * 100) : 0;
     const clase = coberturaCompleta ? 'verde' : (og.estado_busqueda === 'INFACTIBLE_DEMOSTRADO' || og.estado_busqueda === 'ERROR_TECNICO' ? 'rojo' : 'naranja');
@@ -1085,7 +1103,7 @@ function renderCoberturaGlobal(og, coberturaCompleta) {
             ${kpi(pct + '%', 'Cobertura', clase)}
         </div>
         <div style="font-size:13px;">${sanitizar(ETIQUETAS_ESTADO_BUSQUEDA[og.estado_busqueda] || og.estado_busqueda || '—')}</div>
-        ${(og.advertencias && og.advertencias.length > 0) ? `<ul style="margin:8px 0 0 20px; font-size:12px; color:var(--gris);">${og.advertencias.map(a => `<li>${sanitizar(typeof a === 'string' ? a : JSON.stringify(a))}</li>`).join('')}</ul>` : ''}
+        ${(og.advertencias && og.advertencias.length > 0) ? `<ul style="margin:8px 0 0 20px; font-size:12px; color:var(--gris);">${og.advertencias.map(a => `<li>${construirResumenAdvertenciaGlobal(a, detalleList)}</li>`).join('')}</ul>` : ''}
         ${!coberturaCompleta ? '<div style="margin-top:8px; font-size:12px; color:#CC6600;">Esta propuesta NO puede aplicarse como definitiva mientras queden cupos pendientes — complete manualmente los rodeos sin jurado antes de aplicar.</div>' : ''}
     </div>`;
 }
@@ -1107,11 +1125,11 @@ function renderPreviewTemporal() {
             ${previewTemporal.motor === 'global' ? ' · Motor: <strong>global optimizado</strong>' : ''}
             ${indicadorConfiguracion(previewTemporal.configuracion)}
         </div>
-        ${renderCoberturaGlobal(previewTemporal.optimizacion_global, previewTemporal.cobertura_completa)}
+        ${renderCoberturaGlobal(previewTemporal.optimizacion_global, previewTemporal.cobertura_completa, previewTemporal.detalle)}
         ${avisoCambios}
         <div class="kpi-grid" style="margin-bottom:16px;">
             ${kpi(r.total_rodeos, 'Rodeos')}
-            ${kpi(r.con_jurado_actual, 'Con jurado actual', 'verde')}
+            ${kpi(r.con_jurado_actual, 'Con jurado propuesto', 'verde')}
             ${kpi(r.modificados, 'Modificados manualmente')}
             ${kpi(r.sin_propuesta, 'Sin propuesta', 'naranja')}
             ${kpi(r.sin_jurado_actual, 'Sin jurado (movido)', 'naranja')}
@@ -1154,7 +1172,7 @@ async function guardarComoPropuesta() {
     const mensaje = `<strong style="font-size:16px;">Guardar propuesta como borrador</strong>
         <div style="text-align:left; margin-top:10px; font-size:14px; line-height:1.8;">
             Rodeos: <strong>${r.total_rodeos}</strong><br>
-            Con jurado actual: <strong>${r.con_jurado_actual}</strong><br>
+            Con jurado propuesto: <strong>${r.con_jurado_actual}</strong><br>
             Modificados manualmente: <strong>${r.modificados}</strong><br>
             Sin jurado actual (movido): <strong>${r.sin_jurado_actual}</strong><br>
             Sin propuesta: <strong>${r.sin_propuesta}</strong><br>
@@ -1333,7 +1351,7 @@ function renderVistaPropuesta() {
                 <button class="btn btn-secundario btn-pequeño" onclick="cerrarVistaPropuesta()">Cerrar</button>
             </div>
         </div>
-        ${renderCoberturaGlobal(propuesta.resultado_cobertura ? { ...propuesta.resultado_cobertura, advertencias: [] } : null, propuesta.resultado_cobertura?.cobertura_completa)}
+        ${renderCoberturaGlobal(propuesta.resultado_cobertura ? { ...propuesta.resultado_cobertura, advertencias: [] } : null, propuesta.resultado_cobertura?.cobertura_completa, detalle)}
         <div class="kpi-grid" style="margin-bottom:16px;">
             ${kpi(resumen.total_rodeos, 'Rodeos')}
             ${kpi(resumen.aceptados, 'Aceptados', 'verde')}
@@ -1606,8 +1624,28 @@ function renderFilaDetallePropuesta(d, modo) {
     const infoOrigen = (d.jurado_id_seleccionado && d.jurado_id_propuesto && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
         ? `<div style="font-size:14px; color:var(--gris); margin-top:6px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
         : '';
+    // Reglas/"por qué ganó"/descartes — solo mientras el jurado efectivo
+    // siga siendo el que el motor propuso originalmente (si se modificó
+    // manualmente, esos checks describen a otra persona y no corresponde
+    // mostrarlos como si fueran del jurado actual). Es, a la vez, la única
+    // señal correcta de "¿esto fue una decisión MANUAL del administrador, o
+    // sigue siendo exactamente lo que el motor propuso?" — se usa también
+    // para el aviso de advertencias, más abajo.
+    const esElPropuestoDelMotor = d.jurado_id_propuesto && (!d.jurado_id_seleccionado || d.jurado_id_seleccionado === d.jurado_id_propuesto);
+
+    // Corrección Fase 2C (validación post-producción) — metricas_json.
+    // advertencias_aceptadas se escribe también cuando el motor GLOBAL
+    // relajó una preferencia por su cuenta (pre-aceptadas para que "Guardar
+    // propuesta" en bloque no las re-exija fila por fila — ver
+    // construirAdvertenciasPreaceptadas más arriba), no solo cuando un
+    // administrador confirmó manualmente una excepción. Mostrar este aviso
+    // como "excepción MANUAL" en ambos casos atribuía falsamente al
+    // administrador una decisión que, cuando esElPropuestoDelMotor es
+    // verdadero, tomó el motor por sí solo — ese caso ya se explica con
+    // avisoForzadoGlobal, más abajo. Solo es una excepción manual real
+    // cuando el jurado efectivo es DISTINTO del propuesto originalmente.
     const advertenciasGuardadas = d.metricas_json?.advertencias_aceptadas;
-    const avisoAdvertencia = (advertenciasGuardadas && advertenciasGuardadas.length > 0)
+    const avisoAdvertencia = pdgEsExcepcionManualConfirmada(d) // ver /js/propuestaDesignacionGlobalUI.js
         ? `<div style="font-size:14px; color:#b9560a; margin-top:4px;">⚠ Seleccionado como excepción manual, con ${advertenciasGuardadas.length} advertencia(s) confirmada(s).</div>`
         : '';
     // Fase 2C, sección 1 — distingue visualmente una designación natural de
@@ -1618,12 +1656,6 @@ function renderFilaDetallePropuesta(d, modo) {
     const avisoForzadoGlobal = forzadoGlobal
         ? `<div style="font-size:14px; color:#1a5276; margin-top:4px;">🧮 Designación obtenida por reacomodo del motor global${(d.explicacion_json.jurado_propuesto.optimizacion_global_relajaciones || []).length > 0 ? ' — relajó: ' + sanitizar(d.explicacion_json.jurado_propuesto.optimizacion_global_relajaciones.map(t => ETIQUETAS_CAUSA[t] || t).join(', ')) : ''}.</div>`
         : '';
-
-    // Reglas/"por qué ganó"/descartes — solo mientras el jurado efectivo
-    // siga siendo el que el motor propuso originalmente (si se modificó
-    // manualmente, esos checks describen a otra persona y no corresponde
-    // mostrarlos como si fueran del jurado actual).
-    const esElPropuestoDelMotor = d.jurado_id_propuesto && (!d.jurado_id_seleccionado || d.jurado_id_seleccionado === d.jurado_id_propuesto);
     let detallesExtra = '';
     if (esElPropuestoDelMotor && d.explicacion_json?.jurado_propuesto?.checks) {
         const checks = d.explicacion_json.jurado_propuesto.checks;
