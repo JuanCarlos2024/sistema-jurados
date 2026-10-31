@@ -7,8 +7,10 @@
     <link rel="icon" type="image/png" href="/assets/logo_V2.png">
     <link rel="stylesheet" href="/css/style.css">
     <style>
-        .badge-receso     { background: #fde8d8; color: #a04000; border: 1px solid #f0a070; }
-        .badge-suspendido { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
+        .badge-receso        { background: #fde8d8; color: #a04000; border: 1px solid #f0a070; }
+        .badge-suspendido    { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
+        .badge-no-certificado { background: #fdecea; color: #943126; border: 1px solid #f1948a; }
+        .badge-en-retiro      { background: #eaecee; color: #424949; border: 1px solid #aab7b8; }
     </style>
 </head>
 <body>
@@ -328,15 +330,27 @@ async function abrirEditar(id) {
     }
 }
 
+// Fase 3 — No certificado / En retiro son condiciones INDEPENDIENTES del
+// ciclo de vida (estado_usuario): se muestran siempre como badges
+// adicionales, nunca reemplazando el badge de estado — un usuario puede
+// estar "En receso" Y "No certificado" a la vez, y ambas deben verse.
+function _badgesCondicionesBloqueantes(u) {
+    let extra = '';
+    if (u.no_certificado) extra += '<span class="badge badge-no-certificado" title="No certificado">No certificado</span> ';
+    if (u.en_retiro)      extra += '<span class="badge badge-en-retiro" title="En retiro">En retiro</span> ';
+    return extra;
+}
+
 function _badgeEstado(u) {
     const e = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
-    if (e === 'activo')      return '<span class="badge badge-activo">Activo</span>';
-    if (e === 'receso')      return '<span class="badge badge-receso">En receso</span>';
+    const extra = _badgesCondicionesBloqueantes(u);
+    if (e === 'activo')      return `<span class="badge badge-activo">Activo</span> ${extra}`;
+    if (e === 'receso')      return `<span class="badge badge-receso">En receso</span> ${extra}`;
     if (e === 'suspendido') {
         const hasta = u.suspension_hasta ? ` — hasta ${fmtFecha(u.suspension_hasta)}` : '';
-        return `<span class="badge badge-suspendido" title="${sanitizar(u.suspension_motivo || '')}">Suspendido${hasta}</span>`;
+        return `<span class="badge badge-suspendido" title="${sanitizar(u.suspension_motivo || '')}">Suspendido${hasta}</span> ${extra}`;
     }
-    return '<span class="badge badge-inactivo">Inactivo</span>';
+    return `<span class="badge badge-inactivo">Inactivo</span> ${extra}`;
 }
 
 function fmtFecha(iso) {
@@ -374,6 +388,16 @@ function abrirAcciones(id) {
         ? `<button class="btn w-100" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="abrirFormSuspender('${id}', '${sanitizar(nombre)}')">⏸ Suspender usuario</button>`
         : '';
 
+    // Fase 3 — condiciones bloqueantes independientes del estado. Cada una
+    // alterna entre "marcar" (pide motivo) y "revertir" (confirmación simple)
+    // según su valor actual — nunca se mezclan ni se sobrescriben entre sí.
+    const btnNoCertificado = u.no_certificado
+        ? `<button class="btn w-100" style="background:#eafaf1;color:#196f3d;border:1px solid #a9dfbf;" onclick="revertirCondicion('${id}','no-certificado','${sanitizar(nombre)}','No certificado')">↩ Revertir No certificado</button>`
+        : `<button class="btn w-100" style="background:#fdecea;color:#943126;border:1px solid #f1948a;" onclick="abrirFormCondicion('${id}','no-certificado','${sanitizar(nombre)}','No certificado')">⚠ Marcar No certificado</button>`;
+    const btnEnRetiro = u.en_retiro
+        ? `<button class="btn w-100" style="background:#eafaf1;color:#196f3d;border:1px solid #a9dfbf;" onclick="revertirCondicion('${id}','en-retiro','${sanitizar(nombre)}','En retiro')">↩ Revertir En retiro</button>`
+        : `<button class="btn w-100" style="background:#eaecee;color:#424949;border:1px solid #aab7b8;" onclick="abrirFormCondicion('${id}','en-retiro','${sanitizar(nombre)}','En retiro')">🏳 Marcar En retiro</button>`;
+
     const adminActual = getUsuario();
     const esAdminPleno = adminActual && adminActual.rol_evaluacion === null;
     const btnEliminar = esAdminPleno
@@ -392,9 +416,59 @@ function abrirAcciones(id) {
             </button>
             ${btnEstado}
             ${btnSuspender}
+            ${btnNoCertificado}
+            ${btnEnRetiro}
             ${btnEliminar}
         </div>`;
     document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+// Fase 3 — formulario para MARCAR una condición bloqueante (motivo obligatorio).
+function abrirFormCondicion(id, endpoint, nombre, etiqueta) {
+    document.getElementById('modal-titulo').textContent = `${etiqueta} — ${nombre}`;
+    document.getElementById('modal-contenido').innerHTML = `
+        <form onsubmit="confirmarCondicion(event, '${id}', '${endpoint}')">
+            <div class="form-grupo">
+                <label class="form-label">Motivo <span class="req">*</span></label>
+                <textarea name="motivo" class="form-control" rows="3" required placeholder="Describa el motivo..."></textarea>
+            </div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-peligro">Confirmar</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+}
+
+async function confirmarCondicion(e, id, endpoint) {
+    e.preventDefault();
+    const form = e.target;
+    const btn  = form.querySelector('button[type=submit]');
+    const motivo = form.motivo.value.trim();
+    btn.disabled = true;
+    try {
+        await api.patch(`/admin/usuarios/${id}/${endpoint}`, { activar: true, motivo });
+        mostrarToast('Condición registrada', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) {
+        mostrarError(err);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Revertir una condición bloqueante ya activa — confirmación simple, sin
+// motivo obligatorio (la trazabilidad de la reversión queda igual en el
+// historial, con observación opcional).
+async function revertirCondicion(id, endpoint, nombre, etiqueta) {
+    const ok = await confirmar(`¿Revertir "${etiqueta}" para ${nombre}?`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/usuarios/${id}/${endpoint}`, { activar: false });
+        mostrarToast(`${etiqueta} revertido`, 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) { mostrarError(err); }
 }
 
 async function eliminarUsuario(id, nombre) {
@@ -424,6 +498,7 @@ async function cambiarEstado(id, nuevoEstado, nombre) {
 }
 
 async function cambiarCategoria(id, catActual) {
+    const hoy = new Date().toISOString().slice(0, 10);
     document.getElementById('modal-contenido').innerHTML = `
         <div class="form-grupo">
             <label class="form-label">Nueva categoría</label>
@@ -434,16 +509,32 @@ async function cambiarCategoria(id, catActual) {
             </select>
             <div class="form-hint">Los pagos ya registrados NO cambiarán. Solo afecta nuevas asignaciones.</div>
         </div>
+        <div class="form-grupo">
+            <label class="form-label">Fecha efectiva del cambio</label>
+            <input type="date" id="cat-fecha-efectiva" class="form-control" value="${hoy}">
+        </div>
+        <div class="form-grupo">
+            <label class="form-label">Justificación del cambio (opcional)</label>
+            <textarea id="cat-justificacion" class="form-control" rows="3" placeholder="Motivo del cambio de categoría..."></textarea>
+        </div>
         <div class="form-acciones">
-            <button class="btn btn-primario" onclick="guardarCategoria('${id}')">Cambiar</button>
+            <button class="btn btn-primario" onclick="guardarCategoria('${id}','${catActual}')">Cambiar</button>
             <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
         </div>`;
 }
 
-async function guardarCategoria(id) {
+async function guardarCategoria(id, catActual) {
     const cat = document.getElementById('nueva-cat').value;
+    if (cat === catActual) {
+        mostrarToast('El usuario ya está en esa categoría — elija una categoría distinta', 'error');
+        return;
+    }
+    const fecha_efectiva = document.getElementById('cat-fecha-efectiva').value || null;
+    const justificacion  = document.getElementById('cat-justificacion').value.trim() || null;
+    const ok = await confirmar(`¿Cambiar la categoría de ${catActual || '—'} a ${cat}?`);
+    if (!ok) return;
     try {
-        await api.patch('/admin/usuarios/' + id + '/categoria', { categoria: cat });
+        await api.patch('/admin/usuarios/' + id + '/categoria', { categoria: cat, justificacion, fecha_efectiva });
         mostrarToast('Categoría actualizada a ' + cat, 'success');
         cerrarModal();
         cargar(paginaActual);

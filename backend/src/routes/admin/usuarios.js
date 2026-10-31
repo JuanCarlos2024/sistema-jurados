@@ -4,7 +4,18 @@ const bcrypt = require('bcryptjs');
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { procesarRutInput } = require('../../services/rut');
+const { soloRolEvaluacion } = require('../../middleware/auth');
 const ExcelJS = require('exceljs');
+
+// Ampliación Hoja de Vida — cambios de estado/categoría/condiciones
+// bloqueantes quedan restringidos a administrador pleno (rol_evaluacion
+// null) y Jefe Área Deportiva (rol_evaluacion='jefe_area', el "Jefe
+// Deportivo" del requerimiento) — mismo criterio ya usado en evaluaciones.js/
+// configuracion.html para ese mismo rol. soloRolEvaluacion(...) ya deja
+// pasar siempre a admin pleno (ver middleware/auth.js). Monitor/Analista/
+// Comisión Técnica/Director/Capacitador quedan explícitamente fuera de
+// estas mutaciones, aunque sigan viendo el listado de usuarios.
+const soloAdminOJefeDeportivo = soloRolEvaluacion('jefe_area');
 
 const PASS_INICIAL = 'jurados';
 
@@ -30,7 +41,7 @@ router.get('/', async (req, res) => {
 
     let query = supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, created_at, updated_at', { count: 'exact' })
+        .select('id, codigo_interno, tipo_persona, nombre_completo, rut, categoria, email, telefono, ciudad, asociacion, perfil_completo, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, no_certificado, en_retiro, created_at, updated_at', { count: 'exact' })
         .order('nombre_completo', { ascending: true })
         .range(offset, offset + parseInt(limit) - 1);
 
@@ -224,8 +235,14 @@ router.patch('/:id', async (req, res) => {
 });
 
 // PATCH /api/admin/usuarios/:id/categoria
-router.patch('/:id/categoria', async (req, res) => {
-    const { categoria, observacion } = req.body;
+// Ampliación Fase 4: justificacion (opcional) y fecha_efectiva (opcional,
+// default hoy) viajan al historial; cambiar hacia la MISMA categoría se
+// rechaza. UPDATE usuarios_pagados + INSERT en usuario_historial_cambios
+// ahora ocurren en UNA sola transacción (RPC) — antes eran dos llamadas
+// separadas: un error en la segunda dejaba la categoría cambiada sin su
+// registro histórico correspondiente.
+router.patch('/:id/categoria', soloAdminOJefeDeportivo, async (req, res) => {
+    const { categoria, observacion, justificacion, fecha_efectiva } = req.body;
 
     if (!['A', 'B', 'C'].includes(categoria)) {
         return res.status(400).json({ error: 'Categoría debe ser A, B o C' });
@@ -242,10 +259,20 @@ router.patch('/:id/categoria', async (req, res) => {
         return res.status(400).json({ error: 'Solo los jurados tienen categoría' });
     }
 
-    await supabase
-        .from('usuarios_pagados')
-        .update({ categoria, updated_at: new Date().toISOString() })
-        .eq('id', req.params.id);
+    const { data: rpcData, error: errRpc } = await supabase.rpc('cambiar_categoria_usuario_con_historial', {
+        p_usuario_id: req.params.id,
+        p_categoria_nueva: categoria,
+        p_actor_id: req.usuario.id,
+        p_actor_nombre: req.usuario.nombre,
+        p_justificacion: justificacion || observacion || null,
+        p_fecha_efectiva: fecha_efectiva || null
+    });
+    if (errRpc) {
+        const msg = errRpc.message || '';
+        if (msg.includes('MISMA_CATEGORIA')) return res.status(400).json({ error: `El usuario ya está en categoría ${categoria}` });
+        if (msg.includes('SOLO_JURADOS_TIENEN_CATEGORIA')) return res.status(400).json({ error: 'Solo los jurados tienen categoría' });
+        return res.status(500).json({ error: msg });
+    }
 
     await auditoria.registrar({
         tabla: 'usuarios_pagados',
@@ -257,16 +284,6 @@ router.patch('/:id/categoria', async (req, res) => {
         actor_tipo: 'administrador',
         descripcion: `Categoría de ${anterior.nombre_completo} cambiada de ${anterior.categoria} a ${categoria}`,
         ip_address: req.ip
-    });
-
-    await supabase.from('usuario_historial_cambios').insert({
-        usuario_pagado_id:   req.params.id,
-        tipo_cambio:         'categoria',
-        valor_anterior:      anterior.categoria || null,
-        valor_nuevo:         categoria,
-        cambiado_por:        req.usuario.id,
-        cambiado_por_nombre: req.usuario.nombre,
-        observacion:         observacion || null
     });
 
     res.json({ mensaje: `Categoría actualizada a ${categoria}` });
@@ -318,7 +335,12 @@ router.patch('/:id/activar', async (req, res) => {
 });
 
 // PATCH /api/admin/usuarios/:id/estado — activo | inactivo | receso
-router.patch('/:id/estado', async (req, res) => {
+// UPDATE + INSERT de historial ahora en una sola transacción (RPC) — ver
+// cambiar_estado_usuario_con_historial (migración 087). La propia RPC
+// rechaza volver a 'activo' mientras no_certificado/en_retiro sigan
+// vigentes (Fase 3: una condición bloqueante no se levanta implícitamente
+// al reactivar el ciclo de vida del usuario).
+router.patch('/:id/estado', soloAdminOJefeDeportivo, async (req, res) => {
     const { estado, observacion } = req.body;
     const ESTADOS = ['activo', 'inactivo', 'receso'];
 
@@ -328,27 +350,29 @@ router.patch('/:id/estado', async (req, res) => {
 
     const { data: u } = await supabase
         .from('usuarios_pagados')
-        .select('nombre_completo, activo, estado_usuario')
+        .select('nombre_completo, activo, estado_usuario, no_certificado, en_retiro')
         .eq('id', req.params.id)
         .single();
 
     if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
 
     const estadoAnterior = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
-    const activoBool = estado === 'activo';
 
-    const updatePayload = { estado_usuario: estado, activo: activoBool, updated_at: new Date().toISOString() };
-    // Al reactivar desde suspensión, limpiar campos de suspensión
-    if (estado === 'activo' && estadoAnterior === 'suspendido') {
-        updatePayload.suspension_desde  = null;
-        updatePayload.suspension_hasta  = null;
-        updatePayload.suspension_motivo = null;
+    const { error: errRpc } = await supabase.rpc('cambiar_estado_usuario_con_historial', {
+        p_usuario_id: req.params.id,
+        p_estado_nuevo: estado,
+        p_actor_id: req.usuario.id,
+        p_actor_nombre: req.usuario.nombre,
+        p_observacion: observacion || null
+    });
+    if (errRpc) {
+        const msg = errRpc.message || '';
+        if (msg.includes('CONDICION_BLOQUEANTE_VIGENTE')) {
+            const cuales = [u.no_certificado ? 'No certificado' : null, u.en_retiro ? 'En retiro' : null].filter(Boolean).join(' y ');
+            return res.status(409).json({ error: `No se puede activar: ${cuales} sigue vigente. Revierta esa condición primero.` });
+        }
+        return res.status(500).json({ error: msg });
     }
-
-    await supabase
-        .from('usuarios_pagados')
-        .update(updatePayload)
-        .eq('id', req.params.id);
 
     await auditoria.registrar({
         tabla: 'usuarios_pagados',
@@ -362,21 +386,11 @@ router.patch('/:id/estado', async (req, res) => {
         ip_address: req.ip
     });
 
-    await supabase.from('usuario_historial_cambios').insert({
-        usuario_pagado_id:   req.params.id,
-        tipo_cambio:         'estado',
-        valor_anterior:      estadoAnterior,
-        valor_nuevo:         estado,
-        cambiado_por:        req.usuario.id,
-        cambiado_por_nombre: req.usuario.nombre,
-        observacion:         observacion || null
-    });
-
     res.json({ mensaje: `Estado actualizado a ${estado}` });
 });
 
 // PATCH /api/admin/usuarios/:id/suspender
-router.patch('/:id/suspender', async (req, res) => {
+router.patch('/:id/suspender', soloAdminOJefeDeportivo, async (req, res) => {
     const { fecha_desde, fecha_hasta, motivo } = req.body;
 
     if (!fecha_desde) return res.status(400).json({ error: 'fecha_desde es obligatoria' });
@@ -393,18 +407,16 @@ router.patch('/:id/suspender', async (req, res) => {
     if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
 
     const estadoAnterior = u.estado_usuario || (u.activo ? 'activo' : 'inactivo');
-    const ahora = new Date().toISOString();
 
-    await supabase
-        .from('usuarios_pagados')
-        .update({
-            estado_usuario:     'suspendido',
-            suspension_desde:   fecha_desde,
-            suspension_hasta:   fecha_hasta,
-            suspension_motivo:  motivo.trim(),
-            updated_at:         ahora
-        })
-        .eq('id', req.params.id);
+    const { error: errRpc } = await supabase.rpc('suspender_usuario_con_historial', {
+        p_usuario_id: req.params.id,
+        p_fecha_desde: fecha_desde,
+        p_fecha_hasta: fecha_hasta,
+        p_motivo: motivo,
+        p_actor_id: req.usuario.id,
+        p_actor_nombre: req.usuario.nombre
+    });
+    if (errRpc) return res.status(500).json({ error: errRpc.message });
 
     await auditoria.registrar({
         tabla: 'usuarios_pagados',
@@ -418,19 +430,63 @@ router.patch('/:id/suspender', async (req, res) => {
         ip_address: req.ip
     });
 
-    await supabase.from('usuario_historial_cambios').insert({
-        usuario_pagado_id:   req.params.id,
-        tipo_cambio:         'suspension',
-        valor_anterior:      estadoAnterior,
-        valor_nuevo:         'suspendido',
-        fecha_desde:         fecha_desde,
-        fecha_hasta:         fecha_hasta,
-        cambiado_por:        req.usuario.id,
-        cambiado_por_nombre: req.usuario.nombre,
-        observacion:         motivo.trim()
+    res.json({ mensaje: `Usuario suspendido del ${fecha_desde} al ${fecha_hasta}` });
+});
+
+// PATCH /api/admin/usuarios/:id/no-certificado — Fase 3: condición
+// bloqueante independiente del ciclo de vida (estado_usuario). body:
+// { activar: boolean, motivo: string (obligatorio solo al activar) }.
+router.patch('/:id/no-certificado', soloAdminOJefeDeportivo, async (req, res) => {
+    const { activar, motivo } = req.body;
+    if (typeof activar !== 'boolean') return res.status(400).json({ error: 'activar (boolean) es obligatorio' });
+    if (activar && (!motivo || !motivo.trim())) return res.status(400).json({ error: 'El motivo es obligatorio para marcar No certificado' });
+
+    const { data: u } = await supabase.from('usuarios_pagados').select('nombre_completo, no_certificado').eq('id', req.params.id).single();
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const { error: errRpc } = await supabase.rpc('marcar_condicion_bloqueante_usuario', {
+        p_usuario_id: req.params.id, p_tipo_condicion: 'no_certificado', p_activar: activar,
+        p_motivo: motivo || null, p_actor_id: req.usuario.id, p_actor_nombre: req.usuario.nombre
+    });
+    if (errRpc) return res.status(500).json({ error: errRpc.message });
+
+    await auditoria.registrar({
+        tabla: 'usuarios_pagados', registro_id: req.params.id,
+        accion: activar ? 'marcar_no_certificado' : 'revertir_no_certificado',
+        datos_anteriores: { no_certificado: u.no_certificado }, datos_nuevos: { no_certificado: activar },
+        actor_id: req.usuario.id, actor_tipo: 'administrador',
+        descripcion: `${u.nombre_completo}: No certificado ${activar ? 'activado' : 'revertido'}${motivo ? ' — ' + motivo.trim() : ''}`,
+        ip_address: req.ip
     });
 
-    res.json({ mensaje: `Usuario suspendido del ${fecha_desde} al ${fecha_hasta}` });
+    res.json({ mensaje: activar ? 'Usuario marcado como No certificado' : 'Condición No certificado revertida' });
+});
+
+// PATCH /api/admin/usuarios/:id/en-retiro — mismo patrón que no-certificado.
+router.patch('/:id/en-retiro', soloAdminOJefeDeportivo, async (req, res) => {
+    const { activar, motivo } = req.body;
+    if (typeof activar !== 'boolean') return res.status(400).json({ error: 'activar (boolean) es obligatorio' });
+    if (activar && (!motivo || !motivo.trim())) return res.status(400).json({ error: 'El motivo es obligatorio para marcar En retiro' });
+
+    const { data: u } = await supabase.from('usuarios_pagados').select('nombre_completo, en_retiro').eq('id', req.params.id).single();
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const { error: errRpc } = await supabase.rpc('marcar_condicion_bloqueante_usuario', {
+        p_usuario_id: req.params.id, p_tipo_condicion: 'en_retiro', p_activar: activar,
+        p_motivo: motivo || null, p_actor_id: req.usuario.id, p_actor_nombre: req.usuario.nombre
+    });
+    if (errRpc) return res.status(500).json({ error: errRpc.message });
+
+    await auditoria.registrar({
+        tabla: 'usuarios_pagados', registro_id: req.params.id,
+        accion: activar ? 'marcar_en_retiro' : 'revertir_en_retiro',
+        datos_anteriores: { en_retiro: u.en_retiro }, datos_nuevos: { en_retiro: activar },
+        actor_id: req.usuario.id, actor_tipo: 'administrador',
+        descripcion: `${u.nombre_completo}: En retiro ${activar ? 'activado' : 'revertido'}${motivo ? ' — ' + motivo.trim() : ''}`,
+        ip_address: req.ip
+    });
+
+    res.json({ mensaje: activar ? 'Usuario marcado como En retiro' : 'Condición En retiro revertida' });
 });
 
 // POST /api/admin/usuarios/:id/resetear-password

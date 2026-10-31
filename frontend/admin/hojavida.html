@@ -63,6 +63,12 @@
         .dist-card .dlbl { font-size:11px; color:var(--gris); margin-top:3px; line-height:1.3; }
         .badge-suspendido { background: #fdf2f8; color: #7d3c98; border: 1px solid #d7bde2; }
         .badge-hist-cat   { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+        .badge-no-certificado { background: #fdecea; color: #943126; border: 1px solid #f1948a; }
+        .badge-en-retiro      { background: #eaecee; color: #424949; border: 1px solid #aab7b8; }
+        .obs-lista   { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+        .obs-fila    { background: #fafafa; border: 1px solid var(--gris-borde); border-radius: 8px; padding: 10px 12px; }
+        .obs-meta    { font-size: 11px; color: var(--gris); margin-top: 6px; }
+        .obs-texto   { font-size: 13px; color: var(--oscuro); white-space: pre-wrap; }
         .hadm-lista       { display: flex; flex-direction: column; gap: 10px; }
         .hadm-fila        { display: flex; gap: 14px; padding: 10px 12px; background: #fafafa; border: 1px solid var(--gris-borde); border-radius: 8px; align-items: flex-start; }
         .hadm-left        { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 110px; flex-shrink: 0; }
@@ -100,6 +106,19 @@
     </div>
 </div>
 
+<!-- Modal acciones administrativas (estado / categoría / condiciones bloqueantes) -->
+<div class="modal-overlay oculto" id="modal-overlay">
+<div class="modal">
+    <div class="modal-header">
+        <h3 id="modal-titulo">Acción</h3>
+        <button class="modal-cerrar" onclick="cerrarModal()">×</button>
+    </div>
+    <div class="modal-body">
+        <div id="modal-contenido"></div>
+    </div>
+</div>
+</div>
+
 <!-- Popover nota por rodeo — posicionado junto al botón presionado -->
 <div id="popover-nota" class="nota-popover" style="display:none;">
     <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px;">
@@ -130,6 +149,21 @@ const params   = new URLSearchParams(location.search);
 const userId   = params.get('id');
 let _datos     = null;
 let _asigIdActual = null;
+let _perfilActual = null;
+
+// Fase 2/3/4 — cambios de estado/categoría/condiciones bloqueantes y el
+// agregado de Observaciones Administrativas quedan restringidos a
+// administrador pleno (rol_evaluacion null) y Jefe Área Deportiva
+// ('jefe_area', el "Jefe Deportivo" del requerimiento) — mismo criterio que
+// el backend (usuarios.js/hojavida.js, soloRolEvaluacion('jefe_area')).
+// Esta página es la única vía administrativa con la que Jefe Deportivo
+// cuenta para estas acciones: /admin/usuarios.html le queda bloqueado por
+// la navegación existente (ver _PAGINAS_BLOQUEADAS_EVAL en utils.js).
+function _esAdminOJefeDeportivo() {
+    const u = api.getUsuario();
+    const rol = u?.rol_evaluacion || null;
+    return rol === null || rol === 'jefe_area';
+}
 
 function sanitizar(s) {
     if (!s) return '';
@@ -171,15 +205,23 @@ async function cargar() {
 }
 
 function renderTodo(d) {
-    const { perfil, historial, historial_cambios, historial_administrativo, ficha, indicadores,
+    const { perfil, historial, historial_cambios, historial_administrativo, historial_categoria,
+            observaciones_administrativas, ficha, indicadores,
             evolucion_notas, frecuencia_propia,
             comparacion, pares_categoria, comparacion_frecuencia, resumen_situaciones } = d;
     const hadm = historial_administrativo || historial_cambios || [];
+    _perfilActual = perfil;
 
     const iniciales = (perfil.nombre_completo || '?').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
     const catBadge  = perfil.categoria
         ? `<span class="badge badge-${perfil.categoria.toLowerCase()}">${perfil.categoria}</span>`
         : '';
+    // Fase 3 — No certificado / En retiro son condiciones INDEPENDIENTES del
+    // ciclo de vida (estado_usuario): se muestran siempre además del badge
+    // de estado, nunca en su lugar — pueden coexistir ambas a la vez.
+    const condicionesBadges =
+        (perfil.no_certificado ? `&nbsp;<span class="badge badge-no-certificado" title="${sanitizar(perfil.no_certificado_motivo || '')}">No certificado</span>` : '') +
+        (perfil.en_retiro      ? `&nbsp;<span class="badge badge-en-retiro" title="${sanitizar(perfil.en_retiro_motivo || '')}">En retiro</span>` : '');
 
     let html = `
     <div class="hv-perfil">
@@ -198,6 +240,7 @@ function renderTodo(d) {
                    ? '&nbsp;<span class="badge badge-suspendido">Suspendido' +
                      (perfil.suspension_hasta ? ' hasta ' + _fmtFecha(perfil.suspension_hasta) : '') + '</span>'
                    : (!perfil.activo ? '&nbsp;<span class="badge badge-inactivo">Inactivo</span>' : '')}
+               ${condicionesBadges}
             </p>
             ${perfil.estado_usuario === 'suspendido' && perfil.suspension_motivo
                ? `<p style="margin-top:6px;font-size:12px;color:#6c3483;background:#fdf2f8;border:1px solid #d7bde2;border-radius:6px;padding:6px 10px;">
@@ -208,7 +251,13 @@ function renderTodo(d) {
         </div>
     </div>
 
+    ${renderAccionesAdministrativas(perfil)}
+
     ${renderHistorialAdmin(hadm)}
+
+    ${renderObservaciones(observaciones_administrativas || [])}
+
+    ${renderHistorialCategoria(historial_categoria || [])}
 
     ${renderHistorial(historial)}
 
@@ -449,6 +498,13 @@ function _badgeEvento(tipo_cambio, valor_nuevo) {
         if (valor_nuevo === 'receso')   return '<span class="badge badge-receso">Receso</span>';
         if (valor_nuevo === 'inactivo') return '<span class="badge badge-inactivo">Desactivación</span>';
     }
+    // Fase 3 — No certificado / En retiro: valor_nuevo es 'true'/'false' (texto).
+    if (tipo_cambio === 'no_certificado') {
+        return valor_nuevo === 'true' ? '<span class="badge badge-no-certificado">No certificado</span>' : '<span class="badge badge-activo">Revertido</span>';
+    }
+    if (tipo_cambio === 'en_retiro') {
+        return valor_nuevo === 'true' ? '<span class="badge badge-en-retiro">En retiro</span>' : '<span class="badge badge-activo">Revertido</span>';
+    }
     return '<span class="badge">' + sanitizar(tipo_cambio) + '</span>';
 }
 
@@ -467,7 +523,239 @@ function _resumenEvento(e) {
         const nuevo = LABELS[e.valor_nuevo]    || sanitizar(e.valor_nuevo    || '—');
         return 'Estado: ' + ant + ' → ' + nuevo;
     }
+    if (e.tipo_cambio === 'no_certificado') {
+        return e.valor_nuevo === 'true' ? 'Marcado como No certificado' : 'No certificado revertido';
+    }
+    if (e.tipo_cambio === 'en_retiro') {
+        return e.valor_nuevo === 'true' ? 'Marcado como En retiro' : 'En retiro revertido';
+    }
     return sanitizar(e.valor_anterior || '—') + ' → ' + sanitizar(e.valor_nuevo || '—');
+}
+
+// ═════ Fase 5C — Historial de Cambios de Categoría (tabla independiente) ═══
+function renderHistorialCategoria(lista) {
+    if (!lista || lista.length === 0) {
+        return `<div class="seccion-bloque">
+            <div class="seccion-titulo">Historial de cambios de categoría</div>
+            <p style="color:var(--gris);font-size:13px;">Sin cambios de categoría registrados.</p>
+        </div>`;
+    }
+    const filas = lista.map(c => `<tr>
+        <td>${c.fecha_efectiva ? formatFecha(c.fecha_efectiva) : (c.fecha ? formatFecha(c.fecha) : '—')}</td>
+        <td>${sanitizar(c.valor_anterior || '—')}</td>
+        <td>${sanitizar(c.valor_nuevo || '—')}</td>
+        <td style="max-width:280px;">${c.observacion ? sanitizar(c.observacion) : '<span class="texto-gris">—</span>'}</td>
+        <td>${sanitizar(c.cambiado_por_nombre || '—')}</td>
+    </tr>`).join('');
+    return `<div class="seccion-bloque">
+        <div class="seccion-titulo">Historial de cambios de categoría (${lista.length})</div>
+        <div style="overflow-x:auto;">
+        <table class="tabla">
+            <thead><tr><th>Fecha</th><th>Categoría anterior</th><th>Categoría nueva</th><th>Justificación</th><th>Responsable</th></tr></thead>
+            <tbody>${filas}</tbody>
+        </table>
+        </div>
+    </div>`;
+}
+
+// ═════ Fase 2 — Observaciones Administrativas ══════════════════════════════
+function renderObservaciones(lista) {
+    const puede = _esAdminOJefeDeportivo();
+    const form = puede ? `
+        <div class="form-grupo">
+            <textarea id="nueva-observacion" class="form-control" rows="3" placeholder="Escriba una observación administrativa..."></textarea>
+        </div>
+        <div class="form-acciones" style="margin-bottom:0;">
+            <button class="btn btn-primario btn-pequeño" onclick="guardarObservacion()">Guardar observación</button>
+        </div>` : '';
+
+    const items = (lista || []).map(o => `
+        <div class="obs-fila">
+            <div class="obs-texto">${sanitizar(o.contenido)}</div>
+            <div class="obs-meta">${formatFecha(o.creado_en)} ${_horaDe(o.creado_en)} — ${sanitizar(o.creado_por_nombre || '—')}</div>
+        </div>`).join('');
+
+    return `<div class="seccion-bloque">
+        <div class="seccion-titulo">Observaciones administrativas (${(lista || []).length})</div>
+        ${form}
+        <div class="obs-lista">${items || '<p style="color:var(--gris);font-size:13px;">Sin observaciones registradas.</p>'}</div>
+    </div>`;
+}
+
+function _horaDe(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function guardarObservacion() {
+    const ta = document.getElementById('nueva-observacion');
+    const contenido = (ta.value || '').trim();
+    if (!contenido) { mostrarToast('Escriba una observación antes de guardar', 'error'); return; }
+    try {
+        await api.post(`/admin/hojavida/${userId}/observacion`, { contenido });
+        mostrarToast('Observación registrada', 'success');
+        await cargar();
+    } catch (e) { mostrarError(e); }
+}
+
+// ═════ Fase 3/4 — Acciones administrativas (estado, categoría, condiciones) ═
+// Solo visible para administrador pleno y Jefe Área Deportiva — mismo
+// criterio que el backend. Jefe Deportivo cuenta con esta vía porque
+// /admin/usuarios.html le queda bloqueado por la navegación existente.
+function renderAccionesAdministrativas(perfil) {
+    if (!_esAdminOJefeDeportivo()) return '';
+
+    const estadoActual = perfil.estado_usuario || (perfil.activo ? 'activo' : 'inactivo');
+    let btnEstado = '';
+    if (estadoActual === 'activo') {
+        btnEstado = `<button class="btn btn-advertencia btn-pequeño" onclick="hvCambiarEstado('receso')">⏸ Poner en receso</button>
+                     <button class="btn btn-peligro btn-pequeño" onclick="hvCambiarEstado('inactivo')">🚫 Desactivar</button>`;
+    } else if (estadoActual === 'suspendido') {
+        btnEstado = `<button class="btn btn-success btn-pequeño" onclick="hvCambiarEstado('activo')">✅ Activar</button>
+                     <button class="btn btn-peligro btn-pequeño" onclick="hvCambiarEstado('inactivo')">🚫 Desactivar</button>`;
+    } else {
+        btnEstado = `<button class="btn btn-success btn-pequeño" onclick="hvCambiarEstado('activo')">✅ Activar</button>
+                     ${estadoActual !== 'receso' ? `<button class="btn btn-advertencia btn-pequeño" onclick="hvCambiarEstado('receso')">⏸ Poner en receso</button>` : ''}
+                     <button class="btn btn-peligro btn-pequeño" onclick="hvCambiarEstado('inactivo')">🚫 Desactivar</button>`;
+    }
+    const btnSuspender = estadoActual !== 'suspendido'
+        ? `<button class="btn btn-pequeño" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="hvAbrirFormSuspender()">⏸ Suspender</button>` : '';
+    const btnCategoria = perfil.tipo_persona === 'jurado'
+        ? `<button class="btn btn-outline btn-pequeño" onclick="hvCambiarCategoria()">🏅 Cambiar categoría</button>` : '';
+    const btnNoCert = perfil.no_certificado
+        ? `<button class="btn btn-pequeño" style="background:#eafaf1;color:#196f3d;border:1px solid #a9dfbf;" onclick="hvRevertirCondicion('no-certificado','No certificado')">↩ Revertir No certificado</button>`
+        : `<button class="btn btn-pequeño" style="background:#fdecea;color:#943126;border:1px solid #f1948a;" onclick="hvAbrirFormCondicion('no-certificado','No certificado')">⚠ Marcar No certificado</button>`;
+    const btnEnRetiro = perfil.en_retiro
+        ? `<button class="btn btn-pequeño" style="background:#eafaf1;color:#196f3d;border:1px solid #a9dfbf;" onclick="hvRevertirCondicion('en-retiro','En retiro')">↩ Revertir En retiro</button>`
+        : `<button class="btn btn-pequeño" style="background:#eaecee;color:#424949;border:1px solid #aab7b8;" onclick="hvAbrirFormCondicion('en-retiro','En retiro')">🏳 Marcar En retiro</button>`;
+
+    return `<div class="seccion-bloque">
+        <div class="seccion-titulo">Acciones administrativas</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${btnCategoria}${btnEstado}${btnSuspender}${btnNoCert}${btnEnRetiro}
+        </div>
+    </div>`;
+}
+
+function cerrarModal() { document.getElementById('modal-overlay').classList.add('oculto'); }
+
+async function hvCambiarEstado(nuevoEstado) {
+    const labels = { activo: 'activar', inactivo: 'desactivar', receso: 'poner en receso' };
+    const ok = await confirmar(`¿Desea ${labels[nuevoEstado] || nuevoEstado} a ${_perfilActual?.nombre_completo}?`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/usuarios/${userId}/estado`, { estado: nuevoEstado });
+        mostrarToast('Estado actualizado', 'success');
+        await cargar();
+    } catch (e) { mostrarError(e); }
+}
+
+function hvAbrirFormSuspender() {
+    const hoy = new Date().toISOString().slice(0, 10);
+    document.getElementById('modal-titulo').textContent = 'Suspender usuario';
+    document.getElementById('modal-contenido').innerHTML = `
+        <form onsubmit="hvConfirmarSuspension(event)">
+            <div class="form-grupo"><label class="form-label">Fecha desde <span class="req">*</span></label>
+                <input type="date" name="fecha_desde" class="form-control" required value="${hoy}"></div>
+            <div class="form-grupo"><label class="form-label">Fecha hasta <span class="req">*</span></label>
+                <input type="date" name="fecha_hasta" class="form-control" required value="${hoy}"></div>
+            <div class="form-grupo"><label class="form-label">Motivo <span class="req">*</span></label>
+                <textarea name="motivo" class="form-control" rows="3" required></textarea></div>
+            <div class="form-acciones">
+                <button type="submit" class="btn" style="background:#6c3483;color:#fff;">Confirmar suspensión</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function hvConfirmarSuspension(e) {
+    e.preventDefault();
+    const form = e.target;
+    const desde = form.fecha_desde.value, hasta = form.fecha_hasta.value, motivo = form.motivo.value.trim();
+    if (hasta < desde) { mostrarToast('La fecha hasta debe ser igual o posterior a la fecha desde', 'error'); return; }
+    try {
+        await api.patch(`/admin/usuarios/${userId}/suspender`, { fecha_desde: desde, fecha_hasta: hasta, motivo });
+        mostrarToast('Usuario suspendido', 'success');
+        cerrarModal();
+        await cargar();
+    } catch (e2) { mostrarError(e2); }
+}
+
+function hvCambiarCategoria() {
+    const catActual = _perfilActual?.categoria || '';
+    const hoy = new Date().toISOString().slice(0, 10);
+    document.getElementById('modal-titulo').textContent = 'Cambiar categoría';
+    document.getElementById('modal-contenido').innerHTML = `
+        <div class="form-grupo"><label class="form-label">Nueva categoría</label>
+            <select id="hv-nueva-cat" class="form-control">
+                <option value="A" ${catActual==='A'?'selected':''}>A — Categoría A</option>
+                <option value="B" ${catActual==='B'?'selected':''}>B — Categoría B</option>
+                <option value="C" ${catActual==='C'?'selected':''}>C — Categoría C</option>
+            </select>
+            <div class="form-hint">Los pagos ya registrados NO cambiarán. Solo afecta nuevas asignaciones.</div>
+        </div>
+        <div class="form-grupo"><label class="form-label">Fecha efectiva del cambio</label>
+            <input type="date" id="hv-cat-fecha-efectiva" class="form-control" value="${hoy}"></div>
+        <div class="form-grupo"><label class="form-label">Justificación del cambio (opcional)</label>
+            <textarea id="hv-cat-justificacion" class="form-control" rows="3"></textarea></div>
+        <div class="form-acciones">
+            <button class="btn btn-primario" onclick="hvGuardarCategoria('${catActual}')">Cambiar</button>
+            <button class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+        </div>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function hvGuardarCategoria(catActual) {
+    const cat = document.getElementById('hv-nueva-cat').value;
+    if (cat === catActual) { mostrarToast('El usuario ya está en esa categoría — elija una categoría distinta', 'error'); return; }
+    const fecha_efectiva = document.getElementById('hv-cat-fecha-efectiva').value || null;
+    const justificacion  = document.getElementById('hv-cat-justificacion').value.trim() || null;
+    const ok = await confirmar(`¿Cambiar la categoría de ${catActual || '—'} a ${cat}?`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/usuarios/${userId}/categoria`, { categoria: cat, justificacion, fecha_efectiva });
+        mostrarToast('Categoría actualizada', 'success');
+        cerrarModal();
+        await cargar();
+    } catch (e) { mostrarError(e); }
+}
+
+function hvAbrirFormCondicion(endpoint, etiqueta) {
+    document.getElementById('modal-titulo').textContent = etiqueta;
+    document.getElementById('modal-contenido').innerHTML = `
+        <form onsubmit="hvConfirmarCondicion(event, '${endpoint}')">
+            <div class="form-grupo"><label class="form-label">Motivo <span class="req">*</span></label>
+                <textarea name="motivo" class="form-control" rows="3" required></textarea></div>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-peligro">Confirmar</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function hvConfirmarCondicion(e, endpoint) {
+    e.preventDefault();
+    const motivo = e.target.motivo.value.trim();
+    try {
+        await api.patch(`/admin/usuarios/${userId}/${endpoint}`, { activar: true, motivo });
+        mostrarToast('Condición registrada', 'success');
+        cerrarModal();
+        await cargar();
+    } catch (e2) { mostrarError(e2); }
+}
+
+async function hvRevertirCondicion(endpoint, etiqueta) {
+    const ok = await confirmar(`¿Revertir "${etiqueta}"?`);
+    if (!ok) return;
+    try {
+        await api.patch(`/admin/usuarios/${userId}/${endpoint}`, { activar: false });
+        mostrarToast(`${etiqueta} revertido`, 'success');
+        await cargar();
+    } catch (e) { mostrarError(e); }
 }
 
 function renderHistorialAdmin(eventos) {
@@ -942,6 +1230,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Cerrar popover con Escape
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') cerrarModalNota();
+    });
+
+    // Cerrar modal de acciones administrativas al hacer clic fuera
+    document.getElementById('modal-overlay').addEventListener('click', function(e) {
+        if (e.target === this) cerrarModal();
     });
 });
 </script>

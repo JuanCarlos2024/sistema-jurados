@@ -3,6 +3,15 @@ const router    = express.Router();
 const supabase  = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { exportarHistorialHojaVida } = require('../../services/exportacion');
+const { soloRolEvaluacion } = require('../../middleware/auth');
+
+// Fase 2 — Observaciones Administrativas: solo administrador pleno
+// (rol_evaluacion null) y Jefe Área Deportiva (rol_evaluacion='jefe_area',
+// el "Jefe Deportivo" del requerimiento) pueden agregarlas — mismo
+// criterio que usuarios.js para estado/categoría/condiciones bloqueantes.
+// Los jurados nunca llegan a este router: está montado bajo soloAdmin
+// (admin/index.js) y un token de usuario_pagado no lo supera.
+const soloAdminOJefeDeportivo = soloRolEvaluacion('jefe_area');
 
 const PAGINA_HV = 900; // paginación defensiva para no depender del tope implícito de Supabase/PostgREST
 
@@ -83,7 +92,7 @@ router.get('/:id', async (req, res) => {
     // 1. Perfil
     const { data: perfil, error: errPerfil } = await supabase
         .from('usuarios_pagados')
-        .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, comuna, asociacion, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, created_at')
+        .select('id, codigo_interno, nombre_completo, rut, tipo_persona, categoria, email, telefono, ciudad, comuna, asociacion, activo, estado_usuario, suspension_desde, suspension_hasta, suspension_motivo, no_certificado, no_certificado_motivo, no_certificado_desde, en_retiro, en_retiro_motivo, en_retiro_desde, created_at')
         .eq('id', uid)
         .single();
 
@@ -382,7 +391,7 @@ router.get('/:id', async (req, res) => {
 
     const { data: historial_cambios } = await supabase
         .from('usuario_historial_cambios')
-        .select('id, tipo_cambio, valor_anterior, valor_nuevo, cambiado_por, cambiado_por_nombre, cambiado_en, observacion, fecha_desde, fecha_hasta')
+        .select('id, tipo_cambio, valor_anterior, valor_nuevo, cambiado_por, cambiado_por_nombre, cambiado_en, observacion, fecha_desde, fecha_hasta, fecha_efectiva')
         .eq('usuario_pagado_id', uid)
         .order('cambiado_en', { ascending: false });
 
@@ -395,15 +404,31 @@ router.get('/:id', async (req, res) => {
         observacion:        c.observacion,
         fecha_desde:        c.fecha_desde,
         fecha_hasta:        c.fecha_hasta,
+        fecha_efectiva:     c.fecha_efectiva,
         cambiado_por:       c.cambiado_por,
         cambiado_por_nombre: c.cambiado_por_nombre
     }));
+
+    // Fase 4 — Historial de Cambios de Categoría: misma fuente (usuario_
+    // historial_cambios), filtrada a tipo_cambio='categoria' — nunca una
+    // consulta ni una tabla paralela.
+    const historial_categoria = hadm.filter(c => c.tipo_cambio === 'categoria');
+
+    // Fase 2 — Observaciones Administrativas: más reciente primero,
+    // conservando TODAS (nunca se sobrescriben ni se eliminan).
+    const { data: observaciones_administrativas } = await supabase
+        .from('usuario_observaciones_administrativas')
+        .select('id, contenido, creado_por, creado_por_nombre, creado_en')
+        .eq('usuario_pagado_id', uid)
+        .order('creado_en', { ascending: false });
 
     res.json({
         perfil,
         historial,
         historial_cambios:        historial_cambios || [],
         historial_administrativo: hadm,
+        historial_categoria,
+        observaciones_administrativas: observaciones_administrativas || [],
         ficha:               ficha || null,
         indicadores,
         evolucion_notas,
@@ -413,6 +438,47 @@ router.get('/:id', async (req, res) => {
         comparacion_frecuencia,
         resumen_situaciones
     });
+});
+
+// ─── POST /api/admin/hojavida/:id/observacion ───────────────────────────────
+// Fase 2 — registra una Observación Administrativa. Append-only: no existe
+// PATCH/DELETE para esta tabla en ningún router — "evitar eliminaciones o
+// modificaciones silenciosas" se cumple por ausencia total de esa vía, no
+// por una validación. Fecha/hora/responsable se completan SIEMPRE desde el
+// servidor (now(), req.usuario.id/nombre) — nunca desde el body.
+router.post('/:id/observacion', soloAdminOJefeDeportivo, async (req, res) => {
+    const uid = req.params.id;
+    const contenido = (req.body?.contenido || '').trim();
+    if (!contenido) return res.status(400).json({ error: 'El contenido de la observación es obligatorio' });
+
+    const { data: u } = await supabase.from('usuarios_pagados').select('id, nombre_completo').eq('id', uid).single();
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const { data: creada, error } = await supabase
+        .from('usuario_observaciones_administrativas')
+        .insert({
+            usuario_pagado_id: uid,
+            contenido,
+            creado_por: req.usuario.id,
+            creado_por_nombre: req.usuario.nombre
+        })
+        .select('id, contenido, creado_por, creado_por_nombre, creado_en')
+        .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await auditoria.registrar({
+        tabla: 'usuario_observaciones_administrativas',
+        registro_id: creada.id,
+        accion: 'crear',
+        datos_nuevos: { usuario_pagado_id: uid, contenido },
+        actor_id: req.usuario.id,
+        actor_tipo: 'administrador',
+        descripcion: `Observación administrativa agregada a ${u.nombre_completo}`,
+        ip_address: req.ip
+    });
+
+    res.json(creada);
 });
 
 // ─── PATCH /api/admin/hojavida/:id/ficha ────────────────────────────────────
