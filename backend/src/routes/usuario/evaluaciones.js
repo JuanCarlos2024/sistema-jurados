@@ -4,6 +4,16 @@ const supabase = require('../../config/supabase');
 
 const ESTADOS_VISIBLES_CASO = ['visible_jurado','pendiente_analista','derivado_comision','resuelto','consolidado'];
 
+// ─── Feature flag: comentario general del jurado por ciclo ─────────────────
+// Deshabilitado temporalmente por decisión administrativa. Sin la variable
+// (o distinta de 'true') queda deshabilitado por defecto. No afecta los
+// registros "(Sin comentario al cierre)" que genera el cierre automático del
+// ciclo (admin/ciclos.js) ni la lectura administrativa de comentarios
+// históricos (admin/evaluaciones.js GET /:id/comentarios-jurado).
+function comentarioCicloHabilitado() {
+    return process.env.ENABLE_COMENTARIO_CICLO_JURADO === 'true';
+}
+
 // GET / — tres grupos: para_responder | en_revision | resultados
 // Retorna por cada evaluación activa: { id, estado, rodeo, ciclo1, ciclo2 }
 router.get('/', async (req, res) => {
@@ -259,7 +269,10 @@ router.get('/:id/casos', async (req, res) => {
     }
 
     res.json({
-        evaluacion: { id: ev.id, estado: ev.estado, modo_flujo: modoFlujo, rodeo: ev.rodeo || {} },
+        evaluacion: {
+            id: ev.id, estado: ev.estado, modo_flujo: modoFlujo, rodeo: ev.rodeo || {},
+            comentario_ciclo_habilitado: comentarioCicloHabilitado()
+        },
         ciclo1: buildCicloConCasos(ciclosMap[1] || null),
         ciclo2: buildCicloConCasos(ciclosMap[2] || null)
     });
@@ -570,6 +583,13 @@ router.post('/:id/casos/:casoId/responder', async (req, res) => {
 
 // POST /:id/ciclos/:cicloId/comentario — enviar comentario de ciclo (modo descuento_automatico)
 router.post('/:id/ciclos/:cicloId/comentario', async (req, res) => {
+    if (!comentarioCicloHabilitado()) {
+        return res.status(403).json({
+            error: 'El comentario general del ciclo está temporalmente deshabilitado.',
+            comentario_ciclo_disabled: true
+        });
+    }
+
     const { comentario } = req.body;
     const evalId  = req.params.id;
     const cicloId = req.params.cicloId;

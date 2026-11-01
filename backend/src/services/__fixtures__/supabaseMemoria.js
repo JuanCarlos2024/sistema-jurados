@@ -1,5 +1,5 @@
 // Supabase EN MEMORIA para pruebas de rutas/servicios (no es parte de la aplicación).
-// Soporta: select/eq/neq/in/gte/lte/is/order/range/limit/single/maybeSingle/insert/update/delete, claves únicas (23505),
+// Soporta: select/eq/neq/in/gte/lte/is/order/range/limit/single/maybeSingle/insert/update/upsert/delete, claves únicas (23505),
 // conteo exacto, rpc con manejadores y un registro de llamadas. Los filtros sobre columnas se aplican de verdad.
 function crearSupabaseMemoria({ tablas = {}, unicos = {}, rpc = {} } = {}) {
     const calls = [];
@@ -29,6 +29,17 @@ function crearSupabaseMemoria({ tablas = {}, unicos = {}, rpc = {} } = {}) {
                 return q.unico ? { data: nuevas[0], error: null } : { data: nuevas, error: null };
             }
             if (q.op === 'update') { const r = coinciden(); r.forEach(f => Object.assign(f, q.payload)); return q.unico ? { data: r[0] || null, error: null } : { data: r, error: null }; }
+            if (q.op === 'upsert') {
+                const conflictCols = q.conflict ? q.conflict.split(',') : null;
+                const resultados = [].concat(q.payload).map(p => {
+                    const existente = conflictCols ? filas(tabla).find(f => conflictCols.every(c => f[c] === p[c])) : null;
+                    if (existente) { Object.assign(existente, p); return existente; }
+                    const fila = { id: `${tabla}-${++seq}`, ...p };
+                    filas(tabla).push(fila);
+                    return fila;
+                });
+                return q.unico ? { data: resultados[0] || null, error: null } : { data: resultados, error: null };
+            }
             if (q.op === 'delete') { const r = coinciden(); tablas[tabla] = filas(tabla).filter(f => !r.includes(f)); return { data: r, error: null }; }
             const r = coinciden();
             const pagina = r.slice(q.desde, q.hasta === Infinity ? undefined : q.hasta + 1);
@@ -41,6 +52,7 @@ function crearSupabaseMemoria({ tablas = {}, unicos = {}, rpc = {} } = {}) {
             select(_c, opts) { if (opts && opts.count) q.cuenta = true; if (q.op === 'insert' || q.op === 'update') q.unico = q.unico || null; return api; },
             insert(p) { q.op = 'insert'; q.payload = p; return api; },
             update(p) { q.op = 'update'; q.payload = p; return api; },
+            upsert(p, opts) { q.op = 'upsert'; q.payload = p; q.conflict = opts && opts.onConflict; return api; },
             delete() { q.op = 'delete'; return api; },
             eq(k, v) { filtro('eq', f => f[k] === v, k, v); return api; },
             neq(k, v) { filtro('neq', f => f[k] !== v, k, v); return api; },

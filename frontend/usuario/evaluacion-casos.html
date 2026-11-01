@@ -267,6 +267,7 @@ if (api.getUsuario()?.tipo_persona !== 'jurado') {
 const _respondidos   = new Set();
 const _envioEnCurso  = new Set();   // evita doble-submit aunque el botón no se haya deshabilitado aún
 let   _modoFlujo     = 'apelacion_jurado';
+let   _comentarioCicloHabilitado = false; // feature flag: comentario general del jurado por ciclo (deshabilitado temporalmente)
 
 // ── Timeout máximo para guardar respuesta (ms) ─────────────────────
 const TIMEOUT_GUARDAR_MS = 20000;
@@ -378,6 +379,7 @@ const CICLO_STYLE = {
 function render(data) {
     const ev    = data.evaluacion || {};
     _modoFlujo  = ev.modo_flujo || 'apelacion_jurado';
+    _comentarioCicloHabilitado = !!ev.comentario_ciclo_habilitado;
     const rodeo = ev.rodeo || {};
     const ciclo1 = data.ciclo1;
     const ciclo2 = data.ciclo2;
@@ -472,7 +474,8 @@ function renderCicloAccordion(ciclo, num, expanded) {
     }
 
     // Sección de comentario por ciclo (modo DA) — no mostrar si el ciclo fue abierto sin casos
-    const comentarioCicloDA = esModoDA && !esSinCasos && ['abierto','cerrado','en_revision'].includes(ciclo.estado)
+    // ni si la funcionalidad está deshabilitada (feature flag ENABLE_COMENTARIO_CICLO_JURADO)
+    const comentarioCicloDA = _comentarioCicloHabilitado && esModoDA && !esSinCasos && ['abierto','cerrado','en_revision'].includes(ciclo.estado)
         ? renderComentarioCicloDA(ciclo)
         : '';
 
