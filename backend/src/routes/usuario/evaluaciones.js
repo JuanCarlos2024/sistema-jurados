@@ -814,6 +814,15 @@ router.get('/historial', async (req, res) => {
 // analista_id/jefe_id/comentario_resultados_alterados/comentario_monitor ni
 // select('*')) y solo se entrega el texto ya resuelto — jamás el objeto
 // completo de la evaluación.
+//
+// "Comparación de puntajes" (mejora): mismos campos reales que usa
+// frontend/admin/evaluacion-detalle.html → renderAnalisisDeportivo → PUNTAJES
+// (confirmado leyendo ese archivo, no asumido):
+//   - Oficial  -> datos_monitor_rodeo.puntaje_oficial_1er/2do/3er (por rodeo_id)
+//   - Revisado -> evaluaciones.puntaje_analista_1er/2do/3er (texto, puede ser
+//     "30+5" en desempates — se muestra tal cual, nunca se recalcula)
+// De datos_monitor_rodeo solo se seleccionan los 3 puntajes oficiales —
+// nunca comentario_monitor (comentario interno del monitor, no autorizado).
 router.get('/:id/detalle-historial', async (req, res) => {
     const evalId = req.params.id;
 
@@ -821,6 +830,7 @@ router.get('/:id/detalle-historial', async (req, res) => {
         .from('evaluaciones')
         .select(`
             id, estado, resultados_alterados, observacion_general,
+            puntaje_analista_1er, puntaje_analista_2do, puntaje_analista_3er,
             rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .eq('id', evalId)
@@ -849,8 +859,12 @@ router.get('/:id/detalle-historial', async (req, res) => {
     // Sin filtrar por "fuente" — mismo criterio que GET /historial (ver su
     // comentario): la nota se muestra tal cual está en notas_rodeo, igual que
     // en Hoja de Vida.
-    const [{ data: notaRow }, situaciones] = await Promise.all([
+    const [{ data: notaRow }, { data: datosMonitor }, situaciones] = await Promise.all([
         supabase.from('notas_rodeo').select('nota').eq('asignacion_id', asignacion.id).maybeSingle(),
+        supabase.from('datos_monitor_rodeo')
+            .select('puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er')
+            .eq('rodeo_id', ev.rodeo.id)
+            .maybeSingle(),
         calcularSituacionesPorRodeo([ev.rodeo.id])
     ]);
 
@@ -861,6 +875,16 @@ router.get('/:id/detalle-historial', async (req, res) => {
         ? ev.observacion_general.trim()
         : 'No existen observaciones disponibles para esta evaluación.';
 
+    // Comparación de puntajes — valores tal cual están registrados, sin
+    // recalcular ni interpretar null como 0 (el frontend decide "Sin
+    // registro"). Se muestra para cualquier evaluación publicada, haya
+    // alterado o no el resultado (punto 7 del requerimiento).
+    const puntajes = [
+        { lugar: '1er lugar', oficial: datosMonitor?.puntaje_oficial_1er ?? null, revisado: ev.puntaje_analista_1er ?? null },
+        { lugar: '2do lugar', oficial: datosMonitor?.puntaje_oficial_2do ?? null, revisado: ev.puntaje_analista_2do ?? null },
+        { lugar: '3er lugar', oficial: datosMonitor?.puntaje_oficial_3er ?? null, revisado: ev.puntaje_analista_3er ?? null }
+    ];
+
     res.json({
         rodeo: ev.rodeo,
         categoria: asignacion.categoria_aplicada || null,
@@ -868,6 +892,7 @@ router.get('/:id/detalle-historial', async (req, res) => {
         nota: notaRow?.nota ?? null,
         situaciones_por_tipo: situaciones.porTipoPorRodeo[ev.rodeo.id] || {},
         situaciones_total:    situaciones.porRodeo[ev.rodeo.id] || 0,
+        puntajes,
         observacion_general: textoObservacion
     });
 });

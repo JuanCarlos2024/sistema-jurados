@@ -19,7 +19,11 @@ const ASIG1 = { id: 'A1', usuario_pagado_id: 'J1', rodeo_id: 'R1', estado: 'acti
 const EVAL1 = { id: 'EV1', rodeo_id: 'R1', estado: 'publicado', resultados_alterados: true, anulada: false, es_historica_importacion: false,
     observacion_general: 'Según esta revisión, diferencias en el 4to toro con la collera que obtuvo el 3er lugar.',
     comentario_resultados_alterados: 'SECRETO INTERNO DEL ANALISTA',
+    // Ejemplo real (ALBORADA DE LINARES): 1er lugar coincide (32=32), 2do y 3er difieren.
+    puntaje_analista_1er: '32', puntaje_analista_2do: '31', puntaje_analista_3er: '32',
     rodeo: { id: 'R1', club: 'Club Uno', fecha: '2026-03-10', asociacion: 'COLCHAGUA', tipo_rodeo_nombre: 'Provincial' } };
+const DATOS_MONITOR_R1 = { rodeo_id: 'R1', puntaje_oficial_1er: '32', puntaje_oficial_2do: '21', puntaje_oficial_3er: '28',
+    comentario_monitor: 'SECRETO DEL MONITOR' }; // nunca debe exponerse al jurado
 
 // R2: evaluación publicada, resultados_alterados=false, con observación general
 // (debe mostrarse igual, bajo el encabezado "Observación general del análisis",
@@ -28,7 +32,9 @@ const ASIG2 = { id: 'A2', usuario_pagado_id: 'J1', rodeo_id: 'R2', estado: 'acti
     rodeos: { id: 'R2', club: 'Club Dos', fecha: '2026-02-01', asociacion: 'MAULE', tipo_rodeo_nombre: 'Zonal', temporada_id: 'T1' } };
 const EVAL2 = { id: 'EV2', rodeo_id: 'R2', estado: 'cerrado', resultados_alterados: false, anulada: false, es_historica_importacion: false,
     observacion_general: 'Rodeo sin novedades relevantes.',
+    puntaje_analista_1er: '30', puntaje_analista_2do: null, puntaje_analista_3er: null,
     rodeo: { id: 'R2', club: 'Club Dos', fecha: '2026-02-01', asociacion: 'MAULE', tipo_rodeo_nombre: 'Zonal' } };
+// R2 no tiene fila en datos_monitor_rodeo -> puntajes oficiales deben venir null ("Sin registro"), nunca 0.
 
 // R3: rodeo asistido SIN evaluación -> pendiente
 const ASIG3 = { id: 'A3', usuario_pagado_id: 'J1', rodeo_id: 'R3', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'A',
@@ -90,6 +96,7 @@ function preparar(extra = {}) {
             evaluaciones: [EVAL1, EVAL2, EVAL4, EVAL6],
             notas_rodeo: NOTAS,
             evaluacion_casos: CASOS_R1,
+            datos_monitor_rodeo: [DATOS_MONITOR_R1],
             ...extra
         }
     });
@@ -227,6 +234,53 @@ describe('GET /:id/detalle-historial — modal "Ver evaluación"', () => {
         expect(r.statusCode).toBe(200);
         expect(r.body.resultado_alterado).toBe(false);
         expect(r.body.observacion_general).toBe('Rodeo sin novedades relevantes.');
+    });
+
+    describe('Comparación de puntajes (oficial vs. revisado)', () => {
+        test('puntajes oficiales y revisados correctos, coinciden exactamente con los datos administrativos (ejemplo real ALBORADA DE LINARES)', async () => {
+            const r = await getDetalle('EV1');
+            expect(r.body.puntajes).toEqual([
+                { lugar: '1er lugar', oficial: '32', revisado: '32' },
+                { lugar: '2do lugar', oficial: '21', revisado: '31' },
+                { lugar: '3er lugar', oficial: '28', revisado: '32' }
+            ]);
+        });
+
+        test('comparación con y sin diferencias: 1er lugar coincide (32=32), 2do y 3er difieren — datos crudos suficientes para que el frontend resalte', async () => {
+            const r = await getDetalle('EV1');
+            const [p1, p2, p3] = r.body.puntajes;
+            expect(p1.oficial).toBe(p1.revisado);
+            expect(p2.oficial).not.toBe(p2.revisado);
+            expect(p3.oficial).not.toBe(p3.revisado);
+        });
+
+        test('se muestra también en evaluaciones SIN resultado alterado', async () => {
+            const r = await getDetalle('EV2');
+            expect(r.body.resultado_alterado).toBe(false);
+            expect(r.body.puntajes[0]).toEqual({ lugar: '1er lugar', oficial: null, revisado: '30' });
+        });
+
+        test('puntaje oficial inexistente (sin fila en datos_monitor_rodeo): null, nunca 0', async () => {
+            const r = await getDetalle('EV2');
+            expect(r.body.puntajes[0].oficial).toBeNull();
+        });
+
+        test('puntaje revisado nulo: null, nunca 0 ni cadena vacía interpretada como cero', async () => {
+            const r = await getDetalle('EV2');
+            expect(r.body.puntajes[1]).toEqual({ lugar: '2do lugar', oficial: null, revisado: null });
+            expect(r.body.puntajes[2]).toEqual({ lugar: '3er lugar', oficial: null, revisado: null });
+        });
+
+        test('nunca expone comentario_monitor (comentario interno del monitor)', async () => {
+            const r = await getDetalle('EV1');
+            expect(JSON.stringify(r.body)).not.toMatch(/SECRETO DEL MONITOR/);
+        });
+
+        test('evaluación no publicada: 403, sin llegar a construir la comparación de puntajes', async () => {
+            const r = await getDetalle('EV4');
+            expect(r.statusCode).toBe(403);
+            expect(r.body.puntajes).toBeUndefined();
+        });
     });
 
     test('evaluación alterada SIN observación general registrada: mensaje neutral, nunca null ni inventado', async () => {

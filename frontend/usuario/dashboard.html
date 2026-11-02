@@ -73,6 +73,14 @@
         .detalle-bloque { margin-bottom:16px; }
         .detalle-bloque .detalle-titulo { font-size:12px; font-weight:700; color:var(--gris); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
         .detalle-fundamento { background:#f8f9fa; border-left:4px solid #8e44ad; border-radius:6px; padding:12px 14px; font-size:14px; white-space:pre-wrap; }
+        .sit-info-btn { border:none; background:none; color:var(--primario); cursor:pointer; font-size:13px; padding:0 2px; vertical-align:middle; }
+        .leyenda-situaciones { margin-top:10px; padding:10px 12px; background:#f8f9fa; border-radius:6px; font-size:12px; color:#555; }
+        .leyenda-situaciones-modal { margin-top:6px; font-size:11px; color:var(--gris); }
+        .puntajes-tabla { border-collapse:collapse; width:100%; font-size:13px; }
+        .puntajes-tabla th { text-align:left; font-size:11px; font-weight:600; color:var(--gris); padding:3px 10px 6px 0; }
+        .puntajes-tabla td { padding:4px 10px 4px 0; }
+        .puntajes-tabla td.difiere { font-weight:700; color:#c0392b; }
+        .puntajes-tabla td.sin-registro { color:#bbb; font-size:12px; }
     </style>
 </head>
 <body>
@@ -375,6 +383,21 @@ const HIST_SIGLA = { reglamentaria: 'R', interpretativa: 'A', informativo: 'C' }
 const HIST_LABEL = { reglamentaria: 'Reglamentaria', interpretativa: 'Apreciación', informativo: 'Conceptual/Informativo' };
 const HIST_ORDEN_TIPOS = ['reglamentaria', 'interpretativa', 'informativo'];
 
+// Leyenda de las 4 clasificaciones (R/A/C/T) — mismas siglas/etiquetas de
+// arriba (y de services/situacionesEvaluacion.js en el backend) + "T" (Total
+// de casos, no es un tipo real sino la suma mostrada en la columna). Nunca
+// se inventan clasificaciones nuevas aquí.
+const LEYENDA_SITUACIONES_HTML = `
+    <strong>R</strong>: ${HIST_LABEL.reglamentaria} &nbsp;·&nbsp;
+    <strong>A</strong>: ${HIST_LABEL.interpretativa} &nbsp;·&nbsp;
+    <strong>C</strong>: ${HIST_LABEL.informativo} &nbsp;·&nbsp;
+    <strong>T</strong>: Total de casos`;
+
+function toggleLeyendaSituaciones() {
+    const box = document.getElementById('leyenda-situaciones-box');
+    if (box) box.classList.toggle('oculto');
+}
+
 let histPagina = 1;
 const HIST_LIMITE = 10;
 
@@ -447,7 +470,9 @@ function renderHistorialEvaluaciones(r) {
     div.innerHTML = `<div style="overflow-x:auto;"><table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Cat.</th>
-            <th>Altera resultado</th><th>Situaciones</th><th>Nota</th><th></th>
+            <th>Altera resultado</th>
+            <th>Situaciones <button type="button" class="sit-info-btn" onclick="toggleLeyendaSituaciones()" aria-label="Qué significan R, A, C y T">ⓘ</button></th>
+            <th>Nota</th><th></th>
         </tr></thead>
         <tbody>
         ${filas.map(f => `
@@ -463,13 +488,39 @@ function renderHistorialEvaluaciones(r) {
                 <td>${f.eval_id ? `<button class="btn btn-pequeño btn-secundario" onclick="abrirDetalleEvaluacion('${f.eval_id}')">Ver evaluación</button>` : ''}</td>
             </tr>`).join('')}
         </tbody>
-    </table></div>`;
+    </table></div>
+    <div id="leyenda-situaciones-box" class="leyenda-situaciones oculto">${LEYENDA_SITUACIONES_HTML}</div>`;
 
     const totalPaginas = Math.max(1, Math.ceil(r.total / r.limite));
     document.getElementById('hist-pag-info').textContent = `Página ${r.pagina} de ${totalPaginas} (${r.total} rodeo(s))`;
     document.getElementById('hist-pag-ant').disabled = r.pagina <= 1;
     document.getElementById('hist-pag-sig').disabled = r.pagina >= totalPaginas;
     document.getElementById('historial-eval-paginacion').classList.remove('oculto');
+}
+
+// Tabla de solo lectura "Comparación de puntajes" — mismos valores crudos de
+// evaluaciones.puntaje_analista_1er/2do/3er (revisado) y
+// datos_monitor_rodeo.puntaje_oficial_1er/2do/3er (oficial) que usa
+// frontend/admin/evaluacion-detalle.html → PUNTAJES. Nunca se recalcula ni se
+// interpreta null como 0 — "Sin registro" para cualquier valor ausente.
+function renderPuntajesTabla(puntajes) {
+    if (!puntajes || !puntajes.length) return '<p style="color:#bbb; font-size:12px;">Sin registro</p>';
+    const celda = (v) => v != null && v !== ''
+        ? sanitizar(String(v))
+        : '<span class="sin-registro">Sin registro</span>';
+    return `<table class="puntajes-tabla">
+        <thead><tr><th>Lugar</th><th>Oficial</th><th>Revisado</th></tr></thead>
+        <tbody>
+        ${puntajes.map(p => {
+            const difieren = p.oficial != null && p.revisado != null && String(p.oficial) !== String(p.revisado);
+            return `<tr>
+                <td>${sanitizar(p.lugar)}</td>
+                <td>${celda(p.oficial)}</td>
+                <td class="${difieren ? 'difiere' : ''}">${celda(p.revisado)}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
 }
 
 async function abrirDetalleEvaluacion(evalId) {
@@ -492,6 +543,11 @@ async function abrirDetalleEvaluacion(evalId) {
                     ${d.nota != null ? `<span>Nota: <strong style="color:#2980b9;">${parseFloat(d.nota).toFixed(1)}</strong></span>` : ''}
                 </div>
                 ${renderSituacionesChip(d.situaciones_por_tipo, d.situaciones_total)}
+                <div class="leyenda-situaciones-modal">${LEYENDA_SITUACIONES_HTML}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-titulo">Comparación de puntajes</div>
+                ${renderPuntajesTabla(d.puntajes)}
             </div>
             <div class="detalle-bloque">
                 <div class="detalle-titulo">${d.resultado_alterado ? 'Fundamento de la alteración' : 'Observación general del análisis'}</div>
