@@ -48,13 +48,31 @@
         .cal-dia.cal-vacio { border: none; background: none; cursor: default; }
         .cal-resumen { margin-top: 10px; font-size: 13px; color: #555; }
         .cal-resumen strong { color: #27ae60; }
-        .desemp-kpi-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+        .desemp-kpi-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+        @media(max-width:900px){ .desemp-kpi-grid { grid-template-columns:repeat(2,1fr); } }
         @media(max-width:560px){ .desemp-kpi-grid { grid-template-columns:1fr; } }
         .desemp-kpi-card { background:#f8f9fa; border-radius:8px; padding:14px 16px; border-left:4px solid var(--primario); }
         .desemp-kpi-card .dval { font-size:24px; font-weight:700; color:var(--primario); line-height:1.1; }
         .desemp-kpi-card .dlbl { font-size:12px; color:#888; margin-top:4px; }
+        .desemp-kpi-card .dsub { font-size:11px; color:#aaa; margin-top:2px; }
         .desemp-kpi-card.cat { border-left-color:#27ae60; }
         .desemp-kpi-card.cat .dval { color:#27ae60; }
+        .desemp-kpi-card.alt { border-left-color:#e74c3c; }
+        .desemp-kpi-card.alt .dval { color:#c0392b; }
+        .desemp-kpi-card.pct { border-left-color:#8e44ad; }
+        .desemp-kpi-card.pct .dval { color:#8e44ad; }
+        /* ── Mi historial de evaluaciones ── */
+        .hist-filtros { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; }
+        .hist-filtros .form-grupo { margin-bottom:0; min-width:160px; }
+        .sit-chip-grid { display:flex; gap:6px; justify-content:center; }
+        .sit-chip { text-align:center; min-width:22px; }
+        .sit-chip .sigla { font-size:10px; font-weight:700; color:var(--gris); }
+        .sit-chip .valor { font-size:12px; font-weight:600; }
+        .sit-chip.total .valor { font-weight:700; color:var(--primario); }
+        .hist-paginacion { display:flex; justify-content:center; align-items:center; gap:14px; margin-top:12px; font-size:13px; }
+        .detalle-bloque { margin-bottom:16px; }
+        .detalle-bloque .detalle-titulo { font-size:12px; font-weight:700; color:var(--gris); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
+        .detalle-fundamento { background:#f8f9fa; border-left:4px solid #8e44ad; border-radius:6px; padding:12px 14px; font-size:14px; white-space:pre-wrap; }
     </style>
 </head>
 <body>
@@ -117,6 +135,36 @@
                 <div class="card-titulo">📊 Mi desempeño</div>
                 <div class="desemp-kpi-grid" id="desempeno-kpis">
                     <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+            <!-- Mi historial de evaluaciones -->
+            <div class="card oculto" id="card-historial-eval" style="margin-bottom:16px;">
+                <div class="card-titulo">📋 Mi historial de evaluaciones</div>
+                <div class="hist-filtros">
+                    <div class="form-grupo">
+                        <label class="form-label">Temporada</label>
+                        <select id="hist-filtro-temporada" class="form-control" onchange="cambiarFiltroHistorial()">
+                            <option value="todas">Historial completo</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo">
+                        <label class="form-label">Resultado</label>
+                        <select id="hist-filtro-resultado" class="form-control" onchange="cambiarFiltroHistorial()">
+                            <option value="todos">Todos</option>
+                            <option value="si">Alteró resultado</option>
+                            <option value="no">No alteró resultado</option>
+                            <option value="pendiente">Pendiente de evaluación</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="historial-eval-tabla" class="tabla-wrap">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                </div>
+                <div id="historial-eval-paginacion" class="hist-paginacion oculto">
+                    <button class="btn btn-secundario btn-pequeño" id="hist-pag-ant" onclick="cambiarPaginaHistorial(-1)">‹ Anterior</button>
+                    <span id="hist-pag-info"></span>
+                    <button class="btn btn-secundario btn-pequeño" id="hist-pag-sig" onclick="cambiarPaginaHistorial(1)">Siguiente ›</button>
                 </div>
             </div>
 
@@ -215,6 +263,17 @@
 </div>
 </div>
 
+<!-- Modal "Ver evaluación" — Mi historial de evaluaciones -->
+<div class="modal-overlay oculto" id="modal-detalle-eval-overlay">
+<div class="modal" style="max-width:600px;">
+    <div class="modal-header">
+        <h3>Detalle de evaluación</h3>
+        <button class="modal-cerrar" onclick="cerrarDetalleEvaluacion()">×</button>
+    </div>
+    <div class="modal-body" id="modal-detalle-eval-body"></div>
+</div>
+</div>
+
 <script src="/js/api.js"></script>
 <script src="/js/utils.js"></script>
 <script>
@@ -252,7 +311,11 @@ async function init() {
     cargarDesempeno();
     cargarResumen();
     cargarCalendario();
-    if (ES_JURADO) cargarEvaluacionesPendientes();
+    if (ES_JURADO) {
+        cargarEvaluacionesPendientes();
+        cargarTemporadasFiltroHistorial();
+        cargarHistorialEvaluaciones();
+    }
 }
 
 async function cargarEvaluacionesPendientes() {
@@ -271,11 +334,26 @@ async function cargarDesempeno() {
         const d = await api.get('/usuario/resumen/desempeno');
         const fmt = v => v !== null && v !== undefined ? parseFloat(v).toFixed(1) : '—';
         const catLabel = d.categoria === 'DR' ? 'Delegados Rentados' : (d.categoria ? `Categoría ${d.categoria}` : 'Categoría');
+
+        // Indicadores 2 y 3 (resultados alterados / % de alteración) son específicos
+        // de la evaluación técnica del jurado — no se muestran para delegados.
+        const tarjetasAlteracion = ES_JURADO ? `
+            <div class="desemp-kpi-card alt">
+                <div class="dval">${d.rodeos_alterados ?? 0}</div>
+                <div class="dlbl">Resultados alterados</div>
+                ${d.rodeos_pendientes_evaluacion ? `<div class="dsub">${d.rodeos_pendientes_evaluacion} rodeo(s) pendiente(s) de evaluación</div>` : ''}
+            </div>
+            <div class="desemp-kpi-card pct">
+                <div class="dval">${d.porcentaje_alteracion !== null && d.porcentaje_alteracion !== undefined ? d.porcentaje_alteracion.toFixed(1) + '%' : 'Sin datos'}</div>
+                <div class="dlbl">Porcentaje de alteración</div>
+            </div>` : '';
+
         document.getElementById('desempeno-kpis').innerHTML = `
             <div class="desemp-kpi-card">
                 <div class="dval">${d.total_rodeos ?? 0}</div>
                 <div class="dlbl">Rodeos asistidos (total histórico)</div>
             </div>
+            ${tarjetasAlteracion}
             <div class="desemp-kpi-card">
                 <div class="dval">${fmt(d.promedio_nota)}</div>
                 <div class="dlbl">Mi promedio de nota</div>
@@ -289,6 +367,143 @@ async function cargarDesempeno() {
         document.getElementById('card-desempeno').classList.add('oculto');
     }
 }
+
+// ── Mi historial de evaluaciones ─────────────────────────────────
+// Mismo mapeo de tipo_caso → sigla/etiqueta que admin/hojavida.html —
+// para que el desglose de "Situaciones" se vea idéntico al administrativo.
+const HIST_SIGLA = { reglamentaria: 'R', interpretativa: 'A', informativo: 'C' };
+const HIST_LABEL = { reglamentaria: 'Reglamentaria', interpretativa: 'Apreciación', informativo: 'Conceptual/Informativo' };
+const HIST_ORDEN_TIPOS = ['reglamentaria', 'interpretativa', 'informativo'];
+
+let histPagina = 1;
+const HIST_LIMITE = 10;
+
+async function cargarTemporadasFiltroHistorial() {
+    try {
+        const temporadas = await api.get('/usuario/evaluaciones/temporadas') || [];
+        const sel = document.getElementById('hist-filtro-temporada');
+        temporadas.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.nombre;
+            sel.appendChild(opt);
+        });
+    } catch(e) {}
+}
+
+function cambiarFiltroHistorial() {
+    histPagina = 1;
+    cargarHistorialEvaluaciones();
+}
+
+function cambiarPaginaHistorial(delta) {
+    histPagina = Math.max(1, histPagina + delta);
+    cargarHistorialEvaluaciones();
+}
+
+async function cargarHistorialEvaluaciones() {
+    const div = document.getElementById('historial-eval-tabla');
+    mostrarSpinner(div);
+    try {
+        const temporada = document.getElementById('hist-filtro-temporada').value;
+        const resultado = document.getElementById('hist-filtro-resultado').value;
+        const r = await api.get(`/usuario/evaluaciones/historial?temporada=${temporada}&resultado=${resultado}&pagina=${histPagina}&limite=${HIST_LIMITE}`);
+        renderHistorialEvaluaciones(r);
+        document.getElementById('card-historial-eval').classList.remove('oculto');
+    } catch(e) {
+        div.innerHTML = `<div class="alerta alerta-error" style="margin:16px;">${sanitizar(e.message || 'Error al cargar el historial')}</div>`;
+        document.getElementById('card-historial-eval').classList.remove('oculto');
+    }
+}
+
+function renderSituacionesChip(porTipo, total) {
+    if (!total) return '<span style="color:#bbb; font-size:12px;">—</span>';
+    const tipos = HIST_ORDEN_TIPOS.filter(t => porTipo?.[t]);
+    const columnas = [...tipos.map(t => ({ sigla: HIST_SIGLA[t], label: HIST_LABEL[t], val: porTipo[t] })),
+                      { sigla: 'T', label: 'Total situaciones', val: total, total: true }];
+    return `<div class="sit-chip-grid">${columnas.map(c => `
+        <div class="sit-chip${c.total ? ' total' : ''}" title="${sanitizar(c.label)}">
+            <div class="sigla">${c.sigla}</div>
+            <div class="valor">${c.val}</div>
+        </div>`).join('')}</div>`;
+}
+
+function renderResultadoAlterado(v) {
+    if (v === true)  return '<span class="badge" style="background:#fdecea;color:#c0392b;">Sí</span>';
+    if (v === false) return '<span class="texto-gris">No</span>';
+    return '<span class="badge" style="background:#fff3cd;color:#8a6d00;">Pendiente</span>';
+}
+
+function renderHistorialEvaluaciones(r) {
+    const div = document.getElementById('historial-eval-tabla');
+    const filas = r.filas || [];
+
+    if (filas.length === 0) {
+        div.innerHTML = '<p class="tabla-vacia">Sin rodeos para los filtros seleccionados</p>';
+        document.getElementById('historial-eval-paginacion').classList.add('oculto');
+        return;
+    }
+
+    div.innerHTML = `<div style="overflow-x:auto;"><table>
+        <thead><tr>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo rodeo</th><th>Cat.</th>
+            <th>Altera resultado</th><th>Situaciones</th><th>Nota</th><th></th>
+        </tr></thead>
+        <tbody>
+        ${filas.map(f => `
+            <tr>
+                <td style="white-space:nowrap;">${formatFecha(f.fecha)}</td>
+                <td><strong>${sanitizar(f.club || '—')}</strong></td>
+                <td style="font-size:13px; color:#555;">${sanitizar(f.asociacion || '—')}</td>
+                <td>${sanitizar(f.tipo_rodeo || '—')}</td>
+                <td>${f.categoria ? `<span class="badge badge-${f.categoria.toLowerCase()}">${f.categoria}</span>` : '—'}</td>
+                <td>${renderResultadoAlterado(f.resultado_alterado)}</td>
+                <td>${renderSituacionesChip(f.situaciones_por_tipo, f.situaciones_total)}</td>
+                <td style="text-align:center;">${f.nota != null ? `<strong style="color:#2980b9;">${parseFloat(f.nota).toFixed(1)}</strong>` : '<span style="color:#bbb;font-size:12px;">—</span>'}</td>
+                <td>${f.eval_id ? `<button class="btn btn-pequeño btn-secundario" onclick="abrirDetalleEvaluacion('${f.eval_id}')">Ver evaluación</button>` : ''}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table></div>`;
+
+    const totalPaginas = Math.max(1, Math.ceil(r.total / r.limite));
+    document.getElementById('hist-pag-info').textContent = `Página ${r.pagina} de ${totalPaginas} (${r.total} rodeo(s))`;
+    document.getElementById('hist-pag-ant').disabled = r.pagina <= 1;
+    document.getElementById('hist-pag-sig').disabled = r.pagina >= totalPaginas;
+    document.getElementById('historial-eval-paginacion').classList.remove('oculto');
+}
+
+async function abrirDetalleEvaluacion(evalId) {
+    const overlay = document.getElementById('modal-detalle-eval-overlay');
+    const body = document.getElementById('modal-detalle-eval-body');
+    overlay.classList.remove('oculto');
+    body.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const d = await api.get(`/usuario/evaluaciones/${evalId}/detalle-historial`);
+        body.innerHTML = `
+            <div class="detalle-bloque">
+                <div class="detalle-titulo">Rodeo</div>
+                <div>${sanitizar(d.rodeo?.club || '—')} — ${formatFecha(d.rodeo?.fecha)}</div>
+                <div style="font-size:13px; color:#555;">${sanitizar(d.rodeo?.asociacion || '—')} · ${sanitizar(d.rodeo?.tipo_rodeo_nombre || '—')} · Categoría ${sanitizar(d.categoria || '—')}</div>
+            </div>
+            <div class="detalle-bloque">
+                <div class="detalle-titulo">Resultado técnico</div>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <span>Resultado alterado: ${renderResultadoAlterado(d.resultado_alterado)}</span>
+                    ${d.nota != null ? `<span>Nota: <strong style="color:#2980b9;">${parseFloat(d.nota).toFixed(1)}</strong></span>` : ''}
+                </div>
+                ${renderSituacionesChip(d.situaciones_por_tipo, d.situaciones_total)}
+            </div>
+            ${d.resultado_alterado ? `<div class="detalle-bloque">
+                <div class="detalle-titulo">Fundamento de la alteración</div>
+                <div class="detalle-fundamento">${sanitizar(d.fundamento || '')}</div>
+            </div>` : ''}`;
+    } catch(e) {
+        body.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar la evaluación')}</div>`;
+    }
+}
+
+function cerrarDetalleEvaluacion() { document.getElementById('modal-detalle-eval-overlay').classList.add('oculto'); }
+document.getElementById('modal-detalle-eval-overlay').addEventListener('click', function(e) { if (e.target === this) cerrarDetalleEvaluacion(); });
 
 function navegarMes(delta) {
     mesActual += delta;

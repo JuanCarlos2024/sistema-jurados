@@ -607,7 +607,9 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
         observacion_general,
         resultados_alterados,
         comentario_resultados_alterados,
-        casos_whatsapp
+        casos_whatsapp,
+        fundamento_jurado,
+        fundamento_jurado_publicado
     } = req.body;
 
     // Casos por WhatsApp: dato informativo del análisis (entero >= 0). No es notas_rodeo.nota ni entra en cálculos.
@@ -616,6 +618,32 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
 
     if (resultados_alterados === true && !comentario_resultados_alterados?.trim()) {
         return res.status(400).json({ error: 'El comentario de alteración es obligatorio cuando resultados_alterados = sí' });
+    }
+
+    // Fundamento visible para el jurado (migración 090) — separado e
+    // independiente de comentario_resultados_alterados (análisis interno,
+    // nunca expuesto al jurado — ver comentario de esa migración). Publicar
+    // (fundamento_jurado_publicado=true) exige resultados_alterados=true y un
+    // texto no vacío, considerando el valor vigente en la fila cuando el campo
+    // correspondiente no viene en este PATCH puntual.
+    let evActual = null;
+    if (fundamento_jurado_publicado !== undefined) {
+        const { data } = await supabase
+            .from('evaluaciones')
+            .select('resultados_alterados, fundamento_jurado')
+            .eq('id', req.params.id)
+            .single();
+        evActual = data;
+        if (fundamento_jurado_publicado) {
+            const resultadosAlteradosEfectivo = resultados_alterados !== undefined ? !!resultados_alterados : !!evActual?.resultados_alterados;
+            const fundamentoEfectivo = fundamento_jurado !== undefined ? fundamento_jurado : evActual?.fundamento_jurado;
+            if (!resultadosAlteradosEfectivo) {
+                return res.status(400).json({ error: 'Solo se puede publicar un fundamento al jurado cuando resultados_alterados = sí' });
+            }
+            if (!fundamentoEfectivo?.trim()) {
+                return res.status(400).json({ error: 'El fundamento para el jurado no puede estar vacío si se va a publicar' });
+            }
+        }
     }
 
     const REGEX_PUNTAJE = /^\d+(\s*\+\s*\d+)?$/;
@@ -647,6 +675,8 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
     if (resultados_alterados !== undefined) cambios.resultados_alterados = !!resultados_alterados;
     if (comentario_resultados_alterados !== undefined)
         cambios.comentario_resultados_alterados = comentario_resultados_alterados || null;
+    if (fundamento_jurado !== undefined) cambios.fundamento_jurado = fundamento_jurado || null;
+    if (fundamento_jurado_publicado !== undefined) cambios.fundamento_jurado_publicado = !!fundamento_jurado_publicado;
     if (casosWs.cambia) cambios.casos_whatsapp = casosWs.valor;
 
     const { data, error } = await supabase

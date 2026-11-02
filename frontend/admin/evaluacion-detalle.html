@@ -2160,7 +2160,36 @@ function renderAnalisisDeportivo(ev) {
 
         <div style="margin-bottom:12px;">${chkHtml}</div>
 
+        ${renderFundamentoJurado(ev)}
+
         ${esAnalista ? `<button class="btn btn-primario btn-pequeño" onclick="guardarAnalisisDeportivo()">Guardar análisis deportivo</button>` : ''}
+    </div>`;
+}
+
+// Fundamento visible para el jurado (migración 090) — INDEPENDIENTE de
+// comentario_resultados_alterados (análisis interno de arriba, nunca
+// expuesto al jurado — ver comentario de esa migración). Publicación
+// explícita y manual: por defecto nunca queda publicado, ni siquiera para
+// evaluaciones históricas ya con resultados_alterados=true.
+function renderFundamentoJurado(ev) {
+    const texto = ev.fundamento_jurado || '';
+    const publicado = !!ev.fundamento_jurado_publicado;
+
+    if (!esAnalista) {
+        return `<div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label">Fundamento visible para el jurado</label>
+            <div class="campo-readonly" style="white-space:pre-wrap;min-height:34px;">${texto ? sanitizar(texto) : '<span style="color:var(--gris)">—</span>'}</div>
+            <div style="font-size:12px;color:var(--gris);margin-top:4px;">${publicado ? '✓ Publicado al jurado' : 'No publicado al jurado'}</div>
+        </div>`;
+    }
+
+    return `<div class="form-group" style="margin-bottom:12px;border-top:1px dashed var(--gris-borde);padding-top:12px;">
+        <label class="form-label">Fundamento visible para el jurado <span style="font-size:11px;color:var(--gris);font-weight:400;">(texto independiente del comentario interno — es lo único que el jurado podrá leer)</span></label>
+        <textarea id="ad-fundamento_jurado" class="form-control" rows="3" placeholder="Redacte aquí el fundamento que el jurado podrá consultar, si corresponde...">${sanitizar(texto)}</textarea>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-top:8px;">
+            <input type="checkbox" id="ad-fundamento_jurado_publicado" ${publicado ? 'checked' : ''}>
+            <span>Publicar este fundamento al jurado (solo posible si los resultados fueron alterados)</span>
+        </label>
     </div>`;
 }
 
@@ -2266,13 +2295,22 @@ async function guardarAnalisisDeportivo() {
         return;
     }
 
+    const fundamentoPublicadoEl = document.getElementById('ad-fundamento_jurado_publicado');
+    const fundamento_jurado_publicado = fundamentoPublicadoEl ? fundamentoPublicadoEl.checked : false;
+    if (fundamento_jurado_publicado && !resultados_alterados) {
+        mostrarToast('Solo se puede publicar el fundamento al jurado cuando los resultados fueron alterados.', 'error');
+        return;
+    }
+
     const body = {
         puntaje_analista_1er:             p1,
         puntaje_analista_2do:             p2,
         puntaje_analista_3er:             p3,
         observacion_general:              getVal('ad-observacion_general') || null,
         resultados_alterados,
-        comentario_resultados_alterados
+        comentario_resultados_alterados,
+        fundamento_jurado:                getVal('ad-fundamento_jurado') || null,
+        fundamento_jurado_publicado
     };
     if (casos_whatsapp !== undefined) body.casos_whatsapp = casos_whatsapp;
 

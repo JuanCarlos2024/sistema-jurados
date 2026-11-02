@@ -116,12 +116,14 @@ describe('guarda de regresión: cada consulta a evaluaciones fue revisada semán
     // [archivo, consultas from('evaluaciones'), menciones de es_historica_importacion]. Si aparece una consulta nueva (o se quita un filtro),
     // este test falla y obliga a decidir si el consumidor debe (o no) ver los registros históricos.
     const ESPERADO = {
-        'routes/admin/evaluaciones.js': [18, 5],            // listado (filtra), rodeos-disponibles y crear-masivo (semántica propia); el resto opera por id/estado
+        'routes/admin/evaluaciones.js': [19, 5],            // listado (filtra), rodeos-disponibles y crear-masivo (semántica propia); el resto opera por id/estado — incl. la lectura previa de fundamento_jurado/resultados_alterados vigentes al validar la publicación del fundamento al jurado (datos-deportivos)
         'routes/admin/reportes.js': [2, 2],                 // dashboard/CSV: filtra
         'routes/admin/reporte-deportivo.js': [3, 1],        // reporte: filtra; la 2ª y 3ª leen comentario_jefe por id ya filtrado (export-detalle y export-fin-semana, misma semántica)
-        'routes/admin/hojavida.js': [3, 2],                 // "Ver evaluación"/"Altera resultado": filtra; calcularSituaciones cuenta casos (histórica = 0)
+        'routes/admin/hojavida.js': [2, 2],                 // "Ver evaluación"/"Altera resultado": filtra; calcularSituacionesPorRodeo se extrajo a services/situacionesEvaluacion.js (misma lógica, ver esa entrada)
         'routes/admin/rodeos.js': [1, 2],                   // detalle: separa evaluacion / evaluacion_historica
-        'routes/usuario/evaluaciones.js': [6, 4],           // portal del jurado: no ve históricas (listado, detalle, resultado, comentar)
+        'routes/usuario/evaluaciones.js': [8, 6],           // portal del jurado: no ve históricas (listado, detalle, resultado, comentar, + historial y detalle-historial de "Mi historial de evaluaciones")
+        'routes/usuario/resumen.js': [1, 2],                // GET /desempeno: rodeos_alterados/pendientes de "Mi desempeño", filtra es_historica_importacion=false igual que el resto del portal
+        'services/situacionesEvaluacion.js': [1, 0],        // extraído tal cual de hojavida.js: cuenta evaluacion_casos por rodeo sin filtrar es_historica_importacion (una histórica no tiene casos reales, cuenta 0 — sin cambio de comportamiento)
         'services/informeGestion/cargaDatos.js': [1, 1],    // Informe de Gestión: base de evaluaciones
         'services/evaluacionDesempenoJurados.js': [1, 1],   // Evaluación de Desempeño Jurados: filtra es_historica_importacion=false (y anulada=false) — un rodeo histórico importado no tiene evaluación técnica real detrás, no debe contar como "altera resultado" ni aportar casos_whatsapp
         'services/motorPropuestaDesignacion.js': [1, 1],    // métricas de rendimiento: histórica ≠ "sin alteración"

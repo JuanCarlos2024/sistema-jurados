@@ -1,8 +1,11 @@
 const express = require('express');
 const router  = express.Router();
 const supabase = require('../../config/supabase');
+const { calcularSituacionesPorRodeo, acumularResumenSituaciones } = require('../../services/situacionesEvaluacion');
+const { resolverFiltroTemporadaRodeos } = require('../../services/temporadas');
 
 const ESTADOS_VISIBLES_CASO = ['visible_jurado','pendiente_analista','derivado_comision','resuelto','consolidado'];
+const HISTORIAL_LIMITE_DEFAULT = 20;
 
 // ─── Feature flag: comentario general del jurado por ciclo ─────────────────
 // Deshabilitado temporalmente por decisión administrativa. Sin la variable
@@ -651,6 +654,202 @@ router.post('/:id/ciclos/:cicloId/comentario', async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
 
     res.status(201).json(data);
+});
+
+// GET /temporadas — catálogo de temporadas para el filtro de "Mi historial de
+// evaluaciones". Datos públicos de catálogo (igual que el selector admin de
+// Rodeos), sin información del propio jurado.
+router.get('/temporadas', async (req, res) => {
+    const { data, error } = await supabase
+        .from('temporadas')
+        .select('id, nombre, fecha_inicio, fecha_fin, activa')
+        .order('fecha_inicio', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+});
+
+// GET /historial — "Mi historial de evaluaciones" (Portal del Jurado, sección
+// nueva bajo "Mi desempeño"). Reutiliza el mismo universo de "rodeos asistidos"
+// que GET /usuario/resumen/desempeno (asignaciones activo+publicado+no
+// rechazada) y el mismo desglose de situaciones que la Hoja de Vida admin
+// (services/situacionesEvaluacion.js). Reglas de publicación: un rodeo sin
+// evaluación publicada/cerrada es "pendiente" — nunca "no alteró" ni nota 0.
+//
+// Query params: temporada ('todas' default | 'sin_temporada' | <id>),
+// resultado ('todos' default | 'si' | 'no' | 'pendiente'), pagina (1-based,
+// default 1), limite (default 20, tope 100).
+router.get('/historial', async (req, res) => {
+    const uid = req.usuario.id;
+
+    const { data: usuario } = await supabase
+        .from('usuarios_pagados')
+        .select('tipo_persona')
+        .eq('id', uid)
+        .single();
+
+    if (!usuario || usuario.tipo_persona !== 'jurado') {
+        return res.json({ total: 0, pagina: 1, limite: HISTORIAL_LIMITE_DEFAULT, filas: [] });
+    }
+
+    const { data: asignaciones } = await supabase
+        .from('asignaciones')
+        .select('id, categoria_aplicada, rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre, temporada_id)')
+        .eq('usuario_pagado_id', uid)
+        .eq('estado', 'activo')
+        .eq('publicado', true)
+        .neq('estado_designacion', 'rechazado');
+
+    let filasBase = (asignaciones || []).filter(a => a.rodeos?.id);
+
+    // Filtro de temporada — misma función pura que ya usa el panel admin de Rodeos
+    // (services/temporadas.js), para no inventar una semántica de filtro distinta.
+    const filtroTemporada = resolverFiltroTemporadaRodeos(req.query.temporada);
+    if (filtroTemporada.tipo === 'sin_temporada') {
+        filasBase = filasBase.filter(a => !a.rodeos.temporada_id);
+    } else if (filtroTemporada.tipo === 'especifica') {
+        filasBase = filasBase.filter(a => a.rodeos.temporada_id === filtroTemporada.valor);
+    }
+
+    const rodeoIds = [...new Set(filasBase.map(a => a.rodeos.id))];
+    const asigIds  = filasBase.map(a => a.id);
+
+    const [{ data: evals }, { data: notas }, situaciones] = await Promise.all([
+        rodeoIds.length
+            ? supabase.from('evaluaciones')
+                .select('id, rodeo_id, estado, resultados_alterados')
+                .in('rodeo_id', rodeoIds)
+                .eq('anulada', false)
+                .eq('es_historica_importacion', false)
+            : Promise.resolve({ data: [] }),
+        // Sin filtrar por "fuente": notas_rodeo.fuente='manual' NO es un
+        // residuo de importación histórica (esas asignaciones, si existieran,
+        // nunca llegan acá por publicado=false) — es el valor por DEFAULT de
+        // la columna (ver migración 017) que toma cualquier nota ingresada
+        // por un administrador desde "Hoja de Vida → + Nota", para rodeos sin
+        // evaluación técnica digital completa. Son notas reales de un rodeo
+        // real, y la propia Hoja de Vida (notaChip) las muestra sin distinguir
+        // fuente — filtrar acá rompería la paridad exigida con el admin y
+        // ocultaría notas legítimas (confirmado contra producción: 65/65 notas
+        // fuente='manual' corresponden a asignaciones publicadas reales, 0
+        // coexisten con una evaluación ya publicada — la publicación siempre
+        // sobrescribe fuente a 'evaluacion_tecnica', ver migración 083).
+        asigIds.length
+            ? supabase.from('notas_rodeo')
+                .select('asignacion_id, nota')
+                .in('asignacion_id', asigIds)
+            : Promise.resolve({ data: [] }),
+        calcularSituacionesPorRodeo(rodeoIds)
+    ]);
+
+    const evalMap = {};
+    (evals || []).forEach(e => { evalMap[e.rodeo_id] = e; });
+    const notaMap = {};
+    (notas || []).forEach(n => { notaMap[n.asignacion_id] = n.nota; });
+
+    let filas = filasBase.map(a => {
+        const rodeo = a.rodeos;
+        const ev = evalMap[rodeo.id];
+        const publicada = !!ev && ['publicado', 'cerrado'].includes(ev.estado);
+        const porTipo = situaciones.porTipoPorRodeo[rodeo.id] || {};
+
+        return {
+            rodeo_id: rodeo.id,
+            fecha: rodeo.fecha || null,
+            club: rodeo.club || null,
+            asociacion: rodeo.asociacion || null,
+            tipo_rodeo: rodeo.tipo_rodeo_nombre || null,
+            categoria: a.categoria_aplicada || null,
+            // true | false | 'pendiente' — nunca se infiere "no alteró" sin evaluación publicada.
+            resultado_alterado: publicada ? !!ev.resultados_alterados : 'pendiente',
+            situaciones_por_tipo: publicada ? porTipo : {},
+            situaciones_total:    publicada ? (situaciones.porRodeo[rodeo.id] || 0) : 0,
+            // La nota NO se condiciona a "publicada": igual que en Hoja de Vida,
+            // se muestra siempre que notas_rodeo tenga un valor para esta
+            // asignación (puede ser una nota manual de un rodeo sin evaluación
+            // técnica digital — nunca una nota inventada en cero).
+            nota: notaMap[a.id] ?? null,
+            eval_id: publicada ? ev.id : null
+        };
+    });
+
+    const resultadoParam = req.query.resultado || 'todos';
+    if (resultadoParam === 'si') filas = filas.filter(f => f.resultado_alterado === true);
+    else if (resultadoParam === 'no') filas = filas.filter(f => f.resultado_alterado === false);
+    else if (resultadoParam === 'pendiente') filas = filas.filter(f => f.resultado_alterado === 'pendiente');
+
+    filas.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+
+    const total   = filas.length;
+    const limite  = Math.min(parseInt(req.query.limite, 10) || HISTORIAL_LIMITE_DEFAULT, 100);
+    const pagina  = Math.max(parseInt(req.query.pagina, 10) || 1, 1);
+    const desde   = (pagina - 1) * limite;
+    const filasPagina = filas.slice(desde, desde + limite);
+
+    res.json({ total, pagina, limite, filas: filasPagina });
+});
+
+// GET /:id/detalle-historial — modal "Detalle de evaluación" de "Mi historial
+// de evaluaciones". A diferencia de /:id/resultado (que sirve el flujo de
+// apelación por casos de evaluaciones.html), este endpoint es deliberadamente
+// mínimo y de solo lectura: nunca incluye identidad del analista, comentario
+// interno (comentario_resultados_alterados) ni observación general — ver
+// migración 090 y punto 6 del requerimiento (confidencialidad del analista).
+router.get('/:id/detalle-historial', async (req, res) => {
+    const evalId = req.params.id;
+
+    const { data: ev } = await supabase
+        .from('evaluaciones')
+        .select(`
+            id, estado, resultados_alterados, fundamento_jurado, fundamento_jurado_publicado,
+            rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
+        `)
+        .eq('id', evalId)
+        .eq('es_historica_importacion', false)
+        .eq('anulada', false)
+        .single();
+
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada' });
+    if (!['publicado', 'cerrado'].includes(ev.estado)) {
+        return res.status(403).json({ error: 'La evaluación aún no ha sido publicada' });
+    }
+
+    const { data: asignacion } = await supabase
+        .from('asignaciones')
+        .select('id, categoria_aplicada')
+        .eq('usuario_pagado_id', req.usuario.id)
+        .eq('rodeo_id', ev.rodeo.id)
+        .eq('estado', 'activo')
+        .eq('publicado', true)
+        .neq('estado_designacion', 'rechazado')
+        .limit(1)
+        .single();
+
+    if (!asignacion) return res.status(403).json({ error: 'No tienes asignación activa en este rodeo' });
+
+    // Sin filtrar por "fuente" — mismo criterio que GET /historial (ver su
+    // comentario): la nota se muestra tal cual está en notas_rodeo, igual que
+    // en Hoja de Vida.
+    const [{ data: notaRow }, situaciones] = await Promise.all([
+        supabase.from('notas_rodeo').select('nota').eq('asignacion_id', asignacion.id).maybeSingle(),
+        calcularSituacionesPorRodeo([ev.rodeo.id])
+    ]);
+
+    let fundamento = null;
+    if (ev.resultados_alterados) {
+        fundamento = (ev.fundamento_jurado_publicado && ev.fundamento_jurado)
+            ? ev.fundamento_jurado
+            : 'No existe un fundamento técnico disponible para consulta.';
+    }
+
+    res.json({
+        rodeo: ev.rodeo,
+        categoria: asignacion.categoria_aplicada || null,
+        resultado_alterado: !!ev.resultados_alterados,
+        nota: notaRow?.nota ?? null,
+        situaciones_por_tipo: situaciones.porTipoPorRodeo[ev.rodeo.id] || {},
+        situaciones_total:    situaciones.porRodeo[ev.rodeo.id] || 0,
+        fundamento
+    });
 });
 
 module.exports = router;

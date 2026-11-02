@@ -61,7 +61,7 @@ router.get('/desempeno', async (req, res) => {
         // 2. Todas las asignaciones activas y no rechazadas del usuario
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('id, estado_designacion')
+            .select('id, rodeo_id, estado_designacion')
             .eq('usuario_pagado_id', uid)
             .eq('estado', 'activo')
             .eq('publicado', true);
@@ -69,6 +69,42 @@ router.get('/desempeno', async (req, res) => {
         const propias = (asigs || []).filter(a => a.estado_designacion !== 'rechazado');
         const total_rodeos = propias.length;
         const propiosIds   = propias.map(a => a.id);
+
+        // 2.5 Resultados alterados / pendientes de evaluación — mismo universo
+        // "total_rodeos" de arriba (asignaciones activas, publicadas, no
+        // rechazadas). Fuente: evaluaciones.resultados_alterados (anulada=false,
+        // es_historica_importacion=false — mismo criterio que GET /usuario/evaluaciones
+        // y admin/hojavida.js: el jurado nunca ve registros históricos importados
+        // como evaluaciones, y estos de todos modos nunca llegan acá porque sus
+        // asignaciones se crean con publicado=false, ver migración 060). Un rodeo
+        // asistido sin evaluación PUBLICADA/CERRADA cuenta como "pendiente", nunca
+        // como "no alterado" (regla de publicación del requerimiento).
+        const rodeoIdsPropios = [...new Set(propias.map(a => a.rodeo_id).filter(Boolean))];
+        let rodeos_alterados = 0;
+        let rodeos_pendientes_evaluacion = 0;
+        if (rodeoIdsPropios.length > 0) {
+            const { data: evalsPropios } = await supabase
+                .from('evaluaciones')
+                .select('rodeo_id, estado, resultados_alterados')
+                .in('rodeo_id', rodeoIdsPropios)
+                .eq('anulada', false)
+                .eq('es_historica_importacion', false);
+            const evalMapPropio = {};
+            (evalsPropios || []).forEach(e => { evalMapPropio[e.rodeo_id] = e; });
+
+            for (const rodeoId of rodeoIdsPropios) {
+                const ev = evalMapPropio[rodeoId];
+                if (!ev || !['publicado', 'cerrado'].includes(ev.estado)) {
+                    rodeos_pendientes_evaluacion++;
+                } else if (ev.resultados_alterados) {
+                    rodeos_alterados++;
+                }
+            }
+        }
+        // Un decimal; "Sin datos" (null) si no hay rodeos asistidos — nunca división por cero.
+        const porcentaje_alteracion = total_rodeos > 0
+            ? Math.round((rodeos_alterados / total_rodeos) * 1000) / 10
+            : null;
 
         // 3. Notas propias
         let promedio_nota = null;
@@ -118,7 +154,10 @@ router.get('/desempeno', async (req, res) => {
             }
         }
 
-        res.json({ total_rodeos, promedio_nota, promedio_categoria, categoria });
+        res.json({
+            total_rodeos, promedio_nota, promedio_categoria, categoria,
+            rodeos_alterados, rodeos_pendientes_evaluacion, porcentaje_alteracion
+        });
     } catch (err) {
         console.error('[resumen/desempeno]', err.message);
         res.status(500).json({ error: err.message });
