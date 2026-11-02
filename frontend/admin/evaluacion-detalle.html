@@ -2151,6 +2151,7 @@ function renderAnalisisDeportivo(ev) {
         <div class="form-group" style="margin-bottom:12px;">
             <label class="form-label">Observación general del análisis</label>
             ${campoText('observacion_general', 'Observaciones del analista sobre la evaluación...')}
+            <div style="font-size:11px;color:var(--gris);margin-top:4px;">⚠ Esta observación será visible para el jurado cuando la evaluación esté publicada.</div>
         </div>
 
         <div class="form-group" style="margin-bottom:12px;">
@@ -2160,7 +2161,13 @@ function renderAnalisisDeportivo(ev) {
 
         <div style="margin-bottom:12px;">${chkHtml}</div>
 
-        ${renderFundamentoJurado(ev)}
+        <!-- renderFundamentoJurado(ev) — oculto deliberadamente: desde la
+        corrección de fuente del comentario del jurado, lo que el jurado ve es
+        "Observación general del análisis" (arriba), no este campo. Mostrar
+        ambos confundiría al analista sobre cuál controla lo que ve el
+        jurado. Columnas, backend (PATCH .../datos-deportivos) y la función
+        de render se conservan intactos — no se eliminó nada, solo se dejó de
+        invocar en pantalla. -->
 
         ${esAnalista ? `<button class="btn btn-primario btn-pequeño" onclick="guardarAnalisisDeportivo()">Guardar análisis deportivo</button>` : ''}
     </div>`;
@@ -2295,12 +2302,12 @@ async function guardarAnalisisDeportivo() {
         return;
     }
 
-    const fundamentoPublicadoEl = document.getElementById('ad-fundamento_jurado_publicado');
-    const fundamento_jurado_publicado = fundamentoPublicadoEl ? fundamentoPublicadoEl.checked : false;
-    if (fundamento_jurado_publicado && !resultados_alterados) {
-        mostrarToast('Solo se puede publicar el fundamento al jurado cuando los resultados fueron alterados.', 'error');
-        return;
-    }
+    // fundamento_jurado / fundamento_jurado_publicado: la UI que los editaba
+    // está oculta (ver comentario en renderAnalisisDeportivo) — por eso NO se
+    // incluyen en este body. Si se incluyeran como null/false aquí, cada
+    // "Guardar análisis deportivo" borraría silenciosamente cualquier valor
+    // ya guardado antes de ocultar esa UI (el backend solo toca una columna
+    // cuando el campo correspondiente viene definido en el PATCH).
 
     const body = {
         puntaje_analista_1er:             p1,
@@ -2308,9 +2315,7 @@ async function guardarAnalisisDeportivo() {
         puntaje_analista_3er:             p3,
         observacion_general:              getVal('ad-observacion_general') || null,
         resultados_alterados,
-        comentario_resultados_alterados,
-        fundamento_jurado:                getVal('ad-fundamento_jurado') || null,
-        fundamento_jurado_publicado
+        comentario_resultados_alterados
     };
     if (casos_whatsapp !== undefined) body.casos_whatsapp = casos_whatsapp;
 

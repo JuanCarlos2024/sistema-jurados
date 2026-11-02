@@ -10,18 +10,24 @@ const router = require('./evaluaciones');
 const J1 = { id: 'J1', tipo_persona: 'jurado' };
 const J2 = { id: 'J2', tipo_persona: 'jurado' };
 
-// R1: evaluación publicada, resultados_alterados=true, con fundamento publicado, 3 situaciones (1 R + 2 A)
+// R1: evaluación publicada, resultados_alterados=true. La fuente correcta del
+// comentario es observacion_general (confirmado en admin/evaluacion-detalle.html,
+// "Observación general del análisis") — comentario_resultados_alterados es el
+// análisis interno del analista y NUNCA debe exponerse. 3 situaciones (1 R + 2 A).
 const ASIG1 = { id: 'A1', usuario_pagado_id: 'J1', rodeo_id: 'R1', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'B',
     rodeos: { id: 'R1', club: 'Club Uno', fecha: '2026-03-10', asociacion: 'COLCHAGUA', tipo_rodeo_nombre: 'Provincial', temporada_id: 'T1' } };
 const EVAL1 = { id: 'EV1', rodeo_id: 'R1', estado: 'publicado', resultados_alterados: true, anulada: false, es_historica_importacion: false,
-    fundamento_jurado: 'Se revisó el video y se confirmó un error en el conteo de puntaje.', fundamento_jurado_publicado: true,
-    comentario_resultados_alterados: 'SECRETO INTERNO DEL ANALISTA', observacion_general: 'Observación interna del jefe deportivo',
+    observacion_general: 'Según esta revisión, diferencias en el 4to toro con la collera que obtuvo el 3er lugar.',
+    comentario_resultados_alterados: 'SECRETO INTERNO DEL ANALISTA',
     rodeo: { id: 'R1', club: 'Club Uno', fecha: '2026-03-10', asociacion: 'COLCHAGUA', tipo_rodeo_nombre: 'Provincial' } };
 
-// R2: evaluación publicada, resultados_alterados=false, sin situaciones
+// R2: evaluación publicada, resultados_alterados=false, con observación general
+// (debe mostrarse igual, bajo el encabezado "Observación general del análisis",
+// nunca presentada como fundamento de una alteración que no ocurrió).
 const ASIG2 = { id: 'A2', usuario_pagado_id: 'J1', rodeo_id: 'R2', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'B',
     rodeos: { id: 'R2', club: 'Club Dos', fecha: '2026-02-01', asociacion: 'MAULE', tipo_rodeo_nombre: 'Zonal', temporada_id: 'T1' } };
 const EVAL2 = { id: 'EV2', rodeo_id: 'R2', estado: 'cerrado', resultados_alterados: false, anulada: false, es_historica_importacion: false,
+    observacion_general: 'Rodeo sin novedades relevantes.',
     rodeo: { id: 'R2', club: 'Club Dos', fecha: '2026-02-01', asociacion: 'MAULE', tipo_rodeo_nombre: 'Zonal' } };
 
 // R3: rodeo asistido SIN evaluación -> pendiente
@@ -46,11 +52,12 @@ const EVAL4 = { id: 'EV4', rodeo_id: 'R4', estado: 'en_proceso', resultados_alte
 const ASIG5 = { id: 'A5', usuario_pagado_id: 'J1', rodeo_id: 'R5', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'A',
     rodeos: { id: 'R5', club: 'Club Cinco', fecha: '2025-11-01', asociacion: 'ÑUBLE', tipo_rodeo_nombre: 'Provincial', temporada_id: 'T2' } };
 
-// R6: resultados_alterados=true pero fundamento NO publicado -> mensaje neutral, nunca el texto interno
+// R6: resultados_alterados=true pero SIN observación general registrada (vacía)
+// -> mensaje neutral, nunca null ni un fundamento inventado.
 const ASIG6 = { id: 'A6', usuario_pagado_id: 'J1', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'A',
     rodeo_id: 'R6', rodeos: { id: 'R6', club: 'Club Seis', fecha: '2025-10-01', asociacion: 'ÑUBLE', tipo_rodeo_nombre: 'Provincial', temporada_id: 'T2' } };
 const EVAL6 = { id: 'EV6', rodeo_id: 'R6', estado: 'publicado', resultados_alterados: true, anulada: false, es_historica_importacion: false,
-    fundamento_jurado: 'texto interno sin publicar', fundamento_jurado_publicado: false,
+    observacion_general: null,
     comentario_resultados_alterados: 'análisis interno del analista',
     rodeo: { id: 'R6', club: 'Club Seis', fecha: '2025-10-01', asociacion: 'ÑUBLE', tipo_rodeo_nombre: 'Provincial' } };
 
@@ -98,7 +105,22 @@ function getDetalle(id, usuarioId = 'J1') {
 
 beforeEach(() => preparar());
 
+// Rodeo FUTURO con designación ya aceptada/publicada: NO debe aparecer en
+// "Mi historial de evaluaciones" (todavía no ocurrió — no es "pendiente de
+// evaluación", simplemente no se ha jurado). Fecha calculada en runtime para
+// que siempre sea futura, sin importar cuándo corra la suite.
+const FUTURO = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const ASIG_FUTURA = { id: 'A11', usuario_pagado_id: 'J1', rodeo_id: 'R11', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'B',
+    rodeos: { id: 'R11', club: 'Club Once (futuro)', fecha: FUTURO, asociacion: 'COLCHAGUA', tipo_rodeo_nombre: 'Provincial', temporada_id: 'T1' } };
+
 describe('GET /historial — lista', () => {
+    test('rodeo futuro con designación ya aceptada/publicada: NO aparece en el historial (aún no ocurrió)', async () => {
+        preparar({ asignaciones: [ASIG1, ASIG_FUTURA] });
+        const r = await getHistorial({ limite: 100 });
+        expect(r.body.total).toBe(1);
+        expect(r.body.filas.map(f => f.club)).not.toContain('Club Once (futuro)');
+    });
+
     test('totales sin duplicados: 6 rodeos asistidos de J1 (rechazado y de J2 excluidos)', async () => {
         const r = await getHistorial();
         expect(r.body.total).toBe(6);
@@ -193,32 +215,55 @@ describe('GET /historial — lista', () => {
 });
 
 describe('GET /:id/detalle-historial — modal "Ver evaluación"', () => {
-    test('evaluación con fundamento autorizado: se muestra el texto real íntegro', async () => {
+    test('resultado alterado = Sí: se muestra el texto real e íntegro de observacion_general (fuente correcta confirmada en el admin)', async () => {
         const r = await getDetalle('EV1');
         expect(r.statusCode).toBe(200);
         expect(r.body.resultado_alterado).toBe(true);
-        expect(r.body.fundamento).toBe('Se revisó el video y se confirmó un error en el conteo de puntaje.');
+        expect(r.body.observacion_general).toBe('Según esta revisión, diferencias en el 4to toro con la collera que obtuvo el 3er lugar.');
     });
 
-    test('evaluación alterada SIN fundamento publicado: mensaje neutral, nunca el texto interno', async () => {
+    test('resultado alterado = No: igual se muestra la observación general (el botón "Ver evaluación" funciona también sin alteración)', async () => {
+        const r = await getDetalle('EV2');
+        expect(r.statusCode).toBe(200);
+        expect(r.body.resultado_alterado).toBe(false);
+        expect(r.body.observacion_general).toBe('Rodeo sin novedades relevantes.');
+    });
+
+    test('evaluación alterada SIN observación general registrada: mensaje neutral, nunca null ni inventado', async () => {
         const r = await getDetalle('EV6');
         expect(r.statusCode).toBe(200);
-        expect(r.body.fundamento).toBe('No existe un fundamento técnico disponible para consulta.');
-        expect(r.body.fundamento).not.toMatch(/interno/);
+        expect(r.body.observacion_general).toBe('No existen observaciones disponibles para esta evaluación.');
     });
 
-    test('evaluación sin alteración: no se expone ningún "fundamento" (ni real ni neutral)', async () => {
-        const r = await getDetalle('EV2');
+    test('evaluación SIN alteración y SIN observación general: también el mismo mensaje neutral (mismo criterio en ambos casos)', async () => {
+        preparar({
+            asignaciones: [{ id: 'A9', usuario_pagado_id: 'J1', rodeo_id: 'R9', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'A' }],
+            evaluaciones: [{ id: 'EV9', rodeo_id: 'R9', estado: 'publicado', resultados_alterados: false, anulada: false, es_historica_importacion: false, observacion_general: '   ',
+                rodeo: { id: 'R9', club: 'Club Nueve', fecha: '2025-09-01', asociacion: 'ÑUBLE', tipo_rodeo_nombre: 'Provincial' } }]
+        });
+        const r = await getDetalle('EV9');
+        expect(r.statusCode).toBe(200);
         expect(r.body.resultado_alterado).toBe(false);
-        expect(r.body.fundamento).toBeNull();
+        expect(r.body.observacion_general).toBe('No existen observaciones disponibles para esta evaluación.');
     });
 
-    test('la respuesta nunca incluye identidad del analista ni comentarios internos', async () => {
+    test('compatibilidad con notas manuales: una nota fuente=manual en una evaluación publicada igual se muestra (sin romper el detalle)', async () => {
+        preparar({
+            asignaciones: [{ id: 'A10', usuario_pagado_id: 'J1', rodeo_id: 'R10', estado: 'activo', publicado: true, estado_designacion: 'aceptado', categoria_aplicada: 'A' }],
+            evaluaciones: [{ id: 'EV10', rodeo_id: 'R10', estado: 'publicado', resultados_alterados: false, anulada: false, es_historica_importacion: false, observacion_general: 'ok',
+                rodeo: { id: 'R10', club: 'Club Diez', fecha: '2025-08-01', asociacion: 'ÑUBLE', tipo_rodeo_nombre: 'Provincial' } }],
+            notas_rodeo: [{ asignacion_id: 'A10', nota: 4.5, fuente: 'manual' }]
+        });
+        const r = await getDetalle('EV10');
+        expect(r.statusCode).toBe(200);
+        expect(r.body.nota).toBe(4.5);
+    });
+
+    test('la respuesta nunca incluye identidad del analista ni el comentario interno de alteración (comentario_resultados_alterados)', async () => {
         const r = await getDetalle('EV1');
         const serializado = JSON.stringify(r.body);
         expect(serializado).not.toMatch(/SECRETO/);
         expect(serializado).not.toMatch(/analista/i);
-        expect(serializado).not.toMatch(/Observación interna/);
     });
 
     test('desglose de situaciones en el detalle coincide con el de la lista', async () => {

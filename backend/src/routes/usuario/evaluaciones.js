@@ -699,7 +699,13 @@ router.get('/historial', async (req, res) => {
         .eq('publicado', true)
         .neq('estado_designacion', 'rechazado');
 
-    let filasBase = (asignaciones || []).filter(a => a.rodeos?.id);
+    // Solo rodeos que YA OCURRIERON (fecha <= hoy en Chile) — mismo criterio
+    // que GET /usuario/resumen/desempeno (ver su comentario): un rodeo futuro
+    // con designación ya aceptada y publicada no pertenece todavía al
+    // "historial" ni es un rodeo "pendiente de evaluación" (simplemente no se
+    // ha jurado aún).
+    const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    let filasBase = (asignaciones || []).filter(a => a.rodeos?.id && a.rodeos.fecha && a.rodeos.fecha <= hoyChile);
 
     // Filtro de temporada — misma función pura que ya usa el panel admin de Rodeos
     // (services/temporadas.js), para no inventar una semántica de filtro distinta.
@@ -791,16 +797,30 @@ router.get('/historial', async (req, res) => {
 // GET /:id/detalle-historial — modal "Detalle de evaluación" de "Mi historial
 // de evaluaciones". A diferencia de /:id/resultado (que sirve el flujo de
 // apelación por casos de evaluaciones.html), este endpoint es deliberadamente
-// mínimo y de solo lectura: nunca incluye identidad del analista, comentario
-// interno (comentario_resultados_alterados) ni observación general — ver
-// migración 090 y punto 6 del requerimiento (confidencialidad del analista).
+// mínimo y de solo lectura.
+//
+// FUENTE DEL COMENTARIO (corrección — antes usaba fundamento_jurado):
+// "Observación general del análisis" en el formulario administrativo
+// (frontend/admin/evaluacion-detalle.html, renderAnalisisDeportivo) es
+// evaluaciones.observacion_general — confirmado leyendo ese archivo, no
+// asumido. Autorizado explícitamente para mostrarse al jurado tal cual fue
+// redactado (sin resumir ni alterar), bajo las reglas de publicación
+// existentes (estado publicado/cerrado). migración 090 (fundamento_jurado /
+// fundamento_jurado_publicado) se conserva por compatibilidad con el panel
+// administrativo — ya no es la fuente de este endpoint, pero sus columnas y
+// el PATCH /admin/evaluaciones/:id/datos-deportivos que las usa no se tocan.
+//
+// Confidencialidad: solo se selecciona observacion_general (nunca
+// analista_id/jefe_id/comentario_resultados_alterados/comentario_monitor ni
+// select('*')) y solo se entrega el texto ya resuelto — jamás el objeto
+// completo de la evaluación.
 router.get('/:id/detalle-historial', async (req, res) => {
     const evalId = req.params.id;
 
     const { data: ev } = await supabase
         .from('evaluaciones')
         .select(`
-            id, estado, resultados_alterados, fundamento_jurado, fundamento_jurado_publicado,
+            id, estado, resultados_alterados, observacion_general,
             rodeo:rodeos(id, club, fecha, asociacion, tipo_rodeo_nombre)
         `)
         .eq('id', evalId)
@@ -834,12 +854,12 @@ router.get('/:id/detalle-historial', async (req, res) => {
         calcularSituacionesPorRodeo([ev.rodeo.id])
     ]);
 
-    let fundamento = null;
-    if (ev.resultados_alterados) {
-        fundamento = (ev.fundamento_jurado_publicado && ev.fundamento_jurado)
-            ? ev.fundamento_jurado
-            : 'No existe un fundamento técnico disponible para consulta.';
-    }
+    // Mismo texto de respaldo tanto si alteró como si no — nunca se presenta
+    // como "fundamento de una alteración" cuando resultados_alterados=false
+    // (el frontend elige el encabezado según resultado_alterado).
+    const textoObservacion = ev.observacion_general?.trim()
+        ? ev.observacion_general.trim()
+        : 'No existen observaciones disponibles para esta evaluación.';
 
     res.json({
         rodeo: ev.rodeo,
@@ -848,7 +868,7 @@ router.get('/:id/detalle-historial', async (req, res) => {
         nota: notaRow?.nota ?? null,
         situaciones_por_tipo: situaciones.porTipoPorRodeo[ev.rodeo.id] || {},
         situaciones_total:    situaciones.porRodeo[ev.rodeo.id] || 0,
-        fundamento
+        observacion_general: textoObservacion
     });
 });
 

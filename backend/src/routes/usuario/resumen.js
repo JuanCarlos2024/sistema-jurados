@@ -58,15 +58,25 @@ router.get('/desempeno', async (req, res) => {
         const esDelegado = perfil?.tipo_persona === 'delegado_rentado';
         const categoria  = esDelegado ? 'DR' : (perfil?.categoria || null);
 
-        // 2. Todas las asignaciones activas y no rechazadas del usuario
+        // 2. Todas las asignaciones activas y no rechazadas del usuario, de
+        // rodeos que YA OCURRIERON (fecha <= hoy en Chile — mismo criterio
+        // que motorPropuestaDesignacion.js/usuario/asignaciones.js: un rodeo
+        // programado con designación ya aceptada y publicada no es un "rodeo
+        // asistido" todavía). Sin este filtro, rodeos futuros ya aceptados
+        // se contaban como asistidos y, peor, inflaban "pendientes de
+        // evaluación" (un rodeo futuro nunca tiene evaluación, no porque
+        // esté atrasada sino porque aún no se jura).
+        const hoyChile = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
         const { data: asigs } = await supabase
             .from('asignaciones')
-            .select('id, rodeo_id, estado_designacion')
+            .select('id, rodeo_id, estado_designacion, rodeos(fecha)')
             .eq('usuario_pagado_id', uid)
             .eq('estado', 'activo')
             .eq('publicado', true);
 
-        const propias = (asigs || []).filter(a => a.estado_designacion !== 'rechazado');
+        const propias = (asigs || []).filter(a =>
+            a.estado_designacion !== 'rechazado' && a.rodeos?.fecha && a.rodeos.fecha <= hoyChile
+        );
         const total_rodeos = propias.length;
         const propiosIds   = propias.map(a => a.id);
 

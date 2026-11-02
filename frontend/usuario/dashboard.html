@@ -493,10 +493,10 @@ async function abrirDetalleEvaluacion(evalId) {
                 </div>
                 ${renderSituacionesChip(d.situaciones_por_tipo, d.situaciones_total)}
             </div>
-            ${d.resultado_alterado ? `<div class="detalle-bloque">
-                <div class="detalle-titulo">Fundamento de la alteración</div>
-                <div class="detalle-fundamento">${sanitizar(d.fundamento || '')}</div>
-            </div>` : ''}`;
+            <div class="detalle-bloque">
+                <div class="detalle-titulo">${d.resultado_alterado ? 'Fundamento de la alteración' : 'Observación general del análisis'}</div>
+                <div class="detalle-fundamento">${sanitizar(d.observacion_general || '')}</div>
+            </div>`;
     } catch(e) {
         body.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'Error al cargar la evaluación')}</div>`;
     }
