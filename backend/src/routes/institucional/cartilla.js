@@ -186,12 +186,36 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
         cargarJuradosRodeo(rodeo.id),
         // Fase 3.5: la fila de rodeos_delegado_institucional (si existe) es la
         // FUENTE del responsable confirmado — se necesita su id para leer el
-        // historial de auditoría asociado a ella.
-        supabase.from('rodeos_delegado_institucional').select('id').eq('rodeo_id', rodeo.id).maybeSingle()
+        // historial de auditoría asociado a ella, y ahora también
+        // delegado_asociacion_id para resolver el nombre (ver delegadoConfirmado
+        // más abajo — corrección del campo "Delegado Oficial" de la cartilla).
+        supabase.from('rodeos_delegado_institucional').select('id, delegado_asociacion_id').eq('rodeo_id', rodeo.id).maybeSingle()
     ]);
 
     const institucional = (filas || []).find(f => f.delegado_asociacion_id != null) || null;
     const rentadoCartillaExiste = (filas || []).some(f => f.delegado_id != null);
+
+    // Corrección "Delegado Oficial": fuente ÚNICA y autoritativa del nombre a
+    // mostrar en la cartilla — nunca el perfil de la cuenta institucional
+    // (esa cuenta es de la asociación, no del delegado) ni un campo de texto
+    // libre. Antes de que exista la cartilla, se usa el nombre VIGENTE del
+    // delegado ya confirmado en rodeos_delegado_institucional; una vez creada
+    // la cartilla, `cartilla.delegado_nombre` (el snapshot que el backend ya
+    // fija en la creación/reemplazo) sigue siendo la fuente para ese registro
+    // específico — el frontend prioriza `cartilla.delegado_nombre` sobre esto
+    // cuando ambos existen.
+    let delegadoConfirmado = null;
+    if (designacion?.delegado_asociacion_id) {
+        const { data: d } = await supabase
+            .from('delegados_asociacion')
+            .select('id, nombre')
+            .eq('id', designacion.delegado_asociacion_id)
+            .maybeSingle();
+        // Se acota explícitamente a {id, nombre} — nunca se reenvía la fila
+        // completa (activo/certificado/asociacion_id son datos de gestión
+        // interna, no necesarios para este campo de solo lectura).
+        if (d) delegadoConfirmado = { id: d.id, nombre: d.nombre };
+    }
 
     // Fase 3.1: la cartilla institucional solo está disponible cuando NO hay
     // designación vigente de Delegado Rentado y NO existe ya una cartilla
@@ -233,7 +257,8 @@ router.get('/rodeo/:rodeo_id', async (req, res) => {
         cartilla_delegado_adjunta: estadoAdjunta.bloqueado,
         cartilla_delegado_estado: estadoAdjunta.bloqueado ? (estadoAdjunta.codigo === CODIGO_CARTILLA_DELEGADO_ADJUNTA ? 'vigente' : 'pendiente') : null,
         jurados,
-        historial_responsables: historialResponsables
+        historial_responsables: historialResponsables,
+        delegado_confirmado: delegadoConfirmado
     });
 });
 

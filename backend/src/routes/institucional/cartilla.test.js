@@ -176,6 +176,34 @@ describe('GET /institucional/cartilla/rodeo/:rodeo_id', () => {
         expect(res.jsonBody.conflicto_rentado).toBe(false);
     });
 
+    describe('Corrección "Delegado Oficial" — delegado_confirmado (fuente autoritativa para el campo de solo lectura)', () => {
+        test('hay un delegado ya confirmado para el rodeo -> devuelve {id, nombre} desde delegados_asociacion, nunca el perfil de la cuenta institucional', async () => {
+            // Por defecto (beforeEach) ya hay un delegado confirmado = DELEGADO_OK.
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.delegado_confirmado).toEqual({ id: DELEGADO_OK.id, nombre: DELEGADO_OK.nombre });
+        });
+
+        test('todavía no se ha confirmado ningún delegado para el rodeo -> delegado_confirmado=null (nunca se inventa un nombre)', async () => {
+            respuestas.rodeos_delegado_institucional = { maybeSingle: { data: null, error: null }, single: { data: {}, error: null } };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.delegado_confirmado).toBeNull();
+        });
+
+        test('el delegado confirmado existe pero su registro en delegados_asociacion ya no se encuentra -> delegado_confirmado=null, sin romper el resto de la respuesta', async () => {
+            respuestas.delegados_asociacion = { maybeSingle: { data: null, error: null } };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.statusCode).toBe(200);
+            expect(res.jsonBody.delegado_confirmado).toBeNull();
+        });
+
+        test('cartilla ya creada (compatibilidad): delegado_confirmado sigue informando el delegado vigente, independiente de cartilla.delegado_nombre (el frontend prioriza el snapshot de la cartilla; esto es solo el respaldo)', async () => {
+            respuestas.cartillas_delegado.list = { data: [{ id: 'cart-inst', rodeo_id: 'rodeo-1', delegado_id: null, delegado_asociacion_id: 'del-1', delegado_nombre: 'Ana Soto', estado: 'borrador' }], error: null };
+            const res = await llamar('GET', '/rodeo/rodeo-1', {}, auth(ASOC_OSORNO));
+            expect(res.jsonBody.cartilla.delegado_nombre).toBe('Ana Soto');
+            expect(res.jsonBody.delegado_confirmado).toEqual({ id: DELEGADO_OK.id, nombre: DELEGADO_OK.nombre });
+        });
+    });
+
     test('Fase 3.1 (cierre) Caso D — cartilla institucional YA existe y DESPUÉS aparece designación vigente de Rentado -> se sigue devolviendo la cartilla (lectura permitida), marcada bloqueada_por_designacion_posterior=true, conflicto_rentado=false', async () => {
         respuestas.cartillas_delegado.list = { data: [{ id: 'cart-inst', rodeo_id: 'rodeo-1', delegado_id: null, delegado_asociacion_id: 'del-1', estado: 'borrador' }], error: null };
         respuestas.asignaciones.maybeSingle = { data: { id: 'asig-1', estado_designacion: 'aceptado' }, error: null };

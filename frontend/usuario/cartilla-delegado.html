@@ -240,6 +240,7 @@ function esSoloLectura() {
 let _guardando     = false;
 let _jurados       = []; // Jurado(s) real(es) asignados al rodeo — SOLO LECTURA (nuevo formato 2026-2027)
 let _rodeoActual    = null; // rodeo cargado — fuente EN VIVO de Temporada/Tipo de Rodeo/Asociación/Club (4ª revisión)
+let _delegadoOficialNombre = null; // ver renderCartilla() — fuente autoritativa del "Delegado Oficial" institucional, nunca el input editable
 
 // ── Globals ETAPA 2 ──────────────────────────────────────────────────────────
 let _seriesGanado   = [];
@@ -295,7 +296,10 @@ async function init() {
 // RENDER PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
 function renderCartilla(r) {
-    const { rodeo, perfil, cartilla, jurados, conflicto_rentado, delegado_rentado_designado, bloqueada_por_designacion_posterior, cartilla_delegado_adjunta, cartilla_delegado_estado, historial_responsables } = r;
+    const { rodeo, perfil, cartilla, jurados, conflicto_rentado, delegado_rentado_designado, bloqueada_por_designacion_posterior, cartilla_delegado_adjunta, cartilla_delegado_estado, historial_responsables, delegado_confirmado } = r;
+    // Corrección "Delegado Oficial": fuente única y autoritativa (nunca el
+    // perfil de la cuenta institucional ni el input editable) — ver más abajo.
+    _delegadoOficialNombre = _esInstitucional ? (cartilla?.delegado_nombre || delegado_confirmado?.nombre || '') : null;
     _bloqueadaPorDesignacionPosterior = !!bloqueada_por_designacion_posterior;
     // Verificación previa a publicación: solo aplica cuando YA existe un
     // borrador (si no existe ninguno, se corta el render más abajo con el
@@ -511,7 +515,10 @@ function renderCartilla(r) {
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
                     <label class="form-label">Delegado Oficial <span class="req">*</span></label>
-                    <input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(fld('delegado_nombre', perfil?.nombre_completo || ''))}" ${ya ? 'readonly' : ''}>
+                    ${_esInstitucional
+                        ? `<input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(_delegadoOficialNombre || '')}" readonly disabled>
+                           <div style="font-size:11px;color:var(--gris);margin-top:4px;">Delegado confirmado desde "Mis Rodeos". Para cambiarlo, solicite un reemplazo al Administrador.</div>`
+                        : `<input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(fld('delegado_nombre', perfil?.nombre_completo || ''))}" ${ya ? 'readonly' : ''}>`}
                 </div>
                 <div>
                     <label class="form-label">Teléfono</label>
@@ -2360,7 +2367,17 @@ function recolectarDatos() {
         // Temporada / Fecha del Rodeo / Tipo de Rodeo / Club-Asociación
         // (campo manual antiguo): ya NO se envían — son automáticos/en vivo
         // desde `rodeo` (4ª y 5ª revisión), no hay input en el DOM que leer.
-        delegado_nombre:                     document.getElementById('f-delegado_nombre')?.value.trim() || null,
+        //
+        // Corrección "Delegado Oficial" (institucional): NUNCA se lee del
+        // input (es readonly, pero esto es defensa en profundidad real —
+        // nunca depender solo de un atributo HTML). Se envía siempre
+        // _delegadoOficialNombre, la fuente autoritativa ya confirmada —
+        // así coincide exactamente con cartilla.delegado_nombre y el backend
+        // nunca rechaza el guardado por esta causa. Delegado Rentado sigue
+        // leyendo el input de siempre (su propio nombre, editable).
+        delegado_nombre: _esInstitucional
+            ? (_delegadoOficialNombre || null)
+            : (document.getElementById('f-delegado_nombre')?.value.trim() || null),
         delegado_telefono:                   document.getElementById('f-delegado_telefono')?.value.trim() || null,
         // Columnas antiguas (secretario_jurado/secretario_numero_socio) se
         // conservan escribiéndose en paralelo desde el objeto `_sec` nuevo

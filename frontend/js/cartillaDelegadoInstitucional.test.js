@@ -39,8 +39,9 @@ describe('Conflicto con cartilla de Delegado Rentado — nunca se toca ni se cre
         // ventana ampliada (antes 1500, luego 2500) — renderCartilla ahora
         // empieza con el chequeo de cartilla_delegado_adjunta (que distingue
         // vigente/pendiente, ver más abajo), que corre ANTES de llegar a
-        // conflicto_rentado.
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 2900);
+        // conflicto_rentado. Ventana ampliada de nuevo a 3600 — corrección
+        // "Delegado Oficial" agregó _delegadoOficialNombre al inicio de la función.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 3600);
         expect(bloque).toMatch(/conflicto_rentado/);
         expect(bloque).toMatch(/requiere revisión administrativa/);
         expect(bloque).toMatch(/return;/);
@@ -69,9 +70,9 @@ describe('Fase 3.1 (cierre) — Caso D: bloqueo de escritura tras designación p
     });
 
     test('renderCartilla() setea _bloqueadaPorDesignacionPosterior desde la respuesta del backend ANTES de calcular el modo solo-lectura', () => {
-        // Ventana ampliada (antes 2000, luego 3000) — ver nota de la
-        // corrección final (076) arriba.
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 3400);
+        // Ventana ampliada (antes 2000, luego 3000, luego 4100 — corrección
+        // "Delegado Oficial") — ver nota de la corrección final (076) arriba.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 4100);
         const iSet = bloque.indexOf('_bloqueadaPorDesignacionPosterior = ');
         const iYa = bloque.indexOf('esSoloLectura()');
         expect(iSet).toBeGreaterThan(-1);
@@ -79,9 +80,9 @@ describe('Fase 3.1 (cierre) — Caso D: bloqueo de escritura tras designación p
     });
 
     test('se muestra el mensaje EXACTO pedido para el bloqueo (distinto del mensaje del Caso A), sin detener el render del formulario', () => {
-        // Ventana ampliada (antes 6000, luego 6800) — ver nota de la
-        // corrección final (076) arriba.
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 7300);
+        // Ventana ampliada (antes 6000, luego 6800, luego 8000 — corrección
+        // "Delegado Oficial") — ver nota de la corrección final (076) arriba.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 8000);
         expect(bloque).toContain('Este rodeo presenta un cambio de designación de Delegado. La cartilla se encuentra temporalmente bloqueada hasta que el Administrador resuelva la situación.');
     });
 
@@ -114,7 +115,9 @@ describe('Verificación previa a publicación — bloqueo por Cartilla de Delega
     });
 
     test('_bloqueadaPorCartillaAdjunta solo se activa cuando YA existe un borrador (nunca cuando el render ya se cortó arriba)', () => {
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 700);
+        // Ventana ampliada a 1400 — corrección "Delegado Oficial" agregó
+        // _delegadoOficialNombre al inicio de la función.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 1400);
         expect(bloque).toMatch(/_bloqueadaPorCartillaAdjunta = !!cartilla_delegado_adjunta && !!cartilla/);
     });
 
@@ -124,13 +127,44 @@ describe('Verificación previa a publicación — bloqueo por Cartilla de Delega
     });
 
     test('se muestra un banner con el mensaje EXACTO para el caso "borrador ya iniciado + adjunto posterior", sin detener el render del formulario', () => {
-        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 8400);
+        // Ventana ampliada a 9100 — corrección "Delegado Oficial" agregó
+        // _delegadoOficialNombre al inicio de la función.
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 9100);
         expect(bloque).toContain('Este rodeo ya tiene una Cartilla de Delegado adjuntada en el sistema. El borrador se conserva para revisión administrativa, pero no admite nuevos guardados ni envíos.');
     });
 
     test('corrección final (076) — mismo banner, pero con un archivo histórico pendiente de clasificar -> mensaje DISTINTO de "pendiente" (nunca el mismo texto que la cartilla vigente)', () => {
         const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 8400);
         expect(bloque).toContain('Cartilla adjunta pendiente de revisión administrativa. El borrador se conserva para revisión administrativa, pero no admite nuevos guardados ni envíos.');
+    });
+});
+
+describe('Corrección "Delegado Oficial" — fuente autoritativa, nunca el input editable (institucional)', () => {
+    test('_delegadoOficialNombre se fija en renderCartilla(): cartilla.delegado_nombre primero, delegado_confirmado.nombre como respaldo, null para Delegado Rentado', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 600);
+        expect(bloque).toMatch(/_delegadoOficialNombre = _esInstitucional \? \(cartilla\?\.delegado_nombre \|\| delegado_confirmado\?\.nombre \|\| ''\) : null/);
+    });
+
+    test('el GET destructura delegado_confirmado de la respuesta del backend', () => {
+        const bloque = html.slice(html.indexOf('function renderCartilla'), html.indexOf('function renderCartilla') + 300);
+        expect(bloque).toMatch(/delegado_confirmado/);
+    });
+
+    test('el input "Delegado Oficial" es readonly+disabled para institucional — nunca editable, ni siquiera antes del primer guardado (a diferencia del resto del formulario, que depende de esSoloLectura())', () => {
+        const inicio = html.indexOf('id="f-delegado_nombre"');
+        const bloque = html.slice(Math.max(0, inicio - 400), inicio + 450);
+        expect(bloque).toMatch(/_esInstitucional\s*\n?\s*\?\s*`<input type="text" id="f-delegado_nombre"[^`]*readonly disabled/);
+        expect(bloque).toMatch(/solicite un reemplazo al Administrador/);
+    });
+
+    test('recolectarDatos() NUNCA lee el input editable para institucional: usa _delegadoOficialNombre, no document.getElementById(\'f-delegado_nombre\')', () => {
+        const inicio = html.indexOf('function recolectarDatos');
+        const bloque = html.slice(inicio, inicio + 2000);
+        expect(bloque).toMatch(/delegado_nombre:\s*_esInstitucional\s*\n?\s*\?\s*\(_delegadoOficialNombre \|\| null\)\s*\n?\s*:\s*\(document\.getElementById\('f-delegado_nombre'\)/);
+    });
+
+    test('_delegadoOficialNombre está declarada como variable global (no local a una función), para que recolectarDatos() pueda leerla', () => {
+        expect(html).toMatch(/let _delegadoOficialNombre\s*=\s*null;/);
     });
 });
 
