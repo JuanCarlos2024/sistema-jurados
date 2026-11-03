@@ -540,7 +540,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Delegado</th><th>Jurados</th>
             <th>Días</th><th>Asistencia J/D</th><th>Total pagos</th><th>Origen</th>
-            <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital de Delegado Rentado/Asociación · VY=Video YouTube">CJ/CD/VY</th>
+            <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital de Delegado Rentado/Asociación (✓=ya enviada) · VY=Video YouTube">CJ/CD/VY</th>
             <th>Acciones</th>
         </tr></thead>
         <tbody>
@@ -595,6 +595,12 @@ function renderTabla(rodeos, total, indicadores = {}) {
                 borrador: '#aaa', enviada: '#27ae60', reenviada: '#1e8449',
                 observada: '#e67e22', aprobada: '#1a5276', cerrada: '#5d6d7e'
             };
+            // Mejora visual (check de envío): estados en que la cartilla
+            // digital ya fue efectivamente enviada (enviada_en queda seteado
+            // en backend) — 'observada' y 'borrador' quedan afuera porque en
+            // 'observada' la asociación debe corregir y reenviar. No altera
+            // ESTADO_DIGITAL_TXT/COLOR ni la lógica de filtros/exportación.
+            const ESTADOS_DIGITAL_ENVIADA = ['enviada', 'reenviada', 'aprobada', 'cerrada'];
             let digitalBadge = '';
             if (ind.cd_digital) {
                 const esAsociacion = ind.cd_digital.modalidad === 'delegado_asociacion';
@@ -602,7 +608,9 @@ function renderTabla(rodeos, total, indicadores = {}) {
                 const letra = esAsociacion ? 'A' : 'R';
                 const color = ESTADO_DIGITAL_COLOR[ind.cd_digital.estado] || '#888';
                 const estadoTxt = ESTADO_DIGITAL_TXT[ind.cd_digital.estado] || ind.cd_digital.estado;
-                digitalBadge = ` <span style="font-size:10px; font-weight:700; color:${color}; border:1px solid ${color}; border-radius:3px; padding:0 3px;" title="Cartilla digital de ${origenTxt} — ${estadoTxt}">📱${letra}</span>`;
+                const fueEnviada = ESTADOS_DIGITAL_ENVIADA.includes(ind.cd_digital.estado);
+                const checkTxt = fueEnviada ? ' ✓' : '';
+                digitalBadge = ` <span style="font-size:10px; font-weight:700; color:${color}; border:1px solid ${color}; border-radius:3px; padding:0 3px;" title="Cartilla digital de ${origenTxt} — ${estadoTxt}${fueEnviada ? ' (enviada)' : ''}">📱${letra}${checkTxt}</span>`;
             }
             const indicHtml = `<span style="font-size:12px; white-space:nowrap;">CJ ${ind.cj?si:no} CD ${cdHtml}${digitalBadge} VY ${ind.vy?si:no}</span>`;
             return `<tr>
@@ -634,7 +642,7 @@ function renderTabla(rodeos, total, indicadores = {}) {
             </td>
         </tr>`;}).join('')}
         </tbody>
-    </table><div style="padding:10px 14px; font-size:12px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; <span style="color:#27ae60;">●</span>=Aceptado <span style="color:#f39c12;">●</span>=Pendiente <span style="color:#e74c3c;">●</span>=Rechazado &nbsp;·&nbsp; J=Jurado D=Delegado &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital registrada (Delegado Rentado/Asociación), color según estado · VY=Video YouTube</div>`;
+    </table><div style="padding:10px 14px; font-size:12px; color:var(--gris); border-top:1px solid var(--gris-claro);">Total: ${total} rodeo(s) &nbsp;·&nbsp; <span style="color:#27ae60;">●</span>=Aceptado <span style="color:#f39c12;">●</span>=Pendiente <span style="color:#e74c3c;">●</span>=Rechazado &nbsp;·&nbsp; J=Jurado D=Delegado &nbsp;·&nbsp; CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital registrada (Delegado Rentado/Asociación), color según estado, ✓=ya enviada · VY=Video YouTube</div>`;
 
     // Los data-* quedan en atributos HTML (sanitizados) para que el hover los lea
     // desde el DOM, evitando incrustar texto libre (nombres con comillas/tildes)
