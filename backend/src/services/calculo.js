@@ -1,4 +1,6 @@
 const supabase = require('../config/supabase');
+const auditoria = require('./auditoria');
+const { TIPO_IMPORTACION_HISTORICA } = require('./asignacionHistorica');
 
 /**
  * Obtiene tarifas vigentes de la base de datos.
@@ -54,6 +56,113 @@ function calcularPagoBase(tipo_persona, categoria, duracion_dias, tarifas) {
         valor_diario_aplicado: valor_diario,
         pago_base_calculado: pago_base
     };
+}
+
+/**
+ * SUPERADA por la RPC transaccional de la migración 091 (actualizar_tipo_
+ * rodeo_y_sincronizar_asignaciones / reparar_sincronizacion_asignaciones_
+ * rodeo) — admin/rodeos.js ya NO llama a esta función. Se conserva, junto
+ * con sus pruebas (calculo.sincronizacionDuracion.test.js), porque implementa
+ * exactamente el mismo algoritmo que la función SQL (idéntica fórmula,
+ * mismos criterios de idempotencia y de protección de pagos históricos) y es
+ * la única forma de probar esa lógica de forma ejecutable en este entorno —
+ * no hay un binario de PostgreSQL real disponible localmente para correr la
+ * función SQL directamente (misma limitación ya documentada en la migración
+ * 084). Si se modifica la fórmula en un lugar, debe replicarse en el otro.
+ *
+ * CAUSA RAÍZ (bug ANCUD/CHILOÉ, jurado Augusto González): al editar un rodeo
+ * desde el admin, `rodeos.duracion_dias` se actualiza, pero las asignaciones
+ * ya creadas guardan una COPIA congelada en `duracion_dias_aplicada` (tomada
+ * una sola vez al crear la designación — necesaria para no alterar pagos ya
+ * cerrados/liquidados retroactivamente) y `pago_base_calculado` se deriva de
+ * esa copia. Nadie volvía a sincronizarla, así que el portal del jurado y el
+ * admin seguían usando la duración/pago antiguos indefinidamente.
+ *
+ * Esta función sincroniza esa copia cuando el admin cambia la duración del
+ * rodeo (vía cambio de tipo de rodeo), de forma seguro e idempotente:
+ *   - Nunca toca asignaciones `anulado` (ya excluidas por el filtro estado=activo).
+ *   - Nunca toca asignaciones de una IMPORTACIÓN HISTÓRICA (pagos ya
+ *     liquidados fuera del sistema — mismo criterio que
+ *     esAsignacionHistoricaImportada/asignacionHistorica.js).
+ *   - Nunca cambia `valor_diario_aplicado` (preserva la tarifa de la
+ *     categoría del jurado aplicada en su momento, incluyendo cualquier
+ *     override manual admin) — solo recalcula pago_base_calculado =
+ *     valor_diario_aplicado × nueva duración, igual que ya hace el PATCH de
+ *     asignaciones cuando se edita el override manual.
+ *   - Si una asignación ya tiene la duración vigente, no hace nada (no-op):
+ *     llamar dos veces con la misma duración no duplica auditoría ni cambia
+ *     nada.
+ *   - Nunca cambia la identidad del jurado/delegado, su aceptación/rechazo,
+ *     publicación, notas, evaluaciones ni cartillas.
+ *
+ * @returns {{ actualizadas:number, omitidas_historicas:number, sin_cambio:number }}
+ */
+async function sincronizarAsignacionesPorCambioDuracion(rodeo_id, nueva_duracion_dias, { actor_id = null, actor_tipo = 'administrador', ip_address = null } = {}) {
+    const { data: asigs, error: errA } = await supabase
+        .from('asignaciones')
+        .select('id, importacion_id, valor_diario_aplicado, duracion_dias_aplicada, pago_base_calculado')
+        .eq('rodeo_id', rodeo_id)
+        .eq('estado', 'activo');
+
+    if (errA) throw new Error('Error al obtener asignaciones para sincronizar: ' + errA.message);
+    if (!asigs || asigs.length === 0) return { actualizadas: 0, omitidas_historicas: 0, sin_cambio: 0 };
+
+    const candidatas = asigs.filter(a => a.duracion_dias_aplicada !== nueva_duracion_dias);
+    const sinCambio = asigs.length - candidatas.length;
+    if (candidatas.length === 0) return { actualizadas: 0, omitidas_historicas: 0, sin_cambio: sinCambio };
+
+    // Pagos de importación histórica (ya liquidados fuera del sistema): se
+    // identifican en un único query por lote (nunca uno por asignación).
+    const idsImportacion = [...new Set(candidatas.map(a => a.importacion_id).filter(Boolean))];
+    let idsHistoricos = new Set();
+    if (idsImportacion.length > 0) {
+        const { data: imports, error: errI } = await supabase
+            .from('importaciones')
+            .select('id')
+            .in('id', idsImportacion)
+            .eq('tipo', TIPO_IMPORTACION_HISTORICA);
+        if (errI) throw new Error('Error al verificar importaciones históricas: ' + errI.message);
+        idsHistoricos = new Set((imports || []).map(i => i.id));
+    }
+
+    let actualizadas = 0;
+    let omitidasHistoricas = 0;
+    const ahora = new Date().toISOString();
+
+    for (const a of candidatas) {
+        if (a.importacion_id && idsHistoricos.has(a.importacion_id)) {
+            omitidasHistoricas++;
+            continue;
+        }
+
+        const nuevoPagoBase = Math.round((a.valor_diario_aplicado || 0) * nueva_duracion_dias);
+
+        const { error: errU } = await supabase
+            .from('asignaciones')
+            .update({
+                duracion_dias_aplicada: nueva_duracion_dias,
+                pago_base_calculado: nuevoPagoBase,
+                updated_at: ahora
+            })
+            .eq('id', a.id);
+
+        if (errU) throw new Error('Error al sincronizar asignación ' + a.id + ': ' + errU.message);
+
+        await auditoria.registrar({
+            tabla: 'asignaciones',
+            registro_id: a.id,
+            accion: 'editar',
+            datos_anteriores: { duracion_dias_aplicada: a.duracion_dias_aplicada, pago_base_calculado: a.pago_base_calculado },
+            datos_nuevos: { duracion_dias_aplicada: nueva_duracion_dias, pago_base_calculado: nuevoPagoBase },
+            actor_id,
+            actor_tipo,
+            descripcion: 'Recálculo automático de duración/pago por edición del rodeo (cambio de tipo de rodeo)',
+            ip_address
+        });
+        actualizadas++;
+    }
+
+    return { actualizadas, omitidas_historicas: omitidasHistoricas, sin_cambio: sinCambio };
 }
 
 /**
@@ -218,5 +327,6 @@ module.exports = {
     calcularPagoBase,
     calcularResumenMensual,
     obtenerBonoParaDistancia,
+    sincronizarAsignacionesPorCambioDuracion,
     _matchBonoConfig  // exportada solo para tests
 };

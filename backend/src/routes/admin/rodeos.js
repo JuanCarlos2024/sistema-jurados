@@ -448,6 +448,16 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
     if (comuna_id !== undefined) cambios.comuna_id = comuna_id || null;
     if (temporada_id !== undefined) cambios.temporada_id = temporada_id || null;
 
+    // Corrección transaccional (bug ANCUD/CHILOÉ, revisión correctiva): el
+    // cambio de tipo_rodeo_id (y por lo tanto de duracion_dias) NUNCA se
+    // mete en `cambios` — se aplica vía la RPC
+    // actualizar_tipo_rodeo_y_sincronizar_asignaciones (migración 091), que
+    // actualiza `rodeos` Y sincroniza sus asignaciones activas en UNA sola
+    // transacción de Postgres. La primera versión de esta corrección hacía
+    // esto en dos pasos por REST (update de rodeos + sincronización en JS);
+    // si el segundo paso fallaba, el rodeo quedaba editado con las
+    // asignaciones a medio sincronizar — exactamente lo que esta RPC evita.
+    let nuevoTipo = null;
     if (tipo_rodeo_id && tipo_rodeo_id !== anterior.tipo_rodeo_id) {
         const { data: tipo } = await supabase
             .from('tipos_rodeo')
@@ -456,9 +466,7 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
             .single();
 
         if (!tipo) return res.status(400).json({ error: 'Tipo de rodeo no encontrado' });
-        cambios.tipo_rodeo_id = tipo_rodeo_id;
-        cambios.tipo_rodeo_nombre = tipo.nombre;
-        cambios.duracion_dias = tipo.duracion_dias;
+        nuevoTipo = { id: tipo_rodeo_id, nombre: tipo.nombre, duracion_dias: tipo.duracion_dias };
     }
 
     if (categoria_rodeo_id !== undefined) {
@@ -472,34 +480,96 @@ router.patch('/:id', soloNoAnalista, soloNoComisionTecnica, async (req, res) => 
         }
     }
 
-    const { data, error } = await supabase
-        .from('rodeos')
-        .update(cambios)
-        .eq('id', req.params.id)
-        .select()
-        .single();
+    let data = null;
 
-    if (error) return res.status(500).json({ error: error.message });
+    // Paso 1 (si cambió el tipo): RPC atómica — actualiza rodeos.tipo_rodeo_id/
+    // nombre/duracion_dias Y sincroniza las asignaciones activas no históricas
+    // de este rodeo, ambas escrituras en UNA sola transacción. Si falla
+    // cualquiera de las dos, Postgres revierte ambas — nunca queda el rodeo
+    // editado con asignaciones a medio sincronizar.
+    if (nuevoTipo) {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('actualizar_tipo_rodeo_y_sincronizar_asignaciones', {
+            p_rodeo_id: req.params.id,
+            p_tipo_rodeo_id: nuevoTipo.id,
+            p_tipo_rodeo_nombre: nuevoTipo.nombre,
+            p_nueva_duracion_dias: nuevoTipo.duracion_dias,
+            p_actor_id: req.usuario.id,
+            p_actor_tipo: 'administrador',
+            p_ip_address: req.ip
+        });
 
-    await auditoria.registrar({
-        tabla: 'rodeos',
-        registro_id: req.params.id,
-        accion: 'editar',
-        datos_anteriores: anterior,
-        datos_nuevos: cambios,
-        actor_id: req.usuario.id,
-        actor_tipo: 'administrador',
-        descripcion: `Rodeo editado: ${anterior.club}`,
-        ip_address: req.ip
-    });
+        if (rpcError) {
+            const msg = rpcError.message || '';
+            if (msg.includes('RODEO_NO_ENCONTRADO')) return res.status(404).json({ error: 'Rodeo no encontrado' });
+            return res.status(500).json({ error: 'No se pudo actualizar el tipo de rodeo: ' + msg });
+        }
+        data = rpcData.rodeo;
+    }
 
-    // Auditoría dedicada de temporada — además de la genérica de arriba, para
-    // poder filtrar/reportar cambios de temporada por separado (sección 13).
-    if (temporada_id !== undefined && anterior.temporada_id !== cambios.temporada_id) {
+    // Paso 2: el resto de los campos (club, fecha, observación, estado,
+    // comuna, temporada, categoría de rodeo) sigue exactamente igual que
+    // antes — un único UPDATE plano, con su propia auditoría. Se omite por
+    // completo cuando el único cambio de esta edición fue el tipo de rodeo
+    // (ya aplicado y auditado por la RPC del paso 1), para no generar una
+    // segunda escritura/auditoría vacía sobre `rodeos`.
+    const hayOtrosCambios = Object.keys(cambios).length > 1; // más que solo updated_at
+    if (!nuevoTipo || hayOtrosCambios) {
+        const { data: dataUpdate, error } = await supabase
+            .from('rodeos')
+            .update(cambios)
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (error) return res.status(500).json({ error: error.message });
+        data = dataUpdate;
+
         await auditoria.registrar({
-            ...construirAuditoriaAsignacionTemporada(anterior, anterior.temporada_id, cambios.temporada_id, req.usuario.id),
+            tabla: 'rodeos',
+            registro_id: req.params.id,
+            accion: 'editar',
+            datos_anteriores: anterior,
+            datos_nuevos: cambios,
+            actor_id: req.usuario.id,
+            actor_tipo: 'administrador',
+            descripcion: `Rodeo editado: ${anterior.club}`,
             ip_address: req.ip
         });
+
+        // Auditoría dedicada de temporada — además de la genérica de arriba, para
+        // poder filtrar/reportar cambios de temporada por separado (sección 13).
+        if (temporada_id !== undefined && anterior.temporada_id !== cambios.temporada_id) {
+            await auditoria.registrar({
+                ...construirAuditoriaAsignacionTemporada(anterior, anterior.temporada_id, cambios.temporada_id, req.usuario.id),
+                ip_address: req.ip
+            });
+        }
+    }
+
+    res.json(data);
+});
+
+// POST /api/admin/rodeos/:id/reparar-sincronizacion-asignaciones
+// Herramienta de reparación (bug ANCUD/CHILOÉ, revisión correctiva): para
+// rodeos que YA quedaron desincronizados antes de esta corrección — sin
+// necesidad de cambiar artificialmente su tipo. Relee la duración VIGENTE
+// del rodeo (no la modifica) y sincroniza sus asignaciones activas no
+// históricas contra ese valor, de forma transaccional, segura e idempotente
+// (ver reparar_sincronizacion_asignaciones_rodeo, migración 091). Útil junto
+// con el diagnóstico de solo lectura database/maintenance/014_diagnostico_
+// duracion_desincronizada.js para corregir los casos que ese script detecte.
+router.post('/:id/reparar-sincronizacion-asignaciones', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
+    const { data, error } = await supabase.rpc('reparar_sincronizacion_asignaciones_rodeo', {
+        p_rodeo_id: req.params.id,
+        p_actor_id: req.usuario.id,
+        p_actor_tipo: 'administrador',
+        p_ip_address: req.ip
+    });
+
+    if (error) {
+        const msg = error.message || '';
+        if (msg.includes('RODEO_NO_ENCONTRADO')) return res.status(404).json({ error: 'Rodeo no encontrado' });
+        return res.status(500).json({ error: 'No se pudo sincronizar: ' + msg });
     }
 
     res.json(data);
