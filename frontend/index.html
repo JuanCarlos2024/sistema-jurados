@@ -42,8 +42,16 @@
             </div>
             <div class="form-grupo">
                 <label class="form-label">Contraseña</label>
-                <input type="password" id="admin-password" class="form-control"
-                       placeholder="••••••••" required autocomplete="current-password">
+                <div class="password-wrapper">
+                    <input type="password" id="admin-password" class="form-control"
+                           placeholder="••••••••" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" id="admin-password-toggle"
+                            aria-label="Mostrar contraseña"
+                            onclick="togglePasswordVisibility('admin-password', this)">
+                        <svg class="icono-ojo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        <svg class="icono-ojo-tachado" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    </button>
+                </div>
             </div>
             <div id="admin-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
             <button type="submit" class="btn btn-primario w-100" id="btn-admin-login">
@@ -67,8 +75,16 @@
             </div>
             <div class="form-grupo">
                 <label class="form-label">Contraseña</label>
-                <input type="password" id="usr-password" class="form-control"
-                       placeholder="••••••••" required autocomplete="current-password">
+                <div class="password-wrapper">
+                    <input type="password" id="usr-password" class="form-control"
+                           placeholder="••••••••" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" id="usr-password-toggle"
+                            aria-label="Mostrar contraseña"
+                            onclick="togglePasswordVisibility('usr-password', this)">
+                        <svg class="icono-ojo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        <svg class="icono-ojo-tachado" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    </button>
+                </div>
                 <div class="form-hint">Contraseña inicial: <strong>jurados</strong></div>
             </div>
             <div id="usr-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
@@ -86,8 +102,16 @@
             </div>
             <div class="form-grupo">
                 <label class="form-label">Contraseña</label>
-                <input type="password" id="inst-password" class="form-control"
-                       placeholder="••••••••" required autocomplete="current-password">
+                <div class="password-wrapper">
+                    <input type="password" id="inst-password" class="form-control"
+                           placeholder="••••••••" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" id="inst-password-toggle"
+                            aria-label="Mostrar contraseña"
+                            onclick="togglePasswordVisibility('inst-password', this)">
+                        <svg class="icono-ojo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        <svg class="icono-ojo-tachado" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    </button>
+                </div>
             </div>
             <div id="inst-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
             <button type="submit" class="btn btn-primario w-100" id="btn-inst-login">
@@ -104,8 +128,16 @@
             </div>
             <div class="form-grupo">
                 <label class="form-label">Contraseña</label>
-                <input type="password" id="comis-password" class="form-control"
-                       placeholder="••••••••" required autocomplete="current-password">
+                <div class="password-wrapper">
+                    <input type="password" id="comis-password" class="form-control"
+                           placeholder="••••••••" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" id="comis-password-toggle"
+                            aria-label="Mostrar contraseña"
+                            onclick="togglePasswordVisibility('comis-password', this)">
+                        <svg class="icono-ojo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        <svg class="icono-ojo-tachado" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    </button>
+                </div>
             </div>
             <div id="comis-error" class="alerta alerta-error oculto" style="margin-bottom:14px;"></div>
             <button type="submit" class="btn btn-primario w-100" id="btn-comis-login">
@@ -142,6 +174,16 @@
             }
         }
     })();
+
+    // Mostrar/ocultar contraseña — botón tipo "button": nunca envía el
+    // formulario ni borra el valor del campo, solo alterna su `type`.
+    function togglePasswordVisibility(inputId, btn) {
+        const input = document.getElementById(inputId);
+        const mostrando = input.type === 'password';
+        input.type = mostrando ? 'text' : 'password';
+        btn.classList.toggle('mostrando', mostrando);
+        btn.setAttribute('aria-label', mostrando ? 'Ocultar contraseña' : 'Mostrar contraseña');
+    }
 
     function mostrarTab(tab) {
         document.getElementById('form-admin').classList.toggle('oculto', tab !== 'admin');
