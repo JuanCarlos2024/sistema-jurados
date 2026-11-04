@@ -886,3 +886,130 @@ describe('construirDiffParaUI — Prioridad Deportiva / Repetición por Interval
         expect(porEtiqueta['Intervalo mínimo (meses)']).toEqual({ etiqueta: 'Intervalo mínimo (meses)', antes: '—', despues: '6 meses' });
     });
 });
+
+// ═════════════════════════════════════════════════════════════════════════
+// CORRECCIÓN — error real en producción al guardar un borrador schema4
+// copiado de v11 (schema3, Equidad de Traslados + Zonas Extremas activas):
+// "La equidad de traslados solo es válida desde schema_version=2".
+//
+// ERROR 1: schemaAdmiteEquidad enumeraba solo 2 y 3, excluyendo por omisión
+// el schema_version=4 agregado por Prioridad Deportiva (Etapa C) — nunca se
+// actualizó esa enumeración al agregar el schema nuevo.
+// ERROR 2: activarEquidadTraslados()/activarZonasExtremas() fijaban
+// schema_version=2/3 INCONDICIONALMENTE — activar (o reactivar) cualquiera
+// de las dos dentro de un borrador YA promovido a schema_version=4 lo hacía
+// RETROCEDER, perdiendo en el acto Prioridad Deportiva/Nota Técnica/
+// Repetición por Intervalo que ese borrador ya tuviera configuradas.
+// ═════════════════════════════════════════════════════════════════════════
+describe('CORRECCIÓN — activar Equidad de Traslados / Zonas Extremas nunca retrocede un schema_version superior ya presente', () => {
+    // Misma v11 real usada en el resto de este archivo (schema3, Equidad de
+    // Traslados Y Zonas Extremas activas a la vez) — el escenario EXACTO
+    // reportado: copiar v11 y activar Prioridad Deportiva sobre ella.
+    function v11RealConEquidadYZonas() {
+        return {
+            schema_version: 3,
+            regla_distancia_maxima_activa: true, distancia_maxima_km: 1000,
+            regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
+            regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true,
+            regla_equidad_traslados_activa: true, umbral_lejania_km: 350,
+            regla_zonas_extremas_activa: true,
+            zonas_extremas: JSON.parse(JSON.stringify(ZE_DEFAULT)),
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                ...ORDEN_CRITERIOS_V1.map(o => ({ ...o, orden: o.orden + 1 }))
+            ],
+            matriz: JSON.parse(JSON.stringify(MATRIZ_V1))
+        };
+    }
+
+    // Puntos 1-4 del pedido de corrección: copiar v11 -> Prioridad Deportiva
+    // -> Nota Técnica -> Repetición por Intervalo, todo en el MISMO borrador.
+    function borradorCompletoSchema4() {
+        let draft = v11RealConEquidadYZonas();
+        draft = activarPrioridadDeportiva(draft, PRIORIDAD_DEFAULT);       // punto 1
+        draft = activarNotaTecnica(draft);                                 // punto 2
+        draft = activarRepeticionIntervalo(draft, 6);                      // punto 2
+        return draft;
+    }
+
+    test('punto 1 — activar Prioridad Deportiva sobre v11 (Equidad+Zonas activas) promueve a schema4 SIN perder Equidad ni Zonas Extremas', () => {
+        const draft = activarPrioridadDeportiva(v11RealConEquidadYZonas(), PRIORIDAD_DEFAULT);
+        expect(draft.schema_version).toBe(4);
+        expect(draft.regla_equidad_traslados_activa).toBe(true);
+        expect(draft.umbral_lejania_km).toBe(350);
+        expect(draft.regla_zonas_extremas_activa).toBe(true);
+        expect(draft.zonas_extremas.asociaciones).toEqual(ZE_DEFAULT.asociaciones);
+        expect(draft.regla_prioridad_deportiva_activa).toBe(true);
+    });
+
+    test('puntos 2/3 — activar también Nota Técnica y Repetición por Intervalo (6 meses) en ese mismo borrador -> validarDraft() lo acepta completo', () => {
+        const draft = borradorCompletoSchema4();
+        expect(draft.schema_version).toBe(4);
+        expect(draft.ordenCriterios.some(o => o.criterio_codigo === 'NOTA_TECNICA')).toBe(true);
+        expect(draft.regla_repeticion_asociacion_intervalo_activa).toBe(true);
+        expect(draft.repeticion_asociacion_meses).toBe(6);
+        expect(validarDraft(draft)).toEqual({ valido: true });
+    });
+
+    test('punto 4 — Equidad sigue en orden=1 y Zonas Extremas conserva asociaciones/categorías intactas en el borrador completo', () => {
+        const draft = borradorCompletoSchema4();
+        const criterioEquidad = draft.ordenCriterios.find(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS');
+        expect(criterioEquidad.orden).toBe(1);
+        expect(draft.zonas_extremas.asociaciones).toEqual(ZE_DEFAULT.asociaciones);
+        expect(draft.zonas_extremas.categorias).toEqual(ZE_DEFAULT.categorias);
+    });
+
+    test('punto 5 — apagar y volver a encender Equidad de Traslados en el borrador completo NO reduce schema_version=4', () => {
+        let draft = borradorCompletoSchema4();
+        draft = desactivarEquidadTraslados(draft);
+        expect(draft.schema_version).toBe(4); // desactivar nunca retrocede (ya documentado)
+        draft = activarEquidadTraslados(draft);
+        expect(draft.schema_version).toBe(4); // CORRECCIÓN: antes esto volvía a fijar 2
+        expect(draft.regla_equidad_traslados_activa).toBe(true);
+        expect(draft.regla_prioridad_deportiva_activa).toBe(true); // nada de lo demás se perdió
+        expect(validarDraft(draft)).toEqual({ valido: true });
+    });
+
+    test('punto 6 — apagar y volver a encender Zonas Extremas en el borrador completo NO reduce schema_version=4', () => {
+        let draft = borradorCompletoSchema4();
+        draft = desactivarZonasExtremas(draft);
+        expect(draft.schema_version).toBe(4);
+        draft = activarZonasExtremas(draft, ZE_DEFAULT);
+        expect(draft.schema_version).toBe(4); // CORRECCIÓN: antes esto volvía a fijar 3
+        expect(draft.regla_zonas_extremas_activa).toBe(true);
+        expect(draft.regla_prioridad_deportiva_activa).toBe(true);
+        expect(validarDraft(draft)).toEqual({ valido: true });
+    });
+
+    test('punto 7 — el caso base sin tocar (draft schema1 -> activar Equidad) sigue promoviendo exactamente a schema_version=2, nunca más ni menos', () => {
+        const nuevo = activarEquidadTraslados({ schema_version: 1, ordenCriterios: [] });
+        expect(nuevo.schema_version).toBe(2);
+    });
+    test('punto 7 — el caso base sin tocar (draft schema2 -> activar Zonas Extremas) sigue promoviendo exactamente a schema_version=3, nunca más ni menos', () => {
+        const nuevo = activarZonasExtremas({ schema_version: 2, ordenCriterios: [] }, ZE_DEFAULT);
+        expect(nuevo.schema_version).toBe(3);
+    });
+
+    test('ERROR 1 aislado — validarDraft() ya NO rechaza regla_equidad_traslados_activa=true en schema_version=4 (antes: "solo es válida desde schema_version=2")', () => {
+        const c = {
+            schema_version: 4,
+            regla_distancia_maxima_activa: false,
+            ordenCriterios: [{ criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 }, { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 }],
+            matriz: JSON.parse(JSON.stringify(MATRIZ_V1)),
+            regla_equidad_traslados_activa: true, umbral_lejania_km: 350
+        };
+        expect(validarDraft(c)).toEqual({ valido: true });
+    });
+
+    // Regresión explícita: schema_version=1 debe seguir rechazando Equidad
+    // de Traslados — la corrección amplía la enumeración (2,3,4), nunca la
+    // convierte en un rango abierto que admitiría schema1 ni un futuro
+    // schema_version todavía no auditado para esta regla.
+    test('schema_version=1 con Equidad de Traslados activa SIGUE siendo inválido (la corrección no abre la puerta a schema1)', () => {
+        const c = configV1();
+        c.regla_equidad_traslados_activa = true;
+        c.umbral_lejania_km = 350;
+        c.ordenCriterios = [{ criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 }, ...ORDEN_CRITERIOS_V1.map(o => ({ ...o, orden: o.orden + 1 }))];
+        expect(validarDraft(c).valido).toBe(false);
+    });
+});

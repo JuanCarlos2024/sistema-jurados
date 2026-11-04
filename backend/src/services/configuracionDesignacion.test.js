@@ -1226,6 +1226,49 @@ describe('validarConfiguracion — gates de schema_version=4 (Prioridad Deportiv
         });
         expect(validarConfiguracion(config)).toEqual({ valido: true });
     });
+
+    // Punto 8 del pedido de corrección — error real en producción: el
+    // frontend (configuracionDesignacionHelpers.js) rechazaba por error
+    // regla_equidad_traslados_activa=true en schema_version=4. Se verifica
+    // acá que el BACKEND ya acepta correctamente ese mismo escenario
+    // completo (no necesitó ningún cambio — validarConfiguracion() nunca
+    // tuvo la enumeración cerrada [2,3] del frontend; su gate real es
+    // `schema_version === 1`, así que admite 2/3/4 sin cambios). Reproduce
+    // el caso EXACTO reportado: v11 real (schema3, Equidad de Traslados Y
+    // Zonas Extremas activas a la vez) clonada a schema4 con Prioridad
+    // Deportiva + Nota Técnica + Repetición por Intervalo, todo a la vez.
+    test('el backend YA acepta schema_version=4 con Equidad de Traslados + Zonas Extremas + Prioridad Deportiva + Nota Técnica + Repetición por Intervalo, todo activo a la vez (ningún cambio de backend fue necesario)', () => {
+        const v11RealConEquidadYZonas = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 3,
+            regla_equidad_traslados_activa: true, umbral_lejania_km: 350,
+            regla_zonas_extremas_activa: true,
+            zonas_extremas: { asociaciones: ['AYSÉN'], categorias: [
+                { categoria: 'A', elegible: false, orden_preferencia: null },
+                { categoria: 'B', elegible: true, orden_preferencia: 2 },
+                { categoria: 'C', elegible: true, orden_preferencia: 1 }
+            ] },
+            ordenCriterios: [
+                { criterio_codigo: 'EQUIDAD_TRASLADOS', orden: 1 },
+                ...construirConfiguracionDefaultV1().ordenCriterios.map(o => ({ ...o, orden: o.orden + 1 }))
+            ]
+        });
+        expect(validarConfiguracion(v11RealConEquidadYZonas)).toEqual({ valido: true }); // línea base real, sin tocar
+
+        const borradorCompletoSchema4 = clonarConfiguracion(v11RealConEquidadYZonas, {
+            schema_version: 4,
+            regla_prioridad_deportiva_activa: true, prioridad_clasificaciones: PRIORIDAD_VALIDA,
+            regla_repeticion_asociacion_intervalo_activa: true, repeticion_asociacion_meses: 6,
+            ordenCriterios: [
+                ...v11RealConEquidadYZonas.ordenCriterios,
+                { criterio_codigo: 'NOTA_TECNICA', orden: v11RealConEquidadYZonas.ordenCriterios.length + 1 }
+            ]
+        });
+        expect(validarConfiguracion(borradorCompletoSchema4)).toEqual({ valido: true });
+        // Equidad y Zonas Extremas se conservan intactas en el borrador schema4.
+        expect(borradorCompletoSchema4.regla_equidad_traslados_activa).toBe(true);
+        expect(borradorCompletoSchema4.regla_zonas_extremas_activa).toBe(true);
+        expect(borradorCompletoSchema4.zonas_extremas.asociaciones).toEqual(['AYSÉN']);
+    });
 });
 
 describe('reconstruirConfiguracionDesdeFilas / construirResumenParaUI — schema_version=4 (solo si la BD trae las columnas)', () => {

@@ -125,7 +125,15 @@ function moverCriterio(ordenCriterios, criterioCodigo, direccion) {
 // si no, usa UMBRAL_LEJANIA_DEFAULT_KM_UI (350).
 function activarEquidadTraslados(configuracion) {
     const c = JSON.parse(JSON.stringify(configuracion || {}));
-    c.schema_version = 2;
+    // CORRECCIÓN (error real en producción — retroceso accidental de
+    // schema_version): esto fijaba schema_version=2 incondicionalmente, así
+    // que activar (o reactivar) Equidad de Traslados dentro de un borrador
+    // YA promovido a schema_version=3 o 4 lo hacía RETROCEDER a 2, perdiendo
+    // en el acto Zonas Extremas/Prioridad Deportiva/Nota Técnica/Repetición
+    // por Intervalo que ese borrador ya tuviera. Promueve al mínimo
+    // requerido (2) SOLO si el draft todavía no alcanzó ese mínimo — nunca
+    // reduce un schema_version superior ya presente.
+    c.schema_version = Math.max(Number(c.schema_version) || 1, 2);
     c.regla_equidad_traslados_activa = true;
     if (!(Number(c.umbral_lejania_km) > 0)) c.umbral_lejania_km = UMBRAL_LEJANIA_DEFAULT_KM_UI;
 
@@ -186,7 +194,13 @@ function desactivarEquidadTraslados(configuracion) {
 // CONSERVAN intactos — nunca se sobrescriben con el default (sección 8).
 function activarZonasExtremas(configuracion, defaultZonaExtrema) {
     const c = JSON.parse(JSON.stringify(configuracion || {}));
-    c.schema_version = 3;
+    // CORRECCIÓN (error real en producción — mismo retroceso accidental que
+    // activarEquidadTraslados): fijaba schema_version=3 incondicionalmente,
+    // así que activar (o reactivar) Zonas Extremas dentro de un borrador YA
+    // promovido a schema_version=4 lo hacía retroceder a 3, perdiendo en el
+    // acto Prioridad Deportiva/Nota Técnica/Repetición por Intervalo. Nunca
+    // reduce un schema_version superior ya presente.
+    c.schema_version = Math.max(Number(c.schema_version) || 1, 3);
     c.regla_zonas_extremas_activa = true;
     const yaTeniaDatos = c.zonas_extremas && Array.isArray(c.zonas_extremas.asociaciones) && c.zonas_extremas.asociaciones.length > 0;
     if (!yaTeniaDatos) {
@@ -431,15 +445,25 @@ function validarDraft(configuracion) {
         }
     }
 
-    // ── Equidad de traslados (schema_version 2 o 3) — revisión de cierre,
+    // ── Equidad de traslados (schema_version 2, 3 o 4) — revisión de cierre,
     // sección 12: réplica de UX de la validación de autoridad en el backend
     // (configuracionDesignacion.js validarConfiguracion()). Casos A-G.
     // Mejora "Zonas Extremas": schema_version=3 admite TODO lo de schema
-    // 2 (EQUIDAD_TRASLADOS incluida, ambas reglas ortogonales) — solo
-    // schema_version=1 sigue rechazándola (significado histórico intacto).
+    // 2 (EQUIDAD_TRASLADOS incluida, ambas reglas ortogonales). Mejora
+    // "Prioridad Deportiva" (Etapa C): schema_version=4 admite TODO lo de
+    // schema 3, EQUIDAD_TRASLADOS incluida (heredada) — solo schema_version=1
+    // sigue rechazándola (significado histórico intacto).
+    //
+    // CORRECCIÓN (error real en producción — "La equidad de traslados solo
+    // es válida desde schema_version=2" al guardar un borrador schema4):
+    // esta condición enumeraba solo 2 y 3, excluyendo schema_version=4 por
+    // omisión — nunca se actualizó al agregar Prioridad Deportiva. Se
+    // enumeran explícitamente las 3 versiones que SÍ la admiten (2, 3 y 4)
+    // — nunca un rango abierto (`>= 2`) que admitiría sin querer un
+    // schema_version futuro todavía no auditado para esta regla.
     const reglaEquidadActiva = c.regla_equidad_traslados_activa === true;
     const criterioEquidad = ordenCriterios.find(o => o.criterio_codigo === 'EQUIDAD_TRASLADOS');
-    const schemaAdmiteEquidad = c.schema_version === 2 || c.schema_version === 3;
+    const schemaAdmiteEquidad = c.schema_version === 2 || c.schema_version === 3 || c.schema_version === 4;
     if (!schemaAdmiteEquidad && reglaEquidadActiva) {
         return { valido: false, error: 'La equidad de traslados solo es válida desde schema_version=2' }; // A
     }
