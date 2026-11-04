@@ -5,6 +5,10 @@ const {
     ASPECTOS_DESEMPENO_JURADO, validarAspectosDesempeno, calcularPromedioDesempeno,
     sincronizarNotaDelegado
 } = require('../../services/cartillaDelegadoNotas');
+// Reapertura/versionado (092): el PDF de cada versión oficial se genera y
+// sube a Storage DESPUÉS de que la RPC confirma el envío — el generador es
+// el mismo que ya usa el administrador, nunca un diseño paralelo.
+const { generarCartillaDelegadoPDF } = require('../../services/cartilla-delegado-pdf');
 
 // Middleware: solo delegados pueden usar este módulo
 router.use((req, res, next) => {
@@ -212,7 +216,11 @@ router.patch('/:id', async (req, res) => {
 
     if (!cartilla) return res.status(404).json({ error: 'Cartilla no encontrada.' });
     if (cartilla.delegado_id !== uid) return res.status(403).json({ error: 'Sin permiso.' });
-    if (['enviada', 'reenviada', 'aprobada'].includes(cartilla.estado)) {
+    // 092: 'cerrada' se agrega al bloqueo (omisión preexistente respecto al
+    // flujo institucional, que ya la bloqueaba — ver ESTADOS_BLOQUEADOS en
+    // institucional/cartilla.js). 'reabierta' NUNCA se bloquea aquí: es
+    // justamente el estado en el que el delegado debe poder volver a editar.
+    if (['enviada', 'reenviada', 'aprobada', 'cerrada'].includes(cartilla.estado)) {
         return res.status(409).json({ error: 'La cartilla ya fue enviada y no puede modificarse.' });
     }
 
@@ -265,7 +273,8 @@ router.post('/:id/enviar', async (req, res) => {
 
     if (!cartilla) return res.status(404).json({ error: 'Cartilla no encontrada.' });
     if (cartilla.delegado_id !== uid) return res.status(403).json({ error: 'Sin permiso.' });
-    if (['enviada', 'reenviada', 'aprobada'].includes(cartilla.estado)) {
+    // 092: 'cerrada' se agrega al bloqueo, mismo criterio que PATCH arriba.
+    if (['enviada', 'reenviada', 'aprobada', 'cerrada'].includes(cartilla.estado)) {
         return res.status(409).json({ error: 'La cartilla ya fue enviada.' });
     }
 
@@ -291,8 +300,12 @@ router.post('/:id/enviar', async (req, res) => {
     }
 
     const ahora = new Date().toISOString();
-    // Si estaba observada, pasar a reenviada; si no, pasar a enviada
-    const esReenvio   = cartilla.estado === 'observada';
+    // 092: si estaba observada O reabierta, pasar a reenviada; si no,
+    // pasar a enviada. 'reabierta' se agrega al criterio preexistente
+    // (antes solo 'observada') — mismo resultado "reenviada" para ambos
+    // orígenes, reutilizando el mismo estado ya existente (pedido 5: no
+    // crear un flujo contradictorio con Observar/Reenviar).
+    const esReenvio   = ['observada', 'reabierta'].includes(cartilla.estado);
     const nuevoEstado = esReenvio ? 'reenviada' : 'enviada';
 
     // Registrar en historial
@@ -302,10 +315,7 @@ router.post('/:id/enviar', async (req, res) => {
     }
 
     const updates = {
-        estado:                  nuevoEstado,
         enviada_en:              cartilla.enviada_en || ahora,
-        updated_at:              ahora,
-        actualizado_por:         uid,
         historial_observaciones: historial,
         ...(esReenvio ? { reenviada_en: ahora } : {})
     };
@@ -322,14 +332,57 @@ router.post('/:id/enviar', async (req, res) => {
         updates.respuestas_json.desempeno_jurado.nota_promedio = notaPromedio;
     }
 
-    const { data, error } = await supabase
-        .from('cartillas_delegado')
-        .update(updates)
-        .eq('id', req.params.id)
-        .select()
-        .single();
+    // 092 — paso final ATÓMICO: aplica los cambios de contenido, fija el
+    // estado explícitamente, limpia motivo_reapertura/reabierta_por/
+    // reabierta_en si los había, e inserta la versión histórica inmutable
+    // correspondiente, todo en una sola transacción (ver migración 092).
+    // Reemplaza el `.update()` directo que usaba esta ruta — ahora CUALQUIER
+    // envío oficial (el primero también) queda versionado.
+    const { data: envioData, error } = await supabase.rpc('registrar_envio_oficial_cartilla_delegado', {
+        p_cartilla_id: req.params.id,
+        p_version_esperada: null, // Delegado Rentado no usa concurrencia optimista
+        p_cambios: updates,
+        p_estado_nuevo: nuevoEstado,
+        p_actor_id: uid,
+        p_actor_tipo: 'usuario_pagado',
+        p_ip_address: req.ip || null
+    });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+        if (error.message?.includes('ESTADO_NO_ENVIABLE')) {
+            return res.status(409).json({ error: 'La cartilla ya fue enviada.' });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+
+    const resultadoEnvio = Array.isArray(envioData) ? envioData[0] : envioData;
+    const data = resultadoEnvio.cartilla;
+
+    // PDF congelado de esta versión — generado y subido DESPUÉS de que el
+    // envío oficial ya quedó confirmado (I/O de Storage, incompatible con
+    // la transacción SQL de arriba). Si este paso falla, el envío ya quedó
+    // aplicado igual — solo falta el PDF de conveniencia para esa versión
+    // histórica (mismo criterio de "no revertir por un fallo secundario"
+    // que ya usa la sincronización de Nota Delegado, debajo).
+    try {
+        const { data: rodeo } = await supabase
+            .from('rodeos')
+            .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre, temporada_id, temporadas(nombre)')
+            .eq('id', data.rodeo_id)
+            .maybeSingle();
+        const buffer = await generarCartillaDelegadoPDF(data, rodeo || {});
+        const storagePath = `${data.rodeo_id}/cartillas-delegado-versiones/${data.id}/v${resultadoEnvio.numero_version}_${Date.now()}.pdf`;
+        const { error: storageErr } = await supabase.storage
+            .from('rodeo-adjuntos')
+            .upload(storagePath, buffer, { contentType: 'application/pdf', upsert: false });
+        if (storageErr) throw new Error(storageErr.message);
+        await supabase.rpc('adjuntar_pdf_version_cartilla_delegado', {
+            p_version_historica_id: resultadoEnvio.version_historica_id,
+            p_storage_path_pdf: storagePath
+        });
+    } catch (errPdf) {
+        console.error('[CARTILLA-DELEGADO enviar] Error generando/subiendo el PDF de la versión histórica (no crítico):', errPdf.message);
+    }
 
     // Sincronizar con rodeo_notas_secundarias.nota_delegado — MISMA fuente
     // que ya usan los reportes/exportaciones del sistema (ver services/
@@ -359,6 +412,7 @@ router.post('/:id/enviar', async (req, res) => {
     const msg = esReenvio ? 'Cartilla reenviada correctamente.' : 'Cartilla enviada correctamente.';
     res.json({
         mensaje: msg, cartilla: data,
+        numero_version: resultadoEnvio.numero_version,
         // Campos compatibles con la respuesta anterior (derivados del
         // resultado detallado) + el resultado detallado completo, para que
         // el frontend pueda distinguir los 4 casos si lo necesita.

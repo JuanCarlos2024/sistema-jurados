@@ -337,7 +337,13 @@ async function cargarIndicadoresAdjuntosPorRodeo(rodeoIds) {
         if (result[l.rodeo_id]) result[l.rodeo_id].vy = true;
     });
 
-    const PRIORIDAD_DIGITAL = { aprobada: 6, cerrada: 5, reenviada: 4, enviada: 3, observada: 2, borrador: 1 };
+    // 092: 'reabierta' se agrega en el mismo nivel que 'observada' — ambos
+    // representan "pendiente de corrección del delegado", solo que con
+    // origen distinto (Observar vs Reabrir). Nunca debe mostrarse 'enviada'
+    // (prioridad 3) cuando en realidad el administrador la reabrió para
+    // que se corrija — mismo criterio de "mostrar siempre el estado más
+    // avanzado" ya documentado en este mapa.
+    const PRIORIDAD_DIGITAL = { aprobada: 6, cerrada: 5, reenviada: 4, enviada: 3, observada: 2, reabierta: 2, borrador: 1 };
     (cdDigitalRes.data || []).forEach(c => {
         if (!result[c.rodeo_id]) return;
         const actual = result[c.rodeo_id].cd_digital;

@@ -6,7 +6,14 @@
 // cubierto exhaustivamente en su propio archivo de tests) — acá solo importa
 // que la ruta lo conecte correctamente.
 // ═════════════════════════════════════════════════════════════════════════
-jest.mock('../../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
+// storage: mock mínimo (092) — el PDF congelado de cada versión se sube
+// DESPUÉS del envío oficial, nunca bloquea la respuesta si falla (ver
+// try/catch en la ruta) — se mockea igual para no ensuciar la salida de
+// estos tests con el error esperado de "supabase.storage is undefined".
+jest.mock('../../config/supabase', () => ({
+    from: jest.fn(), rpc: jest.fn(),
+    storage: { from: () => ({ upload: async () => ({ error: null }) }) }
+}));
 const supabase = require('../../config/supabase');
 const router = require('./cartilla-delegado');
 
@@ -54,6 +61,33 @@ function crearSupabaseMock(porTabla) {
         return chain;
     });
     return llamadas;
+}
+
+// 092 — POST /:id/enviar ahora llama a supabase.rpc('registrar_envio_oficial_
+// cartilla_delegado', ...) en vez de un .update() directo. Este helper monta
+// un dispatcher por nombre de RPC (nunca una única respuesta global — eso
+// pisaría la respuesta esperada por sincronizar_nota_delegado_automatica,
+// que varios tests YA configuran por separado). Las respuestas no
+// especificadas devuelven {data:null, error:null} (equivalente a no llamar).
+function mockRpcPorNombre(respuestas) {
+    supabase.rpc.mockImplementation((nombre, params) => {
+        const r = respuestas[nombre];
+        if (r === undefined) return Promise.resolve({ data: null, error: null });
+        return Promise.resolve(typeof r === 'function' ? r(params) : r);
+    });
+}
+// Respuesta por defecto de registrar_envio_oficial_cartilla_delegado para
+// los tests que no verifican su contenido específico — refleja el estado
+// que la propia ruta decide (nunca el que un mock fijo asumiría).
+function respuestaEnvioOficial(params, extra = {}) {
+    return {
+        data: {
+            cartilla: { id: params.p_cartilla_id, estado: params.p_estado_nuevo, ...params.p_cambios, ...extra },
+            numero_version: 1,
+            version_historica_id: 'hist-1'
+        },
+        error: null
+    };
 }
 
 beforeEach(() => { jest.clearAllMocks(); });
@@ -286,22 +320,23 @@ describe('Temporada / Tipo de Rodeo — 100% automáticos (4ª revisión, puntos
     });
 
     test('POST /:id/enviar — NO exige club_asociacion_organizador (ya no se auto-completa, quedaría siempre vacío en cartillas nuevas)', async () => {
-        const llamadas = crearSupabaseMock({
-            cartillas_delegado: [
-                {
-                    data: {
-                        id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1',
-                        temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D',
-                        tipo_rodeo: 'Provincial', historial_observaciones: []
-                        // sin club_asociacion_organizador — ya no se auto-completa (4ª revisión)
-                    }, error: null
-                },
-                { data: { id: 'cart-1', estado: 'enviada' }, error: null }
-            ]
+        crearSupabaseMock({
+            cartillas_delegado: {
+                data: {
+                    id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1',
+                    temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D',
+                    tipo_rodeo: 'Provincial', historial_observaciones: []
+                    // sin club_asociacion_organizador — ya no se auto-completa (4ª revisión)
+                }, error: null
+            }
         });
-        const { status } = await llamarRuta({ method: 'POST', url: '/cart-1/enviar', body: {} });
+        mockRpcPorNombre({ registrar_envio_oficial_cartilla_delegado: respuestaEnvioOficial });
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/cart-1/enviar', body: {} });
         expect(status).toBe(200);
-        expect(llamadas.cartillas_delegado.updates[0].estado).toBe('enviada');
+        expect(body.cartilla.estado).toBe('enviada');
+        expect(supabase.rpc).toHaveBeenCalledWith('registrar_envio_oficial_cartilla_delegado', expect.objectContaining({
+            p_cartilla_id: 'cart-1', p_estado_nuevo: 'enviada', p_version_esperada: null, p_actor_tipo: 'usuario_pagado'
+        }));
     });
 
     test('POST /:id/enviar — SIGUE exigiendo temporada/tipo_rodeo (garantizados por el auto-cálculo de creación, nunca por el Delegado)', async () => {
@@ -568,12 +603,14 @@ describe('Informe general de accidentes (3ª revisión) — respuestas_json.info
 describe('POST /:id/enviar — sincroniza Nota Delegado (rodeo_notas_secundarias) SOLO si las 4 notas están completas', () => {
     test('CASO 6 del pedido — 4 notas válidas -> sincroniza, nota_delegado_sincronizada=true, vía RPC con el promedio correcto', async () => {
         crearSupabaseMock({
-            cartillas_delegado: [
-                { data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null },
-                { data: { id: 'cart-1', estado: 'enviada' }, error: null }
-            ]
+            cartillas_delegado: {
+                data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null
+            }
         });
-        supabase.rpc.mockResolvedValue({ data: [{ resultado: 'aplicada', nota_delegado_vigente: null }], error: null });
+        mockRpcPorNombre({
+            registrar_envio_oficial_cartilla_delegado: respuestaEnvioOficial,
+            sincronizar_nota_delegado_automatica: { data: [{ resultado: 'aplicada', nota_delegado_vigente: null }], error: null }
+        });
         const { status, body } = await llamarRuta({
             method: 'POST', url: '/cart-1/enviar',
             body: { respuestas_json: { desempeno_jurado: { aspecto_1: 6, aspecto_2: 5, aspecto_3: 7, aspecto_4: 6 } } }
@@ -587,20 +624,23 @@ describe('POST /:id/enviar — sincroniza Nota Delegado (rodeo_notas_secundarias
         });
     });
 
-    test('notas incompletas -> NO sincroniza (nota_delegado_sincronizada=false, nunca llama a la RPC)', async () => {
+    test('notas incompletas -> NO sincroniza (nota_delegado_sincronizada=false, nunca llama a sincronizar_nota_delegado_automatica)', async () => {
         crearSupabaseMock({
-            cartillas_delegado: [
-                { data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null },
-                { data: { id: 'cart-1', estado: 'enviada' }, error: null }
-            ]
+            cartillas_delegado: {
+                data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null
+            }
         });
+        mockRpcPorNombre({ registrar_envio_oficial_cartilla_delegado: respuestaEnvioOficial });
         const { status, body } = await llamarRuta({
             method: 'POST', url: '/cart-1/enviar',
             body: { respuestas_json: { desempeno_jurado: { aspecto_1: 6 } } }
         });
         expect(status).toBe(200);
         expect(body.nota_delegado_sincronizada).toBe(false);
-        expect(supabase.rpc).not.toHaveBeenCalled();
+        // El envío oficial SÍ llama a su propia RPC (versionado, 092) — lo que
+        // nunca debe llamarse con notas incompletas es específicamente la
+        // sincronización de Nota Delegado.
+        expect(supabase.rpc).not.toHaveBeenCalledWith('sincronizar_nota_delegado_automatica', expect.anything());
     });
 
     // Protección (088): la cartilla se reenvía con éxito igual, pero si la
@@ -608,12 +648,14 @@ describe('POST /:id/enviar — sincroniza Nota Delegado (rodeo_notas_secundarias
     // el bloqueo — nunca se sobrescribe la corrección oficial.
     test('Nota Delegado ya protegida por el administrador -> la cartilla igual se envía, pero nota_delegado_bloqueada_por_proteccion=true', async () => {
         crearSupabaseMock({
-            cartillas_delegado: [
-                { data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'observada', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null },
-                { data: { id: 'cart-1', estado: 'reenviada' }, error: null }
-            ]
+            cartillas_delegado: {
+                data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'observada', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null
+            }
         });
-        supabase.rpc.mockResolvedValue({ data: [{ resultado: 'omitida_proteccion_administrativa', nota_delegado_vigente: 4.2 }], error: null });
+        mockRpcPorNombre({
+            registrar_envio_oficial_cartilla_delegado: respuestaEnvioOficial,
+            sincronizar_nota_delegado_automatica: { data: [{ resultado: 'omitida_proteccion_administrativa', nota_delegado_vigente: 4.2 }], error: null }
+        });
         const { status, body } = await llamarRuta({
             method: 'POST', url: '/cart-1/enviar',
             body: { respuestas_json: { desempeno_jurado: { aspecto_1: 6, aspecto_2: 5, aspecto_3: 7, aspecto_4: 6 } } }
@@ -627,12 +669,14 @@ describe('POST /:id/enviar — sincroniza Nota Delegado (rodeo_notas_secundarias
 
     test('Nota Delegado histórica sin clasificar -> la cartilla igual se envía, resultado distinguible de la protección administrativa', async () => {
         crearSupabaseMock({
-            cartillas_delegado: [
-                { data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null },
-                { data: { id: 'cart-1', estado: 'enviada' }, error: null }
-            ]
+            cartillas_delegado: {
+                data: { id: 'cart-1', rodeo_id: 'rodeo-9', estado: 'borrador', delegado_id: 'delegado-1', temporada: '2026-2027', fecha_rodeo: '2026-09-05', delegado_nombre: 'D', club_asociacion_organizador: 'X', tipo_rodeo: 'Provincial', historial_observaciones: [] }, error: null
+            }
         });
-        supabase.rpc.mockResolvedValue({ data: [{ resultado: 'omitida_historica_sin_clasificar', nota_delegado_vigente: 5.1 }], error: null });
+        mockRpcPorNombre({
+            registrar_envio_oficial_cartilla_delegado: respuestaEnvioOficial,
+            sincronizar_nota_delegado_automatica: { data: [{ resultado: 'omitida_historica_sin_clasificar', nota_delegado_vigente: 5.1 }], error: null }
+        });
         const { status, body } = await llamarRuta({
             method: 'POST', url: '/cart-1/enviar',
             body: { respuestas_json: { desempeno_jurado: { aspecto_1: 6, aspecto_2: 5, aspecto_3: 7, aspecto_4: 6 } } }

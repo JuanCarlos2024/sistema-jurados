@@ -542,16 +542,16 @@ router.post('/:id/enviar', async (req, res) => {
     }
 
     const ahora = new Date().toISOString();
-    const esReenvio = cartilla.estado === 'observada';
+    // 092: 'reabierta' se agrega al criterio preexistente (antes solo
+    // 'observada') — mismo estado resultante "reenviada" para ambos
+    // orígenes, reutilizando Observar/Reenviar sin crear un flujo paralelo.
+    const esReenvio = ['observada', 'reabierta'].includes(cartilla.estado);
     const nuevoEstado = esReenvio ? 'reenviada' : 'enviada';
     const historial = Array.isArray(cartilla.historial_observaciones) ? [...cartilla.historial_observaciones] : [];
     if (esReenvio) historial.push({ tipo: 'reenvio', fecha: ahora, por: 'delegado_asociacion' });
 
     const updates = {
-        estado: nuevoEstado,
         enviada_en: cartilla.enviada_en || ahora,
-        updated_at: ahora,
-        actualizado_por_cuenta_institucional_id: req.usuario.id,
         historial_observaciones: historial,
         version: cartilla.version + 1,
         ...(esReenvio ? { reenviada_en: ahora } : {})
@@ -564,17 +564,23 @@ router.post('/:id/enviar', async (req, res) => {
         updates.respuestas_json.desempeno_jurado.nota_promedio = notaPromedio;
     }
 
-    // Fase 3.5.1 — misma garantía que PATCH: el UPDATE y su auditoría
-    // obligatoria ('enviar'/'reenviar') quedan en una sola transacción
-    // (migración 070) — si la auditoría fallara, el envío tampoco queda
-    // aplicado (nunca "cartilla enviada" sin su evento de auditoría).
-    const { data, error } = await supabase.rpc('actualizar_cartilla_institucional_con_auditoria', {
+    // 092 — paso final ATÓMICO, común a ambas modalidades (ver migración):
+    // aplica los cambios de contenido, fija el estado explícitamente, limpia
+    // motivo_reapertura/reabierta_por/reabierta_en si los había, e inserta
+    // la versión histórica inmutable correspondiente, todo en una sola
+    // transacción. Reemplaza actualizar_cartilla_institucional_con_auditoria
+    // (070) SOLO para este paso de envío — PATCH sigue usando esa RPC sin
+    // cambios, ya que el versionado oficial solo aplica a envíos/reenvíos.
+    // Concurrencia optimista obligatoria aquí (p_version_esperada = la
+    // versión leída) — mismo criterio que la RPC anterior exigía.
+    const { data: envioData, error } = await supabase.rpc('registrar_envio_oficial_cartilla_delegado', {
         p_cartilla_id: req.params.id,
-        p_version: cartilla.version,
+        p_version_esperada: cartilla.version,
         p_cambios: updates,
-        p_cuenta_institucional_id: req.usuario.id,
-        p_accion: 'enviar',
-        p_descripcion: `${esReenvio ? 'Reenvío' : 'Envío'} de cartilla institucional`
+        p_estado_nuevo: nuevoEstado,
+        p_actor_id: req.usuario.id,
+        p_actor_tipo: 'cuenta_institucional',
+        p_ip_address: req.ip || null
     });
 
     if (error) {
@@ -584,7 +590,25 @@ router.post('/:id/enviar', async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
 
-    const data_enviada = Array.isArray(data) ? data[0] : data;
+    const resultadoEnvio = Array.isArray(envioData) ? envioData[0] : envioData;
+    const data_enviada = resultadoEnvio.cartilla;
+
+    // PDF congelado de esta versión — mismo criterio de "no revertir por un
+    // fallo secundario" que usuario/cartilla-delegado.js (ver ese archivo).
+    try {
+        const buffer = await generarCartillaDelegadoPDF(data_enviada, rodeo || {});
+        const storagePath = `${data_enviada.rodeo_id}/cartillas-delegado-versiones/${data_enviada.id}/v${resultadoEnvio.numero_version}_${Date.now()}.pdf`;
+        const { error: storageErr } = await supabase.storage
+            .from('rodeo-adjuntos')
+            .upload(storagePath, buffer, { contentType: 'application/pdf', upsert: false });
+        if (storageErr) throw new Error(storageErr.message);
+        await supabase.rpc('adjuntar_pdf_version_cartilla_delegado', {
+            p_version_historica_id: resultadoEnvio.version_historica_id,
+            p_storage_path_pdf: storagePath
+        });
+    } catch (errPdf) {
+        console.error('[CARTILLA-INSTITUCIONAL enviar] Error generando/subiendo el PDF de la versión histórica (no crítico):', errPdf.message);
+    }
 
     // Protección (088) — ver comentario equivalente en usuario/cartilla-delegado.js.
     let notaDelegadoResultado = 'omitida_borrador_incompleto';
@@ -601,6 +625,7 @@ router.post('/:id/enviar', async (req, res) => {
     const msg = esReenvio ? 'Cartilla reenviada correctamente.' : 'Cartilla enviada correctamente.';
     res.json({
         mensaje: msg, cartilla: data_enviada,
+        numero_version: resultadoEnvio.numero_version,
         nota_delegado_sincronizada: notaDelegadoResultado === 'aplicada',
         nota_delegado_bloqueada_por_proteccion: notaDelegadoResultado === 'omitida_proteccion_administrativa',
         nota_delegado_resultado_sincronizacion: notaDelegadoResultado

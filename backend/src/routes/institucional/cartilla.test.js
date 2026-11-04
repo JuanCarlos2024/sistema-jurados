@@ -5,7 +5,10 @@
 // correcto, y que PATCH/enviar respetan versión/estado/asociación.
 const jwt = require('jsonwebtoken');
 
-jest.mock('../../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
+jest.mock('../../config/supabase', () => ({
+    from: jest.fn(), rpc: jest.fn(),
+    storage: { from: () => ({ upload: async () => ({ error: null }) }) }
+}));
 jest.mock('../../services/auditoria', () => ({ registrar: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('../../services/cartilla-delegado-pdf', () => ({ generarCartillaDelegadoPDF: jest.fn() }));
 
@@ -88,6 +91,23 @@ beforeEach(() => {
     rpcImpl = jest.fn((fn) => {
         if (fn === 'actualizar_cartilla_institucional_con_auditoria') {
             return Promise.resolve(respuestas.cartillas_delegado.updateResult ?? { data: null, error: null });
+        }
+        // 092 — POST /:id/enviar ahora llama a esta RPC en vez de la de
+        // arriba. Reutiliza `respuestas.cartillas_delegado.updateResult`
+        // (misma convención ya usada por los tests de PATCH/enviar) pero
+        // envuelta en la forma {cartilla, numero_version, version_historica_id}
+        // que devuelve la nueva RPC — si updateResult trae un error, se
+        // propaga igual.
+        if (fn === 'registrar_envio_oficial_cartilla_delegado') {
+            const r = respuestas.cartillas_delegado.updateResult;
+            if (r?.error) return Promise.resolve({ data: null, error: r.error });
+            return Promise.resolve({
+                data: { cartilla: r?.data ?? null, numero_version: 1, version_historica_id: 'hist-1' },
+                error: null
+            });
+        }
+        if (fn === 'adjuntar_pdf_version_cartilla_delegado') {
+            return Promise.resolve({ data: { id: 'hist-1' }, error: null });
         }
         return Promise.resolve({ data: { id: 'cart-1', version: 1, delegado_asociacion_id: DELEGADO_OK.id, delegado_nombre: DELEGADO_OK.nombre }, error: null });
     });
@@ -536,17 +556,18 @@ describe('POST /institucional/cartilla/:id/enviar', () => {
         historial_observaciones: []
     };
 
-    test('envío válido con todos los campos requeridos -> 200, estado=enviada, vía la RPC atómica de envío+auditoría (migración 070)', async () => {
+    test('envío válido con todos los campos requeridos -> 200, estado=enviada, vía la RPC atómica de envío+versionado (migración 092)', async () => {
         respuestas.cartillas_delegado.maybeSingle = { data: BASE, error: null };
         respuestas.cartillas_delegado.updateResult = { data: { ...BASE, estado: 'enviada', version: 2 }, error: null };
         const res = await llamar('POST', '/cart-1/enviar', { version: 1 }, auth(ASOC_OSORNO));
         expect(res.statusCode).toBe(200);
         expect(res.jsonBody.cartilla.estado).toBe('enviada');
-        expect(supabase.rpc).toHaveBeenCalledWith('actualizar_cartilla_institucional_con_auditoria', expect.objectContaining({
-            p_cartilla_id: 'cart-1', p_version: 1, p_accion: 'enviar'
+        expect(res.jsonBody.numero_version).toBe(1);
+        expect(supabase.rpc).toHaveBeenCalledWith('registrar_envio_oficial_cartilla_delegado', expect.objectContaining({
+            p_cartilla_id: 'cart-1', p_version_esperada: 1, p_estado_nuevo: 'enviada', p_actor_tipo: 'cuenta_institucional'
         }));
-        // Fase 3.5.1: la auditoría la registra la propia RPC — esta ruta ya
-        // no debe llamar a auditoria.registrar.
+        // 092: la auditoría la registra la propia RPC — esta ruta no debe
+        // llamar a auditoria.registrar.
         expect(auditoria.registrar).not.toHaveBeenCalled();
     });
 

@@ -378,6 +378,40 @@ describe('cargarIndicadoresAdjuntosPorRodeo — Cartilla Jurado / Cartilla Deleg
             expect(ind.r1.cd_estado).toBe('pendiente');
             expect(ind.r1.cd_digital).toEqual({ modalidad: 'delegado_asociacion', estado: 'aprobada' });
         });
+
+        // 092 — "Reabrir": 'reabierta' nunca debe quedar eclipsado por un
+        // 'enviada'/'reenviada'/'aprobada' previo del mismo rodeo (el
+        // administrador la reabrió justamente para que no se siga mostrando
+        // como ya resuelta) — mismo nivel de prioridad que 'observada'.
+        test('único estado "reabierta" -> cd_digital.estado="reabierta" (nunca se degrada a un estado previo)', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'reabierta', delegado_asociacion_id: null }], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital.estado).toBe('reabierta');
+        });
+
+        test('"reabierta" tiene la MISMA prioridad que "observada" — nunca por debajo de "borrador"', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [
+                { rodeo_id: 'r1', estado: 'borrador', delegado_asociacion_id: null },
+                { rodeo_id: 'r1', estado: 'reabierta', delegado_asociacion_id: null }
+            ], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital.estado).toBe('reabierta');
+        });
+
+        test('"reabierta" queda por debajo de "aprobada"/"cerrada"/"reenviada"/"enviada" si coexisten (prioridad relativa correcta — ver nota de diseño en PRIORIDAD_DIGITAL)', async () => {
+            respuestas.rodeo_adjuntos = { data: [], error: null };
+            respuestas.rodeo_links = { data: [], error: null };
+            respuestas.cartillas_delegado = { data: [
+                { rodeo_id: 'r1', estado: 'reabierta', delegado_asociacion_id: null },
+                { rodeo_id: 'r1', estado: 'reenviada', delegado_asociacion_id: null }
+            ], error: null };
+            const ind = await cargarIndicadoresAdjuntosPorRodeo(['r1']);
+            expect(ind.r1.cd_digital.estado).toBe('reenviada');
+        });
     });
 });
 

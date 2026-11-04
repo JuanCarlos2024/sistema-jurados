@@ -234,8 +234,10 @@ let _bloqueadaPorCartillaAdjunta = false;
 // múltiples repeticiones de `['enviada','reenviada','aprobada'].includes(_estado)`
 // que ya existían por sección, para que el bloqueo por designación posterior
 // aplique de forma uniforme a TODO el formulario sin tener que tocar cada sección.
+// 092: 'reabierta' NUNCA es solo-lectura (el delegado debe poder editar y
+// reenviar); 'cerrada' se agrega al bloqueo (mismo criterio que el backend).
 function esSoloLectura() {
-    return ['enviada', 'reenviada', 'aprobada'].includes(_estado) || _bloqueadaPorDesignacionPosterior || _bloqueadaPorCartillaAdjunta;
+    return ['enviada', 'reenviada', 'aprobada', 'cerrada'].includes(_estado) || _bloqueadaPorDesignacionPosterior || _bloqueadaPorCartillaAdjunta;
 }
 let _guardando     = false;
 let _jurados       = []; // Jurado(s) real(es) asignados al rodeo — SOLO LECTURA (nuevo formato 2026-2027)
@@ -457,11 +459,25 @@ function renderCartilla(r) {
             <strong>✔ Informe aprobado</strong>
             Tu cartilla fue aprobada el ${aprobadaEn}. Ya no puede ser modificada.
         </div>`;
+    } else if (_estado === 'reabierta') {
+        // 092 — "Reabrir": el Administrador reabrió una cartilla ya enviada
+        // (incluso aprobada/cerrada) para que se corrija. Mismo estilo visual
+        // que el banner "observada" (naranja, requiere acción del delegado),
+        // pero con su propio motivo/fecha — nunca el mismo texto, para no
+        // confundir una reapertura administrativa con una simple observación.
+        const motivoReapertura = sanitizar(cartilla.motivo_reapertura || '');
+        const reabiertaEn = cartilla.reabierta_en ? new Date(cartilla.reabierta_en).toLocaleString('es-CL') : '—';
+        html += `<div class="observada-banner">
+            <strong>🔓 Cartilla reabierta para corrección</strong>
+            El Administrador reabrió esta cartilla el ${reabiertaEn} para que se corrija y se envíe una nueva versión.
+            ${motivoReapertura ? `<div class="motivo-obs">${motivoReapertura}</div>` : ''}
+            <div style="margin-top:8px;font-size:13px;color:#555;">Puedes editar y reenviar el informe a continuación. Al reenviarlo se registrará como una nueva versión oficial.</div>
+        </div>`;
     }
 
     // ── Estado badges ─────────────────────────────────────────────────────
-    const _estadoBadgeMap = { enviada:'estado-enviada', reenviada:'estado-reenviada', observada:'estado-observada', aprobada:'estado-aprobada', borrador:'estado-borrador' };
-    const _estadoLabelMap = { enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', aprobada:'Aprobada', borrador:'Borrador', nueva:'Nueva' };
+    const _estadoBadgeMap = { enviada:'estado-enviada', reenviada:'estado-reenviada', observada:'estado-observada', aprobada:'estado-aprobada', borrador:'estado-borrador', reabierta:'estado-observada' };
+    const _estadoLabelMap = { enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', aprobada:'Aprobada', borrador:'Borrador', nueva:'Nueva', reabierta:'Pendiente corrección' };
     const _badgeClass = _estadoBadgeMap[_estado] || 'estado-borrador';
     const _badgeLabel = _estadoLabelMap[_estado] || _estado;
 
@@ -796,7 +812,7 @@ function renderCartilla(r) {
     if (!ya) {
         const barra = document.createElement('div');
         barra.className = 'barra-acciones';
-        const btnEnviarLabel = _estado === 'observada' ? 'Reenviar informe' : 'Enviar informe';
+        const btnEnviarLabel = ['observada', 'reabierta'].includes(_estado) ? 'Reenviar informe' : 'Enviar informe';
         barra.innerHTML = `
             <button class="btn btn-secundario" onclick="guardarBorrador()" id="btn-borrador">Guardar borrador</button>
             <button class="btn btn-primario"   onclick="enviarCartilla()" id="btn-enviar">${btnEnviarLabel}</button>`;
@@ -2553,7 +2569,7 @@ async function enviarCartilla() {
         if (!confirm('Ha ingresado ganado bajo/sobre peso pero no marcó "Sí" en "¿Incluye informe de ganado bajo peso?". ¿Desea continuar de todas formas?')) return;
     }
 
-    const esReenvio = _estado === 'observada';
+    const esReenvio = ['observada', 'reabierta'].includes(_estado);
     const confirmMsg = esReenvio
         ? '¿Confirma el reenvío del Informe del Delegado?\n\nEl informe volverá a revisión del Administrador.'
         : '¿Confirma el envío del Informe del Delegado?\n\nUna vez enviado no podrá editarlo sin autorización del Administrador.';

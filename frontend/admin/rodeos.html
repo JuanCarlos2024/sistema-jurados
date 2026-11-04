@@ -2616,8 +2616,11 @@ async function verCartillaDelegadoDigital(cartillaId) {
         const bool2txt = (v) => v === true ? '<span style="color:#27ae60;font-weight:600;">Sí</span>' : v === false ? '<span style="color:#e74c3c;">No</span>' : '<em style="color:#bbb;">No indicado</em>';
         const check2txt = (v) => v === true ? '✅' : '☐';
 
-        const estadoColor = { borrador:'#f39c12', enviada:'#27ae60', observada:'#e67e22', aprobada:'#1a5276', cerrada:'#888' }[c.estado] || '#888';
-        const estadoLabel = { borrador:'Borrador', enviada:'Enviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[c.estado] || c.estado;
+        // 092: se agregan 'reenviada' (gap preexistente — ya existía en el
+        // CHECK y en el código, pero nunca tuvo color/etiqueta propios acá)
+        // y 'reabierta' (nuevo).
+        const estadoColor = { borrador:'#f39c12', enviada:'#27ae60', reenviada:'#1e8449', observada:'#e67e22', reabierta:'#e67e22', aprobada:'#1a5276', cerrada:'#888' }[c.estado] || '#888';
+        const estadoLabel = { borrador:'Borrador', enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', reabierta:'Reabierta', aprobada:'Aprobada', cerrada:'Cerrada' }[c.estado] || c.estado;
         const fechaEnv = c.enviada_en ? new Date(c.enviada_en).toLocaleString('es-CL') : '—';
 
         const fila = (label, val) => `<tr>
@@ -2678,11 +2681,14 @@ async function verCartillaDelegadoDigital(cartillaId) {
             ${renderHistorialObsCd(c)}
             ${renderHistorialResponsablesCd(c)}
             <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
+            <div id="cd-versiones-cont"></div>
+            <hr style="margin:20px 0 4px;border:none;border-top:2px solid #e0e8f5;">
             <div id="cd-admin-acciones"></div>`;
         _cdActivaData = c;
         setTimeout(function(){
             renderAdjuntosModalCd(c.rodeo_id);
             renderAccionesCartillaDelegado(c);
+            cargarVersionesCartillaDelegado(c.id);
         }, 50);
     } catch (err) {
         document.getElementById('modal-cartilla-delegado-body').innerHTML =
@@ -3353,7 +3359,15 @@ function renderAccionesCartillaDelegado(c) {
     const estado = c.estado || '';
     const puedeObservar = ['enviada', 'reenviada'].includes(estado);
     const puedeAprobar  = ['enviada', 'reenviada', 'observada'].includes(estado);
-    const hayCartilla   = ['enviada', 'reenviada', 'observada', 'aprobada'].includes(estado);
+    // 092: 'cerrada' se agrega — es el único estado reservado desde el que
+    // hoy solo tiene sentido mostrar "Reabrir" (nunca se llega a él todavía
+    // por ningún otro endpoint). 'reabierta' también se agrega para que el
+    // panel de acciones siga visible mientras el delegado corrige (antes
+    // quedaba vacío por completo en ese estado).
+    const hayCartilla   = ['enviada', 'reenviada', 'observada', 'aprobada', 'cerrada', 'reabierta'].includes(estado);
+    // 092: "Reabrir" — válido desde enviada/reenviada/aprobada/cerrada (ver
+    // migración 092 y su nota de diseño sobre por qué 'cerrada' es segura).
+    const puedeReabrir  = ['enviada', 'reenviada', 'aprobada', 'cerrada'].includes(estado);
 
     if (!hayCartilla) { cont.innerHTML = ''; return; }
 
@@ -3364,6 +3378,9 @@ function renderAccionesCartillaDelegado(c) {
     if (puedeAprobar) {
         botonesHtml += `<button class="btn btn-pequeño" style="background:#d4efdf;color:#1e8449;border:1px solid #52be80;" onclick="aprobarCartillaDelegado('${c.id}')">✔ Aprobar</button> `;
     }
+    if (puedeReabrir) {
+        botonesHtml += `<button class="btn btn-pequeño" style="background:#fff3cd;color:#856404;border:1px solid #ffc107;" onclick="abrirModalReabrirCd('${c.id}')">🔓 Reabrir</button> `;
+    }
     botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="descargarPdfCartillaDelegado('${c.id}')">📄 Exportar PDF</button> `;
 
     const emailDelegado = c.delegado?.email || '';
@@ -3371,6 +3388,105 @@ function renderAccionesCartillaDelegado(c) {
 
     cont.innerHTML = `<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Acciones administrativas</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">${botonesHtml}</div>`;
+}
+
+// ─── 092 — Historial de versiones oficiales (Reabrir/Reenviar) ──────────────
+async function cargarVersionesCartillaDelegado(cartillaId) {
+    const cont = document.getElementById('cd-versiones-cont');
+    if (!cont) return;
+    try {
+        const versiones = await api.get('/admin/cartillas-delegado/' + cartillaId + '/versiones');
+        if (!versiones || versiones.length === 0) { cont.innerHTML = ''; return; }
+
+        let html = '<div style="font-size:13px;font-weight:700;color:#1a3c6e;margin-bottom:8px;">Historial de versiones oficiales</div>'
+            + '<div style="display:flex;flex-direction:column;gap:5px;">';
+        versiones.forEach(function(v) {
+            const estadoTxt = v.estado_version === 'reenviada' ? 'Reenviada' : 'Enviada';
+            const fechaStr  = v.enviada_en ? new Date(v.enviada_en).toLocaleString('es-CL') : '—';
+            const motivo    = v.motivo_reapertura_previa ? ' · <em>Reapertura: ' + sanitizar(v.motivo_reapertura_previa) + '</em>' : '';
+            // Punto B (revisión final): si falló la generación/subida del PDF
+            // tras el envío, storage_path_pdf queda NULL — ese NULL es el
+            // registro del pendiente. Se ofrece regenerarlo EXACTO desde el
+            // snapshot inmutable (nunca altera las respuestas históricas ni
+            // crea una versión nueva).
+            const btnPdf    = v.storage_path_pdf
+                ? '<button class="btn btn-pequeño btn-outline" onclick="verPdfVersionCartillaDelegado(\'' + v.id + '\')">📄 PDF</button>'
+                : '<button class="btn btn-pequeño" style="background:#f8d7da;color:#842029;border:1px solid #f1aeb5;" onclick="regenerarPdfVersionCartillaDelegado(\'' + v.id + '\')">⚠ Regenerar PDF</button>';
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid #1a5276;">'
+                + '<span style="font-size:12px;font-weight:700;color:#1a5276;white-space:nowrap;">v' + v.numero_version + ' · ' + estadoTxt + '</span>'
+                + '<span style="font-size:11px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + fechaStr + motivo + '</span>'
+                + btnPdf
+                + '</div>';
+        });
+        html += '</div>';
+        cont.innerHTML = html;
+    } catch (e) {
+        cont.innerHTML = '';
+        console.error('[CARTILLA-DELEGADO versiones]', e.message);
+    }
+}
+
+async function verPdfVersionCartillaDelegado(versionId) {
+    try {
+        const r = await api.get('/admin/cartillas-delegado/version/' + versionId + '/pdf');
+        window.open(r.url, '_blank');
+    } catch(e) { mostrarToast(e.message || 'Error al obtener PDF', 'error'); }
+}
+
+// Punto B (revisión final) — regenera el PDF EXACTO de una versión histórica
+// a partir de su snapshot inmutable (nunca de datos en vivo), para el caso en
+// que la subida original falló tras el envío oficial.
+async function regenerarPdfVersionCartillaDelegado(versionId) {
+    try {
+        await api.post('/admin/cartillas-delegado/version/' + versionId + '/regenerar-pdf', {});
+        mostrarToast('PDF regenerado correctamente.', 'exito');
+        if (_cdActivaData?.id) cargarVersionesCartillaDelegado(_cdActivaData.id);
+    } catch(e) { mostrarToast(e.message || 'Error al regenerar el PDF', 'error'); }
+}
+
+// ─── Modal: Reabrir cartilla delegado (092) ─────────────────────────────────
+function abrirModalReabrirCd(cartillaId) {
+    let m = document.getElementById('modal-reabrir-cd');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'modal-reabrir-cd';
+        m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1300;align-items:center;justify-content:center;padding:16px;';
+        m.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;padding:24px;">
+            <div style="font-weight:700;font-size:15px;color:#1a3c6e;margin-bottom:12px;">🔓 Reabrir cartilla del delegado</div>
+            <p style="font-size:13px;color:#555;margin-bottom:12px;">La versión actual quedará archivada en el historial. El delegado podrá corregir y enviar una nueva versión oficial.</p>
+            <label class="form-label">Motivo de reapertura <span style="color:red">*</span></label>
+            <textarea id="reabrir-cd-motivo" rows="4" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;box-sizing:border-box;resize:vertical;" placeholder="Ej: Falta corregir el nombre del secretario..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+                <button class="btn btn-secundario btn-pequeño" onclick="document.getElementById('modal-reabrir-cd').style.display='none'">Cancelar</button>
+                <button class="btn btn-pequeño" id="btn-confirmar-reabrir-cd" style="background:#ffc107;color:#856404;border:1px solid #ffc107;" onclick="confirmarReabrirCd()">Reabrir cartilla</button>
+            </div>
+        </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('click', function(e) { if (e.target === m) m.style.display = 'none'; });
+    }
+    document.getElementById('reabrir-cd-motivo').value = '';
+    m._cartillaId = cartillaId;
+    m.style.display = 'flex';
+    setTimeout(function(){ document.getElementById('reabrir-cd-motivo').focus(); }, 50);
+}
+
+async function confirmarReabrirCd() {
+    const m      = document.getElementById('modal-reabrir-cd');
+    const motivo = (document.getElementById('reabrir-cd-motivo')?.value || '').trim();
+    if (!motivo) { mostrarToast('El motivo de reapertura es obligatorio', 'error'); return; }
+    const btn = document.getElementById('btn-confirmar-reabrir-cd');
+    if (btn) { btn.disabled = true; btn.textContent = 'Reabriendo...'; }
+    try {
+        await api.post('/admin/cartillas-delegado/' + m._cartillaId + '/reabrir', { motivo });
+        m.style.display = 'none';
+        mostrarToast('Cartilla reabierta. El delegado puede corregir y reenviar.', 'exito');
+        await verCartillaDelegadoDigital(m._cartillaId);
+        if (rodeoActual?.id) verDetalle(rodeoActual.id);
+    } catch(e) {
+        mostrarToast(e.message || 'Error al reabrir cartilla', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Reabrir cartilla'; }
+    }
 }
 
 // ─── Modal: Observar cartilla delegado ──────────────────────────────────────
@@ -3631,8 +3747,10 @@ async function renderAdjuntosAdmin() {
                                   : cd.estado === 'reenviada' ? '#1e8449'
                                   : cd.estado === 'aprobada'  ? '#1a5276'
                                   : cd.estado === 'observada' ? '#e67e22'
+                                  : cd.estado === 'reabierta' ? '#e67e22'
                                   : '#f39c12';
-                const estadoText  = { borrador:'Borrador', enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', aprobada:'Aprobada', cerrada:'Cerrada' }[cd.estado] || cd.estado;
+                // 092: 'reabierta' se agrega al mapa de etiquetas.
+                const estadoText  = { borrador:'Borrador', enviada:'Enviada', reenviada:'Reenviada', observada:'Observada', reabierta:'Reabierta', aprobada:'Aprobada', cerrada:'Cerrada' }[cd.estado] || cd.estado;
                 const nombre      = cd.delegado?.nombre_completo || cd.delegado_nombre || 'Delegado';
                 // Mejoras rodeos (ítem 3): el backend ya distingue el origen
                 // (GET /admin/cartillas-delegado/by-rodeo, campo `origen` —

@@ -157,6 +157,156 @@ router.post('/:id/observar', async (req, res) => {
     }
 });
 
+// ─── POST /api/admin/cartillas-delegado/:id/reabrir ──────────────────────────
+// 092: reabre una cartilla ya enviada/reenviada/aprobada/cerrada para que el
+// delegado (Asociación o Rentado) la corrija y reenvíe. Exige motivo.
+router.post('/:id/reabrir', async (req, res) => {
+    const { motivo } = req.body || {};
+    if (!motivo || String(motivo).trim() === '') {
+        return res.status(422).json({ error: 'El motivo de reapertura es obligatorio.' });
+    }
+    try {
+        const { data, error } = await supabase.rpc('reabrir_cartilla_delegado', {
+            p_cartilla_id: req.params.id,
+            p_motivo: String(motivo).trim(),
+            p_actor_id: req.usuario.id,
+            p_actor_tipo: 'administrador',
+            p_ip_address: req.ip || null
+        });
+
+        if (error) {
+            if (error.message?.includes('CARTILLA_NO_ENCONTRADA')) {
+                return res.status(404).json({ error: 'Cartilla no encontrada.' });
+            }
+            if (error.message?.includes('ESTADO_NO_REABRIBLE')) {
+                return res.status(409).json({ error: 'Solo se puede reabrir una cartilla enviada, reenviada, aprobada o cerrada.' });
+            }
+            return res.status(500).json({ error: error.message });
+        }
+
+        const cartilla = Array.isArray(data) ? data[0] : data;
+        res.json({ mensaje: 'Cartilla reabierta. El delegado puede corregirla y reenviarla.', cartilla });
+    } catch (err) {
+        console.error('[CARTILLAS-DELEGADO reabrir]', err.message);
+        res.status(500).json({ error: 'Error interno al reabrir la cartilla.' });
+    }
+});
+
+// ─── GET /api/admin/cartillas-delegado/:id/versiones ─────────────────────────
+// 092: historial inmutable de versiones oficiales enviadas (v1, v2, v3...).
+router.get('/:id/versiones', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('cartillas_delegado_versiones')
+            .select('id, numero_version, estado_version, storage_path_pdf, motivo_reapertura_previa, reabierta_por_previa, reabierta_en_previa, enviada_en, enviada_por, enviada_por_tipo, created_at')
+            .eq('cartilla_delegado_id', req.params.id)
+            .order('numero_version', { ascending: false });
+
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data || []);
+    } catch (err) {
+        console.error('[CARTILLAS-DELEGADO versiones]', err.message);
+        res.status(500).json({ error: 'Error interno al cargar el historial de versiones.' });
+    }
+});
+
+// ─── GET /api/admin/cartillas-delegado/version/:version_id/pdf ───────────────
+// 092: URL firmada del PDF congelado de una versión histórica específica
+// (mismo patrón que GET /admin/cartillas-jurado/pdf/:id).
+router.get('/version/:version_id/pdf', async (req, res) => {
+    try {
+        const { data: version } = await supabase
+            .from('cartillas_delegado_versiones')
+            .select('storage_path_pdf')
+            .eq('id', req.params.version_id)
+            .maybeSingle();
+
+        if (!version) return res.status(404).json({ error: 'Versión no encontrada.' });
+        if (!version.storage_path_pdf) return res.status(404).json({ error: 'Esta versión aún no tiene un PDF adjunto.' });
+
+        const { data, error } = await supabase.storage
+            .from('rodeo-adjuntos')
+            .createSignedUrl(version.storage_path_pdf, 3600);
+
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ url: data.signedUrl });
+    } catch (err) {
+        console.error('[CARTILLAS-DELEGADO version pdf]', err.message);
+        res.status(500).json({ error: 'Error interno al obtener el PDF de la versión.' });
+    }
+});
+
+// ─── POST /api/admin/cartillas-delegado/version/:version_id/regenerar-pdf ──
+// Punto B (revisión final): si la generación/subida del PDF falló después
+// de un envío oficial, la versión queda con storage_path_pdf=NULL — ese
+// NULL es, en sí mismo, el registro del pendiente (no se necesita una tabla
+// de cola aparte: ver GET /:id/versiones, que ya expone esta columna).
+// Este endpoint regenera el PDF EXACTO de esa versión a partir de su
+// `snapshot` JSONB inmutable (nunca de datos en vivo, que podrían haber
+// cambiado) y solo actualiza storage_path_pdf — nunca toca snapshot ni crea
+// una fila nueva: no puede duplicar versiones ni alterar respuestas
+// históricas.
+//
+// Revisión final (protección del PDF histórico): si la versión YA tiene un
+// PDF adjunto, esto es un REEMPLAZO excepcional (no la recuperación normal
+// de un PDF faltante) — exige `motivo` en el body; la RPC adjuntar_pdf_
+// version_cartilla_delegado repite esta misma exigencia como defensa en
+// profundidad y deja su propio registro de auditoría antes de aplicarlo.
+router.post('/version/:version_id/regenerar-pdf', async (req, res) => {
+    try {
+        const { data: version, error: errVer } = await supabase
+            .from('cartillas_delegado_versiones')
+            .select('id, cartilla_delegado_id, numero_version, snapshot, storage_path_pdf')
+            .eq('id', req.params.version_id)
+            .maybeSingle();
+
+        if (errVer || !version) return res.status(404).json({ error: 'Versión no encontrada.' });
+
+        const motivo = (req.body?.motivo || '').trim();
+        if (version.storage_path_pdf && !motivo) {
+            return res.status(422).json({
+                error: 'Esta versión ya tiene un PDF adjunto. Reemplazarlo es una acción excepcional: indique el motivo.',
+                code: 'MOTIVO_REQUERIDO_PARA_REEMPLAZO'
+            });
+        }
+
+        const rodeoId = version.snapshot?.rodeo_id;
+        const { data: rodeo } = await supabase
+            .from('rodeos')
+            .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre, temporada_id, temporadas(nombre)')
+            .eq('id', rodeoId)
+            .maybeSingle();
+
+        const buffer = await generarCartillaDelegadoPDF(version.snapshot, rodeo || {});
+        const storagePath = `${rodeoId}/cartillas-delegado-versiones/${version.cartilla_delegado_id}/v${version.numero_version}_${Date.now()}.pdf`;
+
+        const { error: storageErr } = await supabase.storage
+            .from('rodeo-adjuntos')
+            .upload(storagePath, buffer, { contentType: 'application/pdf', upsert: false });
+        if (storageErr) return res.status(500).json({ error: 'Error al subir el PDF: ' + storageErr.message });
+
+        const { data, error: errRpc } = await supabase.rpc('adjuntar_pdf_version_cartilla_delegado', {
+            p_version_historica_id: req.params.version_id,
+            p_storage_path_pdf: storagePath,
+            p_actor_id: req.usuario.id,
+            p_actor_tipo: 'administrador',
+            p_motivo: motivo || null
+        });
+        if (errRpc) {
+            if (errRpc.message?.includes('MOTIVO_REQUERIDO_PARA_REEMPLAZO') || errRpc.message?.includes('ACTOR_REQUERIDO_PARA_REEMPLAZO')) {
+                return res.status(422).json({ error: 'Esta versión ya tiene un PDF adjunto. Reemplazarlo es una acción excepcional: indique el motivo.', code: 'MOTIVO_REQUERIDO_PARA_REEMPLAZO' });
+            }
+            return res.status(500).json({ error: errRpc.message });
+        }
+
+        const actualizada = Array.isArray(data) ? data[0] : data;
+        res.json({ mensaje: 'PDF regenerado correctamente.', version: actualizada });
+    } catch (err) {
+        console.error('[CARTILLAS-DELEGADO regenerar-pdf]', err.message);
+        res.status(500).json({ error: 'Error interno al regenerar el PDF.' });
+    }
+});
+
 // ─── POST /api/admin/cartillas-delegado/:id/aprobar ─────────────────────────
 // Aprueba la cartilla. Válido desde: enviada, reenviada.
 router.post('/:id/aprobar', async (req, res) => {
