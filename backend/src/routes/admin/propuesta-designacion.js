@@ -1542,16 +1542,74 @@ router.post('/propuestas/:id/aplicar', async (req, res) => {
         const rodeoIds = [...new Set(pendientesDeAplicar.map(d => d.rodeo_id))];
         const juradoIds = [...new Set(pendientesDeAplicar.map(d => d.jurado_efectivo))];
 
-        const { data: rodeos } = await supabase
+        const { data: rodeos, error: errRodeos } = await supabase
             .from('rodeos').select('id, club, fecha, duracion_dias, estado').in('id', rodeoIds);
-        const { data: jurados } = await supabase
+        if (errRodeos) return res.status(500).json({ error: 'No se pudieron cargar los rodeos: ' + errRodeos.message });
+        const { data: jurados, error: errJurados } = await supabase
             .from('usuarios_pagados').select('id, nombre_completo, categoria, tipo_persona, activo').in('id', juradoIds);
-        const { data: asigExistentes } = await supabase
+        if (errJurados) return res.status(500).json({ error: 'No se pudieron cargar los jurados: ' + errJurados.message });
+        const { data: asigExistentes, error: errAsigExistentes } = await supabase
             .from('asignaciones').select('id, rodeo_id').in('rodeo_id', rodeoIds).eq('tipo_persona', 'jurado').neq('estado', 'anulado');
-        const { data: dispRows } = await supabase
-            .from('disponibilidad_usuarios').select('usuario_pagado_id, fecha').in('usuario_pagado_id', juradoIds);
-        const { data: otrasAsig } = await supabase
-            .from('asignaciones').select('id, usuario_pagado_id, rodeo_id, rodeos!inner(fecha, duracion_dias, club)').in('usuario_pagado_id', juradoIds).neq('estado', 'anulado');
+        if (errAsigExistentes) return res.status(500).json({ error: 'No se pudo verificar designaciones existentes: ' + errAsigExistentes.message });
+
+        // CORRECCIÓN (error de disponibilidad al aplicar propuestas) — causa
+        // raíz confirmada: esta consulta pedía TODA la disponibilidad
+        // histórica de cada jurado (sin filtro de fecha), y PostgREST
+        // trunca silenciosamente cualquier respuesta a su límite de filas
+        // (1.000 por defecto en este proyecto) — con 28 jurados y ~45
+        // registros históricos cada uno (~1.256 filas), la respuesta se
+        // recortaba antes de llegar a las fechas reales del lote (14/15-11-
+        // 2026), y el jurado aparecía erróneamente "sin disponibilidad
+        // declarada" aunque sí la tuviera. Mismo patrón YA usado por
+        // cargarDatosMotor() (motorPropuestaDesignacion.js, paso 6): acotar
+        // la consulta a la UNIÓN de fechas que los rodeos de ESTE lote
+        // realmente necesitan — nunca el historial completo — reduce el
+        // resultado a, como mucho, jurados × fechas del lote (cientos, no
+        // miles). `rangoFechas` está declarada más abajo en este mismo
+        // bloque (function declaration, con hoisting dentro de esta misma
+        // función) — se usa acá arriba de forma segura.
+        const fechasLoteAplicar = [...new Set(
+            (rodeos || []).flatMap(r => rangoFechas(r.fecha, r.duracion_dias))
+        )];
+        let dispRows = [];
+        if (fechasLoteAplicar.length > 0 && juradoIds.length > 0) {
+            const PAGINA = 900; // mismo tamaño de página que el resto del proyecto (cargarDatosMotor, /diagnostico) — defensa en profundidad ante un lote legítimamente grande, nunca se confía solo en el filtro de fechas de arriba.
+            let offset = 0;
+            while (true) {
+                const { data: pagina, error: errDisp } = await supabase
+                    .from('disponibilidad_usuarios').select('usuario_pagado_id, fecha')
+                    .in('usuario_pagado_id', juradoIds).in('fecha', fechasLoteAplicar)
+                    .range(offset, offset + PAGINA - 1);
+                if (errDisp) return res.status(500).json({ error: 'No se pudo verificar la disponibilidad de los jurados: ' + errDisp.message });
+                const filas = pagina || [];
+                dispRows = dispRows.concat(filas);
+                if (filas.length < PAGINA) break;
+                offset += PAGINA;
+            }
+        }
+
+        // `otrasAsig` (detección de cruce de fechas) tiene el MISMO riesgo
+        // de truncamiento silencioso — a diferencia de disponibilidad, acá
+        // NO se acota por fecha (un cruce real puede involucrar cualquier
+        // asignación vigente del jurado, no solo las fechas de este lote) —
+        // se pagina en su lugar, mismo patrón que arriba, para que un
+        // jurado con muchas asignaciones nunca pierda filas silenciosamente.
+        let otrasAsig = [];
+        if (juradoIds.length > 0) {
+            const PAGINA_ASIG = 900;
+            let offset = 0;
+            while (true) {
+                const { data: pagina, error: errOtrasAsig } = await supabase
+                    .from('asignaciones').select('id, usuario_pagado_id, rodeo_id, rodeos!inner(fecha, duracion_dias, club)')
+                    .in('usuario_pagado_id', juradoIds).neq('estado', 'anulado')
+                    .range(offset, offset + PAGINA_ASIG - 1);
+                if (errOtrasAsig) return res.status(500).json({ error: 'No se pudo verificar otras asignaciones de los jurados: ' + errOtrasAsig.message });
+                const filas = pagina || [];
+                otrasAsig = otrasAsig.concat(filas);
+                if (filas.length < PAGINA_ASIG) break;
+                offset += PAGINA_ASIG;
+            }
+        }
 
         let tarifas;
         try {

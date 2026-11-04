@@ -1313,4 +1313,124 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
         expect(body.conflictos[0].motivo).toBe('El jurado ya está asignado a otro rodeo en fechas que se cruzan.');
         expect(llamadas.asignaciones.inserts.length).toBe(0);
     });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // CORRECCIÓN — error de disponibilidad al aplicar propuestas.
+    //
+    // Causa raíz real: la consulta de disponibilidad pedía TODO el
+    // historial de cada jurado, sin filtrar por fecha ni paginar.
+    // PostgREST trunca silenciosamente cualquier respuesta a su límite de
+    // filas (1.000 por defecto) — con muchos jurados y años de historial
+    // acumulado, la respuesta se recortaba ANTES de llegar a las fechas
+    // reales del lote, y el jurado quedaba marcado erróneamente como "sin
+    // disponibilidad declarada" aunque sí la tuviera. Corregido acotando la
+    // consulta a las fechas del lote + paginando por seguridad (mismo
+    // patrón PAGINA=900 que cargarDatosMotor()).
+    // ═════════════════════════════════════════════════════════════════════
+    test('28 jurados, 2 fechas cada uno (56 filas reales) — la disponibilidad llega en 2 páginas (900 filas de "relleno" + el resto) y las 28 designaciones se aplican sin conflictos falsos', async () => {
+        const N = 28;
+        const detalle = [];
+        const rodeos = [];
+        const usuarios = [];
+        for (let i = 1; i <= N; i++) {
+            detalle.push({ id: 'd' + i, rodeo_id: 'r' + i, jurado_id_seleccionado: 'j' + i, estado_revision: 'ACEPTADO' });
+            rodeos.push({ id: 'r' + i, club: 'Club ' + i, fecha: '2026-11-14', duracion_dias: 2, estado: 'activo' }); // 2 días -> 14 y 15 de noviembre
+            usuarios.push({ id: 'j' + i, nombre_completo: 'Jurado ' + i, categoria: 'A', tipo_persona: 'jurado', activo: true });
+        }
+        // Página 1 — simula el "relleno" histórico (900 filas irrelevantes,
+        // ninguna corresponde a las fechas del lote) que antes truncaba la
+        // respuesta antes de llegar a la página 2.
+        const paginaHistorica = Array.from({ length: 900 }, (_, i) => ({ usuario_pagado_id: 'historico-' + i, fecha: '2020-01-01' }));
+        // Página 2 — las 56 filas REALES del lote (28 jurados × 2 fechas).
+        const paginaReal = usuarios.flatMap(u => ([
+            { usuario_pagado_id: u.id, fecha: '2026-11-14' },
+            { usuario_pagado_id: u.id, fecha: '2026-11-15' }
+        ]));
+        expect(paginaReal.length).toBe(56);
+
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-7', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: detalle, error: null },
+            rodeos: { data: rodeos, error: null },
+            usuarios_pagados: { data: usuarios, error: null },
+            disponibilidad_usuarios: [
+                { data: paginaHistorica, error: null },
+                { data: paginaReal, error: null }
+            ],
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [], error: null }, // SELECT ya-aplicadas
+                { data: [], error: null }, // SELECT ya-designados
+                { data: [], error: null }  // SELECT otras fechas (cruces) — ninguna
+            ]
+        });
+        supabase.rpc.mockResolvedValueOnce({
+            data: { aplicadas: detalle.map(d => ({ detalle_id: d.id, asignacion_id: 'asig-' + d.id, rodeo_id: d.rodeo_id, usuario_pagado_id: d.jurado_id_seleccionado })) },
+            error: null
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-7/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: N, conflictos: 0 });
+        expect(llamadas.asignaciones.inserts.length).toBe(0); // todo vía RPC, igual que el resto de los casos
+    });
+
+    test('un jurado realmente sin disponibilidad para la fecha exacta del rodeo sigue detectándose como conflicto (la corrección de paginación nunca oculta un conflicto real)', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-8', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            rodeos: { data: [{ id: 'r1', club: 'Club A', fecha: '2026-11-14', duracion_dias: 2, estado: 'activo' }], error: null },
+            usuarios_pagados: { data: [{ id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true }], error: null },
+            // Declaró disponibilidad SOLO para el 14 — falta el 15 (duracion_dias=2).
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-11-14' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }]
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-8/aplicar' });
+
+        expect(status).toBe(409);
+        expect(body.conflictos[0].motivo).toBe('El jurado ya no tiene disponibilidad declarada para estas fechas.');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // Punto 4 del pedido de corrección: "comprobar errores de Supabase en
+    // lugar de interpretar respuestas fallidas o incompletas como ausencia
+    // de disponibilidad" — antes, un error de red/consulta en CUALQUIERA de
+    // estas 5 consultas (rodeos/jurados/asignaciones ya-designadas/
+    // disponibilidad/otras asignaciones) se destructuraba sin leer `error`,
+    // así que `data` quedaba `undefined` y el código seguía con `(x || [])`
+    // como si la respuesta hubiera sido "0 filas" — indistinguible de un
+    // jurado realmente sin disponibilidad.
+    test('error de Supabase al consultar disponibilidad -> 500 explícito, nunca interpretado como "sin disponibilidad"', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-9', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            rodeos: { data: [{ id: 'r1', club: 'Club A', fecha: '2026-11-14', duracion_dias: 1, estado: 'activo' }], error: null },
+            usuarios_pagados: { data: [{ id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true }], error: null },
+            disponibilidad_usuarios: { data: null, error: { message: 'timeout de conexión' } },
+            asignaciones: [{ data: [], error: null }, { data: [], error: null }]
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-9/aplicar' });
+
+        expect(status).toBe(500);
+        expect(body.error).toContain('timeout de conexión');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    test('error de Supabase al consultar rodeos -> 500 explícito, nunca tratado como rodeo inexistente', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-10', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: { data: [{ id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' }], error: null },
+            rodeos: { data: null, error: { message: 'columna inexistente' } }
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-10/aplicar' });
+
+        expect(status).toBe(500);
+        expect(body.error).toContain('columna inexistente');
+        expect(supabase.rpc).not.toHaveBeenCalled();
+    });
 });
