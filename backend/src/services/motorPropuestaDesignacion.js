@@ -23,6 +23,9 @@ const { calcularBloqueRodeo, contarSabadosEntre, rangoFechas } = require('./feri
 const {
     construirConfiguracionDefaultV1, validarConfiguracion, configuracionRequiereDistancia, clasificarTraslado
 } = require('./configuracionDesignacion');
+// Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
+// (schema_version=4) — fuente oficial única, ver notaTecnicaJurados.js.
+const { cargarNotaTecnicaPorJurado } = require('./notaTecnicaJurados');
 
 // Etapa 2 — Configuración de Propuesta de Designación. Valor histórico
 // (equivalente a configuracion.distancia_maxima_km de la Versión 1) que se
@@ -55,6 +58,7 @@ const ORDEN_CAUSA_PRINCIPAL = [
     'DISPONIBILIDAD',
     'MISMA_ASOCIACION',
     'ASOCIACION_REPETIDA_TEMPORADA',
+    'ASOCIACION_REPETIDA_INTERVALO',
     'FINDE_CONSECUTIVO',
     'MISMO_FINDE',
     'CATEGORIA_INCOMPATIBLE',
@@ -333,6 +337,22 @@ function compararPorCriterio(criterioCodigo, a, b, umbralLejaniaKm) {
         }
         case 'EQUIDAD_TRASLADOS':
             return compararEquidadTraslados(a, b, umbralLejaniaKm);
+        // NOTA_TECNICA (schema_version=4, pedido "Motor Global con Prioridad
+        // de Rodeos, Categorías y Calidad Técnica") → mayor nota técnica
+        // oficial primero (notaTecnicaJurados.js). Una nota AUSENTE (null —
+        // jurado sin evaluación técnica todavía) NUNCA se trata como si
+        // fuera un 0 real: se usa -Infinity solo como centinela interno de
+        // ESTE comparador (nunca se expone, nunca se guarda) para que un
+        // candidato sin nota quede detrás de cualquiera con nota real
+        // conocida, sin fingir que su calidad es "la peor posible" — mismo
+        // criterio exacto que MENOR_DISTANCIA ya usa con `?? Infinity` para
+        // una comuna no resoluble.
+        case 'NOTA_TECNICA': {
+            if (a.notaTecnica == null && b.notaTecnica == null) return 0; // ambos ausentes -> empate real, nunca -Infinity - (-Infinity) = NaN
+            const na = a.notaTecnica ?? -Infinity;
+            const nb = b.notaTecnica ?? -Infinity;
+            return nb - na;
+        }
         default:
             return 0;
     }
@@ -403,6 +423,26 @@ function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPor
     const asociacionesUsadas = asociacionesPorJurado.get(jurado.id);
     const repiteAsociacionTemporada = !!asociacionesUsadas && asociacionesUsadas.has(asocNorm);
     if (configuracion.regla_no_repetir_asociacion_activa && repiteAsociacionTemporada) causas.push('ASOCIACION_REPETIDA_TEMPORADA');
+
+    // Regla NUEVA (schema_version=4) — repetición de asociación por
+    // INTERVALO configurable (default 6 meses), independiente de la regla
+    // de temporada arriba: mira TODO el historial real (incluidas
+    // temporadas anteriores) vía estado.ultimaFechaAsociacionPorJurado
+    // (construirUltimaFechaAsociacionPorJurado, estático, nunca mutado
+    // durante la búsqueda) + cualquier repetición DENTRO de este mismo lote
+    // (repiteAsociacionTemporada ya cubre eso, sin fechas — un repeat en el
+    // mismo lote se trata siempre como "demasiado pronto", igual criterio
+    // que la regla de temporada). Nunca confundir con MISMA_ASOCIACION
+    // (prohibición de juzgar el propio rodeo de la asociación del jurado —
+    // conflicto de interés real, obligatoria, nunca se relaja).
+    const ultimaFechaHistorica = estado.ultimaFechaAsociacionPorJurado?.get(jurado.id)?.get(asocNorm) || null;
+    const limiteIntervalo = configuracion.regla_repeticion_asociacion_intervalo_activa
+        ? restarMeses(rodeo.fecha, configuracion.repeticion_asociacion_meses)
+        : null;
+    const dentroDeIntervalo = !!ultimaFechaHistorica && !!limiteIntervalo
+        && ultimaFechaHistorica >= limiteIntervalo && ultimaFechaHistorica < rodeo.fecha;
+    const repiteAsociacionIntervalo = dentroDeIntervalo || repiteAsociacionTemporada;
+    if (configuracion.regla_repeticion_asociacion_intervalo_activa && repiteAsociacionIntervalo) causas.push('ASOCIACION_REPETIDA_INTERVALO');
 
     // Regla 3/4 — mismo fin de semana / fin de semana consecutivo (secciones
     // 9/10) — dos flags INDEPENDIENTES; bloquesSonConsecutivos()/feriados.js
@@ -475,11 +515,19 @@ function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPor
         );
     }
 
+    // Nota técnica oficial (schema_version=4) — ver notaTecnicaJurados.js.
+    // `estado.notaTecnicaPorJurado` es OPCIONAL (Map|undefined): si el
+    // llamador no la pobló (motor local/global sin cargarla todavía, o un
+    // test que no la necesita), queda `null` para TODOS — el criterio
+    // NOTA_TECNICA del comparador simplemente empata siempre y cede al
+    // siguiente criterio, nunca rompe nada por su ausencia.
+    const notaTecnica = estado.notaTecnicaPorJurado?.get(jurado.id)?.promedio ?? null;
+
     return {
         jurado, causas, elegible: causas.length === 0,
         distanciaKm, comunaJurado, categoriaOrdenPreferencia, categoriaCompatible,
-        disponible, mismaAsoc, repiteAsociacionTemporada, mismoFinde, findeConsecutivo,
-        designacionesAntes, trasladosTemporada
+        disponible, mismaAsoc, repiteAsociacionTemporada, repiteAsociacionIntervalo, mismoFinde, findeConsecutivo,
+        designacionesAntes, trasladosTemporada, notaTecnica
     };
 }
 
@@ -671,6 +719,53 @@ function construirEstadoDesdeBD(asignacionesTemporada) {
     return { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado };
 }
 
+// ─── Resta N meses a una fecha 'YYYY-MM-DD', sin dependencias externas ────
+// Pura — usada por la regla de repetición de asociación por intervalo
+// (schema_version=4). Si el día de destino no existe en el mes resultante
+// (ej. 31 de marzo menos 1 mes -> 31 de febrero), JS normaliza al mes
+// siguiente — comportamiento de Date, documentado, nunca oculto.
+function restarMeses(fechaISO, meses) {
+    const [y, m, d] = fechaISO.split('-').map(Number);
+    const fecha = new Date(Date.UTC(y, m - 1, d));
+    fecha.setUTCMonth(fecha.getUTCMonth() - meses);
+    return fecha.toISOString().slice(0, 10);
+}
+
+// ─── Última fecha real (histórica, cualquier temporada) de designación
+// EFECTIVA de cada jurado en cada asociación organizadora — mejora
+// "Repetición de Asociación por Intervalo" (schema_version=4). A diferencia
+// de `asociacionesPorJurado` (construirEstadoDesdeBD, acotado a la
+// temporada vigente y sin fechas — solo "¿ya la usó, sí/no?"), esta
+// estructura SÍ guarda CUÁNDO fue la última vez, mirando TODO el historial
+// disponible (incluidas temporadas anteriores), para poder comparar contra
+// el intervalo configurado (ej. 6 meses) sin importar el límite de
+// temporada. Se calcula UNA sola vez por corrida — nunca recalculado por
+// nodo/candidato — igual criterio de costo que construirTrasladosPorJuradoBD.
+// Estático: nunca se muta durante una búsqueda (son designaciones REALES ya
+// ocurridas, no pueden cambiar a mitad de una simulación) — las repeticiones
+// DENTRO del mismo lote/corrida las sigue cubriendo repiteAsociacionTemporada
+// (ver evaluarCandidato), no esta estructura.
+// @param asignacionesHistoricas filas crudas de `asignaciones` (cualquier
+//   temporada, no solo la vigente) — MISMO criterio esAsignacionEfectiva()
+//   que todo el resto del motor, aplicado acá mismo (nunca confiar en que
+//   el llamador ya filtró).
+// @returns Map(jurado_id -> Map(asociacion_normalizada -> fecha ISO más reciente))
+function construirUltimaFechaAsociacionPorJurado(asignacionesHistoricas) {
+    const resultado = new Map();
+    for (const a of (asignacionesHistoricas || [])) {
+        if (!esAsignacionEfectiva(a)) continue;
+        const asociacion = a.rodeos?.asociacion;
+        const fecha = a.rodeos?.fecha;
+        if (!asociacion || !fecha) continue;
+        const asocNorm = normalizarAsociacion(asociacion);
+        if (!resultado.has(a.usuario_pagado_id)) resultado.set(a.usuario_pagado_id, new Map());
+        const porAsociacion = resultado.get(a.usuario_pagado_id);
+        const actual = porAsociacion.get(asocNorm);
+        if (!actual || fecha > actual) porAsociacion.set(asocNorm, fecha);
+    }
+    return resultado;
+}
+
 // ─── Evalúa UN jurado específico para UN rodeo específico, DIRECTAMENTE ──
 // Sin depender de ningún topN ni de buscar en una lista de candidatos — el
 // llamador ya sabe exactamente qué jurado quiere verificar. Llama a
@@ -727,6 +822,8 @@ function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = co
     const estado = construirEstadoDesdeBD(contexto.asignacionesTemporada);
     estado.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     estado.trasladosTemporalesPorJurado = new Map(); // sin corrida encima — evaluación directa contra estado real de BD únicamente
+    estado.ultimaFechaAsociacionPorJurado = contexto.ultimaFechaAsociacionPorJurado;
+    estado.notaTecnicaPorJurado = contexto.notaTecnicaPorJurado;
 
     return {
         evaluacion: evaluarCandidato(jurado, rodeo, matriz, contexto.disponibilidad, comunaJuradoPorId, estado, configuracion),
@@ -868,6 +965,17 @@ async function cargarDatosMotor(rodeoIdsInput) {
         ? asignacionesRaw.filter(a => esAsignacionEfectiva(a) && a.rodeos?.fecha >= temporadaRow.fecha_inicio && a.rodeos?.fecha <= temporadaRow.fecha_fin)
         : [];
 
+    // Mejora "Repetición de Asociación por Intervalo" (schema_version=4) —
+    // `asignacionesRaw` YA trae el historial COMPLETO (ninguna temporada
+    // excluida, ver la consulta del paso 7 arriba: solo filtra
+    // tipo_persona='jurado' y estado!='anulado') — se reutiliza tal cual,
+    // SIN ninguna consulta nueva, para derivar "última vez que cada jurado
+    // juzgó cada asociación" sin acotar a la temporada vigente (a diferencia
+    // de asignacionesTemporada, que SÍ se recorta a [fecha_inicio,fecha_fin]
+    // para todo lo demás). Pura, calculada una sola vez acá.
+    const asignacionesHistoricas = asignacionesRaw.filter(esAsignacionEfectiva);
+    const ultimaFechaAsociacionPorJurado = construirUltimaFechaAsociacionPorJurado(asignacionesHistoricas);
+
     return {
         idsSolicitados: idsUnicos,
         temporada: temporadaRow,
@@ -876,6 +984,8 @@ async function cargarDatosMotor(rodeoIdsInput) {
         catalogoComunas,
         disponibilidad,
         asignacionesTemporada,
+        asignacionesHistoricas,
+        ultimaFechaAsociacionPorJurado,
         _queriesAproximadas: queries
     };
 }
@@ -933,7 +1043,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     const val = validarConfiguracion(configuracion);
     if (!val.valido) throw new Error(`Configuración de designación inválida: ${val.error}`);
 
-    const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada } = contexto;
+    const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada, ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado } = contexto;
     const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
     // Mejora "Zonas Extremas" — derivada UNA vez por corrida (pura, sin BD,
     // sección 15 del pedido); resolverMatrizParaRodeo() decide por rodeo si
@@ -1046,7 +1156,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // Es la MISMA función evaluarCandidato() que se usa en la evaluación real
     // más abajo — no hay una segunda versión de las reglas, solo se le pasa
     // un snapshot de estado distinto (sin mutaciones de esta corrida todavía).
-    const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
+    const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado, ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado };
     for (const rodeo of rodeosEvaluables) {
         // Zona Extrema (sección 14 del pedido): la dificultad se estima con la
         // MISMA matriz efectiva (normal o especial) que usará la evaluación
@@ -1069,7 +1179,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // A partir de aquí, `estadoActual` sí se muta (registrarAsignacionTemporal
     // agrega a las mismas Map/Set que arriba) — cada rodeo que se procesa ve
     // las propuestas ya hechas a rodeos anteriores en esta misma corrida.
-    const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
+    const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado, ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado };
     for (const rodeo of rodeosEvaluables) {
         // Zona Extrema — mismo resolver que la dificultad de arriba (sección
         // 14/15 del pedido: un único punto de decisión, nunca dos).
@@ -1102,7 +1212,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
         // ── Resumen de descartes (se cuentan TODAS las causas detectadas —
         //    un candidato puede aportar a más de un contador a la vez) ──
         const descartes = {};
-        for (const codigo of ['DISPONIBILIDAD','MISMA_ASOCIACION','ASOCIACION_REPETIDA_TEMPORADA','MISMO_FINDE','FINDE_CONSECUTIVO','CATEGORIA_INCOMPATIBLE','JURADO_SIN_COMUNA_RESOLVIBLE','DISTANCIA_EXCEDIDA']) {
+        for (const codigo of ['DISPONIBILIDAD','MISMA_ASOCIACION','ASOCIACION_REPETIDA_TEMPORADA','ASOCIACION_REPETIDA_INTERVALO','MISMO_FINDE','FINDE_CONSECUTIVO','CATEGORIA_INCOMPATIBLE','JURADO_SIN_COMUNA_RESOLVIBLE','DISTANCIA_EXCEDIDA']) {
             descartes[codigo] = evaluaciones.filter(e => e.causas.includes(codigo)).length;
         }
         const descartados = evaluaciones.filter(e => !e.elegible).map(e => ({
@@ -1274,6 +1384,10 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
                 // propuestaDesignacion.js.
                 asociacion: ganador.jurado.asociacion,
                 categoria: ganador.jurado.categoria,
+                // Nota técnica oficial usada para el desempate (schema_version=4,
+                // notaTecnicaJurados.js) — null si el jurado todavía no tiene
+                // ninguna evaluación técnica real (nunca se finge un 0).
+                nota_tecnica: ganador.notaTecnica,
                 categoria_preferente: ganador.categoriaOrdenPreferencia === 1,
                 comuna_canonica: ganador.comunaJurado?.nombre || null,
                 origen_comuna: ganador.comunaJurado?.origen || null,
@@ -1594,9 +1708,23 @@ async function cargarHistorialRecienteBatch(juradoIds) {
 // configuracion_designacion_versiones (vía configuracionDesignacionRepositorio)
 // y la pasa explícitamente aquí — el default solo se ejerce en tests/uso
 // directo de esta función, nunca en un endpoint real.
-async function generarSimulacion(rodeoIdsInput, topN = 5, configuracion = construirConfiguracionDefaultV1()) {
+async function generarSimulacion(rodeoIdsInput, topN = 5, configuracion = construirConfiguracionDefaultV1(), opciones = {}) {
     const inicioMs = Date.now();
     const contexto = await cargarDatosMotor(rodeoIdsInput);
+    // Nota técnica oficial (schema_version=4) — se carga ANTES de rankear
+    // (a diferencia de rendimiento_temporada/historial_reciente más abajo,
+    // que son enriquecimiento posterior solo del ganador): NOTA_TECNICA
+    // participa del comparador, así que debe existir ANTES de
+    // ejecutarSimulacion(). Solo se consulta si el criterio realmente está
+    // activo en esta configuración — nunca se paga el costo de la consulta
+    // para una configuración que no lo usa (schema_version 1/2/3, o
+    // schema_version=4 sin NOTA_TECNICA en el orden).
+    if ((configuracion.ordenCriterios || []).some(o => o.criterio_codigo === 'NOTA_TECNICA')) {
+        contexto.notaTecnicaPorJurado = await cargarNotaTecnicaPorJurado(
+            contexto.jurados.map(j => j.id),
+            opciones.fechaCorteTecnica || new Date().toISOString()
+        );
+    }
     const finCargaMs = Date.now();
     const resultado = ejecutarSimulacion(contexto, topN, configuracion);
     const finMotorMs = Date.now();
@@ -1663,5 +1791,8 @@ module.exports = {
     cargarHistorialRecienteBatch,
     designacionesPorJuradoAConteos: _designacionesActualesComoMapa,
     // Mejora "Zonas Extremas" (schema_version=3) — funciones puras nuevas.
-    construirMatrizZonaExtremaDesdeConfiguracion, resolverMatrizParaRodeo, construirExplicacionZonaExtrema
+    construirMatrizZonaExtremaDesdeConfiguracion, resolverMatrizParaRodeo, construirExplicacionZonaExtrema,
+    // Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
+    // (schema_version=4) — funciones puras nuevas.
+    restarMeses, construirUltimaFechaAsociacionPorJurado
 };

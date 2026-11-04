@@ -22,9 +22,15 @@
 // build step, no hay forma de compartir un módulo entre frontend/backend en
 // este proyecto), pero ambas listas deben mantenerse en sincronía manual.
 const CRITERIOS_CONOCIDOS_UI = ['PRIORIDAD_CATEGORIA', 'MENOS_DESIGNACIONES_TEMPORADA', 'MENOR_DISTANCIA'];
+// schema_version=4 (Etapa C) agrega NOTA_TECNICA — mismo patrón que
+// EQUIDAD_TRASLADOS en schema_version=2/3 (ver CRITERIOS_CONOCIDOS_POR_SCHEMA
+// del backend, configuracionDesignacion.js — fuente de verdad duplicada
+// intencionalmente, ver comentario de arriba).
 const CRITERIOS_CONOCIDOS_UI_POR_SCHEMA = {
     1: CRITERIOS_CONOCIDOS_UI,
-    2: [...CRITERIOS_CONOCIDOS_UI, 'EQUIDAD_TRASLADOS']
+    2: [...CRITERIOS_CONOCIDOS_UI, 'EQUIDAD_TRASLADOS'],
+    3: [...CRITERIOS_CONOCIDOS_UI, 'EQUIDAD_TRASLADOS'],
+    4: [...CRITERIOS_CONOCIDOS_UI, 'EQUIDAD_TRASLADOS', 'NOTA_TECNICA']
 };
 function criteriosConocidosUIParaSchema(schemaVersion) {
     return CRITERIOS_CONOCIDOS_UI_POR_SCHEMA[schemaVersion] || CRITERIOS_CONOCIDOS_UI;
@@ -34,6 +40,9 @@ const CATEGORIAS_CONOCIDAS_UI = ['A', 'B', 'C'];
 const DISTANCIA_MAXIMA_TECNICA_KM_UI = 5000;
 const UMBRAL_LEJANIA_TECNICO_KM_UI = 5000; // mismo techo técnico que distancia_maxima_km — ver DISTANCIA_MAXIMA_TECNICA_KM_UI
 const UMBRAL_LEJANIA_DEFAULT_KM_UI = 350;  // valor inicial sugerido al activar equidad (informativo — el administrador puede cambiarlo)
+// Repetición de Asociación por Intervalo (schema_version=4) — mismo rol que
+// REPETICION_ASOCIACION_MESES_TECNICO_MAX del backend (configuracionDesignacion.js).
+const REPETICION_ASOCIACION_MESES_TECNICO_MAX_UI = 60;
 
 // ─── Renumera un array ya en el orden deseado como 1..N sin huecos ───────
 function renumerar(lista, campoOrden) {
@@ -206,6 +215,92 @@ function activarZonasExtremas(configuracion, defaultZonaExtrema) {
 function desactivarZonasExtremas(configuracion) {
     const c = JSON.parse(JSON.stringify(configuracion || {}));
     c.regla_zonas_extremas_activa = false;
+    return c;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// PRIORIDAD DEPORTIVA + NOTA TÉCNICA + REPETICIÓN POR INTERVALO
+// (schema_version=4, Etapa C del pedido "Motor Global con Prioridad de
+// Rodeos, Categorías y Calidad Técnica") — activar/desactivar cada una de
+// las 3 piezas, mismo patrón exacto que EQUIDAD DE TRASLADOS/ZONAS EXTREMAS
+// arriba: promueve schema_version al activar, nunca modifica la versión
+// base, nunca "baja" el schema al desactivar, y CONSERVA los datos en
+// memoria del draft al desactivar (reactivar más tarde no pierde lo ya
+// configurado).
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─── Prioridad Deportiva — ordena las 6 clasificaciones (orden=1 = MÁXIMA
+// prioridad deportiva: zonal reserva los mejores jurados antes que
+// cualquier otra, según el pedido). `defaultPrioridadClasificaciones` —
+// [{clasificacion_codigo, orden}, ...] — SIEMPRE viene de `capacidades.
+// prioridad_clasificaciones_default` (backend, GET /activa o /defaults),
+// NUNCA hardcodeado acá (mismo principio que defaultZonaExtrema arriba).
+function activarPrioridadDeportiva(configuracion, defaultPrioridadClasificaciones) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.schema_version = 4;
+    c.regla_prioridad_deportiva_activa = true;
+    const yaTeniaDatos = Array.isArray(c.prioridad_clasificaciones) && c.prioridad_clasificaciones.length > 0;
+    if (!yaTeniaDatos) {
+        c.prioridad_clasificaciones = ((defaultPrioridadClasificaciones) || []).map(f => ({ ...f }));
+    }
+    return c;
+}
+function desactivarPrioridadDeportiva(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.regla_prioridad_deportiva_activa = false;
+    return c; // conserva prioridad_clasificaciones en memoria (mismo patrón que Zonas Extremas)
+}
+// Mismo mecanismo que moverCategoria(), con los campos de prioridad_
+// clasificaciones (clasificacion_codigo/orden en vez de categoria/orden_preferencia).
+function moverClasificacionPrioridad(prioridadClasificaciones, clasificacionCodigo, direccion) {
+    const lista = [...(prioridadClasificaciones || [])].sort((a, b) => a.orden - b.orden);
+    const idx = lista.findIndex(f => f.clasificacion_codigo === clasificacionCodigo);
+    if (idx === -1) return lista;
+    const destino = direccion === 'arriba' ? idx - 1 : idx + 1;
+    if (destino < 0 || destino >= lista.length) return lista;
+    [lista[idx], lista[destino]] = [lista[destino], lista[idx]];
+    return lista.map((f, i) => ({ ...f, orden: i + 1 }));
+}
+
+// ─── Nota Técnica — es un CRITERIO más de ordenCriterios (sin regla booleana
+// propia — su presencia/ausencia en el orden ES la activación, igual que
+// MENOR_DISTANCIA/PRIORIDAD_CATEGORIA desde Etapa 1; ver validarConfiguracion()
+// en el backend). A diferencia de EQUIDAD_TRASLADOS, NO queda fijo en
+// orden=1 — es libremente reordenable, así que reutiliza activarCriterio/
+// desactivarCriterio/moverCriterio genéricos. Necesita su PROPIO toggle
+// dedicado (en vez del checkbox genérico de "criterios inactivos") solo
+// porque, a diferencia de los criterios de schema_version=1, recién existe
+// desde schema_version=4 — activarlo debe promover el schema, igual que
+// activarEquidadTraslados/activarZonasExtremas.
+function activarNotaTecnica(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.schema_version = 4;
+    c.ordenCriterios = activarCriterio(c.ordenCriterios, 'NOTA_TECNICA');
+    return c;
+}
+function desactivarNotaTecnica(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.ordenCriterios = desactivarCriterio(c.ordenCriterios, 'NOTA_TECNICA');
+    return c;
+}
+
+// ─── Repetición de Asociación por Intervalo — intervalo mínimo (en meses,
+// default 6) antes de poder repetir la misma asociación para un jurado,
+// mirando el historial real (no solo la temporada vigente — ver
+// ASOCIACION_REPETIDA_TEMPORADA, regla_no_repetir_asociacion_activa, sin
+// cambios, totalmente independiente). `mesesDefault` — SIEMPRE viene de
+// `capacidades.repeticion_asociacion_meses_default` (backend).
+function activarRepeticionIntervalo(configuracion, mesesDefault) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.schema_version = 4;
+    c.regla_repeticion_asociacion_intervalo_activa = true;
+    if (!(Number(c.repeticion_asociacion_meses) > 0)) c.repeticion_asociacion_meses = mesesDefault || 6;
+    return c;
+}
+function desactivarRepeticionIntervalo(configuracion) {
+    const c = JSON.parse(JSON.stringify(configuracion || {}));
+    c.regla_repeticion_asociacion_intervalo_activa = false;
+    // conserva repeticion_asociacion_meses (mismo patrón "recordar" que distancia_maxima_km)
     return c;
 }
 
@@ -387,8 +482,13 @@ function validarDraft(configuracion) {
     // algo cuando la regla está ACTIVA — apagar el toggle nunca obliga a
     // vaciar lo ya configurado (sección 16/26/36 del pedido de UI).
     const reglaZonasActiva = c.regla_zonas_extremas_activa === true;
-    if (c.schema_version !== 3 && reglaZonasActiva) {
-        return { valido: false, error: 'Zonas Extremas solo es válida en schema_version=3' };
+    // CORRECCIÓN (Etapa C): `!== 3` rechazaba también schema_version=4 (que
+    // SÍ hereda Zonas Extremas de schema 3, igual que el backend — ver
+    // validarConfiguracion() en configuracionDesignacion.js, misma
+    // corrección aplicada ahí) — la condición real es "antes de que
+    // existiera la regla" (schema_version < 3), nunca "distinto de 3".
+    if (c.schema_version < 3 && reglaZonasActiva) {
+        return { valido: false, error: 'Zonas Extremas solo es válida desde schema_version=3' };
     }
     if (reglaZonasActiva) {
         const ze = c.zonas_extremas || {};
@@ -406,6 +506,71 @@ function validarDraft(configuracion) {
         }
     }
 
+    // ── Prioridad Deportiva (schema_version=4) — réplica de UX de
+    // validarConfiguracion()/validarPrioridadClasificaciones() en el backend.
+    const reglaPrioridadActiva = c.regla_prioridad_deportiva_activa === true;
+    if (c.schema_version !== 4 && reglaPrioridadActiva) {
+        return { valido: false, error: 'Prioridad Deportiva solo es válida desde schema_version=4' };
+    }
+    const prioridadClasificaciones = c.prioridad_clasificaciones || [];
+    if (prioridadClasificaciones.length > 0 || reglaPrioridadActiva) {
+        const rPrioridad = validarPrioridadClasificacionesUI(prioridadClasificaciones);
+        if (!rPrioridad.valido) return rPrioridad;
+    }
+
+    // ── Nota Técnica (schema_version=4) — sin regla booleana propia; su
+    // presencia en ordenCriterios ES la activación (ver backend).
+    const criterioNotaTecnica = ordenCriterios.find(o => o.criterio_codigo === 'NOTA_TECNICA');
+    if (c.schema_version !== 4 && criterioNotaTecnica) {
+        return { valido: false, error: 'NOTA_TECNICA solo es válido desde schema_version=4' };
+    }
+
+    // ── Repetición de Asociación por Intervalo (schema_version=4).
+    const reglaIntervaloActiva = c.regla_repeticion_asociacion_intervalo_activa === true;
+    if (c.schema_version !== 4 && reglaIntervaloActiva) {
+        return { valido: false, error: 'La repetición de asociación por intervalo solo es válida desde schema_version=4' };
+    }
+    if (reglaIntervaloActiva) {
+        const n = Number(c.repeticion_asociacion_meses);
+        if (c.repeticion_asociacion_meses === null || c.repeticion_asociacion_meses === undefined || c.repeticion_asociacion_meses === '' || Number.isNaN(n)) {
+            return { valido: false, error: 'El intervalo mínimo (meses) es obligatorio mientras la regla esté activa' };
+        }
+        if (!Number.isInteger(n) || n <= 0) {
+            return { valido: false, error: 'El intervalo mínimo (meses) debe ser un entero mayor que 0' };
+        }
+        if (n > REPETICION_ASOCIACION_MESES_TECNICO_MAX_UI) {
+            return { valido: false, error: `El intervalo mínimo no puede superar ${REPETICION_ASOCIACION_MESES_TECNICO_MAX_UI} meses` };
+        }
+    }
+
+    return { valido: true };
+}
+
+// ─── Validación estructural de prioridad_clasificaciones PARA LA UI ──────
+// Réplica de UX de validarPrioridadClasificaciones() en el backend: permutación
+// completa de las 6 clasificaciones conocidas, orden 1..6 sin huecos ni duplicados.
+function validarPrioridadClasificacionesUI(lista) {
+    const l = lista || [];
+    if (l.length !== CLASIFICACIONES_CONOCIDAS_UI.length) {
+        return { valido: false, error: `Prioridad Deportiva debe tener exactamente las ${CLASIFICACIONES_CONOCIDAS_UI.length} clasificaciones conocidas` };
+    }
+    const codigosVistos = new Set(), ordenesVistos = new Set();
+    for (const f of l) {
+        if (!CLASIFICACIONES_CONOCIDAS_UI.includes(f.clasificacion_codigo)) {
+            return { valido: false, error: `Prioridad Deportiva: clasificación desconocida: ${f.clasificacion_codigo}` };
+        }
+        if (codigosVistos.has(f.clasificacion_codigo)) {
+            return { valido: false, error: `Prioridad Deportiva: clasificación duplicada: ${f.clasificacion_codigo}` };
+        }
+        codigosVistos.add(f.clasificacion_codigo);
+        if (!Number.isInteger(f.orden) || f.orden <= 0 || ordenesVistos.has(f.orden)) {
+            return { valido: false, error: `Prioridad Deportiva: orden inválido o duplicado para ${f.clasificacion_codigo}` };
+        }
+        ordenesVistos.add(f.orden);
+    }
+    for (const cod of CLASIFICACIONES_CONOCIDAS_UI) {
+        if (!codigosVistos.has(cod)) return { valido: false, error: `Prioridad Deportiva: falta la clasificación ${cod}` };
+    }
     return { valido: true };
 }
 
@@ -419,7 +584,8 @@ const NOMBRE_CRITERIO_UI = {
     PRIORIDAD_CATEGORIA: 'Prioridad de categoría',
     MENOS_DESIGNACIONES_TEMPORADA: 'Menos designaciones',
     MENOR_DISTANCIA: 'Menor distancia',
-    EQUIDAD_TRASLADOS: 'Equidad de traslados'
+    EQUIDAD_TRASLADOS: 'Equidad de traslados',
+    NOTA_TECNICA: 'Nota técnica'
 };
 
 function textoOrdenCriterios(ordenCriterios) {
@@ -508,15 +674,47 @@ function construirDiffParaUI(configBase, configNueva) {
         cambios.push({ etiqueta: 'Prioridad Zona Extrema', antes: prioridadZeA || '—', despues: prioridadZeB || '—' });
     }
 
+    // Prioridad Deportiva + Repetición por Intervalo (schema_version=4,
+    // Etapa C) — mismo estilo antes/después plano que el resto de esta
+    // función. NOTA_TECNICA como criterio ya queda reflejado automáticamente
+    // en la línea "Prioridades" de arriba (ordenCriterios) — no se repite acá.
+    const pdActivaA = a.regla_prioridad_deportiva_activa === true, pdActivaB = b.regla_prioridad_deportiva_activa === true;
+    if (pdActivaA !== pdActivaB) {
+        cambios.push({ etiqueta: 'Prioridad Deportiva', antes: pdActivaA ? 'Activada' : 'Desactivada', despues: pdActivaB ? 'Activada' : 'Desactivada' });
+    }
+    const ordenPdA = textoOrdenClasificaciones(a.prioridad_clasificaciones), ordenPdB = textoOrdenClasificaciones(b.prioridad_clasificaciones);
+    if (ordenPdA !== ordenPdB) {
+        cambios.push({ etiqueta: 'Orden de prioridad deportiva', antes: ordenPdA || '—', despues: ordenPdB || '—' });
+    }
+    const intActivaA = a.regla_repeticion_asociacion_intervalo_activa === true, intActivaB = b.regla_repeticion_asociacion_intervalo_activa === true;
+    if (intActivaA !== intActivaB) {
+        cambios.push({ etiqueta: 'Repetición de asociación por intervalo', antes: intActivaA ? 'Activada' : 'Desactivada', despues: intActivaB ? 'Activada' : 'Desactivada' });
+    }
+    const mesesA = a.repeticion_asociacion_meses ?? null, mesesB = b.repeticion_asociacion_meses ?? null;
+    if (mesesA !== mesesB) {
+        cambios.push({ etiqueta: 'Intervalo mínimo (meses)', antes: mesesA !== null ? `${mesesA} meses` : '—', despues: mesesB !== null ? `${mesesB} meses` : '—' });
+    }
+
     return { hayDiferencias: cambios.length > 0, cambios };
 }
+
+function textoOrdenClasificaciones(prioridadClasificaciones) {
+    return (prioridadClasificaciones || [])
+        .slice().sort((a, b) => a.orden - b.orden)
+        .map(f => NOMBRE_CLASIFICACION_UI[f.clasificacion_codigo] || f.clasificacion_codigo)
+        .join(' → ');
+}
+const NOMBRE_CLASIFICACION_UI = {
+    interclubes: 'Interclubes', provincial: 'Provincial', interasociaciones: 'Interasociaciones',
+    zonal: 'Zonal', clasificatorio: 'Clasificatorio', nacional: 'Nacional'
+};
 
 // Funciona como <script> global en el navegador y como módulo require()-able
 // en Node/Jest — mismo patrón que candidatosFiltro.js.
 const _configuracionDesignacionHelpersExports = {
     CRITERIOS_CONOCIDOS_UI, CRITERIOS_CONOCIDOS_UI_POR_SCHEMA, criteriosConocidosUIParaSchema,
     CLASIFICACIONES_CONOCIDAS_UI, CATEGORIAS_CONOCIDAS_UI, DISTANCIA_MAXIMA_TECNICA_KM_UI,
-    UMBRAL_LEJANIA_TECNICO_KM_UI, UMBRAL_LEJANIA_DEFAULT_KM_UI,
+    UMBRAL_LEJANIA_TECNICO_KM_UI, UMBRAL_LEJANIA_DEFAULT_KM_UI, REPETICION_ASOCIACION_MESES_TECNICO_MAX_UI,
     activarCriterio, desactivarCriterio, moverCriterio,
     activarEquidadTraslados, desactivarEquidadTraslados,
     activarCategoria, desactivarCategoria, moverCategoria,
@@ -524,7 +722,13 @@ const _configuracionDesignacionHelpersExports = {
     // Mejora "Zonas Extremas" (schema_version=3).
     activarZonasExtremas, desactivarZonasExtremas,
     agregarAsociacionZonaExtrema, quitarAsociacionZonaExtrema,
-    _normalizarAsociacionUI
+    _normalizarAsociacionUI,
+    // Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
+    // (schema_version=4, Etapa C).
+    activarPrioridadDeportiva, desactivarPrioridadDeportiva, moverClasificacionPrioridad,
+    activarNotaTecnica, desactivarNotaTecnica,
+    activarRepeticionIntervalo, desactivarRepeticionIntervalo,
+    validarPrioridadClasificacionesUI
 };
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = _configuracionDesignacionHelpersExports;

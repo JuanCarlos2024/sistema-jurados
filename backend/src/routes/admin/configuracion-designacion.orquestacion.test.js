@@ -101,14 +101,16 @@ describe('GET /activa', () => {
     // actualización que ya ocurrió acá cuando 2 se agregó con "Equidad de
     // Traslados") — el backend YA declara soporte de código para schema_
     // version=3 aunque la migración 053 todavía no esté aplicada.
-    test('incluye capacidades.schema_versions_soportadas = [1, 2, 3]', async () => {
+    test('incluye capacidades.schema_versions_soportadas = [1, 2, 3, 4]', async () => {
         cargarConfiguracionDesignacionActiva.mockResolvedValue({ configuracion: {}, meta: { id: 'v1-uuid', numero_version: 1 } });
         obtenerVersionDesignacionDetalle.mockResolvedValue({ configuracion: { schema_version: 1 }, meta: { id: 'v1-uuid', numero_version: 1, creado_por_nombre: null } });
         const { body } = await llamarRuta({ method: 'GET', url: '/activa' });
-        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2, 3]);
+        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2, 3, 4]);
         expect(body.capacidades.criterios_soportados_por_schema[2]).toContain('EQUIDAD_TRASLADOS');
         expect(body.capacidades.criterios_soportados_por_schema[1]).not.toContain('EQUIDAD_TRASLADOS');
         expect(body.capacidades.criterios_soportados_por_schema[3]).toContain('EQUIDAD_TRASLADOS');
+        // Mejora "Prioridad Deportiva + Nota Técnica" — schema_version=4.
+        expect(body.capacidades.criterios_soportados_por_schema[4]).toContain('NOTA_TECNICA');
         // Zonas Extremas — el frontend necesita el payload por defecto para
         // ofrecer la activación en un draft nuevo (sección 6/23 del pedido).
         expect(Array.isArray(body.capacidades.zonas_extremas_default.asociaciones)).toBe(true);
@@ -138,9 +140,9 @@ describe('GET /defaults', () => {
         const { body } = await llamarRuta({ method: 'GET', url: '/defaults' });
         expect(body.configuracion.schema_version).toBe(1);
     });
-    test('incluye capacidades.schema_versions_soportadas = [1, 2, 3] (mismo endpoint liviano, sin BD)', async () => {
+    test('incluye capacidades.schema_versions_soportadas = [1, 2, 3, 4] (mismo endpoint liviano, sin BD)', async () => {
         const { body } = await llamarRuta({ method: 'GET', url: '/defaults' });
-        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2, 3]);
+        expect(body.capacidades.schema_versions_soportadas).toEqual([1, 2, 3, 4]);
         expect(body.capacidades.criterios_soportados_por_schema[2]).toContain('EQUIDAD_TRASLADOS');
     });
 });

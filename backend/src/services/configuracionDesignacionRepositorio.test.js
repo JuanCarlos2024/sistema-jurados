@@ -159,13 +159,13 @@ describe('TEST E: versión inexistente por ID', () => {
 // SCHEMA_VERSIONES_SOPORTADAS). Lo que sigue siendo inválido es cualquier
 // schema_version FUERA de [1, 2] — ej. 3, todavía inexistente.
 describe('TEST F: schema_version no soportado — inválida, nunca fallback silencioso', () => {
-    // 4 (no 3): la mejora "Zonas Extremas" volvió a schema_version=3 un
-    // valor SOPORTADO (mismo tipo de actualización que ya ocurrió acá
-    // cuando 2 se volvió soportado con "Equidad de Traslados") — 4 sigue
-    // siendo un ejemplo válido de "schema_version desconocido".
-    test('CONFIGURACION_DESIGNACION_INVALIDA si schema_version es 4 (no soportado)', async () => {
+    // 5 (no 4): la mejora "Prioridad Deportiva + Nota Técnica" volvió a
+    // schema_version=4 un valor SOPORTADO (mismo tipo de actualización que
+    // ya ocurrió acá cuando 2 y 3 se volvieron soportados) — 5 sigue siendo
+    // un ejemplo válido de "schema_version desconocido".
+    test('CONFIGURACION_DESIGNACION_INVALIDA si schema_version es 5 (no soportado)', async () => {
         mockSupabaseRespuestas({
-            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 4 }], error: null },
+            configuracion_designacion_versiones: { data: [{ ...VERSION_V1, schema_version: 5 }], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
@@ -233,35 +233,35 @@ describe('TEST I: distancia inválida — inválida', () => {
 
 // TEST J
 describe('TEST J: cantidad fija de consultas — sin N+1', () => {
-    // 5 (no 3): la mejora "Zonas Extremas" agrega 2 queries fijas nuevas
-    // (sus 2 tablas propias) — mismo tipo de actualización que ya ocurrió
-    // acá cuando "Equidad de Traslados" no agregó ninguna consulta nueva
-    // (reutilizó las columnas ya traídas por configuracion_designacion_
-    // versiones), pero Zonas Extremas SÍ necesita 2 tablas hijas nuevas,
-    // igual que orden_criterios/matriz — siguen siendo FIJAS, nunca por
-    // criterio/categoría/asociación (sin importar su tamaño).
-    test('cargarConfiguracionDesignacionActiva hace exactamente 5 llamadas a supabase.from(), sin importar el tamaño de la matriz/criterios/zonas extremas', async () => {
+    // 6 (no 3, no 5): "Zonas Extremas" agregó 2 queries fijas nuevas (sus 2
+    // tablas propias); "Prioridad Deportiva" (Etapa C, migración 093,
+    // PREPARADA) agrega 1 más (su propia tabla hija) — mismo tipo de
+    // actualización que ya ocurrió acá para Zonas Extremas. Siguen siendo
+    // FIJAS, nunca por criterio/categoría/asociación/clasificación (sin
+    // importar su tamaño).
+    test('cargarConfiguracionDesignacionActiva hace exactamente 6 llamadas a supabase.from(), sin importar el tamaño de la matriz/criterios/zonas extremas/prioridad deportiva', async () => {
         mockSupabaseRespuestas({
             configuracion_designacion_versiones: { data: [VERSION_V1], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
         await cargarConfiguracionDesignacionActiva();
-        expect(supabase.from).toHaveBeenCalledTimes(5);
+        expect(supabase.from).toHaveBeenCalledTimes(6);
         expect(supabase.from.mock.calls.map(c => c[0]).sort()).toEqual([
             'configuracion_designacion_matriz', 'configuracion_designacion_orden_criterios',
+            'configuracion_designacion_prioridad_clasificaciones',
             'configuracion_designacion_versiones',
             'configuracion_designacion_zona_extrema_categorias', 'configuracion_designacion_zonas_extremas'
         ]);
     });
-    test('cargarConfiguracionDesignacionPorId también hace exactamente 5 llamadas', async () => {
+    test('cargarConfiguracionDesignacionPorId también hace exactamente 6 llamadas', async () => {
         mockSupabaseRespuestas({
             configuracion_designacion_versiones: { data: [VERSION_V1], error: null },
             configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
             configuracion_designacion_matriz: { data: MATRIZ_V1, error: null }
         });
         await cargarConfiguracionDesignacionPorId('v1-uuid');
-        expect(supabase.from).toHaveBeenCalledTimes(5);
+        expect(supabase.from).toHaveBeenCalledTimes(6);
     });
 });
 
@@ -444,6 +444,103 @@ describe('ESTADO 2/3 — crearVersionDesignacion despacha a la RPC correcta seg�
         expect(supabase.rpc.mock.calls[0][1].p_regla_zonas_extremas_activa).toBe(false);
         expect(supabase.rpc.mock.calls[0][1].p_zonas_extremas_asociaciones).toEqual([]);
         expect(supabase.rpc.mock.calls[0][1].p_zonas_extremas_categorias).toEqual([]);
+    });
+
+    // ETAPA C — "Prioridad Deportiva + Nota Técnica + Repetición por
+    // Intervalo" (schema_version=4, migración 093, PREPARADA, NO aplicada).
+    const PRIORIDAD_CLASIFICACIONES_TEST = [
+        { clasificacion_codigo: 'zonal', orden: 1 },
+        { clasificacion_codigo: 'interasociaciones', orden: 2 },
+        { clasificacion_codigo: 'provincial', orden: 3 },
+        { clasificacion_codigo: 'interclubes', orden: 4 },
+        { clasificacion_codigo: 'clasificatorio', orden: 5 },
+        { clasificacion_codigo: 'nacional', orden: 6 }
+    ];
+    test('schema_version=4 con las 3 reglas activas llama EXCLUSIVAMENTE a la RPC v4, con TODOS los parámetros (heredados de schema1/2/3 + los 4 nuevos)', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-nueva-v4', numero_version: 10 }], error: null });
+        const configuracion = {
+            ...construirConfiguracionDefaultV1(),
+            schema_version: 4,
+            regla_prioridad_deportiva_activa: true,
+            prioridad_clasificaciones: PRIORIDAD_CLASIFICACIONES_TEST,
+            regla_repeticion_asociacion_intervalo_activa: true,
+            repeticion_asociacion_meses: 6,
+            ordenCriterios: [
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 2 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 3 },
+                { criterio_codigo: 'NOTA_TECNICA', orden: 4 }
+            ]
+        };
+        const resultado = await crearVersionDesignacion({ configuracion, descripcion: 'v4 prioridad deportiva', creadoPor: 'admin-4' });
+
+        expect(resultado).toEqual({ id: 'v-nueva-v4', numero_version: 10 });
+        expect(supabase.rpc).toHaveBeenCalledTimes(1);
+        const [nombreRpc, params] = supabase.rpc.mock.calls[0];
+        expect(nombreRpc).toBe('crear_configuracion_designacion_version_v4'); // RPC NUEVA, nunca v3/v2/legacy
+        expect(Object.keys(params).sort()).toEqual([
+            'p_creado_por', 'p_descripcion', 'p_distancia_maxima_km', 'p_matriz', 'p_orden_criterios',
+            'p_prioridad_clasificaciones',
+            'p_regla_asociacion_organizadora_activa', 'p_regla_distancia_maxima_activa',
+            'p_regla_equidad_traslados_activa', 'p_regla_finde_consecutivo_activa',
+            'p_regla_no_repetir_asociacion_activa', 'p_regla_prioridad_deportiva_activa',
+            'p_regla_repeticion_asociacion_intervalo_activa',
+            'p_regla_un_rodeo_por_finde_activa', 'p_regla_zonas_extremas_activa',
+            'p_repeticion_asociacion_meses', 'p_umbral_lejania_km',
+            'p_zonas_extremas_asociaciones', 'p_zonas_extremas_categorias'
+        ].sort());
+        expect(params.p_regla_prioridad_deportiva_activa).toBe(true);
+        expect(params.p_prioridad_clasificaciones).toEqual(PRIORIDAD_CLASIFICACIONES_TEST);
+        expect(params.p_regla_repeticion_asociacion_intervalo_activa).toBe(true);
+        expect(params.p_repeticion_asociacion_meses).toBe(6);
+        // Heredado de schema2/3 — sigue viajando aunque esté inactivo.
+        expect(params.p_regla_equidad_traslados_activa).toBe(false);
+        expect(params.p_regla_zonas_extremas_activa).toBe(false);
+        expect(params.p_zonas_extremas_asociaciones).toEqual([]);
+    });
+
+    test('schema_version=4 SIN ninguna de las 3 reglas activas también usa la RPC v4 — la elección es por schema_version, no por si las reglas están activas', async () => {
+        supabase.rpc.mockResolvedValue({ data: [{ id: 'v-schema4-sin-reglas', numero_version: 11 }], error: null });
+        const configuracion = { ...construirConfiguracionDefaultV1(), schema_version: 4 };
+        await crearVersionDesignacion({ configuracion, descripcion: null, creadoPor: null });
+        expect(supabase.rpc.mock.calls[0][0]).toBe('crear_configuracion_designacion_version_v4');
+        expect(supabase.rpc.mock.calls[0][1].p_regla_prioridad_deportiva_activa).toBe(false);
+        expect(supabase.rpc.mock.calls[0][1].p_prioridad_clasificaciones).toEqual([]);
+        expect(supabase.rpc.mock.calls[0][1].p_regla_repeticion_asociacion_intervalo_activa).toBe(false);
+        expect(supabase.rpc.mock.calls[0][1].p_repeticion_asociacion_meses).toBeNull();
+    });
+});
+
+// Etapa C — GET versión schema4 -> prioridad_clasificaciones completa
+// reconstruida desde su tabla nueva, mismo patrón que TEST 43 (Zonas Extremas).
+describe('cargarConfiguracionDesignacionPorId — schema_version=4 reconstruye prioridad_clasificaciones completo', () => {
+    test('versión schema4 con Prioridad Deportiva activa -> configuracion.prioridad_clasificaciones trae el orden real de BD', async () => {
+        const versionPD = {
+            ...VERSION_V1, id: 'v4-uuid', schema_version: 4, regla_prioridad_deportiva_activa: true,
+            regla_equidad_traslados_activa: false, umbral_lejania_km: null,
+            regla_zonas_extremas_activa: false,
+            regla_repeticion_asociacion_intervalo_activa: false, repeticion_asociacion_meses: null
+        };
+        mockSupabaseRespuestas({
+            configuracion_designacion_versiones: { data: [versionPD], error: null },
+            configuracion_designacion_orden_criterios: { data: CRITERIOS_V1, error: null },
+            configuracion_designacion_matriz: { data: MATRIZ_V1, error: null },
+            configuracion_designacion_prioridad_clasificaciones: {
+                data: [
+                    { clasificacion_codigo: 'zonal', orden: 1 }, { clasificacion_codigo: 'interasociaciones', orden: 2 },
+                    { clasificacion_codigo: 'provincial', orden: 3 }, { clasificacion_codigo: 'interclubes', orden: 4 },
+                    { clasificacion_codigo: 'clasificatorio', orden: 5 }, { clasificacion_codigo: 'nacional', orden: 6 }
+                ], error: null
+            }
+        });
+        const resultado = await cargarConfiguracionDesignacionPorId('v4-uuid');
+        expect(resultado.error).toBeUndefined();
+        expect(resultado.configuracion.regla_prioridad_deportiva_activa).toBe(true);
+        expect(resultado.configuracion.prioridad_clasificaciones).toEqual([
+            { clasificacion_codigo: 'zonal', orden: 1 }, { clasificacion_codigo: 'interasociaciones', orden: 2 },
+            { clasificacion_codigo: 'provincial', orden: 3 }, { clasificacion_codigo: 'interclubes', orden: 4 },
+            { clasificacion_codigo: 'clasificatorio', orden: 5 }, { clasificacion_codigo: 'nacional', orden: 6 }
+        ]);
     });
 });
 

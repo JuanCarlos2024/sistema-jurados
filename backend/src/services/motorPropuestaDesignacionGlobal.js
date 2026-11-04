@@ -41,16 +41,43 @@
 //                                     puede estar en dos rodeos el mismo fin
 //                                     de semana. Expresamente distinto de
 //                                     FINDE_CONSECUTIVO (ver abajo).
+//     ASOCIACION_REPETIDA_INTERVALO — (schema_version=4, corrección Etapa C,
+//                                     sección 3 del pedido) regla de 6 meses
+//                                     (configurable) entre designaciones de
+//                                     la MISMA asociación: "el motor NO puede
+//                                     repetir automáticamente una asociación
+//                                     si no han transcurrido [N] meses desde
+//                                     la última designación efectiva... no
+//                                     debe saltarse automáticamente esta
+//                                     restricción". Antes (Etapa B) estaba
+//                                     entre las relajables — el usuario
+//                                     corrigió explícitamente ese diseño: a
+//                                     diferencia de ASOCIACION_REPETIDA_
+//                                     TEMPORADA (repetición dentro del MISMO
+//                                     lote/temporada, sigue siendo relajable,
+//                                     sin cambios), esta regla mira historial
+//                                     real con fecha de corte y nunca se cede
+//                                     para ganar cobertura — si bloquea un
+//                                     rodeo, el motor debe EXPLICARLO como
+//                                     SIN_PROPUESTA, nunca forzar la repetición.
 //
 //   PREFERENCIAS FLEXIBLES (relajables SOLO en el 2º nivel de búsqueda, y
 //   SOLO cuando sea la única forma de cubrir el 100% de los cupos):
 //     DISTANCIA_EXCEDIDA            — "distancia de referencia" de 600 km.
 //     ASOCIACION_REPETIDA_TEMPORADA — repetición de asociación organizadora
-//                                     ya designada en la temporada.
+//                                     ya designada en la temporada (mismo
+//                                     lote, sin mirar fechas históricas —
+//                                     distinta de ASOCIACION_REPETIDA_
+//                                     INTERVALO, ver arriba, que SÍ es
+//                                     obligatoria).
 //     FINDE_CONSECUTIVO             — dos rodeos en fines de semana
 //                                     consecutivos (NO el mismo fin de
 //                                     semana — eso es MISMO_FINDE, siempre
-//                                     obligatorio).
+//                                     obligatorio). Expresamente SIGUE siendo
+//                                     relajable (pedido, Etapa C, sección 3:
+//                                     "independiente de permitir fines de
+//                                     semana consecutivos, que sí puede
+//                                     flexibilizarse").
 //     JURADO_SIN_COMUNA_RESOLVIBLE  — no se pudo calcular distancia: un dato
 //                                     faltante, no una prohibición; si la
 //                                     distancia en sí es preferencial, no
@@ -77,6 +104,7 @@ const {
 const { resolverComuna } = require('./geografia');
 const { normalizarAsociacion } = require('./asociaciones');
 const { construirConfiguracionDefaultV1 } = require('./configuracionDesignacion');
+const { cargarNotaTecnicaPorJurado } = require('./notaTecnicaJurados');
 
 // Límites de seguridad de la búsqueda exacta — pensados para lotes reales
 // (hasta 200 rodeos por corrida, mismo tope que POST /dry-run). Si se
@@ -89,11 +117,21 @@ const LIMITE_MS_DEFAULT = 8000;
 // Preferencias flexibles — ver comentario de cabecera. Único lugar que
 // define esta lista; tanto resolverAsignacionGlobal() como la
 // reconstrucción del resultado final la reutilizan, nunca una segunda copia.
+//
+// CORRECCIÓN (Etapa C, sección 3 del pedido): ASOCIACION_REPETIDA_INTERVALO
+// se retiró de esta lista — el usuario corrigió explícitamente el diseño de
+// la Etapa B ("la regla acordada es que el motor NO pueda repetir
+// automáticamente una asociación si no han transcurrido [N] meses... no
+// debe saltarse automáticamente esta restricción"). Queda como OBLIGATORIA
+// (ver CAUSAS_OBLIGATORIAS) — nunca se cede, en ningún nivel de búsqueda,
+// aunque eso reduzca la cobertura máxima factible; si bloquea un rodeo, se
+// reporta SIN_PROPUESTA con el motivo explícito (descartes), nunca se fuerza.
 const CAUSAS_RELAJABLES = new Set(['DISTANCIA_EXCEDIDA', 'ASOCIACION_REPETIDA_TEMPORADA', 'FINDE_CONSECUTIVO', 'JURADO_SIN_COMUNA_RESOLVIBLE']);
 // Documental/tests — todas las causas que evaluarCandidato() puede producir,
 // menos las relajables, son las obligatorias (DISPONIBILIDAD,
-// CATEGORIA_INCOMPATIBLE, MISMA_ASOCIACION, MISMO_FINDE).
-const CAUSAS_OBLIGATORIAS = new Set(['DISPONIBILIDAD', 'CATEGORIA_INCOMPATIBLE', 'MISMA_ASOCIACION', 'MISMO_FINDE']);
+// CATEGORIA_INCOMPATIBLE, MISMA_ASOCIACION, MISMO_FINDE,
+// ASOCIACION_REPETIDA_INTERVALO — ver corrección arriba).
+const CAUSAS_OBLIGATORIAS = new Set(['DISPONIBILIDAD', 'CATEGORIA_INCOMPATIBLE', 'MISMA_ASOCIACION', 'MISMO_FINDE', 'ASOCIACION_REPETIDA_INTERVALO']);
 
 // Estados de búsqueda explícitos (Fase 2B, sección 2 del pedido) — nunca se
 // informa imposibilidad por un simple timeout, y nunca se afirma cobertura
@@ -148,7 +186,21 @@ function resolverAsignacionGlobal(contexto, configuracion, rodeosConMatriz, opci
     const { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado } = construirEstadoDesdeBD(contexto.asignacionesTemporada);
     const trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     const trasladosTemporalesPorJurado = new Map();
-    const estado = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado };
+    // CORRECCIÓN (Etapa C, sección 3/4 del pedido): faltaban aquí —
+    // evaluarCandidato() nunca podía detectar ASOCIACION_REPETIDA_INTERVALO
+    // (histórico real, fuera de esta temporada) ni usar la nota técnica como
+    // desempate DURANTE esta búsqueda exacta, aunque el llamador
+    // (ejecutarSimulacionGlobal/generarSimulacionGlobal) ya las cargara en
+    // `contexto` — resolverPrioridadDeportiva() sí las incluía en su propio
+    // estado, pero esta función (la que decide la cobertura MÁXIMA, tier0/
+    // tier1) no. Se detectó al escribir las pruebas de la corrección de la
+    // sección 3: un jurado que debía quedar SIN_PROPUESTA (única vía posible
+    // viola el intervalo obligatorio de 6 meses) terminaba propuesto de
+    // todas formas por el nivel ESTRICTO, que nunca vio la causa.
+    const estado = {
+        asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado,
+        ultimaFechaAsociacionPorJurado: contexto.ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado: contexto.notaTecnicaPorJurado
+    };
 
     const comparador = construirComparadorJerarquico(configuracion.ordenCriterios, configuracion.umbral_lejania_km);
 
@@ -157,19 +209,37 @@ function resolverAsignacionGlobal(contexto, configuracion, rodeosConMatriz, opci
     const candidatosEstaticosPorRodeo = opciones.candidatosEstaticosPorRodeo
         || construirCandidatosEstaticosPorRodeo(contexto, configuracion, rodeosConMatriz, causasRelajadas, comunaJuradoPorId);
 
+    // Corrección (sección 8): un rodeo con CERO candidatos estáticos (ya
+    // bajo el nivel permisivo de ESTE tier) nunca puede asignarse en NINGÚN
+    // nodo de esta búsqueda — es una imposibilidad estructural, no depende
+    // de qué otras decisiones tome el backtracking. Incluirlo en la lista
+    // de pendientes no solo es inútil: al tener SIEMPRE la menor cantidad
+    // de candidatos (0), el orden MRV lo procesa PRIMERO y el nodo raíz
+    // completo falla de inmediato (`candidatos.length === 0` más abajo)
+    // ANTES de intentar cubrir ningún otro rodeo — "envenenando" la
+    // búsqueda entera y dejando `mejorParcial` vacío aunque el resto del
+    // lote sí tuviera una combinación perfectamente factible. Se excluyen
+    // aquí de lo que el backtracking realmente explora; la exigencia de
+    // cobertura TOTAL (`exito`) de todo `rodeosConMatriz` se preserva
+    // exacta más abajo (nunca puede ser true si existe uno de estos).
+    const rodeosSinCandidatos = new Set(
+        rodeosConMatriz.filter(r => (candidatosEstaticosPorRodeo.get(r.id) || []).length === 0).map(r => r.id)
+    );
+    const rodeosBuscables = rodeosSinCandidatos.size === 0 ? rodeosConMatriz : rodeosConMatriz.filter(r => !rodeosSinCandidatos.has(r.id));
+
     // Orden MRV APROXIMADO, precalculado UNA sola vez: rodeos ordenados
     // ascendente por cantidad de candidatos ESTÁTICOS. Cualquier orden de
     // ramificación es válido para la CORRECCIÓN del backtracking (prueba
     // todos los candidatos del rodeo elegido, sin importar cuál se eligió
     // primero) — este orden solo decide qué tan rápido se converge, nunca
     // si la respuesta final es correcta.
-    const ordenEstatico = [...rodeosConMatriz].sort(
+    const ordenEstatico = [...rodeosBuscables].sort(
         (a, b) => (candidatosEstaticosPorRodeo.get(a.id)?.length || 0) - (candidatosEstaticosPorRodeo.get(b.id)?.length || 0)
     );
     const rodeoPorId = new Map(rodeosConMatriz.map(r => [r.id, r]));
 
     const asignado = new Map(); // rodeo_id -> jurado_id
-    const pendientesRestantes = new Set(rodeosConMatriz.map(r => r.id)); // mutado durante la búsqueda
+    const pendientesRestantes = new Set(rodeosBuscables.map(r => r.id)); // mutado durante la búsqueda
     let mejorParcial = new Map();
     let nodos = 0;
     let limiteAlcanzado = false;
@@ -245,12 +315,297 @@ function resolverAsignacionGlobal(contexto, configuracion, rodeosConMatriz, opci
         return false;
     }
 
-    const exito = rodeosConMatriz.length === 0 ? true : backtrack();
-    const asignacionFinal = exito ? asignado : mejorParcial;
+    // La cobertura TOTAL de `rodeosConMatriz` (lo que `exito` promete) nunca
+    // puede ser true si existe al menos un rodeo sin ningún candidato — eso
+    // se decide aquí, independientemente de cómo le haya ido al backtracking
+    // sobre `rodeosBuscables` (que persigue cubrir el resto al máximo).
+    const exitoBuscables = rodeosBuscables.length === 0 ? true : backtrack();
+    const exito = exitoBuscables && rodeosSinCandidatos.size === 0;
+    const asignacionFinal = exitoBuscables ? asignado : mejorParcial;
     return {
         exito, asignacion: asignacionFinal,
         cobertura: asignacionFinal.size, totalEvaluables: rodeosConMatriz.length,
         nodosExplorados: nodos, limiteAlcanzado, tiempoMs: Date.now() - inicioMs
+    };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Objetivo secundario — Prioridad Deportiva + Calidad Técnica
+// (schema_version=4, pedido "Motor Global con Prioridad de Rodeos,
+// Categorías y Calidad Técnica", Etapa B).
+//
+// "Primero maximizar la cobertura, después optimizar la prioridad
+// deportiva..." — la cobertura máxima (`coberturaObjetivo`) SIEMPRE se
+// calcula primero con resolverAsignacionGlobal() (sin modificar esa
+// función en absoluto); este objetivo secundario NUNCA puede sacrificar un
+// solo cupo de cobertura para mejorar la prioridad deportiva —
+// coberturaObjetivo es un piso DURO (ver poda de factibilidad más abajo).
+//
+// Costo de una asignación completa = SUMA, por cada rodeo asignado, de
+// peso_prioridad(rodeo.clasificacion_codigo) × costo_categoria(rodeo, jurado):
+//   peso_prioridad   — de configuracion.prioridad_clasificaciones (orden=1
+//                       la MÁXIMA prioridad deportiva, configurable, nunca
+//                       fijo en código — sección 1/2 del pedido): mayor
+//                       peso para las clasificaciones de mayor prioridad,
+//                       así que darle a un zonal una categoría peor que la
+//                       ideal cuesta MUCHO más que la misma "degradación"
+//                       en un interclubes — esto ES, en sí mismo, "reservar
+//                       los mejores jurados para los rodeos que más los
+//                       necesitan".
+//   costo_categoria  — rodeo._matrizGlobal.ordenPorCategoria.get(categoria)
+//                       - 1: 0 si el jurado tiene la categoría MÁS
+//                       preferida para ese rodeo (nunca penaliza al jurado
+//                       ideal), 1 si es la 2ª preferida, etc. Reutiliza la
+//                       MISMA matriz ya resuelta (zona extrema incluida)
+//                       que usa el resto del motor — nunca una fuente
+//                       paralela de "qué categoría es mejor para este rodeo".
+//
+// CORRECCIÓN (Etapa C, sección 4 del pedido): la NOTA TÉCNICA SÍ debe
+// participar, pero exclusivamente como DESEMPATE — el usuario detectó que,
+// con dos jurados A igualmente elegibles (misma categoría ideal, mismo
+// costo_categoria=0) para un zonal y un interasociaciones, el costo de
+// prioridad deportiva quedaba EMPATADO entre "A de nota 6,3 → zonal" y "A
+// de nota 5,2 → zonal": el objetivo era indiferente a cuál de los dos A
+// terminaba en el rodeo de mayor prioridad, pudiendo elegir arbitrariamente
+// el de peor nota técnica. `costoNotaTecnicaCandidato` + `ESCALA_COSTO_
+// CATEGORIA` abajo resuelven esto como un desempate LEXICOGRÁFICO estricto,
+// nunca como un "tipo de cambio" entre nota técnica y prioridad deportiva:
+// el costo de categoría se escala por ESCALA_COSTO_CATEGORIA antes de sumar
+// el término de nota técnica, así que NINGUNA combinación de diferencias de
+// nota técnica (acotadas por NOTA_TECNICA_MAXIMA, sumadas sobre TODO el
+// lote) puede jamás invertir una diferencia real de 1 unidad de
+// costo_categoria en ningún rodeo — la distribución de categorías A/B/C
+// sigue siendo SIEMPRE lo primero que se optimiza; la nota técnica solo
+// decide ENTRE soluciones que ya son óptimas en categoría. Sigue sin
+// mezclarse con el criterio NOTA_TECNICA del comparador (motor local,
+// desempate dentro de un MISMO rodeo) — son dos mecanismos independientes
+// que, con esta corrección, apuntan en la misma dirección en vez de
+// contradecirse.
+// ═════════════════════════════════════════════════════════════════════════
+function calcularPesoPorClasificacion(prioridadClasificaciones) {
+    const lista = prioridadClasificaciones || [];
+    const total = lista.length;
+    const pesos = new Map();
+    for (const f of lista) pesos.set(f.clasificacion_codigo, total - f.orden + 1);
+    return pesos;
+}
+
+// Tope documentado de la escala de nota técnica (evaluacionDesempenoJurados.js
+// / notas_rodeo.nota) — usado SOLO para acotar este desempate interno, nunca
+// mostrado ni almacenado como una nota real.
+const NOTA_TECNICA_MAXIMA = 7;
+// Garantiza la dominancia lexicográfica descrita arriba: con hasta 6
+// clasificaciones (peso máximo 6) y lotes reales de hasta 200 rodeos, la
+// suma máxima posible del término de nota técnica es 200 × 6 × 7 = 8400,
+// muy por debajo de esta escala — así que 1 sola unidad de costo_categoria
+// en un solo rodeo siempre pesa más que la nota técnica de TODO el lote.
+const ESCALA_COSTO_CATEGORIA = 1000000;
+
+// Penalización de desempate por nota técnica de UN candidato — mayor nota,
+// menor costo. Una nota AUSENTE (jurado sin evaluación técnica todavía)
+// recibe la penalización MÁXIMA (mismo criterio que el comparador
+// NOTA_TECNICA: nunca mejor que cualquier nota real conocida), sin fingir
+// que equivale a una nota real de 0.
+function costoNotaTecnicaCandidato(jurado, notaTecnicaPorJurado) {
+    const nota = notaTecnicaPorJurado.get(jurado?.id)?.promedio;
+    const notaEfectiva = nota ?? 0;
+    return Math.max(0, NOTA_TECNICA_MAXIMA - notaEfectiva);
+}
+
+// Costo de UN rodeo ya asignado — reutilizado tanto para evaluar una
+// asignación completa como para acumular costo nodo a nodo durante la
+// búsqueda (branch-and-bound, poda por cota inferior).
+// `notaTecnicaPorJurado` es OPCIONAL (Map|undefined) — cuando no se pasa
+// (p. ej. criterio NOTA_TECNICA inactivo, o llamadas existentes que no la
+// necesitan), el costo es EXACTAMENTE el de antes de esta corrección, sin
+// ningún término adicional ni cambio de escala.
+function costoRodeoAsignado(rodeo, juradoId, juradoPorId, pesoPorClasificacion, notaTecnicaPorJurado) {
+    const jurado = juradoPorId.get(juradoId);
+    const ordenPreferencia = rodeo._matrizGlobal?.ordenPorCategoria?.get(jurado?.categoria);
+    const costoCategoria = (ordenPreferencia || 1) - 1; // nunca negativo; sin matriz resuelta, costo 0 (defensivo)
+    const peso = pesoPorClasificacion.get(rodeo.clasificacion_codigo) ?? 1;
+    const costoBase = peso * costoCategoria;
+    if (!notaTecnicaPorJurado) return costoBase;
+    const costoNota = peso * costoNotaTecnicaCandidato(jurado, notaTecnicaPorJurado);
+    return costoBase * ESCALA_COSTO_CATEGORIA + costoNota;
+}
+
+function calcularCostoPrioridadDeportiva(asignacion, rodeoPorId, juradoPorId, pesoPorClasificacion, notaTecnicaPorJurado) {
+    let total = 0;
+    for (const [rodeoId, juradoId] of asignacion.entries()) {
+        total += costoRodeoAsignado(rodeoPorId.get(rodeoId), juradoId, juradoPorId, pesoPorClasificacion, notaTecnicaPorJurado);
+    }
+    return total;
+}
+
+// ─── Búsqueda del objetivo secundario (branch-and-bound) ─────────────────
+// Explora el MISMO espacio de soluciones que resolverAsignacionGlobal()
+// (misma evaluarCandidato(), mismo candidatosEstaticosPorRodeo del nivel ya
+// probado) pero, a diferencia de esa búsqueda (que se detiene en la
+// PRIMERA cobertura total encontrada), sigue explorando después de
+// encontrar una solución completa, buscando una de MENOR costo, y PODA
+// cualquier rama cuyo costo acumulado ya iguale o supere la mejor solución
+// completa conocida (válido porque el costo nunca es negativo: solo puede
+// crecer al agregar más asignaciones).
+//
+// SIEMPRE arranca con `asignacionSemilla` (la cobertura máxima ya probada
+// por resolverAsignacionGlobal) como cota superior inicial — así, aunque se
+// agote el presupuesto de nodos/tiempo ANTES de mejorar nada, el resultado
+// NUNCA es peor que no haber corrido este objetivo secundario en absoluto
+// (sección 2 del pedido: "nunca debe abandonar una cobertura parcial mejor").
+//
+// @returns { asignacion, costo, costoSemilla, cobertura, mejorada, nodosExplorados, limiteAlcanzado, tiempoMs }
+function resolverPrioridadDeportiva(contexto, configuracion, rodeosBuscables, coberturaObjetivo, candidatosEstaticosPorRodeo, causasRelajadas, asignacionSemilla, opciones = {}) {
+    const limiteNodos = opciones.limiteNodosPrioridad || LIMITE_NODOS_DEFAULT;
+    const limiteMs = opciones.limiteMsPrioridad || LIMITE_MS_DEFAULT;
+    const inicioMs = Date.now();
+
+    const rodeoPorId = new Map(rodeosBuscables.map(r => [r.id, r]));
+    const juradoPorId = new Map(contexto.jurados.map(j => [j.id, j]));
+    const pesoPorClasificacion = calcularPesoPorClasificacion(configuracion.prioridad_clasificaciones);
+    // Corrección (Etapa C, sección 4 del pedido) — ver comentario de cabecera
+    // de costoRodeoAsignado(): el desempate por nota técnica solo se activa
+    // si el criterio NOTA_TECNICA está realmente en el orden configurado
+    // (mismo gate que ya usa el resto del motor para esta mejora) Y hay datos
+    // cargados en el contexto; de lo contrario queda `undefined` y el costo
+    // es idéntico, bit a bit, al de antes de esta corrección.
+    const notaTecnicaActiva = (configuracion.ordenCriterios || []).some(o => o.criterio_codigo === 'NOTA_TECNICA')
+        ? contexto.notaTecnicaPorJurado
+        : undefined;
+    const costoSemilla = calcularCostoPrioridadDeportiva(asignacionSemilla, rodeoPorId, juradoPorId, pesoPorClasificacion, notaTecnicaActiva);
+
+    const comunaJuradoPorId = new Map();
+    for (const j of contexto.jurados) comunaJuradoPorId.set(j.id, resolverComuna(j.comuna, contexto.catalogoComunas));
+    const { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado } = construirEstadoDesdeBD(contexto.asignacionesTemporada);
+    const trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
+    const trasladosTemporalesPorJurado = new Map();
+    const estado = {
+        asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado,
+        ultimaFechaAsociacionPorJurado: contexto.ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado: contexto.notaTecnicaPorJurado
+    };
+    const comparador = construirComparadorJerarquico(configuracion.ordenCriterios, configuracion.umbral_lejania_km);
+
+    const ordenEstatico = [...rodeosBuscables].sort(
+        (a, b) => (candidatosEstaticosPorRodeo.get(a.id)?.length || 0) - (candidatosEstaticosPorRodeo.get(b.id)?.length || 0)
+    );
+
+    const asignado = new Map();
+    const pendientesRestantes = new Set(rodeosBuscables.map(r => r.id));
+    let costoAcumulado = 0;
+    let mejorAsignacion = new Map(asignacionSemilla);
+    let mejorCosto = costoSemilla;
+    let nodos = 0;
+    let limiteAlcanzado = false;
+
+    function candidatosFactibles(rodeo) {
+        return (candidatosEstaticosPorRodeo.get(rodeo.id) || [])
+            .map(j => evaluarCandidato(j, rodeo, rodeo._matrizGlobal, contexto.disponibilidad, comunaJuradoPorId, estado, configuracion))
+            .filter(e => e.causas.every(c => causasRelajadas.has(c)));
+    }
+    function asignarTemporal(juradoId, rodeo) {
+        if (!designacionesPorJurado.has(juradoId)) designacionesPorJurado.set(juradoId, new Set());
+        designacionesPorJurado.get(juradoId).add(rodeo.id);
+        if (!bloquesPorJurado.has(juradoId)) bloquesPorJurado.set(juradoId, []);
+        bloquesPorJurado.get(juradoId).push(rodeo.bloque);
+        let agregoAsociacion = false;
+        if (rodeo.asociacion) {
+            if (!asociacionesPorJurado.has(juradoId)) asociacionesPorJurado.set(juradoId, new Set());
+            const asocNorm = normalizarAsociacion(rodeo.asociacion);
+            if (!asociacionesPorJurado.get(juradoId).has(asocNorm)) { asociacionesPorJurado.get(juradoId).add(asocNorm); agregoAsociacion = true; }
+        }
+        return agregoAsociacion;
+    }
+    function desasignarTemporal(juradoId, rodeo, agregoAsociacion) {
+        designacionesPorJurado.get(juradoId).delete(rodeo.id);
+        bloquesPorJurado.get(juradoId).pop();
+        if (agregoAsociacion) asociacionesPorJurado.get(juradoId).delete(normalizarAsociacion(rodeo.asociacion));
+    }
+
+    function backtrack() {
+        nodos++;
+        if (nodos > limiteNodos || Date.now() - inicioMs > limiteMs) { limiteAlcanzado = true; return; }
+
+        if (pendientesRestantes.size === 0) {
+            if (asignado.size >= coberturaObjetivo && costoAcumulado < mejorCosto) {
+                mejorCosto = costoAcumulado;
+                mejorAsignacion = new Map(asignado);
+            }
+            return; // nunca se detiene en la primera — sigue buscando otra combinación mejor
+        }
+        // Poda de factibilidad — piso DURO: coberturaObjetivo nunca se sacrifica.
+        if (asignado.size + pendientesRestantes.size < coberturaObjetivo) return;
+        // Poda por costo — esta rama ya es igual o peor que la mejor completa conocida.
+        if (costoAcumulado >= mejorCosto) return;
+
+        let rodeoElegido = null;
+        for (const r of ordenEstatico) { if (pendientesRestantes.has(r.id)) { rodeoElegido = r; break; } }
+        const candidatos = candidatosFactibles(rodeoElegido);
+        pendientesRestantes.delete(rodeoElegido.id);
+
+        // Explora TAMBIÉN la opción de dejar este rodeo sin cubrir (si la
+        // cobertura restante todavía puede alcanzar el objetivo) — nunca se
+        // asume que el patrón de "quién queda sin cubrir" de la cobertura
+        // máxima original es el único válido; distintos jurados libres
+        // cambian qué combinación respeta mejor la prioridad deportiva.
+        if (asignado.size + pendientesRestantes.size >= coberturaObjetivo) {
+            backtrack();
+            if (limiteAlcanzado) { pendientesRestantes.add(rodeoElegido.id); return; }
+        }
+
+        // Candidatos ordenados por costo ascendente (poda temprana más
+        // efectiva — explora primero las ramas más prometedoras); desempate
+        // por el comparador ya configurado, nunca aleatorio.
+        const ordenados = [...candidatos].sort((a, b) => {
+            const ca = costoRodeoAsignado(rodeoElegido, a.jurado.id, juradoPorId, pesoPorClasificacion, notaTecnicaActiva);
+            const cb = costoRodeoAsignado(rodeoElegido, b.jurado.id, juradoPorId, pesoPorClasificacion, notaTecnicaActiva);
+            return ca !== cb ? ca - cb : comparador(a, b);
+        });
+
+        for (const cand of ordenados) {
+            const costoCand = costoRodeoAsignado(rodeoElegido, cand.jurado.id, juradoPorId, pesoPorClasificacion, notaTecnicaActiva);
+            if (costoAcumulado + costoCand >= mejorCosto) continue; // poda — ni probar esta rama
+            const agregoAsoc = asignarTemporal(cand.jurado.id, rodeoElegido);
+            asignado.set(rodeoElegido.id, cand.jurado.id);
+            costoAcumulado += costoCand;
+
+            backtrack();
+
+            costoAcumulado -= costoCand;
+            asignado.delete(rodeoElegido.id);
+            desasignarTemporal(cand.jurado.id, rodeoElegido, agregoAsoc);
+            if (limiteAlcanzado) { pendientesRestantes.add(rodeoElegido.id); return; }
+        }
+        pendientesRestantes.add(rodeoElegido.id);
+    }
+
+    if (rodeosBuscables.length > 0) backtrack();
+
+    return {
+        asignacion: mejorAsignacion, costo: mejorCosto, costoSemilla, cobertura: mejorAsignacion.size,
+        mejorada: mejorCosto < costoSemilla,
+        nodosExplorados: nodos, limiteAlcanzado, tiempoMs: Date.now() - inicioMs
+    };
+}
+
+// ─── Aplica el objetivo secundario SOLO si la regla está activa — devuelve
+// siempre la misma forma, aplicada o no, para que el llamador no tenga que
+// ramificar. Si `asignacionBase` está vacía (nada que optimizar) o la regla
+// está inactiva (default — nunca se activa sola, sección 5 del pedido:
+// "no activar automáticamente"), devuelve la asignación tal cual, sin costo
+// alguno de cómputo adicional.
+function aplicarPrioridadDeportivaSiCorresponde(contexto, configuracion, rodeosBuscables, asignacionBase, coberturaObjetivo, candidatosEstaticosPorRodeo, causasRelajadas, opciones) {
+    if (!configuracion.regla_prioridad_deportiva_activa || asignacionBase.size === 0) {
+        return { asignacion: asignacionBase, info: null };
+    }
+    const r = resolverPrioridadDeportiva(contexto, configuracion, rodeosBuscables, coberturaObjetivo, candidatosEstaticosPorRodeo, causasRelajadas, asignacionBase, opciones);
+    return {
+        asignacion: r.asignacion,
+        info: {
+            aplicada: true, mejorada: r.mejorada,
+            costo_local_original: r.costoSemilla, costo_final: r.costo,
+            nodos_explorados: r.nodosExplorados, tiempo_busqueda_ms: r.tiempoMs,
+            limite_alcanzado: r.limiteAlcanzado
+        }
     };
 }
 
@@ -317,14 +672,28 @@ function construirComponentesPorRodeo(rodeosConMatriz, candidatosPorRodeo) {
 // "Estático" = usando el estado SOLO-BD (sin ninguna mutación de esta
 // búsqueda) — una cota segura: cualquier jurado que no pase aquí JAMÁS va a
 // pasar durante la búsqueda real (las únicas causas que pueden APARECER
-// dinámicamente a medida que la búsqueda avanza son las 3 que dependen de
-// qué OTRAS asignaciones ya lleva el mismo jurado en esta corrida — mismo
-// finde, finde consecutivo, repetición de asociación — nunca categoría,
-// disponibilidad, distancia o asociación organizadora, que son fijas por
-// (rodeo, jurado) y no cambian durante la búsqueda). Por eso es seguro
-// usarla como PRE-FILTRO (nunca como respuesta final — la factibilidad real
-// de cada candidato se vuelve a comprobar con evaluarCandidato() contra el
-// estado vigente en cada uso, ver candidatosFactibles() más arriba).
+// dinámicamente a medida que la búsqueda avanza son las que dependen de qué
+// OTRAS asignaciones ya lleva el mismo jurado EN ESTA CORRIDA — mismo
+// finde, finde consecutivo, repetición de asociación DENTRO DEL LOTE
+// [ASOCIACION_REPETIDA_TEMPORADA] — nunca categoría, disponibilidad,
+// distancia, asociación organizadora NI la repetición de asociación por
+// INTERVALO histórico [ASOCIACION_REPETIDA_INTERVALO, schema_version=4]:
+// esta última mira `contexto.ultimaFechaAsociacionPorJurado`, fijo ANTES de
+// que la búsqueda empiece (no depende de qué decida el backtracking), así
+// que es seguro — y correcto, ver corrección de abajo — incluirla aquí.
+// Por eso es seguro usar este resultado como PRE-FILTRO (nunca como
+// respuesta final — la factibilidad real de cada candidato se vuelve a
+// comprobar con evaluarCandidato() contra el estado vigente en cada uso,
+// ver candidatosFactibles() más arriba).
+//
+// CORRECCIÓN (Etapa C): antes de esta corrección, `estadoSoloBD` no incluía
+// `ultimaFechaAsociacionPorJurado` ni `notaTecnicaPorJurado` — un jurado que
+// infringía el intervalo de 6 meses pasaba igual este pre-filtro (como si
+// no tuviera esa causa) y la nota técnica nunca participaba del desempate
+// NI AQUÍ ni en la búsqueda real (ver misma corrección en
+// resolverAsignacionGlobal(), que sí la sufría de forma crítica: hacía que
+// el nivel ESTRICTO propusiera jurados que en realidad infringían el
+// intervalo obligatorio).
 //
 // Una sola pasada evaluarCandidato() por (rodeo, jurado) sirve para AMBOS
 // niveles a la vez (se clasifica el mismo resultado contra las 2 whitelists)
@@ -337,6 +706,8 @@ function construirCandidatosEstaticosAmbosNiveles(contexto, configuracion, rodeo
     const estadoSoloBD = construirEstadoDesdeBD(contexto.asignacionesTemporada);
     estadoSoloBD.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     estadoSoloBD.trasladosTemporalesPorJurado = new Map();
+    estadoSoloBD.ultimaFechaAsociacionPorJurado = contexto.ultimaFechaAsociacionPorJurado;
+    estadoSoloBD.notaTecnicaPorJurado = contexto.notaTecnicaPorJurado;
 
     const estricto = new Map(), permisivo = new Map();
     for (const rodeo of rodeosConMatriz) {
@@ -364,6 +735,10 @@ function construirCandidatosEstaticosPorRodeo(contexto, configuracion, rodeosCon
     const estadoSoloBD = construirEstadoDesdeBD(contexto.asignacionesTemporada);
     estadoSoloBD.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     estadoSoloBD.trasladosTemporalesPorJurado = new Map();
+    // Misma corrección que construirCandidatosEstaticosAmbosNiveles() —
+    // ver su comentario de cabecera.
+    estadoSoloBD.ultimaFechaAsociacionPorJurado = contexto.ultimaFechaAsociacionPorJurado;
+    estadoSoloBD.notaTecnicaPorJurado = contexto.notaTecnicaPorJurado;
 
     const porRodeo = new Map();
     for (const rodeo of rodeosConMatriz) {
@@ -409,21 +784,83 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
         const sinPropuestaBaseline = evaluables.filter(r => r.estado === 'SIN_PROPUESTA');
         const totalCupos = evaluables.length;
 
-        // 2. El greedy ya cubre el 100% — nada que mejorar.
+        // 2. El greedy ya cubre el 100% — nada que mejorar EN COBERTURA. Pero
+        //    "primero maximizar la cobertura, después optimizar la
+        //    prioridad deportiva" (sección 2 del pedido) no se detiene acá
+        //    si la regla de prioridad deportiva está activa (schema_version
+        //    =4): el greedy local nunca razona entre rodeos DISTINTOS —
+        //    puede cubrir el 100% y, aun así, haberle dado la categoría
+        //    equivocada a un rodeo de alta prioridad porque el jurado ideal
+        //    ya estaba "gastado" en uno de menor prioridad. Se reutiliza el
+        //    MISMO objetivo secundario que el resto de esta función, sobre
+        //    la semilla que el propio greedy ya encontró (nunca se pierde
+        //    cobertura: coberturaObjetivo = totalCupos, piso duro).
         if (sinPropuestaBaseline.length === 0) {
-            return {
-                ...baseline,
-                motor: 'GLOBAL',
-                optimizacion_global: {
-                    aplicada: false, estado_busqueda: ESTADOS_BUSQUEDA.COBERTURA_COMPLETA,
-                    motivo: totalCupos === 0
-                        ? 'No hay rodeos evaluables en esta corrida.'
-                        : 'La asignación local ya cubre el 100% de los rodeos evaluables; no fue necesario buscar una alternativa global.',
-                    total_cupos: totalCupos, cobertura_obtenida: totalCupos, cupos_pendientes: 0,
-                    advertencias: []
-                },
-                cobertura_completa: true
+            if (!configuracion.regla_prioridad_deportiva_activa || totalCupos === 0) {
+                return {
+                    ...baseline,
+                    motor: 'GLOBAL',
+                    optimizacion_global: {
+                        aplicada: false, estado_busqueda: ESTADOS_BUSQUEDA.COBERTURA_COMPLETA,
+                        motivo: totalCupos === 0
+                            ? 'No hay rodeos evaluables en esta corrida.'
+                            : 'La asignación local ya cubre el 100% de los rodeos evaluables; no fue necesario buscar una alternativa global.',
+                        total_cupos: totalCupos, cobertura_obtenida: totalCupos, cupos_pendientes: 0,
+                        advertencias: []
+                    },
+                    cobertura_completa: true
+                };
+            }
+
+            const rodeosConMatrizTotal = anotarMatrizPorRodeo(contexto, configuracion, evaluables);
+            const comunaJuradoPorId = new Map();
+            for (const j of contexto.jurados) comunaJuradoPorId.set(j.id, resolverComuna(j.comuna, contexto.catalogoComunas));
+            // El greedy local cubrió el 100% SIN ceder ninguna preferencia
+            // (el motor local nunca relaja nada — ese concepto es exclusivo
+            // del motor global) — el objetivo secundario opera siempre al
+            // nivel ESTRICTO acá, nunca uno relajado que el local ni usó.
+            const candidatosEstaticosTotal = construirCandidatosEstaticosPorRodeo(contexto, configuracion, rodeosConMatrizTotal, new Set(), comunaJuradoPorId);
+            const asignacionSemilla = new Map(
+                baseline.resultados.filter(r => r.estado === 'PROPUESTO').map(r => [r.rodeo_id, r.jurado_propuesto.jurado_id])
+            );
+
+            const { asignacion: asignacionOptimizada, info: prioridadDeportivaInfo } = aplicarPrioridadDeportivaSiCorresponde(
+                contexto, configuracion, rodeosConMatrizTotal, asignacionSemilla, totalCupos,
+                candidatosEstaticosTotal, new Set(), opciones
+            );
+
+            if (!prioridadDeportivaInfo?.mejorada) {
+                return {
+                    ...baseline,
+                    motor: 'GLOBAL',
+                    optimizacion_global: {
+                        aplicada: false, estado_busqueda: ESTADOS_BUSQUEDA.COBERTURA_COMPLETA,
+                        motivo: 'La asignación local ya cubre el 100% de los rodeos evaluables y ya respeta de la mejor forma posible la prioridad deportiva configurada; no fue necesario reasignar nada.',
+                        total_cupos: totalCupos, cobertura_obtenida: totalCupos, cupos_pendientes: 0,
+                        prioridad_deportiva: prioridadDeportivaInfo,
+                        advertencias: []
+                    },
+                    cobertura_completa: true
+                };
+            }
+
+            const resultadoConPrioridad = ejecutarSimulacion(contexto, topN, configuracion, { forzarGanadorPorRodeo: asignacionOptimizada });
+            const rodeosReasignadosPorPrioridad = resultadoConPrioridad.resultados
+                .filter(r => r.estado === 'PROPUESTO' && r.jurado_propuesto.optimizacion_global_forzado)
+                .map(r => ({ rodeo_id: r.rodeo_id, jurado_id: r.jurado_propuesto.jurado_id }));
+            resultadoConPrioridad.motor = 'GLOBAL';
+            resultadoConPrioridad.optimizacion_global = {
+                aplicada: true, estado_busqueda: ESTADOS_BUSQUEDA.COBERTURA_COMPLETA,
+                motivo: `La asignación local ya cubría el 100% de los rodeos evaluables; se reasignaron ${rodeosReasignadosPorPrioridad.length} rodeo(s) para respetar mejor la prioridad deportiva configurada, sin perder cobertura.`,
+                total_cupos: totalCupos, cobertura_obtenida: totalCupos, cupos_pendientes: 0,
+                nivel_busqueda: 'ESTRICTO',
+                rodeos_recuperados: [],
+                rodeos_con_ganador_forzado: rodeosReasignadosPorPrioridad,
+                prioridad_deportiva: prioridadDeportivaInfo,
+                advertencias: []
             };
+            resultadoConPrioridad.cobertura_completa = true;
+            return resultadoConPrioridad;
         }
 
         const rodeosConMatriz = anotarMatrizPorRodeo(contexto, configuracion, evaluables);
@@ -469,6 +906,44 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
             busqueda = tier1;
             relajado = tier1.exito;
 
+            // Sección 8 (corrección): ambas ramas de abajo antes devolvían
+            // `baseline` tal cual — la solución del motor LOCAL original —
+            // descartando la mejor combinación PARCIAL que el propio
+            // backtracking ya calculó y guardó en `mejorParcial` (ver
+            // resolverAsignacionGlobal: `asignacionFinal = exito ? asignado :
+            // mejorParcial`). Una cobertura imposible al 100% nunca justifica
+            // tirar oportunidades reales que la búsqueda sí encontró para los
+            // demás rodeos. Se materializa aquí la mejor de las dos (tier0 vs
+            // tier1 — tier1 explora un superconjunto de candidatos, pero con
+            // presupuesto propio, así que no se asume que domine a tier0 sin
+            // comprobarlo) con el MISMO mecanismo `forzarGanadorPorRodeo` que
+            // ya usa el camino de éxito más abajo — nunca una reconstrucción
+            // paralela.
+            const mejorBusqueda = tier1.cobertura >= tier0.cobertura ? tier1 : tier0;
+            const usoPreferenciasRelajadas = mejorBusqueda === tier1 && tier1.cobertura > 0;
+
+            // Objetivo secundario — Prioridad Deportiva (schema_version=4,
+            // sección 2 del pedido): opera SOBRE la cobertura parcial máxima
+            // ya probada arriba (mejorBusqueda.asignacion) — nunca puede
+            // reducirla, solo redistribuir QUIÉN cubre cada rodeo entre las
+            // combinaciones que logran la MISMA cobertura. Mismo nivel
+            // (candidatos estáticos + causas relajadas) que ya probó
+            // mejorBusqueda, nunca uno distinto.
+            const { asignacion: asignacionOptimizada, info: prioridadDeportivaInfo } = aplicarPrioridadDeportivaSiCorresponde(
+                contexto, configuracion, rodeosContestados, mejorBusqueda.asignacion, mejorBusqueda.cobertura,
+                usoPreferenciasRelajadas ? estaticoPermisivo : estaticoEstricto,
+                usoPreferenciasRelajadas ? CAUSAS_RELAJABLES : new Set(),
+                opciones
+            );
+
+            const resultadoParcial = asignacionOptimizada.size > 0
+                ? ejecutarSimulacion(contexto, topN, configuracion, {
+                      forzarGanadorPorRodeo: asignacionOptimizada,
+                      ...(usoPreferenciasRelajadas ? { causasRelajadasPorForzado: CAUSAS_RELAJABLES } : {})
+                  })
+                : baseline;
+            const propuestosParcial = resultadoParcial.resultados.filter(r => r.estado === 'PROPUESTO').length;
+
             // Monotonía: relajar preferencias solo puede AGRANDAR el conjunto
             // de soluciones factibles respecto al nivel estricto — si el
             // nivel permisivo demuestra infactibilidad (no solo límite),
@@ -477,14 +952,15 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
             // asignación de cobertura total, ni siquiera cediendo preferencias.
             if (!tier1.exito && !tier1.limiteAlcanzado) {
                 return {
-                    ...baseline,
+                    ...resultadoParcial,
                     motor: 'GLOBAL',
                     optimizacion_global: {
-                        aplicada: false, estado_busqueda: ESTADOS_BUSQUEDA.INFACTIBLE_DEMOSTRADO,
-                        motivo: 'Búsqueda exhaustiva (incluso cediendo las preferencias flexibles de distancia, repetición de asociación, fin de semana consecutivo y comuna no resoluble): no existe ninguna asignación posible que cubra el 100% de los rodeos evaluables sin violar una restricción obligatoria (disponibilidad, habilitación de categoría, asociación organizadora o conflicto real de fecha).',
+                        aplicada: propuestosParcial > (evaluables.length - sinPropuestaBaseline.length),
+                        estado_busqueda: ESTADOS_BUSQUEDA.INFACTIBLE_DEMOSTRADO,
+                        motivo: 'Búsqueda exhaustiva (incluso cediendo las preferencias flexibles de distancia, repetición de asociación, fin de semana consecutivo y comuna no resoluble): no existe ninguna asignación posible que cubra el 100% de los rodeos evaluables sin violar una restricción obligatoria (disponibilidad, habilitación de categoría, asociación organizadora o conflicto real de fecha). Se conservó la mejor combinación PARCIAL encontrada durante esa misma búsqueda, no solo la solución local original.',
                         total_cupos: totalCupos,
-                        cobertura_obtenida: evaluables.length - sinPropuestaBaseline.length,
-                        cupos_pendientes: sinPropuestaBaseline.length,
+                        cobertura_obtenida: propuestosParcial,
+                        cupos_pendientes: totalCupos - propuestosParcial,
                         // Diagnóstico, NO una cota matemáticamente probada:
                         // el backtracking exige cubrir TODOS los rodeos para
                         // declarar éxito, así que al fallar puede quedarse
@@ -498,6 +974,7 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
                         cobertura_parcial_observada: tier1.cobertura,
                         nodos_explorados: tier0.nodosExplorados + tier1.nodosExplorados,
                         tiempo_busqueda_ms: tier0.tiempoMs + tier1.tiempoMs,
+                        prioridad_deportiva: prioridadDeportivaInfo,
                         advertencias: []
                     },
                     cobertura_completa: false
@@ -510,18 +987,20 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
             // informa como si fuera infactibilidad.
             if (!tier1.exito && tier1.limiteAlcanzado) {
                 return {
-                    ...baseline,
+                    ...resultadoParcial,
                     motor: 'GLOBAL',
                     optimizacion_global: {
-                        aplicada: false, estado_busqueda: ESTADOS_BUSQUEDA.LIMITE_ALCANZADO,
-                        motivo: 'Se alcanzó el límite de búsqueda (nodos o tiempo) antes de poder determinar si existe una asignación con cobertura total, incluso cediendo preferencias flexibles. No se demostró ni la factibilidad ni la imposibilidad — se conservó la mejor asignación local válida encontrada, sin aplicar ningún cambio.',
+                        aplicada: propuestosParcial > (evaluables.length - sinPropuestaBaseline.length),
+                        estado_busqueda: ESTADOS_BUSQUEDA.LIMITE_ALCANZADO,
+                        motivo: 'Se alcanzó el límite de búsqueda (nodos o tiempo) antes de poder determinar si existe una asignación con cobertura total, incluso cediendo preferencias flexibles. No se demostró ni la factibilidad ni la imposibilidad — se conservó la mejor combinación PARCIAL encontrada durante la búsqueda, no solo la solución local original.',
                         total_cupos: totalCupos,
-                        cobertura_obtenida: evaluables.length - sinPropuestaBaseline.length,
-                        cupos_pendientes: sinPropuestaBaseline.length,
+                        cobertura_obtenida: propuestosParcial,
+                        cupos_pendientes: totalCupos - propuestosParcial,
                         cobertura_parcial_observada: Math.max(tier0.cobertura, tier1.cobertura),
                         limite_busqueda_alcanzado: true,
                         nodos_explorados: tier0.nodosExplorados + tier1.nodosExplorados,
                         tiempo_busqueda_ms: tier0.tiempoMs + tier1.tiempoMs,
+                        prioridad_deportiva: prioridadDeportivaInfo,
                         advertencias: []
                     },
                     cobertura_completa: false
@@ -529,16 +1008,31 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
             }
         }
 
-        // 5. Cobertura total encontrada (nivel 0 o nivel 1) — se reconstruye
-        //    el resultado final con el formato enriquecido completo,
-        //    forzando por rodeo el ganador que dictó la búsqueda. Cuando se
-        //    usó el nivel permisivo, se habilita la whitelist de relajación
-        //    para el ganador forzado (motorPropuestaDesignacion.js) — nunca
-        //    se le permite saltar una causa obligatoria, eso es imposible
-        //    por construcción: la propia búsqueda nunca asignó un jurado con
-        //    una causa obligatoria pendiente.
+        // 5. Cobertura total encontrada (nivel 0 o nivel 1). Objetivo
+        //    secundario — Prioridad Deportiva (schema_version=4, sección 2
+        //    del pedido: "primero maximizar la cobertura, después optimizar
+        //    la prioridad deportiva..."): opera SOBRE la cobertura total ya
+        //    probada (busqueda.asignacion) — con cobertura 100% no hay
+        //    ningún cupo que "sacrificar"; solo puede cambiar QUIÉN cubre
+        //    cada rodeo entre las combinaciones que logran esa misma
+        //    cobertura total, nunca reducirla.
+        const { asignacion: asignacionGanadora, info: prioridadDeportivaInfo } = aplicarPrioridadDeportivaSiCorresponde(
+            contexto, configuracion, rodeosContestados, busqueda.asignacion, busqueda.cobertura,
+            relajado ? estaticoPermisivo : estaticoEstricto,
+            relajado ? CAUSAS_RELAJABLES : new Set(),
+            opciones
+        );
+
+        // Se reconstruye el resultado final con el formato enriquecido
+        // completo, forzando por rodeo el ganador que dictó la búsqueda
+        // (ya con la prioridad deportiva aplicada, si correspondía). Cuando
+        // se usó el nivel permisivo, se habilita la whitelist de relajación
+        // para el ganador forzado (motorPropuestaDesignacion.js) — nunca
+        // se le permite saltar una causa obligatoria, eso es imposible
+        // por construcción: la propia búsqueda nunca asignó un jurado con
+        // una causa obligatoria pendiente.
         const resultadoFinal = ejecutarSimulacion(contexto, topN, configuracion, {
-            forzarGanadorPorRodeo: busqueda.asignacion,
+            forzarGanadorPorRodeo: asignacionGanadora,
             ...(relajado ? { causasRelajadasPorForzado: CAUSAS_RELAJABLES } : {})
         });
 
@@ -572,6 +1066,7 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
             rodeos_con_ganador_forzado: rodeosReasignados,
             nodos_explorados: tier0.nodosExplorados + (busqueda !== tier0 ? busqueda.nodosExplorados : 0),
             tiempo_busqueda_ms: tier0.tiempoMs + (busqueda !== tier0 ? busqueda.tiempoMs : 0),
+            prioridad_deportiva: prioridadDeportivaInfo,
             advertencias
         };
         resultadoFinal.cobertura_completa = true;
@@ -587,6 +1082,16 @@ function ejecutarSimulacionGlobal(contexto, topN = 5, configuracion = construirC
 async function generarSimulacionGlobal(rodeoIdsInput, topN = 5, configuracion = construirConfiguracionDefaultV1(), opciones = {}) {
     const inicioMs = Date.now();
     const contexto = await cargarDatosMotor(rodeoIdsInput);
+    // Nota técnica oficial (schema_version=4) — mismo criterio exacto que
+    // generarSimulacion() (motorPropuestaDesignacion.js): se carga ANTES de
+    // correr el motor (participa del comparador, nunca es enriquecimiento
+    // posterior), y solo si el criterio realmente está activo.
+    if ((configuracion.ordenCriterios || []).some(o => o.criterio_codigo === 'NOTA_TECNICA')) {
+        contexto.notaTecnicaPorJurado = await cargarNotaTecnicaPorJurado(
+            contexto.jurados.map(j => j.id),
+            opciones.fechaCorteTecnica || new Date().toISOString()
+        );
+    }
     const finCargaMs = Date.now();
     const resultado = ejecutarSimulacionGlobal(contexto, topN, configuracion, opciones);
     const finMotorMs = Date.now();
@@ -626,5 +1131,11 @@ async function generarSimulacionGlobal(rodeoIdsInput, topN = 5, configuracion = 
 module.exports = {
     ejecutarSimulacionGlobal, generarSimulacionGlobal, resolverAsignacionGlobal,
     LIMITE_NODOS_DEFAULT, LIMITE_MS_DEFAULT,
-    CAUSAS_RELAJABLES, CAUSAS_OBLIGATORIAS, ESTADOS_BUSQUEDA
+    CAUSAS_RELAJABLES, CAUSAS_OBLIGATORIAS, ESTADOS_BUSQUEDA,
+    // Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
+    // (schema_version=4, Etapa B) — funciones puras nuevas, testeables sin BD.
+    calcularPesoPorClasificacion, costoRodeoAsignado, calcularCostoPrioridadDeportiva,
+    resolverPrioridadDeportiva, aplicarPrioridadDeportivaSiCorresponde,
+    // Corrección Etapa C (sección 4) — desempate por nota técnica en el costo.
+    NOTA_TECNICA_MAXIMA, ESCALA_COSTO_CATEGORIA, costoNotaTecnicaCandidato
 };

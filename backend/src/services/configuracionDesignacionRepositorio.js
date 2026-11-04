@@ -17,7 +17,7 @@
 // ejecuta el motor con eso).
 // ═════════════════════════════════════════════════════════════════════════
 const supabase = require('../config/supabase');
-const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz, aplanarZonaExtremaCategorias } = require('./configuracionDesignacion');
+const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz, aplanarZonaExtremaCategorias, aplanarPrioridadClasificaciones } = require('./configuracionDesignacion');
 
 // Campos de REGLAS (los que entiende reconstruirConfiguracionDesdeFilas/el
 // motor) + campos de METADATA/DISPLAY (Etapa 4: activa, descripcion,
@@ -34,11 +34,18 @@ const { reconstruirConfiguracionDesdeFilas, validarConfiguracion, aplanarMatriz,
 // Postgres ("column does not exist"), nunca un fallback silencioso ni una
 // configuración a medias. Orden correcto: 1) aplicar 053, 2) recién
 // entonces desplegar este archivo.
+// regla_prioridad_deportiva_activa/regla_repeticion_asociacion_intervalo_
+// activa/repeticion_asociacion_meses — mejora "Prioridad Deportiva + Nota
+// Técnica + Repetición por Intervalo" (schema_version=4, migración 093,
+// PREPARADA, NO aplicada todavía) — mismo aviso exacto que regla_zonas_
+// extremas_activa arriba: estas 3 columnas NO EXISTEN en la base de datos
+// hasta que se aplique esa migración.
 const SELECT_VERSION =
     'id, numero_version, schema_version, activa, regla_distancia_maxima_activa, distancia_maxima_km, ' +
     'regla_no_repetir_asociacion_activa, regla_un_rodeo_por_finde_activa, regla_finde_consecutivo_activa, ' +
     'regla_asociacion_organizadora_activa, regla_equidad_traslados_activa, umbral_lejania_km, ' +
     'regla_zonas_extremas_activa, ' +
+    'regla_prioridad_deportiva_activa, regla_repeticion_asociacion_intervalo_activa, repeticion_asociacion_meses, ' +
     'descripcion, creado_por, created_at';
 
 // ─── Dado un versionRow ya resuelto, carga sus componentes (4 queries fijas
@@ -53,12 +60,14 @@ async function cargarComponentesYValidar(versionRow) {
         { data: criterios, error: errC },
         { data: matrizRows, error: errM },
         { data: zonasExtremasAsocRows, error: errZA },
-        { data: zonasExtremasCatRows, error: errZC }
+        { data: zonasExtremasCatRows, error: errZC },
+        { data: prioridadClasificacionesRows, error: errP }
     ] = await Promise.all([
         supabase.from('configuracion_designacion_orden_criterios').select('criterio_codigo, orden').eq('version_id', versionRow.id),
         supabase.from('configuracion_designacion_matriz').select('clasificacion_codigo, categoria, elegible, orden_preferencia').eq('version_id', versionRow.id),
         supabase.from('configuracion_designacion_zonas_extremas').select('asociacion').eq('version_id', versionRow.id),
-        supabase.from('configuracion_designacion_zona_extrema_categorias').select('categoria, elegible, orden_preferencia').eq('version_id', versionRow.id)
+        supabase.from('configuracion_designacion_zona_extrema_categorias').select('categoria, elegible, orden_preferencia').eq('version_id', versionRow.id),
+        supabase.from('configuracion_designacion_prioridad_clasificaciones').select('clasificacion_codigo, orden').eq('version_id', versionRow.id)
     ]);
     if (errC) throw new Error('No se pudo cargar el orden de criterios de la configuración de designación: ' + errC.message);
     if (errM) throw new Error('No se pudo cargar la matriz de la configuración de designación: ' + errM.message);
@@ -68,8 +77,11 @@ async function cargarComponentesYValidar(versionRow) {
     // exist") — nunca se ignora silenciosamente.
     if (errZA) throw new Error('No se pudo cargar las asociaciones de Zonas Extremas: ' + errZA.message);
     if (errZC) throw new Error('No se pudo cargar las categorías de Zonas Extremas: ' + errZC.message);
+    // Prioridad Deportiva (schema_version=4, migración 093, PREPARADA, NO
+    // aplicada) — mismo criterio exacto: la tabla no existe hasta aplicarla.
+    if (errP) throw new Error('No se pudo cargar la prioridad deportiva de la configuración de designación: ' + errP.message);
 
-    const configuracion = reconstruirConfiguracionDesdeFilas(versionRow, criterios || [], matrizRows || [], zonasExtremasAsocRows || [], zonasExtremasCatRows || []);
+    const configuracion = reconstruirConfiguracionDesdeFilas(versionRow, criterios || [], matrizRows || [], zonasExtremasAsocRows || [], zonasExtremasCatRows || [], prioridadClasificacionesRows || []);
     const val = validarConfiguracion(configuracion);
     if (!val.valido) {
         return { error: 'CONFIGURACION_DESIGNACION_INVALIDA', detalle: val.error };
@@ -188,11 +200,13 @@ async function obtenerVersionDesignacionDetalle(versionId) {
 // misma RPC legacy con los mismos 10 parámetros de siempre — cero cambio
 // de comportamiento para el caso ya usado en producción. schema_version=2
 // llama a crear_configuracion_designacion_version_v2. Mejora "Zonas
-// Extremas" (migración 053, PREPARADA — ver nota en SELECT_VERSION
-// arriba): schema_version=3 llama a la RPC nueva crear_configuracion_
-// designacion_version_v3 (que no existe hasta aplicar la migración 053 —
-// si se invoca antes, Postgres devuelve un error claro de función
-// inexistente, nunca un fallback silencioso).
+// Extremas" (migración 053, YA APLICADA): schema_version=3 llama a
+// crear_configuracion_designacion_version_v3. Mejora "Prioridad Deportiva +
+// Nota Técnica + Repetición por Intervalo" (migración 093, PREPARADA — ver
+// nota en SELECT_VERSION arriba): schema_version=4 llama a la RPC nueva
+// crear_configuracion_designacion_version_v4 (que no existe hasta aplicar
+// la migración 093 — si se invoca antes, Postgres devuelve un error claro
+// de función inexistente, nunca un fallback silencioso).
 // @param configuracion objeto configuracion completo (misma forma que construirConfiguracionDefaultV1())
 // @param descripcion texto opcional
 // @param creadoPor uuid del administrador (req.usuario.id) | null
@@ -204,12 +218,13 @@ async function crearVersionDesignacion({ configuracion, descripcion, creadoPor }
     }
 
     // Despacho EXPLÍCITO por schema_version (revisión de cierre, sección 15:
-    // "if schema1 → legacy, if schema2 → v2, if schema3 → v3, otro schema →
-    // error controlado, no fallback"). validarConfiguracion() ya rechazó
-    // cualquier valor fuera de [1, 2, 3] arriba, así que la rama `else` de
-    // abajo no debería alcanzarse en la práctica — se deja como defensa en
-    // profundidad explícita ante una discrepancia inesperada entre capas,
-    // nunca cayendo silenciosamente en la RPC legacy para un schema que no es 1.
+    // "if schema1 → legacy, if schema2 → v2, if schema3 → v3, if schema4 →
+    // v4, otro schema → error controlado, no fallback"). validarConfiguracion()
+    // ya rechazó cualquier valor fuera de [1, 2, 3, 4] arriba, así que la
+    // rama `else` de abajo no debería alcanzarse en la práctica — se deja
+    // como defensa en profundidad explícita ante una discrepancia inesperada
+    // entre capas, nunca cayendo silenciosamente en la RPC legacy para un
+    // schema que no es 1.
     let data, error;
     if (configuracion.schema_version === 1) {
         ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version', {
@@ -240,9 +255,8 @@ async function crearVersionDesignacion({ configuracion, descripcion, creadoPor }
             p_matriz: aplanarMatriz(configuracion.matriz)
         }));
     } else if (configuracion.schema_version === 3) {
-        // Mejora "Zonas Extremas" — RPC v3 (migración 053, PREPARADA, NO
-        // aplicada). Invocarla antes de aplicar 053 falla con un error claro
-        // de función inexistente — nunca un fallback silencioso a v2/legacy.
+        // Mejora "Zonas Extremas" — RPC v3 (migración 053, YA APLICADA en
+        // producción).
         ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version_v3', {
             p_regla_distancia_maxima_activa: configuracion.regla_distancia_maxima_activa,
             p_distancia_maxima_km: configuracion.distancia_maxima_km,
@@ -259,6 +273,32 @@ async function crearVersionDesignacion({ configuracion, descripcion, creadoPor }
             p_matriz: aplanarMatriz(configuracion.matriz),
             p_zonas_extremas_asociaciones: configuracion.zonas_extremas?.asociaciones || [],
             p_zonas_extremas_categorias: aplanarZonaExtremaCategorias(configuracion.zonas_extremas?.categorias)
+        }));
+    } else if (configuracion.schema_version === 4) {
+        // Mejora "Prioridad Deportiva + Nota Técnica + Repetición por
+        // Intervalo" (Etapa C) — RPC v4 (migración 093, PREPARADA, NO
+        // aplicada). Invocarla antes de aplicar 093 falla con un error claro
+        // de función inexistente — nunca un fallback silencioso a v3.
+        ({ data, error } = await supabase.rpc('crear_configuracion_designacion_version_v4', {
+            p_regla_distancia_maxima_activa: configuracion.regla_distancia_maxima_activa,
+            p_distancia_maxima_km: configuracion.distancia_maxima_km,
+            p_regla_no_repetir_asociacion_activa: configuracion.regla_no_repetir_asociacion_activa,
+            p_regla_un_rodeo_por_finde_activa: configuracion.regla_un_rodeo_por_finde_activa,
+            p_regla_finde_consecutivo_activa: configuracion.regla_finde_consecutivo_activa,
+            p_regla_asociacion_organizadora_activa: configuracion.regla_asociacion_organizadora_activa,
+            p_regla_equidad_traslados_activa: !!configuracion.regla_equidad_traslados_activa,
+            p_umbral_lejania_km: configuracion.umbral_lejania_km ?? null,
+            p_regla_zonas_extremas_activa: !!configuracion.regla_zonas_extremas_activa,
+            p_descripcion: descripcion || null,
+            p_creado_por: creadoPor || null,
+            p_orden_criterios: configuracion.ordenCriterios || [],
+            p_matriz: aplanarMatriz(configuracion.matriz),
+            p_zonas_extremas_asociaciones: configuracion.zonas_extremas?.asociaciones || [],
+            p_zonas_extremas_categorias: aplanarZonaExtremaCategorias(configuracion.zonas_extremas?.categorias),
+            p_regla_prioridad_deportiva_activa: !!configuracion.regla_prioridad_deportiva_activa,
+            p_prioridad_clasificaciones: aplanarPrioridadClasificaciones(configuracion.prioridad_clasificaciones),
+            p_regla_repeticion_asociacion_intervalo_activa: !!configuracion.regla_repeticion_asociacion_intervalo_activa,
+            p_repeticion_asociacion_meses: configuracion.repeticion_asociacion_meses ?? null
         }));
     } else {
         return { error: 'CONFIGURACION_DESIGNACION_INVALIDA', detalle: `schema_version no soportado para crear versión: ${configuracion.schema_version}` };

@@ -7,7 +7,9 @@ const {
     validarConfiguracion, configuracionRequiereDistancia, clasificarTraslado,
     construirConfiguracionDefaultV1, clonarConfiguracion, compararConfiguraciones,
     reconstruirConfiguracionDesdeFilas, aplanarMatriz, construirResumenParaUI,
-    validarZonasExtremas
+    validarZonasExtremas,
+    validarPrioridadClasificaciones, validarRepeticionAsociacionIntervalo, aplanarPrioridadClasificaciones,
+    CLASIFICACIONES_CONOCIDAS
 } = require('./configuracionDesignacion');
 
 const defaultV1 = construirConfiguracionDefaultV1();
@@ -351,21 +353,30 @@ describe('TEST R/S/T: configuracionRequiereDistancia', () => {
     });
 });
 
-// TEST U — actualizado por la mejora "Zonas Extremas": schema_version=3
-// ahora también es un valor SOPORTADO (mismo patrón que schema_version=2 lo
-// fue con "Equidad de Traslados") — ver SCHEMA_VERSIONES_SOPORTADAS y
-// CRITERIOS_CONOCIDOS_POR_SCHEMA. Lo que sigue siendo inválido es cualquier
-// schema_version FUERA de [1, 2, 3] (se usa 4 como ejemplo de "desconocido"
-// — 3 dejó de serlo con esta mejora, exactamente el mismo tipo de
-// actualización de expectativa que ya ocurrió acá cuando 2 se volvió válido).
-describe('TEST U: schema_version desconocido (fuera de [1, 2, 3]) es inválido', () => {
-    test('validarOrdenCriterios rechaza schema_version 4 (no soportado)', () => {
-        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 4);
+// TEST U — actualizado por la mejora "Prioridad Deportiva + Nota Técnica +
+// Repetición por Intervalo": schema_version=4 ahora también es un valor
+// SOPORTADO (mismo patrón que 2 lo fue con "Equidad de Traslados" y 3 con
+// "Zonas Extremas") — ver SCHEMA_VERSIONES_SOPORTADAS y CRITERIOS_CONOCIDOS_
+// POR_SCHEMA. Lo que sigue siendo inválido es cualquier schema_version FUERA
+// de [1, 2, 3, 4] (se usa 5 como ejemplo de "desconocido" — 4 dejó de serlo
+// con esta mejora, exactamente el mismo tipo de actualización de
+// expectativa que ya ocurrió acá cuando 2 y 3 se volvieron válidos).
+describe('TEST U: schema_version desconocido (fuera de [1, 2, 3, 4]) es inválido', () => {
+    test('validarOrdenCriterios rechaza schema_version 5 (no soportado)', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 }], 5);
         expect(r.valido).toBe(false);
     });
-    test('validarConfiguracion rechaza schema_version 4 (no soportado)', () => {
-        const config = { ...defaultV1, schema_version: 4 };
+    test('validarConfiguracion rechaza schema_version 5 (no soportado)', () => {
+        const config = { ...defaultV1, schema_version: 5 };
         expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    test('validarOrdenCriterios acepta schema_version 4 (soportado por esta mejora) con NOTA_TECNICA', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'NOTA_TECNICA', orden: 1 }], 4);
+        expect(r.valido).toBe(true);
+    });
+    test('validarOrdenCriterios rechaza NOTA_TECNICA en schema_version 3 (no existía todavía)', () => {
+        const r = validarOrdenCriterios([{ criterio_codigo: 'NOTA_TECNICA', orden: 1 }], 3);
+        expect(r.valido).toBe(false);
     });
     // Confirma explícitamente que schema_version=2 SÍ es válido desde la
     // mejora "Equidad de Traslados", incluso usando solo los 3 criterios de
@@ -744,11 +755,14 @@ describe('Equidad de Traslados — criteriosConocidosParaSchema / CRITERIOS_CONO
         expect(c2).toContain('EQUIDAD_TRASLADOS');
         expect(c2).toHaveLength(CRITERIOS_CONOCIDOS.length + 1);
     });
-    test('SCHEMA_VERSIONES_SOPORTADAS = [1, 2, 3] (3 agregado por la mejora "Zonas Extremas")', () => {
-        expect(SCHEMA_VERSIONES_SOPORTADAS).toEqual([1, 2, 3]);
+    test('SCHEMA_VERSIONES_SOPORTADAS = [1, 2, 3, 4] (4 agregado por la mejora "Prioridad Deportiva + Nota Técnica")', () => {
+        expect(SCHEMA_VERSIONES_SOPORTADAS).toEqual([1, 2, 3, 4]);
     });
     test('schema_version=3 incluye los mismos criterios que schema_version=2 (Zonas Extremas no agrega ningun criterio de ranking)', () => {
         expect(criteriosConocidosParaSchema(3)).toEqual(criteriosConocidosParaSchema(2));
+    });
+    test('schema_version=4 incluye los mismos criterios que schema_version=3 MÁS NOTA_TECNICA', () => {
+        expect(criteriosConocidosParaSchema(4)).toEqual([...criteriosConocidosParaSchema(3), 'NOTA_TECNICA']);
     });
 });
 
@@ -1057,5 +1071,206 @@ describe('validarConfiguracion — regresión explícita con la V2 REAL de produ
             // Sin regla_zonas_extremas_activa ni zonas_extremas — schema2 nunca los tiene.
         });
         expect(validarConfiguracion(v2Real)).toEqual({ valido: true });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
+// (schema_version=4, Etapa B) — mismo patrón de pruebas que Zonas Extremas.
+// ─────────────────────────────────────────────────────────────────────────
+const PRIORIDAD_VALIDA = [
+    { clasificacion_codigo: 'zonal', orden: 1 },
+    { clasificacion_codigo: 'interasociaciones', orden: 2 },
+    { clasificacion_codigo: 'provincial', orden: 3 },
+    { clasificacion_codigo: 'interclubes', orden: 4 },
+    { clasificacion_codigo: 'clasificatorio', orden: 5 },
+    { clasificacion_codigo: 'nacional', orden: 6 }
+];
+
+describe('validarPrioridadClasificaciones', () => {
+    test('permutación completa y válida de las 6 clasificaciones -> válido', () => {
+        expect(validarPrioridadClasificaciones(PRIORIDAD_VALIDA)).toEqual({ valido: true });
+    });
+    test('falta una clasificación -> inválido', () => {
+        const sinNacional = PRIORIDAD_VALIDA.filter(f => f.clasificacion_codigo !== 'nacional');
+        expect(validarPrioridadClasificaciones(sinNacional).valido).toBe(false);
+    });
+    test('clasificación desconocida -> inválido', () => {
+        const conInventada = [...PRIORIDAD_VALIDA.slice(0, 5), { clasificacion_codigo: 'inventada', orden: 6 }];
+        expect(validarPrioridadClasificaciones(conInventada).valido).toBe(false);
+    });
+    test('clasificación duplicada -> inválido', () => {
+        const conDuplicado = [...PRIORIDAD_VALIDA.slice(0, 5), { clasificacion_codigo: 'zonal', orden: 6 }];
+        expect(validarPrioridadClasificaciones(conDuplicado).valido).toBe(false);
+    });
+    test('orden con hueco (1,2,3,4,5,7) -> inválido', () => {
+        const conHueco = PRIORIDAD_VALIDA.map(f => f.clasificacion_codigo === 'nacional' ? { ...f, orden: 7 } : f);
+        expect(validarPrioridadClasificaciones(conHueco).valido).toBe(false);
+    });
+    test('orden duplicado -> inválido', () => {
+        const conDup = PRIORIDAD_VALIDA.map(f => f.clasificacion_codigo === 'nacional' ? { ...f, orden: 1 } : f);
+        expect(validarPrioridadClasificaciones(conDup).valido).toBe(false);
+    });
+    test('lista vacía -> inválido', () => {
+        expect(validarPrioridadClasificaciones([]).valido).toBe(false);
+    });
+});
+
+describe('validarRepeticionAsociacionIntervalo', () => {
+    test('regla inactiva -> cualquier valor (incluso ausente) es válido', () => {
+        expect(validarRepeticionAsociacionIntervalo(false, undefined)).toEqual({ valido: true });
+        expect(validarRepeticionAsociacionIntervalo(false, null)).toEqual({ valido: true });
+        expect(validarRepeticionAsociacionIntervalo(false, -5)).toEqual({ valido: true });
+    });
+    test('regla activa + 6 meses (default de negocio) -> válido', () => {
+        expect(validarRepeticionAsociacionIntervalo(true, 6)).toEqual({ valido: true });
+    });
+    test('regla activa + ausente -> inválido', () => {
+        expect(validarRepeticionAsociacionIntervalo(true, undefined).valido).toBe(false);
+        expect(validarRepeticionAsociacionIntervalo(true, null).valido).toBe(false);
+    });
+    test('regla activa + 0 o negativo -> inválido', () => {
+        expect(validarRepeticionAsociacionIntervalo(true, 0).valido).toBe(false);
+        expect(validarRepeticionAsociacionIntervalo(true, -1).valido).toBe(false);
+    });
+    test('regla activa + no entero -> inválido', () => {
+        expect(validarRepeticionAsociacionIntervalo(true, 6.5).valido).toBe(false);
+    });
+    test('regla activa + valor por encima del techo técnico (60 meses) -> inválido (probable error de tipeo)', () => {
+        expect(validarRepeticionAsociacionIntervalo(true, 61).valido).toBe(false);
+        expect(validarRepeticionAsociacionIntervalo(true, 60).valido).toBe(true);
+    });
+});
+
+describe('validarConfiguracion — gates de schema_version=4 (Prioridad Deportiva / Repetición por intervalo)', () => {
+    function configSchema4(cambios = {}) {
+        return clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4,
+            ...cambios
+        });
+    }
+
+    test('regla_prioridad_deportiva_activa=true en schema_version 1/2/3 -> inválido (significado histórico intacto)', () => {
+        const config = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            regla_prioridad_deportiva_activa: true, prioridad_clasificaciones: PRIORIDAD_VALIDA
+        });
+        expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    test('regla_repeticion_asociacion_intervalo_activa=true en schema_version 1/2/3 -> inválido', () => {
+        const config = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            regla_repeticion_asociacion_intervalo_activa: true, repeticion_asociacion_meses: 6
+        });
+        expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    test('schema_version=4 con regla_prioridad_deportiva_activa=true y permutación completa -> válido', () => {
+        const config = configSchema4({ regla_prioridad_deportiva_activa: true, prioridad_clasificaciones: PRIORIDAD_VALIDA });
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+    test('schema_version=4 con regla_prioridad_deportiva_activa=true pero prioridad_clasificaciones incompleta -> inválido', () => {
+        const config = configSchema4({ regla_prioridad_deportiva_activa: true, prioridad_clasificaciones: PRIORIDAD_VALIDA.slice(0, 4) });
+        expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    test('schema_version=4 con regla_prioridad_deportiva_activa=false pero prioridad_clasificaciones con datos latentes -> SIGUE exigiendo que sea estructuralmente válida', () => {
+        const config = configSchema4({ regla_prioridad_deportiva_activa: false, prioridad_clasificaciones: PRIORIDAD_VALIDA.slice(0, 4) });
+        expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    test('schema_version=4 con regla_prioridad_deportiva_activa=false y sin prioridad_clasificaciones -> válido (apagada, sin datos)', () => {
+        const config = configSchema4({ regla_prioridad_deportiva_activa: false });
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+    test('schema_version=4 con NOTA_TECNICA como criterio de ranking -> válido', () => {
+        const config = configSchema4({
+            ordenCriterios: [
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+                { criterio_codigo: 'NOTA_TECNICA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        });
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+    test('schema_version=4 con regla_repeticion_asociacion_intervalo_activa=true y 6 meses -> válido', () => {
+        const config = configSchema4({ regla_repeticion_asociacion_intervalo_activa: true, repeticion_asociacion_meses: 6 });
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+    test('schema_version=4 con regla_repeticion_asociacion_intervalo_activa=true sin meses -> inválido', () => {
+        const config = configSchema4({ regla_repeticion_asociacion_intervalo_activa: true });
+        expect(validarConfiguracion(config).valido).toBe(false);
+    });
+    // Corrección real encontrada al correr la comparación contra el lote de
+    // 28 rodeos: la validación de Zonas Extremas (schema_version=3) usaba
+    // `!== 3` en vez de `< 3` — rechazaba por error también al nuevo
+    // schema_version=4, que hereda ADITIVAMENTE Zonas Extremas de 3 (igual
+    // que 3 heredó Equidad de Traslados de 2). v11 real (schema_version=3,
+    // zonas extremas activa) debe poder clonarse a schema_version=4 sin
+    // perder esa regla.
+    test('schema_version=4 HEREDA zonas extremas de schema_version=3 (aditivo) — nunca se rechaza por "!== 3"', () => {
+        const v11Simulada = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 3,
+            regla_zonas_extremas_activa: true,
+            zonas_extremas: { asociaciones: ['AYSÉN'], categorias: [
+                { categoria: 'A', elegible: false, orden_preferencia: null },
+                { categoria: 'B', elegible: true, orden_preferencia: 2 },
+                { categoria: 'C', elegible: true, orden_preferencia: 1 }
+            ] }
+        });
+        expect(validarConfiguracion(v11Simulada)).toEqual({ valido: true });
+        const v4ConZonas = clonarConfiguracion(v11Simulada, { schema_version: 4 });
+        expect(validarConfiguracion(v4ConZonas)).toEqual({ valido: true });
+    });
+
+    test('regla_no_repetir_asociacion_activa (temporada) y regla_repeticion_asociacion_intervalo_activa (6 meses) son independientes — ambas activas a la vez es válido', () => {
+        const config = configSchema4({
+            regla_no_repetir_asociacion_activa: true,
+            regla_repeticion_asociacion_intervalo_activa: true, repeticion_asociacion_meses: 6
+        });
+        expect(validarConfiguracion(config)).toEqual({ valido: true });
+    });
+});
+
+describe('reconstruirConfiguracionDesdeFilas / construirResumenParaUI — schema_version=4 (solo si la BD trae las columnas)', () => {
+    test('versionRow sin las columnas nuevas -> la configuración reconstruida NO trae los campos (nunca se finge false/null)', () => {
+        const versionRow = { schema_version: 1, regla_distancia_maxima_activa: true, distancia_maxima_km: '600', regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true, regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true };
+        const r = reconstruirConfiguracionDesdeFilas(versionRow, [], []);
+        expect(r.regla_prioridad_deportiva_activa).toBeUndefined();
+        expect(r.regla_repeticion_asociacion_intervalo_activa).toBeUndefined();
+    });
+    test('versionRow CON las columnas nuevas -> se reconstruyen prioridad_clasificaciones y repeticion_asociacion_meses', () => {
+        const versionRow = {
+            schema_version: 4, regla_distancia_maxima_activa: true, distancia_maxima_km: '600',
+            regla_no_repetir_asociacion_activa: true, regla_un_rodeo_por_finde_activa: true,
+            regla_finde_consecutivo_activa: true, regla_asociacion_organizadora_activa: true,
+            regla_prioridad_deportiva_activa: true,
+            regla_repeticion_asociacion_intervalo_activa: true, repeticion_asociacion_meses: '6'
+        };
+        const prioridadRows = PRIORIDAD_VALIDA.map(f => ({ clasificacion_codigo: f.clasificacion_codigo, orden: String(f.orden) }));
+        const r = reconstruirConfiguracionDesdeFilas(versionRow, [], [], [], [], prioridadRows);
+        expect(r.regla_prioridad_deportiva_activa).toBe(true);
+        expect(r.prioridad_clasificaciones).toEqual(PRIORIDAD_VALIDA);
+        expect(r.repeticion_asociacion_meses).toBe(6); // normalizado a Number, nunca string
+    });
+    test('construirResumenParaUI incluye los campos nuevos solo si la configuración de origen los trae', () => {
+        const conCampos = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4, regla_prioridad_deportiva_activa: true, prioridad_clasificaciones: PRIORIDAD_VALIDA,
+            regla_repeticion_asociacion_intervalo_activa: true, repeticion_asociacion_meses: 6
+        });
+        const resumen = construirResumenParaUI(conCampos, { id: 'x', numero_version: 1 });
+        expect(resumen.regla_prioridad_deportiva_activa).toBe(true);
+        expect(resumen.prioridad_clasificaciones).toEqual(PRIORIDAD_VALIDA);
+        expect(resumen.repeticion_asociacion_meses).toBe(6);
+
+        const sinCampos = construirResumenParaUI(defaultV1, { id: 'y', numero_version: 1 });
+        expect(sinCampos.regla_prioridad_deportiva_activa).toBeUndefined();
+        expect(sinCampos.repeticion_asociacion_meses).toBeUndefined();
+    });
+});
+
+describe('aplanarPrioridadClasificaciones', () => {
+    test('aplana la lista tal cual (sin transformación adicional, mismo rol que aplanarMatriz)', () => {
+        expect(aplanarPrioridadClasificaciones(PRIORIDAD_VALIDA)).toEqual(PRIORIDAD_VALIDA);
+    });
+    test('lista ausente -> array vacío', () => {
+        expect(aplanarPrioridadClasificaciones(null)).toEqual([]);
+        expect(aplanarPrioridadClasificaciones(undefined)).toEqual([]);
     });
 });

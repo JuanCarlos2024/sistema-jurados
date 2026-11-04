@@ -1,6 +1,7 @@
 const {
     ejecutarSimulacion, DISTANCIA_MAXIMA_KM, esAsignacionEfectiva, filtrarRodeosSinJuradoEfectivo, evaluarCandidatoDirecto,
-    compararPorCriterio, construirComparadorJerarquico, construirMatrizPorClasificacionDesdeConfiguracion
+    compararPorCriterio, construirComparadorJerarquico, construirMatrizPorClasificacionDesdeConfiguracion,
+    restarMeses, construirUltimaFechaAsociacionPorJurado
 } = require('./motorPropuestaDesignacion');
 const { construirConfiguracionDefaultV1, clonarConfiguracion, validarConfiguracion } = require('./configuracionDesignacion');
 const { calcularBloqueRodeo, rangoFechas } = require('./feriados');
@@ -774,6 +775,23 @@ describe('Motor — Etapa 2: comparador jerárquico puro', () => {
         expect(compararPorCriterio('MENOR_DISTANCIA', a, b)).toBeLessThan(0);
         expect(compararPorCriterio('MENOR_DISTANCIA', a, b)).toBeCloseTo(-0.1, 5);
     });
+    // NOTA_TECNICA (schema_version=4) — mayor nota primero; ausente (null)
+    // NUNCA se trata como 0 — queda detrás de cualquiera con nota real.
+    test('compararPorCriterio: NOTA_TECNICA compara notaTecnica descendente (mejor nota primero)', () => {
+        const a = { notaTecnica: 6.8 }, b = { notaTecnica: 6.2 };
+        expect(compararPorCriterio('NOTA_TECNICA', a, b)).toBeLessThan(0); // a (mejor nota) gana
+        expect(compararPorCriterio('NOTA_TECNICA', b, a)).toBeGreaterThan(0);
+        expect(compararPorCriterio('NOTA_TECNICA', a, a)).toBe(0);
+    });
+    test('compararPorCriterio: NOTA_TECNICA ausente (null) queda DETRÁS de una nota real conocida, nunca tratada como 0', () => {
+        const sinNota = { notaTecnica: null };
+        const conNotaBaja = { notaTecnica: 1.0 }; // nota real baja, aun así mejor que "sin nota"
+        expect(compararPorCriterio('NOTA_TECNICA', sinNota, conNotaBaja)).toBeGreaterThan(0); // sinNota pierde
+        expect(compararPorCriterio('NOTA_TECNICA', conNotaBaja, sinNota)).toBeLessThan(0);
+    });
+    test('compararPorCriterio: NOTA_TECNICA con ambos ausentes -> empate (0), nunca rompe', () => {
+        expect(compararPorCriterio('NOTA_TECNICA', { notaTecnica: null }, { notaTecnica: null })).toBe(0);
+    });
     test('construirComparadorJerarquico recorre los criterios en orden y cae al desempate por jurado_id', () => {
         const comparador = construirComparadorJerarquico([
             { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
@@ -1249,5 +1267,262 @@ describe('Motor — Etapa 2: escenario completo con configuración distinta de V
         const juradosPropuestos = propuestos.map(r => r.jurado_propuesto.jurado_id);
         expect(new Set(juradosPropuestos).size).toBe(2);
         expect(res.asignaciones_temporales.length).toBe(2);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
+// (schema_version=4, Etapa B del pedido "Motor Global con Prioridad de
+// Rodeos, Categorías y Calidad Técnica").
+// ═════════════════════════════════════════════════════════════════════════
+describe('restarMeses — pura, sin dependencias externas', () => {
+    test('resta meses dentro del mismo año', () => {
+        expect(restarMeses('2026-11-14', 6)).toBe('2026-05-14');
+    });
+    test('resta meses cruzando el límite de año', () => {
+        expect(restarMeses('2026-02-10', 6)).toBe('2025-08-10');
+    });
+    test('resta 0 meses -> misma fecha', () => {
+        expect(restarMeses('2026-11-14', 0)).toBe('2026-11-14');
+    });
+});
+
+describe('construirUltimaFechaAsociacionPorJurado — pura, mismo criterio esAsignacionEfectiva', () => {
+    test('toma la fecha MÁS RECIENTE entre varias designaciones del mismo jurado/asociación', () => {
+        const historicas = [
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2025-01-10', asociacion: 'Colchagua' } },
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2025-06-20', asociacion: 'Colchagua' } }
+        ];
+        const r = construirUltimaFechaAsociacionPorJurado(historicas);
+        expect(r.get('j1').get('colchagua')).toBe('2025-06-20');
+    });
+    test('excluye asignaciones NO efectivas (anuladas/rechazadas) — mismo criterio único del motor', () => {
+        const historicas = [
+            { usuario_pagado_id: 'j1', estado: 'anulado', estado_designacion: null, rodeos: { fecha: '2026-10-01', asociacion: 'Colchagua' } },
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: 'rechazado', rodeos: { fecha: '2026-09-01', asociacion: 'Colchagua' } },
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2025-01-10', asociacion: 'Colchagua' } }
+        ];
+        const r = construirUltimaFechaAsociacionPorJurado(historicas);
+        expect(r.get('j1').get('colchagua')).toBe('2025-01-10'); // la única efectiva
+    });
+    test('distingue asociaciones y jurados distintos sin mezclar', () => {
+        const historicas = [
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2025-03-01', asociacion: 'Colchagua' } },
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2025-07-01', asociacion: 'Cachapoal' } },
+            { usuario_pagado_id: 'j2', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2025-08-01', asociacion: 'Colchagua' } }
+        ];
+        const r = construirUltimaFechaAsociacionPorJurado(historicas);
+        expect(r.get('j1').get('colchagua')).toBe('2025-03-01');
+        expect(r.get('j1').get('cachapoal')).toBe('2025-07-01');
+        expect(r.get('j2').get('colchagua')).toBe('2025-08-01');
+    });
+    test('lista vacía -> Map vacío', () => {
+        expect(construirUltimaFechaAsociacionPorJurado([]).size).toBe(0);
+    });
+});
+
+describe('Motor — ASOCIACION_REPETIDA_INTERVALO (schema_version=4, repetición por intervalo configurable)', () => {
+    function configConIntervalo(meses = 6, cambios = {}) {
+        return clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4,
+            regla_repeticion_asociacion_intervalo_activa: true,
+            repeticion_asociacion_meses: meses,
+            // La regla de temporada queda DESACTIVADA en estos tests para
+            // aislar la causa bajo prueba — ambas son independientes (ver
+            // test de independencia más abajo) y no deben mezclarse aquí.
+            regla_no_repetir_asociacion_activa: false,
+            ...cambios
+        });
+    }
+
+    test('última designación histórica hace 3 meses, intervalo de 6 -> descartado (dentro del intervalo)', () => {
+        const fecha = '2026-11-14';
+        const j = jurado('j1', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, asociacion: 'Colchagua', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({
+            rodeos: [r], jurados: [j],
+            disponibilidadPorJurado: { j1: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+        ctx.ultimaFechaAsociacionPorJurado = construirUltimaFechaAsociacionPorJurado([
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2026-08-14', asociacion: 'Colchagua' } }
+        ]);
+        const res = ejecutarSimulacion(ctx, 5, configConIntervalo(6));
+        expect(res.resultados[0].estado).toBe('SIN_PROPUESTA');
+        expect(res.resultados[0].descartes.ASOCIACION_REPETIDA_INTERVALO).toBe(1);
+    });
+
+    test('última designación histórica hace 8 meses, intervalo de 6 -> permitido (fuera del intervalo)', () => {
+        const fecha = '2026-11-14';
+        const j = jurado('j1', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, asociacion: 'Colchagua', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({
+            rodeos: [r], jurados: [j],
+            disponibilidadPorJurado: { j1: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+        ctx.ultimaFechaAsociacionPorJurado = construirUltimaFechaAsociacionPorJurado([
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2026-03-14', asociacion: 'Colchagua' } }
+        ]);
+        const res = ejecutarSimulacion(ctx, 5, configConIntervalo(6));
+        expect(res.resultados[0].estado).toBe('PROPUESTO');
+    });
+
+    test('sin ninguna designación histórica en esa asociación -> permitido', () => {
+        const fecha = '2026-11-14';
+        const j = jurado('j1', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, asociacion: 'Colchagua', comunaObj: COMUNA_RODEO_DEFAULT });
+        const res = ejecutarSimulacion(contexto({
+            rodeos: [r], jurados: [j],
+            disponibilidadPorJurado: { j1: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        }), 5, configConIntervalo(6));
+        expect(res.resultados[0].estado).toBe('PROPUESTO');
+    });
+
+    test('regla inactiva -> ninguna causa ASOCIACION_REPETIDA_INTERVALO, aunque exista historial reciente', () => {
+        const fecha = '2026-11-14';
+        const j = jurado('j1', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, asociacion: 'Colchagua', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({
+            rodeos: [r], jurados: [j],
+            disponibilidadPorJurado: { j1: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+        ctx.ultimaFechaAsociacionPorJurado = construirUltimaFechaAsociacionPorJurado([
+            { usuario_pagado_id: 'j1', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2026-08-14', asociacion: 'Colchagua' } }
+        ]);
+        const config = configConIntervalo(6, { regla_repeticion_asociacion_intervalo_activa: false });
+        const res = ejecutarSimulacion(ctx, 5, config);
+        expect(res.resultados[0].estado).toBe('PROPUESTO');
+    });
+
+    // Independencia explícita (sección 4 del pedido): ambas reglas pueden
+    // configurarse por separado (cada una con su propio toggle) y conviven
+    // activas a la vez — ninguna sustituye a la otra. Dicho esto, por
+    // diseño (ver comentario en evaluarCandidato), un repeat DENTRO de la
+    // temporada vigente SIEMPRE cuenta también como "demasiado pronto" para
+    // la regla de intervalo (criterio conservador: nunca permite relajar el
+    // intervalo solo porque el repeat ya estaba cubierto por la regla de
+    // temporada) — por eso j1 aparece en AMBOS contadores. j2, en cambio,
+    // SOLO tiene antecedente fuera de la temporada vigente (historial real,
+    // detectado vía fechas) — demuestra que la regla de intervalo funciona
+    // por sí sola, sin depender de la regla de temporada. j3 no tiene
+    // ningún antecedente -> ninguna de las dos lo descarta, prueba de que
+    // ninguna regla sobre-descarta de más.
+    test('regla de temporada (sin fechas) y regla de intervalo (con fechas) conviven activas; la de intervalo también detecta un antecedente que la de temporada NUNCA vería (fuera de la temporada vigente)', () => {
+        const fecha = '2026-11-14';
+        const j1 = jurado('j1', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const j2 = jurado('j2', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const j3 = jurado('j3', { asociacion: 'Asociación Jurado', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, asociacion: 'Colchagua', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({
+            rodeos: [r], jurados: [j1, j2, j3],
+            // j3 queda SIN disponibilidad declarada a propósito (bloqueado por
+            // DISPONIBILIDAD, causa ajena a esta prueba) — así el rodeo sigue
+            // SIN_PROPUESTA pese a tener un 3er candidato "limpio" de repetición.
+            disponibilidadPorJurado: { j1: rangoFechas(fecha, 1), j2: rangoFechas(fecha, 1) },
+            // j1 ya designado en Colchagua ESTA temporada (regla de temporada lo descarta).
+            asignacionesTemporada: [{ usuario_pagado_id: 'j1', rodeo_id: 'r-historico', rodeos: { fecha: '2026-05-01', duracion_dias: 1, asociacion: 'Colchagua' } }],
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+        // j2 tiene una designación histórica reciente (hace 3 meses) en Colchagua,
+        // pero FUERA de la temporada vigente -> solo la regla de intervalo la ve.
+        ctx.ultimaFechaAsociacionPorJurado = construirUltimaFechaAsociacionPorJurado([
+            { usuario_pagado_id: 'j2', estado: 'activo', estado_designacion: null, rodeos: { fecha: '2026-08-14', asociacion: 'Colchagua' } }
+        ]);
+        const config = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4,
+            regla_no_repetir_asociacion_activa: true,
+            regla_repeticion_asociacion_intervalo_activa: true,
+            repeticion_asociacion_meses: 6
+        });
+        const res = ejecutarSimulacion(ctx, 5, config);
+        expect(res.resultados[0].estado).toBe('SIN_PROPUESTA');
+        expect(res.resultados[0].descartes.ASOCIACION_REPETIDA_TEMPORADA).toBe(1); // solo j1 (j2 queda fuera de la temporada vigente)
+        expect(res.resultados[0].descartes.ASOCIACION_REPETIDA_INTERVALO).toBe(2); // j1 (conservador) + j2 (detectado solo por fechas)
+        // j3 está descartado (DISPONIBILIDAD, ajeno a esta prueba) pero NUNCA
+        // por ninguna de las 2 causas de repetición de asociación — nunca tuvo
+        // antecedente real en ninguna de las dos fuentes.
+        const descartadoJ3 = res.resultados[0].descartados.find(d => d.jurado_id === 'j3');
+        expect(descartadoJ3.causas).not.toContain('ASOCIACION_REPETIDA_TEMPORADA');
+        expect(descartadoJ3.causas).not.toContain('ASOCIACION_REPETIDA_INTERVALO');
+    });
+});
+
+describe('Motor — NOTA_TECNICA integrada (schema_version=4): desempate por mejor nota técnica dentro de la misma categoría', () => {
+    test('entre dos candidatos de la MISMA categoría, gana el de mejor nota técnica', () => {
+        const fecha = '2026-11-14';
+        const jMejor = jurado('jMejor', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const jPeor = jurado('jPeor', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', asociacion: 'OtraAsociacion', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({
+            rodeos: [r], jurados: [jMejor, jPeor],
+            disponibilidadPorJurado: { jMejor: rangoFechas(fecha, 1), jPeor: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+        ctx.notaTecnicaPorJurado = new Map([
+            ['jMejor', { promedio: 6.8, cantidad: 5 }],
+            ['jPeor', { promedio: 5.2, cantidad: 5 }]
+        ]);
+        const config = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4,
+            ordenCriterios: [
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+                { criterio_codigo: 'NOTA_TECNICA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        });
+        const res = ejecutarSimulacion(ctx, 5, config);
+        expect(res.resultados[0].jurado_propuesto.jurado_id).toBe('jMejor');
+    });
+
+    test('un candidato SIN nota técnica (null) nunca le gana a uno con nota real conocida, aunque sea baja', () => {
+        const fecha = '2026-11-14';
+        const jConNota = jurado('jConNota', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const jSinNota = jurado('jSinNota', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', asociacion: 'OtraAsociacion', comunaObj: COMUNA_RODEO_DEFAULT });
+        const ctx = contexto({
+            rodeos: [r], jurados: [jConNota, jSinNota],
+            disponibilidadPorJurado: { jConNota: rangoFechas(fecha, 1), jSinNota: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        });
+        ctx.notaTecnicaPorJurado = new Map([
+            ['jConNota', { promedio: 1.5, cantidad: 1 }] // nota real baja, pero conocida
+            // jSinNota: ausente del Map -> null, nunca 0
+        ]);
+        const config = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4,
+            ordenCriterios: [
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 1 },
+                { criterio_codigo: 'NOTA_TECNICA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        });
+        const res = ejecutarSimulacion(ctx, 5, config);
+        expect(res.resultados[0].jurado_propuesto.jurado_id).toBe('jConNota');
+    });
+
+    test('sin contexto.notaTecnicaPorJurado en absoluto (no cargado) -> NOTA_TECNICA empata siempre, cede al siguiente criterio, nunca rompe', () => {
+        const fecha = '2026-11-14';
+        const jA = jurado('jA', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const jB = jurado('jB', { categoria: 'A', comunaTexto: 'ComunaJurado' });
+        const r = rodeoInterno('r1', { fecha, clasificacion_codigo: 'nacional', asociacion: 'OtraAsociacion', comunaObj: COMUNA_RODEO_DEFAULT });
+        const config = clonarConfiguracion(construirConfiguracionDefaultV1(), {
+            schema_version: 4,
+            ordenCriterios: [
+                { criterio_codigo: 'NOTA_TECNICA', orden: 1 },
+                { criterio_codigo: 'PRIORIDAD_CATEGORIA', orden: 2 },
+                { criterio_codigo: 'MENOS_DESIGNACIONES_TEMPORADA', orden: 3 },
+                { criterio_codigo: 'MENOR_DISTANCIA', orden: 4 }
+            ]
+        });
+        expect(() => ejecutarSimulacion(contexto({
+            rodeos: [r], jurados: [jA, jB],
+            disponibilidadPorJurado: { jA: rangoFechas(fecha, 1), jB: rangoFechas(fecha, 1) },
+            comunas: [COMUNA_RODEO_DEFAULT, COMUNA_JURADO_DEFAULT]
+        }), 5, config)).not.toThrow();
     });
 });

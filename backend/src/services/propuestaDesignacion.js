@@ -298,6 +298,7 @@ function fingerprintAdvertencia(a) {
             return `CATEGORIA_INCOMPATIBLE:${a.categoria || ''}`;
         case 'MISMA_ASOCIACION':
         case 'ASOCIACION_REPETIDA_TEMPORADA':
+        case 'ASOCIACION_REPETIDA_INTERVALO': // schema_version=4, mejora "Repetición de Asociación por Intervalo"
             return `${a.tipo}:${a.asociacion || ''}`;
         default:
             return a.tipo;
