@@ -1433,6 +1433,22 @@ function filtrarJuradosDesignacion() {
     _designarBuscarTimer = setTimeout(cargarJuradosDesignacion, 350);
 }
 
+// Auditoría de elegibilidad (Etapa B) — misma etiqueta de causas que ya usa
+// Propuesta de Designación (ETIQUETAS_CAUSA en propuesta-designacion.html),
+// duplicada acá a propósito (mismo patrón ya establecido en este proyecto
+// para constantes de presentación — no hay forma de compartir un módulo
+// entre páginas sin build step): NUNCA se reimplementa ninguna regla, solo
+// se traduce el código que el backend ya devuelve (evaluarCandidato()).
+const ETIQUETAS_CAUSA_JURADO = {
+    DISPONIBILIDAD: 'Sin disponibilidad declarada', MISMA_ASOCIACION: 'Es de la misma asociación organizadora del rodeo',
+    ASOCIACION_REPETIDA_TEMPORADA: 'Ya fue designado en esa asociación esta temporada',
+    ASOCIACION_REPETIDA_INTERVALO: 'Repite esa asociación antes del intervalo mínimo configurado',
+    MISMO_FINDE: 'Ya tiene otro rodeo ese mismo fin de semana', FINDE_CONSECUTIVO: 'Trabajó el fin de semana inmediatamente anterior',
+    CATEGORIA_INCOMPATIBLE: 'Categoría no habilitada para esta clasificación de rodeo',
+    JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia excedida'
+};
+function _etiquetaCausaJurado(codigo) { return ETIQUETAS_CAUSA_JURADO[codigo] || codigo; }
+
 function renderJuradosDesignacion() {
     const lista = document.getElementById('dj-lista');
     if (!lista) return;
@@ -1468,11 +1484,27 @@ function renderJuradosDesignacion() {
                 }).join('')}
                </div>`
             : '';
+        // Auditoría de elegibilidad (Etapa B) — mismo estado de 3 niveles
+        // que usa Propuesta de Designación (nunca una clasificación propia
+        // de esta pantalla): NO_HABILITADO = restricción obligatoria real
+        // (deshabilitado, nunca seleccionable); CON_ADVERTENCIAS = solo
+        // preferencias flexibles (seleccionable con excepción justificada);
+        // null = no se pudo evaluar (configuración no resuelta — se
+        // comporta como antes de esta corrección, sin bloquear).
+        const causasObligatoriasHtml = (j.causas_obligatorias || []).length > 0
+            ? `<div style="font-size:11px; color:#922b21; margin-top:3px;">🚫 ${j.causas_obligatorias.map(_etiquetaCausaJurado).join(' · ')}</div>`
+            : '';
+        const causasRelajablesHtml = (j.causas_relajables || []).length > 0
+            ? `<div style="font-size:11px; color:#CC6600; margin-top:3px;">⚠ ${j.causas_relajables.map(_etiquetaCausaJurado).join(' · ')}</div>`
+            : '';
         const btnStyle = j.ya_asignado
             ? `class="btn btn-pequeño btn-outline" disabled`
-            : j.repite_asociacion
-                ? `class="btn btn-pequeño" style="background:#f39c12;color:white;" onclick="designarJurado('${j.id}','${sanitizar(j.nombre_completo)}','${j.repite_asociacion}')"`
-                : `class="btn btn-pequeño btn-primario" onclick="designarJurado('${j.id}','${sanitizar(j.nombre_completo)}',false)"`;
+            : j.estado_elegibilidad === 'NO_HABILITADO'
+                ? `class="btn btn-pequeño btn-outline" disabled title="No cumple una restricción obligatoria: ${sanitizar((j.causas_obligatorias || []).map(_etiquetaCausaJurado).join(', '))}"`
+                : j.estado_elegibilidad === 'CON_ADVERTENCIAS'
+                    ? `class="btn btn-pequeño" style="background:#f39c12;color:white;" onclick="designarJurado('${j.id}')"`
+                    : `class="btn btn-pequeño btn-primario" onclick="designarJurado('${j.id}')"`;
+        const btnLabel = j.ya_asignado ? 'Asignado' : (j.estado_elegibilidad === 'NO_HABILITADO' ? 'No habilitado' : 'Designar');
         return `
         <div style="padding:10px 14px; border-bottom:1px solid var(--gris-claro); display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
             <div style="flex:1; min-width:0;">
@@ -1481,9 +1513,11 @@ function renderJuradosDesignacion() {
                 </div>
                 ${designacionesHtml}
                 ${infoJuradoHtml}
+                ${causasObligatoriasHtml}
+                ${causasRelajablesHtml}
                 ${histHtml}
             </div>
-            <button ${btnStyle}>${j.ya_asignado ? 'Asignado' : 'Designar'}</button>
+            <button ${btnStyle}>${btnLabel}</button>
         </div>`;
     }).join('');
 }
@@ -1550,11 +1584,94 @@ function construirContenidoAdvertenciaDesignacion(nombre, val) {
         </div>`;
 }
 
-async function designarJurado(usuarioId, nombre, repiteAsociacion) {
+// Contenido genérico de advertencia a partir de causas_relajables (Etapa B)
+// — distancia, repetición de asociación, finde consecutivo, comuna no
+// resoluble. Las dos primeras ya tienen un bloque RICO (club/fecha exactos)
+// vía construirContenidoAdvertenciaDesignacion()/validar-historial — esto
+// cubre las que ese endpoint no conocía (sobre todo distancia), sin
+// duplicar lo que ya existe.
+function construirContenidoAdvertenciaCausas(nombre, causasRelajables) {
+    return `
+        <div style="font-size:16px; font-weight:700; color:#CC6600; margin-bottom:10px;">⚠ Advertencia de designación</div>
+        <div style="font-size:14px; margin-bottom:10px;"><strong>${sanitizar(nombre)}</strong> presenta ${causasRelajables.length > 1 ? 'las siguientes advertencias (preferencias flexibles, no restricciones obligatorias)' : 'la siguiente advertencia (preferencia flexible, no una restricción obligatoria)'}:</div>
+        <ul style="margin:0 0 10px 18px; font-size:13px;">${causasRelajables.map(c => `<li>${sanitizar(_etiquetaCausaJurado(c))}</li>`).join('')}</ul>
+        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
+            <div style="font-size:13px; font-weight:600;">Nueva designación:</div>
+            <div style="font-size:12px; color:var(--gris);">${_filaRodeoAdvertencia(rodeoActual)}</div>
+        </div>`;
+}
+
+// Corrección final de seguridad, sección 3 — una excepción confirmada
+// (confirmar_advertencias:true) ahora exige un motivo del catálogo antes de
+// guardarse (el backend la rechaza sin él); se pide con el mismo catálogo
+// ya usado por "Reemplazar jurado" (rjMotivosCache), reutilizado para no
+// duplicar el fetch.
+async function pedirMotivoExcepcion(nombre) {
+    if (!rjMotivosCache) {
+        try {
+            const r = await api.get('/admin/asignaciones/motivos-designacion');
+            rjMotivosCache = r.motivos || [];
+        } catch (err) { mostrarError(err); rjMotivosCache = []; }
+    }
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-confirmar" style="max-width:420px; text-align:left;">
+                <div style="font-weight:700; font-size:15px; margin-bottom:8px;">Motivo de la excepción</div>
+                <p style="font-size:13px; margin-bottom:10px;">Para designar a <strong>${sanitizar(nombre)}</strong> con una advertencia confirmada, indique un motivo del catálogo — queda registrado de forma permanente en la bitácora de designaciones.</p>
+                <div class="form-grupo">
+                    <select id="me-motivo" class="form-control">
+                        <option value="">Seleccione un motivo…</option>
+                        ${rjMotivosCache.map(m => `<option value="${m.codigo}">${sanitizar(m.etiqueta)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-grupo">
+                    <textarea id="me-detalle" class="form-control" rows="2" placeholder="Justificación adicional (opcional)"></textarea>
+                </div>
+                <div class="modal-acciones">
+                    <button class="btn btn-secundario" id="btn-me-cancelar">Cancelar</button>
+                    <button class="btn btn-primario" id="btn-me-confirmar" disabled>Guardar excepción</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const sel = overlay.querySelector('#me-motivo');
+        const btnOk = overlay.querySelector('#btn-me-confirmar');
+        sel.addEventListener('change', () => { btnOk.disabled = !sel.value; });
+        btnOk.onclick = () => {
+            const motivo_codigo = sel.value, motivo_detalle = overlay.querySelector('#me-detalle').value.trim() || undefined;
+            overlay.remove(); resolve({ motivo_codigo, motivo_detalle });
+        };
+        overlay.querySelector('#btn-me-cancelar').onclick = () => { overlay.remove(); resolve(null); };
+    });
+}
+
+async function designarJurado(usuarioId) {
+    // Auditoría de elegibilidad (Etapa A/B) — la lista (_juradosDesignacion)
+    // ya trae el estado real de ESTE candidato, calculado con el mismo
+    // mecanismo que usa Propuesta de Designación. Un NO_HABILITADO nunca
+    // debería llegar acá (el botón queda deshabilitado) — se revalida igual
+    // como defensa en profundidad; quien decide de verdad es el backend.
+    const j = _juradosDesignacion.find(x => x.id === usuarioId);
+    const nombre = j ? j.nombre_completo : '';
+    if (j && j.estado_elegibilidad === 'NO_HABILITADO') {
+        mostrarToast('Este jurado no cumple una restricción obligatoria para este rodeo.', 'error');
+        return;
+    }
+
+    let confirmarAdvertencias = false;
+    if (j && j.estado_elegibilidad === 'CON_ADVERTENCIAS' && (j.causas_relajables || []).length > 0) {
+        const ok = await confirmarDesignacionConAdvertencia(construirContenidoAdvertenciaCausas(nombre, j.causas_relajables));
+        if (!ok) return;
+        confirmarAdvertencias = true;
+    }
+
     // Validación con información actual (no depende únicamente del flag ya
     // calculado en bloque al abrir el modal): reutiliza el mismo endpoint que
     // ya usa la asignación manual genérica (asignaciones.js: /validar-historial),
-    // ahora extendido con Regla A (asociación) y Regla B (fecha consecutiva).
+    // con el detalle RICO (club/fecha exactos) de repetición de asociación /
+    // fecha consecutiva — se mantiene como confirmación adicional, nunca
+    // reemplazada por la genérica de arriba.
     let val = null;
     try {
         val = await api.post('/admin/asignaciones/validar-historial', {
@@ -1572,12 +1689,24 @@ async function designarJurado(usuarioId, nombre, repiteAsociacion) {
             construirContenidoAdvertenciaDesignacion(nombre, val)
         );
         if (!ok) return;
+        confirmarAdvertencias = true;
+    }
+
+    // Corrección final de seguridad, sección 3 — toda excepción confirmada
+    // ahora exige un motivo del catálogo (el backend la rechaza sin él).
+    let motivo = null;
+    if (confirmarAdvertencias) {
+        motivo = await pedirMotivoExcepcion(nombre);
+        if (!motivo) return;
     }
 
     try {
         await api.post('/admin/asignaciones', {
             rodeo_id: _designarRodeoId,
-            personas: [{ usuario_pagado_id: usuarioId, tipo_persona: 'jurado' }]
+            personas: [{
+                usuario_pagado_id: usuarioId, tipo_persona: 'jurado', confirmar_advertencias: confirmarAdvertencias,
+                motivo_codigo: motivo?.motivo_codigo, motivo_detalle: motivo?.motivo_detalle
+            }]
         });
         mostrarToast(`${nombre} designado correctamente`, 'success');
         cerrarModal();

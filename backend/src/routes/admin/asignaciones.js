@@ -11,6 +11,16 @@ const { responderSiConflictoDesignacionRentado } = require('../../services/desig
 // (movida ahí tal cual, sin cambiar el algoritmo, para que el motor de propuesta
 // de designación —Etapa 3— reutilice exactamente esta misma versión).
 const { calcularBloqueRodeo, contarSabadosEntre } = require('../../services/feriados');
+// Auditoría de elegibilidad (Etapa A) — POST / (Designar jurado) solo
+// validaba disponibilidad declarada y cruce de fechas: nunca MISMA_ASOCIACION
+// (conflicto de interés real), categoría/matriz ni distancia — una
+// designación manual podía escribirse sin ninguna advertencia aunque
+// violara una restricción obligatoria. Se reutiliza el mecanismo ÚNICO de
+// elegibilidad (envuelve evaluarCandidato(), nunca una regla nueva) para
+// cerrar ese hueco tanto al listar (rodeos.js) como al escribir (acá).
+const { cargarDatosMotor } = require('../../services/motorPropuestaDesignacion');
+const { cargarConfiguracionDesignacionActiva } = require('../../services/configuracionDesignacionRepositorio');
+const { evaluarElegibilidadJurado, ESTADOS_ELEGIBILIDAD } = require('../../services/elegibilidadJurado');
 
 // ─── Helper: crea o actualiza bono de distancia (flujo admin) ──────────────────
 // Lógica idéntica al flujo usuario:
@@ -155,7 +165,13 @@ async function validarDisponibilidadYCruceFechas(usuarioPagadoId, rodeoId, rodeo
 // POST /api/admin/asignaciones — crear una o varias asignaciones para un rodeo
 router.post('/', async (req, res) => {
     const { rodeo_id, personas } = req.body;
-    // personas: [{ usuario_pagado_id, tipo_persona }]
+    // personas: [{ usuario_pagado_id, tipo_persona, confirmar_advertencias?,
+    //              motivo_codigo?, motivo_detalle? }]
+    // confirmar_advertencias (Auditoría de elegibilidad, Etapa A) — true
+    // SOLO cuando el administrador ya revisó y aceptó explícitamente una
+    // advertencia de preferencia flexible (distancia, repetición de
+    // asociación, finde consecutivo, comuna no resoluble) para ESTE jurado y
+    // ESTE rodeo — nunca se asume, nunca tiene default true.
 
     if (!rodeo_id || !personas || !Array.isArray(personas) || personas.length === 0) {
         return res.status(400).json({ error: 'rodeo_id y al menos una persona son requeridos' });
@@ -169,6 +185,24 @@ router.post('/', async (req, res) => {
 
     if (!rodeo || rodeo.estado !== 'activo') {
         return res.status(400).json({ error: 'Rodeo no encontrado o anulado' });
+    }
+
+    // Auditoría de elegibilidad (Etapa A) — contexto cargado UNA sola vez
+    // para todo el lote (nunca una consulta por persona). Si no hay ninguna
+    // persona de tipo jurado, no se carga nada (mismo costo que hoy).
+    let contextoElegibilidad = null, configuracionElegibilidad = null, elegibilidadErrorCarga = null;
+    if (personas.some(p => p.tipo_persona === 'jurado')) {
+        try {
+            const cargaConfig = await cargarConfiguracionDesignacionActiva();
+            if (cargaConfig.error) {
+                elegibilidadErrorCarga = cargaConfig.detalle || cargaConfig.error;
+            } else {
+                configuracionElegibilidad = cargaConfig.configuracion;
+                contextoElegibilidad = await cargarDatosMotor([rodeo_id]);
+            }
+        } catch (err) {
+            elegibilidadErrorCarga = err.message;
+        }
     }
 
     // Generar rango de fechas del rodeo (para validación de disponibilidad)
@@ -185,6 +219,12 @@ router.post('/', async (req, res) => {
     const tarifas = await obtenerTarifas();
     const creadas = [];
     const erroresCreacion = [];
+    // Corrección final de seguridad (sección 3) — excepciones confirmadas
+    // (CON_ADVERTENCIAS + confirmar_advertencias:true + motivo_codigo
+    // válido) por usuario_pagado_id, para crear esa asignación puntual vía
+    // crear_asignacion_con_bitacora() (atómico con su registro en
+    // bitacora_designaciones) en vez del INSERT simple de siempre.
+    const excepcionConfirmadaPorPersona = new Map();
 
     for (const p of personas) {
         const { usuario_pagado_id, tipo_persona } = p;
@@ -259,6 +299,63 @@ router.post('/', async (req, res) => {
                 }
             }
             if (hayConflicto) continue;
+
+            // 3. Elegibilidad real (Etapa A) — mismo mecanismo que ya usa
+            // Propuesta de Designación, nunca una regla distinta. Antes de
+            // esta corrección, esta ruta nunca validaba MISMA_ASOCIACION
+            // (conflicto de interés real), categoría/matriz ni distancia —
+            // podía designarse a cualquiera que tuviera disponibilidad y
+            // fechas libres, sin ninguna advertencia.
+            if (!contextoElegibilidad || !configuracionElegibilidad) {
+                erroresCreacion.push({
+                    error: 'No se pudo validar la elegibilidad del jurado para este rodeo (configuración de designación no disponible)' + (elegibilidadErrorCarga ? ': ' + elegibilidadErrorCarga : ''),
+                    usuario_pagado_id
+                });
+                continue;
+            }
+            const elegibilidad = evaluarElegibilidadJurado(contextoElegibilidad, rodeo_id, usuario_pagado_id, configuracionElegibilidad);
+            if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.NO_HABILITADO) {
+                erroresCreacion.push({
+                    error: 'El jurado no cumple una restricción obligatoria para este rodeo' + (elegibilidad.causas_obligatorias.length ? ' (' + elegibilidad.causas_obligatorias.join(', ') + ')' : ''),
+                    usuario_pagado_id, estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_obligatorias
+                });
+                continue;
+            }
+            if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.CON_ADVERTENCIAS) {
+                if (p.confirmar_advertencias !== true) {
+                    erroresCreacion.push({
+                        error: 'Esta designación tiene advertencias (preferencias flexibles) que deben confirmarse explícitamente antes de guardar',
+                        usuario_pagado_id, estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_relajables, requiere_confirmacion: true
+                    });
+                    continue;
+                }
+                // Corrección final de seguridad (sección 3) — una excepción
+                // confirmada sin motivo del catálogo no queda registrada en
+                // ningún lado (hallazgo de la revisión de cierre); ahora se
+                // exige SIEMPRE un motivo antes de poder guardar la excepción,
+                // igual que ya exige /reemplazar.
+                if (!p.motivo_codigo) {
+                    erroresCreacion.push({
+                        error: 'Esta excepción (preferencias flexibles confirmadas) requiere un motivo del catálogo antes de guardarse',
+                        usuario_pagado_id, estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_relajables, requiere_motivo: true
+                    });
+                    continue;
+                }
+                const { data: motivoExcepcion } = await supabase
+                    .from('catalogo_motivos_designacion')
+                    .select('id, activo')
+                    .eq('codigo', p.motivo_codigo)
+                    .maybeSingle();
+                if (!motivoExcepcion || !motivoExcepcion.activo) {
+                    erroresCreacion.push({ error: 'motivo_codigo inválido o inactivo', usuario_pagado_id });
+                    continue;
+                }
+                excepcionConfirmadaPorPersona.set(usuario_pagado_id, {
+                    motivoCatalogoId: motivoExcepcion.id,
+                    motivoDetalle: p.motivo_detalle || null,
+                    causasConfirmadas: elegibilidad.causas_relajables
+                });
+            }
         }
 
         try {
@@ -268,6 +365,63 @@ router.post('/', async (req, res) => {
                 rodeo.duracion_dias,
                 tarifas
             );
+
+            const excepcion = excepcionConfirmadaPorPersona.get(usuario_pagado_id);
+            if (excepcion) {
+                // Corrección final de seguridad (sección 3) — camino
+                // EXCLUSIVO para una excepción confirmada: crea la
+                // asignación Y registra la excepción en bitacora_
+                // designaciones de forma atómica (crear_asignacion_con_
+                // bitacora, migración 094) — nunca dos pasos separados
+                // donde el segundo pueda fallar dejando al primero huérfano.
+                const { data: rpcData, error: errRpc } = await supabase.rpc('crear_asignacion_con_bitacora', {
+                    p_rodeo_id: rodeo_id,
+                    p_usuario_pagado_id: usuario_pagado_id,
+                    p_categoria_aplicada: calculo.categoria_aplicada,
+                    p_valor_diario_aplicado: calculo.valor_diario_aplicado,
+                    p_duracion_dias_aplicada: rodeo.duracion_dias,
+                    p_pago_base_calculado: calculo.pago_base_calculado,
+                    p_motivo_catalogo_id: excepcion.motivoCatalogoId,
+                    p_actor_id: req.usuario.id,
+                    p_causas_confirmadas: JSON.stringify(excepcion.causasConfirmadas),
+                    p_motivo_detalle: excepcion.motivoDetalle
+                });
+                if (errRpc) {
+                    const msg = errRpc.message || '';
+                    if (msg.includes('RODEO_ANULADO') || msg.includes('RODEO_NO_ENCONTRADO')) {
+                        erroresCreacion.push({ error: 'Rodeo no encontrado o anulado', usuario_pagado_id });
+                    } else if (msg.includes('JURADO_INVALIDO')) {
+                        erroresCreacion.push({ error: 'Usuario no encontrado, inactivo, o no es jurado', usuario_pagado_id });
+                    } else if (msg.includes('MOTIVO_INVALIDO') || msg.includes('MOTIVO_REQUERIDO')) {
+                        erroresCreacion.push({ error: 'motivo_codigo inválido o inactivo', usuario_pagado_id });
+                    } else if (msg.includes('JURADO_YA_DESIGNADO_EN_RODEO')) {
+                        erroresCreacion.push({ error: 'El jurado ya está designado vigente en este mismo rodeo', usuario_pagado_id });
+                    } else if (msg.includes('CRUCE_DISPONIBILIDAD')) {
+                        erroresCreacion.push({ error: 'El jurado ya está asignado a otro rodeo en fechas que se cruzan', usuario_pagado_id });
+                    } else {
+                        erroresCreacion.push({ error: msg, usuario_pagado_id });
+                    }
+                    continue;
+                }
+
+                const asignacion = rpcData.asignacion;
+                creadas.push(asignacion);
+
+                await auditoria.registrar({
+                    tabla: 'asignaciones',
+                    registro_id: asignacion.id,
+                    accion: 'crear',
+                    datos_nuevos: {
+                        rodeo_id, usuario_pagado_id, tipo_persona, pago_base_calculado: calculo.pago_base_calculado,
+                        excepcion_confirmada: true, causas_relajables: excepcion.causasConfirmadas, motivo_codigo: p.motivo_codigo
+                    },
+                    actor_id: req.usuario.id,
+                    actor_tipo: 'administrador',
+                    descripcion: `Asignación creada con excepción confirmada: ${usuario.nombre_completo} a rodeo ${rodeo_id} (bitácora ${rpcData.bitacora_id})`,
+                    ip_address: req.ip
+                });
+                continue;
+            }
 
             const { data: asignacion, error: errA } = await supabase
                 .from('asignaciones')
@@ -430,11 +584,17 @@ router.patch('/:id', async (req, res) => {
 //
 // body: { usuario_pagado_id_nuevo, motivo_codigo, motivo_detalle?,
 //          usuario_pagado_id_anterior_esperado?, tipo_movimiento?,
-//          fecha_efectiva?, operacion_id? }
+//          fecha_efectiva?, operacion_id?, confirmar_advertencias? }
+// confirmar_advertencias (Corrección final de seguridad, sección 2) — true
+// SOLO cuando el administrador ya revisó y aceptó explícitamente una
+// advertencia de preferencia flexible del candidato nuevo para ESTE rodeo
+// (reemplazos urgentes) — nunca se asume, nunca tiene default true, y NUNCA
+// permite omitir una restricción obligatoria (ver gate más abajo).
 router.post('/:id/reemplazar', async (req, res) => {
     const {
         usuario_pagado_id_nuevo, motivo_codigo, motivo_detalle,
-        usuario_pagado_id_anterior_esperado, tipo_movimiento, fecha_efectiva, operacion_id
+        usuario_pagado_id_anterior_esperado, tipo_movimiento, fecha_efectiva, operacion_id,
+        confirmar_advertencias
     } = req.body;
 
     if (!usuario_pagado_id_nuevo) return res.status(400).json({ error: 'usuario_pagado_id_nuevo es requerido' });
@@ -470,6 +630,39 @@ router.post('/:id/reemplazar', async (req, res) => {
         usuario_pagado_id_nuevo, anterior.rodeo_id, anterior.rodeos?.fecha, anterior.rodeos?.duracion_dias, req.params.id
     );
     if (!disponibilidad.ok) return res.status(409).json({ error: disponibilidad.motivo, code: 'CRUCE_DISPONIBILIDAD' });
+
+    // Corrección final de seguridad, sección 2 — este reemplazo nunca
+    // evaluaba MISMA_ASOCIACION/categoría-matriz/distancia/mismo finde del
+    // candidato nuevo: solo disponibilidad+cruce de fechas (arriba). Mismo
+    // mecanismo único que POST / y /jurados-candidatos-reemplazo — se
+    // revalida AQUÍ, justo antes de la RPC, con datos en vivo. Autoexclusión
+    // por construcción: evaluarElegibilidadJurado() indexa sus causas por
+    // usuario_pagado_id del CANDIDATO (nunca por asignacion_id), así que la
+    // propia asignación que se está reemplazando (dueña del jurado anterior,
+    // no del candidato) nunca puede generar un conflicto falso.
+    let elegibilidad;
+    try {
+        const cargaConfig = await cargarConfiguracionDesignacionActiva();
+        if (cargaConfig.error) {
+            return res.status(409).json({ error: 'No se pudo validar la elegibilidad del jurado nuevo para este rodeo: ' + (cargaConfig.detalle || cargaConfig.error) });
+        }
+        const contextoElegibilidad = await cargarDatosMotor([anterior.rodeo_id]);
+        elegibilidad = evaluarElegibilidadJurado(contextoElegibilidad, anterior.rodeo_id, usuario_pagado_id_nuevo, cargaConfig.configuracion);
+    } catch (err) {
+        return res.status(409).json({ error: 'No se pudo validar la elegibilidad del jurado nuevo para este rodeo: ' + err.message });
+    }
+    if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.NO_HABILITADO) {
+        return res.status(409).json({
+            error: 'El jurado nuevo no cumple una restricción obligatoria para este rodeo' + (elegibilidad.causas_obligatorias.length ? ' (' + elegibilidad.causas_obligatorias.join(', ') + ')' : ''),
+            code: 'RESTRICCION_OBLIGATORIA', estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_obligatorias
+        });
+    }
+    if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.CON_ADVERTENCIAS && confirmar_advertencias !== true) {
+        return res.status(409).json({
+            error: 'El reemplazo tiene advertencias (preferencias flexibles) que deben confirmarse explícitamente antes de guardar',
+            code: 'REQUIERE_CONFIRMACION_ADVERTENCIAS', estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_relajables, requiere_confirmacion: true
+        });
+    }
 
     let calculo;
     try {

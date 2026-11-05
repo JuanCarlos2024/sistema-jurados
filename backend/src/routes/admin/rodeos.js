@@ -20,6 +20,16 @@ const {
 const {
     construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo
 } = require('../../services/rodeosListado');
+// Auditoría de elegibilidad (Etapa A) — GET /:id/jurados-disponibles (usado
+// por "Designar jurado") solo validaba disponibilidad + cruce de fechas,
+// nunca MISMA_ASOCIACION/categoría-matriz/distancia como sí hace Propuesta
+// de Designación — mismo mecanismo ÚNICO que corrige ese hueco también en
+// POST /admin/asignaciones (asignaciones.js). Nunca excluye a nadie
+// adicional de la lista — solo agrega el estado real de cada candidato que
+// ya pasó el filtro de disponibilidad/cruce (ver comentario en el endpoint).
+const { cargarDatosMotor } = require('../../services/motorPropuestaDesignacion');
+const { cargarConfiguracionDesignacionActiva } = require('../../services/configuracionDesignacionRepositorio');
+const { evaluarElegibilidadJurado } = require('../../services/elegibilidadJurado');
 
 // Asignar/quitar temporada a un rodeo es una acción restringida a
 // administrador pleno (rol_evaluacion === null) — a diferencia del resto de
@@ -1126,22 +1136,58 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
     // compartido con /jurados-candidatos-reemplazo.
     const { designacionesMap, historialMap } = await _historialYDesignaciones(idsDisp);
 
-    const resultado = juradosDisp.map(j => ({
-        id:                j.id,
-        nombre_completo:   j.nombre_completo,
-        categoria:         j.categoria,
-        codigo_interno:    j.codigo_interno,
-        asociacion:        j.asociacion || null,
-        comuna:            j.comuna || null,
-        designaciones:     designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
-        ya_asignado:       yaAsignadosSet.has(j.id),
-        repite_asociacion: repiteAsocSet.has(j.id),
-        historial:         historialMap[j.id] || []
-    }));
+    // Auditoría de elegibilidad (Etapa A) — NUNCA excluye a nadie adicional
+    // de esta lista (los únicos filtros que quitan candidatos siguen siendo
+    // disponibilidad declarada y cruce de fechas, arriba — ambos son
+    // restricciones obligatorias reales, igual que en el motor). Lo que
+    // agrega es el estado real (igual criterio que usa Propuesta de
+    // Designación) de cada candidato que YA pasó ese filtro — antes, un
+    // candidato con conflicto de interés (MISMA_ASOCIACION) o categoría no
+    // habilitada aparecía sin ninguna señal. Degrada con gracia: si la
+    // configuración de designación no está resuelta, la lista sigue
+    // funcionando igual que antes (estado_elegibilidad queda null).
+    const estadoElegibilidadPorId = new Map();
+    try {
+        const cargaConfig = await cargarConfiguracionDesignacionActiva();
+        if (!cargaConfig.error) {
+            const contextoElegibilidad = await cargarDatosMotor([req.params.id]);
+            for (const id of idsDisp) {
+                estadoElegibilidadPorId.set(id, evaluarElegibilidadJurado(contextoElegibilidad, req.params.id, id, cargaConfig.configuracion));
+            }
+        }
+    } catch (err) {
+        console.error('[jurados-disponibles] no se pudo evaluar elegibilidad completa:', err.message);
+    }
 
-    // Orden de presentación (no altera quiénes califican, solo el orden ya calculado
-    // arriba): menos designaciones primero; empate, alfabético por nombre.
+    const resultado = juradosDisp.map(j => {
+        const elegibilidad = estadoElegibilidadPorId.get(j.id) || null;
+        return {
+            id:                   j.id,
+            nombre_completo:      j.nombre_completo,
+            categoria:            j.categoria,
+            codigo_interno:       j.codigo_interno,
+            asociacion:           j.asociacion || null,
+            comuna:               j.comuna || null,
+            designaciones:        designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
+            ya_asignado:          yaAsignadosSet.has(j.id),
+            repite_asociacion:    repiteAsocSet.has(j.id),
+            historial:            historialMap[j.id] || [],
+            estado_elegibilidad:  elegibilidad?.estado ?? null,
+            causas_obligatorias:  elegibilidad?.causas_obligatorias ?? [],
+            causas_relajables:    elegibilidad?.causas_relajables ?? [],
+            distancia_km:         elegibilidad?.distancia_km ?? null
+        };
+    });
+
+    // Orden de presentación (no altera quiénes califican, solo el orden ya
+    // calculado arriba): NO_HABILITADO al final (mismo criterio que
+    // /jurados-candidatos-reemplazo — nunca se oculta, solo se antepone lo
+    // realmente usable); dentro de cada grupo, menos designaciones primero,
+    // empate alfabético por nombre.
     resultado.sort((a, b) => {
+        const noHabA = a.estado_elegibilidad === 'NO_HABILITADO';
+        const noHabB = b.estado_elegibilidad === 'NO_HABILITADO';
+        if (noHabA !== noHabB) return noHabA ? 1 : -1;
         if (a.designaciones !== b.designaciones) return a.designaciones - b.designaciones;
         return a.nombre_completo.localeCompare(b.nombre_completo, 'es');
     });
@@ -1272,28 +1318,61 @@ router.get('/:id/jurados-candidatos-reemplazo', soloNoAnalista, soloNoComisionTe
     const repiteAsocSet = await _repiteAsociacionSet(ids, rodeo.asociacion);
     const { designacionesMap, historialMap } = await _historialYDesignaciones(ids);
 
-    const candidatos = candidatosBase.map(j => ({
-        id:                       j.id,
-        nombre_completo:          j.nombre_completo,
-        categoria:                j.categoria,
-        codigo_interno:           j.codigo_interno,
-        asociacion:               j.asociacion || null,
-        comuna:                   j.comuna || null,
-        designaciones:            designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
-        historial:                historialMap[j.id] || [],
-        repite_asociacion:        repiteAsocSet.has(j.id),
-        disponibilidad_declarada: fechasRodeo.every(f => dispMap[j.id]?.has(f)),
-        ya_asignado_en_rodeo:     yaAsignadoEnRodeoSet.has(j.id),
-        conflictos:               conflictosMap[j.id] || []
-    }));
+    // Corrección final de seguridad, sección 2 — este buscador nunca había
+    // sido enriquecido con elegibilidad real (MISMA_ASOCIACION, categoría/
+    // matriz, distancia, mismo finde): un candidato que "Designar jurado"
+    // bloquea de forma permanente podía reemplazar a un jurado sin ninguna
+    // advertencia. Mismo mecanismo único que /jurados-disponibles —
+    // evaluarElegibilidadJurado() sobre EL MISMO contexto/configuración,
+    // NUNCA una regla nueva. Autoexclusión: ningún causa del motor está
+    // indexada por asignación — todas se calculan por identidad del jurado
+    // candidato (bloquesPorJurado/asociacionesPorJurado en
+    // construirEstadoDesdeBD, motorPropuestaDesignacion.js), así que la
+    // asignación que se está reemplazando (de OTRO usuario_pagado_id, el
+    // anterior) nunca puede generar un conflicto falso contra el candidato.
+    const estadoElegibilidadPorId = new Map();
+    try {
+        const cargaConfig = await cargarConfiguracionDesignacionActiva();
+        if (!cargaConfig.error) {
+            const contextoElegibilidad = await cargarDatosMotor([req.params.id]);
+            for (const id of ids) {
+                estadoElegibilidadPorId.set(id, evaluarElegibilidadJurado(contextoElegibilidad, req.params.id, id, cargaConfig.configuracion));
+            }
+        }
+    } catch (err) {
+        console.error('[jurados-candidatos-reemplazo] no se pudo evaluar elegibilidad completa:', err.message);
+    }
 
-    // Orden: candidatos sin ningún impedimento real primero (mismas 3
-    // condiciones que bloquean el reemplazo real en el backend); dentro de
-    // cada grupo, menos designaciones primero y empate alfabético — mismo
-    // criterio de /jurados-disponibles.
+    const candidatos = candidatosBase.map(j => {
+        const elegibilidad = estadoElegibilidadPorId.get(j.id) || null;
+        return {
+            id:                       j.id,
+            nombre_completo:          j.nombre_completo,
+            categoria:                j.categoria,
+            codigo_interno:           j.codigo_interno,
+            asociacion:               j.asociacion || null,
+            comuna:                   j.comuna || null,
+            designaciones:            designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
+            historial:                historialMap[j.id] || [],
+            repite_asociacion:        repiteAsocSet.has(j.id),
+            disponibilidad_declarada: fechasRodeo.every(f => dispMap[j.id]?.has(f)),
+            ya_asignado_en_rodeo:     yaAsignadoEnRodeoSet.has(j.id),
+            conflictos:               conflictosMap[j.id] || [],
+            estado_elegibilidad:      elegibilidad?.estado ?? null,
+            causas_obligatorias:      elegibilidad?.causas_obligatorias ?? [],
+            causas_relajables:        elegibilidad?.causas_relajables ?? [],
+            distancia_km:             elegibilidad?.distancia_km ?? null
+        };
+    });
+
+    // Orden: candidatos sin ningún impedimento real primero (disponibilidad/
+    // cruce de fechas/ya asignado en este rodeo, igual que antes, más ahora
+    // NO_HABILITADO por restricción obligatoria real); dentro de cada grupo,
+    // menos designaciones primero y empate alfabético — mismo criterio de
+    // /jurados-disponibles. Nunca se oculta a nadie, solo se reordena.
     candidatos.sort((a, b) => {
-        const bloqA = a.ya_asignado_en_rodeo || a.conflictos.length > 0 || !a.disponibilidad_declarada;
-        const bloqB = b.ya_asignado_en_rodeo || b.conflictos.length > 0 || !b.disponibilidad_declarada;
+        const bloqA = a.ya_asignado_en_rodeo || a.conflictos.length > 0 || !a.disponibilidad_declarada || a.estado_elegibilidad === 'NO_HABILITADO';
+        const bloqB = b.ya_asignado_en_rodeo || b.conflictos.length > 0 || !b.disponibilidad_declarada || b.estado_elegibilidad === 'NO_HABILITADO';
         if (bloqA !== bloqB) return bloqA ? 1 : -1;
         if (a.designaciones !== b.designaciones) return a.designaciones - b.designaciones;
         return a.nombre_completo.localeCompare(b.nombre_completo, 'es');

@@ -326,16 +326,28 @@ function evaluarCambiosParaGuardar(advertenciasFrescas, advertenciasPrevias) {
 }
 
 // ─── Resumen de una propuesta a partir de sus filas de detalle ───────────
+// `cupos_cubiertos`/`cobertura_completa` (Auditoría de elegibilidad y
+// gestión de propuestas incompletas, Etapa D) — calculados con
+// obtenerJuradoEfectivo(), la MISMA fuente única de verdad que ya decide si
+// una fila puede aplicarse (POST /propuestas/:id/aplicar). Guardar un
+// borrador NUNCA exige cobertura completa (eso ya funcionaba antes de esta
+// etapa) — este campo es solo para que la interfaz pueda informarlo con
+// claridad, en vez de obligar a restar mentalmente sin_propuesta/no_evaluables.
 function resumenPropuesta(filasDetalle) {
-    const contar = (estado) => (filasDetalle || []).filter(f => f.estado_revision === estado).length;
+    const filas = filasDetalle || [];
+    const contar = (estado) => filas.filter(f => f.estado_revision === estado).length;
+    const cuposCubiertos = filas.filter(f => !!obtenerJuradoEfectivo(f)).length;
     return {
-        total_rodeos: (filasDetalle || []).length,
+        total_rodeos: filas.length,
         aceptados: contar('ACEPTADO'),
         modificados: contar('MODIFICADO'),
         pendientes: contar('PENDIENTE'),
         sin_propuesta: contar('SIN_PROPUESTA'),
         no_evaluables: contar('NO_EVALUABLE'),
-        sin_jurado_actual: contar('SIN_JURADO_ACTUAL')
+        sin_jurado_actual: contar('SIN_JURADO_ACTUAL'),
+        cupos_cubiertos: cuposCubiertos,
+        cupos_pendientes: filas.length - cuposCubiertos,
+        cobertura_completa: filas.length > 0 && cuposCubiertos === filas.length
     };
 }
 

@@ -38,6 +38,12 @@ const {
 const { generarSimulacionGlobal } = require('../../services/motorPropuestaDesignacionGlobal');
 const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
 const { clasificarJurado } = require('../../services/diagnosticoJurados');
+// Auditoría de elegibilidad (Etapa B) — mismo estado de 3 niveles que ahora
+// también usa Rodeos → "Designar jurado" (rodeos.js/asignaciones.js), para
+// que ambas pantallas describan a un candidato con el mismo criterio. Acá
+// NO se reevalúa nada (ejecutarSimulacion() ya corrió evaluarCandidato()) —
+// solo se clasifica el array `causas` que el motor ya devuelve.
+const { clasificarCausas, separarCausas, evaluarElegibilidadJurado, ESTADOS_ELEGIBILIDAD } = require('../../services/elegibilidadJurado');
 const { calcularBloqueRodeo } = require('../../services/feriados');
 const {
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
@@ -1424,7 +1430,7 @@ router.delete('/propuestas/:id', async (req, res) => {
 router.post('/propuestas/:id/aplicar', async (req, res) => {
     const { data: propuesta } = await supabase
         .from('propuestas_designacion')
-        .select('id, estado, temporada_id, aplicacion_en_curso_desde')
+        .select('id, estado, temporada_id, aplicacion_en_curso_desde, configuracion_version_id')
         .eq('id', req.params.id)
         .maybeSingle();
     if (!propuesta) return res.status(404).json({ error: 'La propuesta no existe.' });
@@ -1684,6 +1690,41 @@ router.post('/propuestas/:id/aplicar', async (req, res) => {
             return 'No se pudo aplicar la propuesta: ' + msg;
         }
 
+        // Corrección final de seguridad, sección 4 — hasta aquí, revalidar
+        // "al aplicar" solo verificaba rodeo/jurado vigentes, cobertura,
+        // disponibilidad declarada y cruce de fechas: NUNCA las restricciones
+        // obligatorias reales del motor (MISMA_ASOCIACION, categoría/matriz,
+        // MISMO_FINDE contra designaciones reales actuales,
+        // ASOCIACION_REPETIDA_INTERVALO si está configurada como
+        // obligatoria). Un borrador generado hace tiempo podía aplicarse como
+        // definitivo aunque, con los datos de HOY, esa selección ya violara
+        // una restricción obligatoria real (p. ej. una designación real nueva
+        // creó un conflicto de MISMO_FINDE, o el jurado cambió de asociación).
+        // Se reutiliza el ÚNICO mecanismo de elegibilidad (evaluarElegibilidadJurado
+        // — nunca una regla nueva) con la configuración PROPIA de esta
+        // propuesta (nunca la activa del momento, igual criterio que el resto
+        // de este archivo) — NUNCA sustituye al jurado seleccionado ni
+        // recalcula candidatos: solo bloquea la fila si la selección YA
+        // GUARDADA deja de ser válida. Las causas RELAJABLES no bloquean
+        // aquí: una fila ACEPTADO/MODIFICADO con advertencias ya las confirmó
+        // (con motivo) al momento de seleccionarse (Corrección final de
+        // seguridad, sección 1) — revalidarlas de nuevo sería un bloqueo
+        // redundante, no una protección adicional.
+        let configuracionAplicar = null, contextoElegibilidadAplicar = null;
+        try {
+            const cargaConfigAplicar = await cargarConfiguracionDesignacionPorId(propuesta.configuracion_version_id);
+            if (cargaConfigAplicar.error) {
+                return res.status(500).json({
+                    error: 'CONFIGURACION_PROPUESTA_NO_RESUELTA',
+                    detalle: 'Esta propuesta no tiene una configuración de designación resoluble — no se puede revalidar antes de aplicar.'
+                });
+            }
+            configuracionAplicar = cargaConfigAplicar.configuracion;
+            contextoElegibilidadAplicar = await cargarDatosMotor(rodeoIds);
+        } catch (err) {
+            return res.status(500).json({ error: 'No se pudo revalidar la elegibilidad de las designaciones antes de aplicar: ' + err.message });
+        }
+
         // Fase 2C (revisión correctiva, sección 1) — pre-chequeo rápido en
         // JavaScript (mismo criterio de siempre: buenos mensajes, nunca la
         // única defensa) ANTES de intentar el lote: si CUALQUIER fila
@@ -1723,6 +1764,23 @@ router.post('/propuestas/:id/aplicar', async (req, res) => {
             const hayCruce = ocupado.some(o => o.rodeo_id !== d.rodeo_id && seSuperponen(rodeo.fecha, rodeo.duracion_dias, o.fecha, o.duracion_dias));
             if (hayCruce) {
                 conflictosPrevios.push({ rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo, motivo: 'El jurado ya está asignado a otro rodeo en fechas que se cruzan.' });
+                continue;
+            }
+
+            // Corrección final de seguridad, sección 4 — restricción
+            // obligatoria real re-evaluada con datos de HOY: si esta
+            // selección guardada deja de ser válida (p. ej. una designación
+            // real nueva creó MISMO_FINDE, o cambió la asociación del
+            // jurado), la fila queda pendiente de corrección administrativa
+            // — nunca se aplica silenciosamente, y por la regla de
+            // aplicación atómica, bloquea TODO el lote (no solo esta fila).
+            const elegibilidadAplicar = evaluarElegibilidadJurado(contextoElegibilidadAplicar, d.rodeo_id, d.jurado_efectivo, configuracionAplicar);
+            if (elegibilidadAplicar.estado === ESTADOS_ELEGIBILIDAD.NO_HABILITADO) {
+                conflictosPrevios.push({
+                    rodeo_id: d.rodeo_id, club: rodeo.club, fecha: rodeo.fecha, jurado: jurado.nombre_completo,
+                    motivo: 'Esta selección ya no cumple una restricción obligatoria' + (elegibilidadAplicar.causas_obligatorias.length ? ' (' + elegibilidadAplicar.causas_obligatorias.join(', ') + ')' : '') + ' — requiere corrección administrativa antes de aplicarse.',
+                    causas: elegibilidadAplicar.causas_obligatorias
+                });
                 continue;
             }
 
@@ -2031,7 +2089,20 @@ function ajustarEquidadConTemporales(candidatos, contexto, otrasFilas) {
 async function enriquecerConHistorialReciente(validos, descartados) {
     const juradoIds = [...validos, ...descartados].map(c => c.jurado_id);
     const historialPorJurado = await cargarHistorialRecienteBatch(juradoIds);
-    const conHistorial = (c) => ({ ...c, historial_reciente: historialPorJurado.get(c.jurado_id) || [] });
+    // Auditoría de elegibilidad (Etapa B) — mismo estado de 3 niveles
+    // (DISPONIBLE_Y_HABILITADO/CON_ADVERTENCIAS/NO_HABILITADO) que ahora usa
+    // también Rodeos → "Designar jurado", clasificado a partir del mismo
+    // array `causas` que el motor ya calculó (nunca una reevaluación nueva).
+    // Corrección final de seguridad, sección 1: también se agrega el split
+    // causas_obligatorias/causas_relajables (mismo separarCausas() que usa
+    // evaluarElegibilidadJurado) para que el frontend pueda distinguir y
+    // eliminar "Seleccionar igualmente" cuando corresponde, sin reimplementar
+    // el filtro.
+    const conHistorial = (c) => ({
+        ...c, historial_reciente: historialPorJurado.get(c.jurado_id) || [],
+        estado_elegibilidad: c.causas ? clasificarCausas(c.causas) : ESTADOS_ELEGIBILIDAD.DISPONIBLE_Y_HABILITADO,
+        ...separarCausas(c.causas)
+    });
     return { validos: validos.map(conHistorial), descartados: descartados.map(conHistorial) };
 }
 
@@ -2253,19 +2324,30 @@ router.post('/preview/candidatos', async (req, res) => {
 // POST /preview/seleccionar → la firmada en el preview_token) — nunca la
 // activa "de paso", para no romper la atadura permanente preview/borrador ↔
 // versión con la que se generaron.
-// @returns { error } | { jurado, advertencias, rodeoEnriquecido }
+// Corrección final de seguridad, sección 1 — cierre de la brecha de
+// selección: antes, esta función mezclaba TODAS las causas del motor
+// (obligatorias Y relajables) en un único array `advertencias`, así que
+// `confirmar_advertencias=true` bastaba para pasar por encima de una
+// restricción obligatoria real (MISMA_ASOCIACION, CATEGORIA_INCOMPATIBLE,
+// MISMO_FINDE, DISPONIBILIDAD, ASOCIACION_REPETIDA_INTERVALO) — exactamente
+// lo que POST /admin/asignaciones ya bloquea sin excepción desde la Etapa A.
+// Ahora reutiliza evaluarElegibilidadJurado() (el mismo mecanismo único, sin
+// reimplementar la clasificación) y separa `causasObligatorias` — que el
+// llamador debe bloquear SIEMPRE, nunca confirmable — de `advertencias`
+// (causas relajables del motor + conflictos internos del lote, lógica de
+// "mover jurado" preexistente, sin cambios).
+// @returns { error } | { jurado, causasObligatorias, advertencias, rodeoEnriquecido }
 async function evaluarSeleccion(rodeoId, juradoId, otrasFilasEnriquecidas, configuracion) {
     if (!juradoId) return { error: 'jurado_id requerido' };
     if (!configuracion) throw new Error('evaluarSeleccion: configuracion es obligatoria (Etapa 3) — el llamador debe resolverla antes de invocar');
 
-    let evaluacion, rodeoEnriquecido;
+    let elegibilidad, rodeoEnriquecido;
     try {
         const contexto = await cargarDatosMotor([rodeoId]);
         rodeoEnriquecido = contexto.rodeosPorId.get(rodeoId) || null;
-        const resultado = evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion);
-        if (resultado.error === 'JURADO_INACTIVO_O_INEXISTENTE') return { error: 'Jurado inválido o inactivo' };
-        if (resultado.error) return { error: 'No se pudo evaluar el rodeo para este jurado (' + resultado.error + ')' };
-        evaluacion = resultado.evaluacion;
+        elegibilidad = evaluarElegibilidadJurado(contexto, rodeoId, juradoId, configuracion);
+        if (elegibilidad.error === 'JURADO_INACTIVO_O_INEXISTENTE') return { error: 'Jurado inválido o inactivo' };
+        if (elegibilidad.error) return { error: 'No se pudo evaluar el rodeo para este jurado (' + elegibilidad.error + ')' };
     } catch (err) {
         return { error: err.message };
     }
@@ -2278,14 +2360,20 @@ async function evaluarSeleccion(rodeoId, juradoId, otrasFilasEnriquecidas, confi
         );
     }
 
-    // Los campos extra (distancia_km/categoria/asociacion) alimentan
-    // fingerprintAdvertencia() al guardar — ver propuestaDesignacion.js.
+    // Las causas OBLIGATORIAS nunca entran a `advertencias` — jamás pueden
+    // confirmarse. Los campos extra de las relajables (distancia_km/
+    // categoria/asociacion) siguen alimentando fingerprintAdvertencia() al
+    // guardar — ver propuestaDesignacion.js — exactamente igual que antes.
+    const causasObligatorias = elegibilidad.causas_obligatorias.map(c => ({ tipo: c, origen: 'REGLA_MOTOR' }));
     const advertencias = [
-        ...evaluacion.causas.map(c => ({ tipo: c, origen: 'REGLA_MOTOR', distancia_km: evaluacion.distanciaKm, categoria: evaluacion.jurado.categoria, asociacion: evaluacion.jurado.asociacion })),
+        ...elegibilidad.causas_relajables.map(c => ({
+            tipo: c, origen: 'REGLA_MOTOR', distancia_km: elegibilidad.distancia_km,
+            categoria: elegibilidad.jurado?.categoria, asociacion: elegibilidad.jurado?.asociacion
+        })),
         ...conflictos.map(c => ({ ...c, origen: 'CONFLICTO_INTERNO_PROPUESTA' }))
     ];
-    const jurado = { id: evaluacion.jurado.id, nombre_completo: evaluacion.jurado.nombre_completo };
-    return { jurado, advertencias, rodeoEnriquecido };
+    const jurado = { id: juradoId, nombre_completo: elegibilidad.jurado?.nombre_completo || null };
+    return { jurado, causasObligatorias, advertencias, rodeoEnriquecido };
 }
 
 // ─── Lógica compartida por ACEPTAR, SELECCIONAR y DESIGNAR JURADO ─────────
@@ -2335,7 +2423,18 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias, moti
 
     const evaluacion = await evaluarSeleccion(detalle.rodeo_id, juradoId, otrasFilasEnriquecidas, configuracion);
     if (evaluacion.error) return res.status(400).json({ error: evaluacion.error });
-    const { jurado, advertencias, rodeoEnriquecido } = evaluacion;
+    const { jurado, causasObligatorias, advertencias, rodeoEnriquecido } = evaluacion;
+
+    // Corrección final de seguridad, sección 1: una causa obligatoria NUNCA
+    // es confirmable — ninguna cantidad de confirmar_advertencias la pasa
+    // por alto. Se corta ANTES del gate de advertencias, incondicionalmente.
+    if (causasObligatorias.length > 0) {
+        return res.status(409).json({
+            bloqueadoPorRestriccionObligatoria: true,
+            causas: causasObligatorias,
+            jurado: { id: jurado.id, nombre: jurado.nombre_completo }
+        });
+    }
 
     if (advertencias.length > 0 && !confirmarAdvertencias) {
         return res.status(409).json({
@@ -2513,7 +2612,18 @@ router.post('/preview/seleccionar', async (req, res) => {
 
     const evaluacion = await evaluarSeleccion(rodeo_id, jurado_id, otrasFilasEnriquecidas, configuracion);
     if (evaluacion.error) return res.status(400).json({ error: evaluacion.error });
-    const { jurado, advertencias } = evaluacion;
+    const { jurado, causasObligatorias, advertencias } = evaluacion;
+
+    // Corrección final de seguridad, sección 1: mismo control incondicional
+    // que la ruta persistida — el preview stateless NUNCA debe poder
+    // "autorizar" un destino con una causa obligatoria, confirmada o no.
+    if (causasObligatorias.length > 0) {
+        return res.status(409).json({
+            bloqueadoPorRestriccionObligatoria: true,
+            causas: causasObligatorias,
+            jurado: { id: jurado.id, nombre: jurado.nombre_completo }
+        });
+    }
 
     if (advertencias.length > 0 && confirmar_advertencias !== true) {
         return res.status(409).json({

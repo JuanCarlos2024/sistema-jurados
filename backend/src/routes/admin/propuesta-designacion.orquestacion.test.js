@@ -1134,6 +1134,19 @@ describe('GET /propuestas — listado expone bloqueada_para_eliminar (botón Eli
 describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
     const TARIFAS = [{ categoria: 'A', valor_diario: 100000 }, { categoria: 'B', valor_diario: 90000 }];
 
+    // Corrección final de seguridad, sección 4 — /aplicar ahora revalida
+    // elegibilidad real (evaluarElegibilidadJurado, vía evaluarCandidatoDirecto
+    // mockeado igual que en el resto de este archivo) con la configuración
+    // PROPIA de la propuesta. Default "sin causas" para que los tests de
+    // este describe —centrados en cobertura/disponibilidad/cruce, no en
+    // elegibilidad— sigan pasando sin tener que configurar esto cada vez;
+    // los tests que SÍ prueban el nuevo gate lo sobreescriben explícitamente.
+    beforeEach(() => {
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({});
+        evaluarCandidatoDirecto.mockReturnValue({ evaluacion: { causas: [], distanciaKm: null, jurado: { id: 'x', nombre_completo: 'x', categoria: 'A', asociacion: 'A' } } });
+    });
+
     test('CASO 1/2/9 — aplica ACEPTADO y MODIFICADO válidos: crea 2 asignaciones con el jurado_id_seleccionado exacto (no recalcula), publicado:false, propuesta_detalle_id en la MISMA sentencia, audita cada una + un resumen', async () => {
         const llamadas = crearSupabaseMock({
             propuestas_designacion: { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
@@ -1204,6 +1217,59 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
         const auditResumen = llamadas.auditoria.inserts.find(a => a.tabla === 'propuestas_designacion');
         expect(auditResumen.accion).toBe('aplicar');
         expect(auditResumen.datos_nuevos).toEqual({ aplicadas: 2, ya_aplicadas_antes: 0 });
+    });
+
+    // Corrección final de seguridad, sección 4 — test 10/14 del pedido de
+    // cierre: un borrador antiguo cuya selección guardada (ACEPTADO) ya no
+    // cumple una restricción obligatoria real (p. ej. MISMA_ASOCIACION,
+    // detectada con datos de HOY) queda bloqueado para aplicación — nunca
+    // se aplica silenciosamente, y por la regla de atomicidad, bloquea TODO
+    // el lote (incluida la otra fila, d2, que sí seguía siendo válida).
+    test('selección guardada ahora inválida (causa OBLIGATORIA re-evaluada con datos de hoy) -> 409, bloquea TODO el lote, nunca llama a la RPC', async () => {
+        crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1', configuracion_version_id: 'v1-uuid' }, error: null },
+            propuestas_designacion_detalle: {
+                data: [
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' },
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO' }
+                ], error: null
+            },
+            rodeos: {
+                data: [
+                    { id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' },
+                    { id: 'r2', club: 'Club B', fecha: '2026-05-10', duracion_dias: 1, estado: 'activo' }
+                ], error: null
+            },
+            usuarios_pagados: {
+                data: [
+                    { id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true },
+                    { id: 'j2', nombre_completo: 'Pedro Gomez', categoria: 'B', tipo_persona: 'jurado', activo: true }
+                ], error: null
+            },
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }, { usuario_pagado_id: 'j2', fecha: '2026-05-10' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [], error: null }, // SELECT ya-aplicadas
+                { data: [], error: null }, // SELECT ya-designados
+                { data: [], error: null } // SELECT otras fechas del jurado
+            ]
+        });
+        // j1 ahora viola MISMA_ASOCIACION (conflicto de interés real, re-evaluado
+        // con datos de hoy) — j2 sigue sin ninguna causa.
+        evaluarCandidatoDirecto.mockImplementation((ctx, rodeoId, juradoId) =>
+            juradoId === 'j1'
+                ? { evaluacion: { causas: ['MISMA_ASOCIACION'], distanciaKm: null, jurado: { id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', asociacion: 'Asoc' } } }
+                : { evaluacion: { causas: [], distanciaKm: null, jurado: { id: 'j2', nombre_completo: 'Pedro Gomez', categoria: 'B', asociacion: 'Asoc' } } }
+        );
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-1/aplicar' });
+
+        expect(status).toBe(409);
+        expect(body.resumen).toEqual({ aplicadas: 0, conflictos: 1 });
+        expect(body.conflictos[0]).toEqual(expect.objectContaining({ rodeo_id: 'r1', causas: ['MISMA_ASOCIACION'] }));
+        expect(body.conflictos[0].motivo).toMatch(/restricción obligatoria/);
+        expect(supabase.rpc).not.toHaveBeenCalled(); // atomicidad: ni d1 ni d2 se aplican
+        expect(cargarConfiguracionDesignacionPorId).toHaveBeenCalledWith('v1-uuid'); // configuración PROPIA de la propuesta, no la activa
     });
 
     test('propuesta no BORRADOR (CONFIRMADA) -> 409, no se consulta ni rodeos ni asignaciones', async () => {

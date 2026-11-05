@@ -270,15 +270,36 @@ describe('resumenPropuesta', () => {
             { estado_revision: 'NO_EVALUABLE' },
             { estado_revision: 'SIN_JURADO_ACTUAL' }
         ];
+        // Ninguna fila trae jurado_id_seleccionado/propuesto -> obtenerJuradoEfectivo()
+        // devuelve null para las 7, así que cupos_cubiertos es 0 (Etapa D: cupos
+        // cubiertos/pendientes/cobertura_completa, añadido sobre el mismo resumen).
         expect(resumenPropuesta(filas)).toEqual({
-            total_rodeos: 7, aceptados: 2, modificados: 1, pendientes: 1, sin_propuesta: 1, no_evaluables: 1, sin_jurado_actual: 1
+            total_rodeos: 7, aceptados: 2, modificados: 1, pendientes: 1, sin_propuesta: 1, no_evaluables: 1, sin_jurado_actual: 1,
+            cupos_cubiertos: 0, cupos_pendientes: 7, cobertura_completa: false
         });
     });
 
     test('propuesta vacía', () => {
         expect(resumenPropuesta([])).toEqual({
-            total_rodeos: 0, aceptados: 0, modificados: 0, pendientes: 0, sin_propuesta: 0, no_evaluables: 0, sin_jurado_actual: 0
+            total_rodeos: 0, aceptados: 0, modificados: 0, pendientes: 0, sin_propuesta: 0, no_evaluables: 0, sin_jurado_actual: 0,
+            cupos_cubiertos: 0, cupos_pendientes: 0, cobertura_completa: false
         });
+    });
+
+    test('cupos_cubiertos/cobertura_completa reflejan a obtenerJuradoEfectivo, no solo el estado_revision', () => {
+        const filas = [
+            { estado_revision: 'ACEPTADO', jurado_id_seleccionado: 'J1' },
+            { estado_revision: 'MODIFICADO', jurado_id_seleccionado: 'J2' },
+            { estado_revision: 'PENDIENTE', jurado_id_propuesto: 'J3' }
+        ];
+        expect(resumenPropuesta(filas)).toEqual(expect.objectContaining({
+            cupos_cubiertos: 3, cupos_pendientes: 0, cobertura_completa: true
+        }));
+
+        const incompleta = [...filas, { estado_revision: 'SIN_PROPUESTA' }];
+        expect(resumenPropuesta(incompleta)).toEqual(expect.objectContaining({
+            cupos_cubiertos: 3, cupos_pendientes: 1, cobertura_completa: false
+        }));
     });
 
     test('sección 13: una fila liberada (SIN_JURADO_ACTUAL) no suma como pendiente ni aceptada', () => {

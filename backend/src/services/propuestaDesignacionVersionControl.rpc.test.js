@@ -25,6 +25,14 @@ const ESQUEMA = fs.readFileSync(path.join(__dirname, '__fixtures__', 'esquemaBit
 const MIGRACION_083 = leer('083_fase1a_bitacora_designaciones_catalogo_motivos_snapshot_notas.sql');
 const MIGRACION_084 = leer('084_reemplazo_jurado_transaccional_con_bitacora.sql');
 const MIGRACION_086 = leer('086_fase2c_version_control_propuestas_designacion.sql');
+// Corrección final de seguridad, sección 3 (revisión puntual, punto 7) —
+// 094 cambia la firma de registrar_movimiento_designacion() de 14 a 15
+// parámetros (DROP + CREATE real, no una sobrecarga). Se carga también
+// acá, en el MISMO orden de aplicación real (después de 086), para
+// verificar que modificar_jurado_propuesta_borrador() y
+// aplicar_propuesta_designacion_completa() — ambas llamadoras existentes —
+// sigan funcionando exactamente igual sin ningún cambio en este archivo.
+const MIGRACION_094 = leer('094_designacion_manual_con_bitacora_atomica.sql');
 
 let db; const ID = {};
 async function q(sql, p) { return (await db.query(sql, p)).rows; }
@@ -35,6 +43,7 @@ beforeAll(async () => {
     await db.exec(MIGRACION_083);
     await db.exec(MIGRACION_084);
     await db.exec(MIGRACION_086);
+    await db.exec(MIGRACION_094);
 
     await db.exec(`GRANT ALL ON TABLE administradores, temporadas, usuarios_pagados, rodeos, asignaciones,
         propuestas_designacion, propuestas_designacion_detalle, notas_rodeo, evaluaciones, evaluacion_casos,

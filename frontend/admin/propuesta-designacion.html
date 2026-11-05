@@ -204,7 +204,6 @@
                     </div>
 
                     <datalist id="dl-comunas-busqueda"></datalist>
-                    <datalist id="dl-asociaciones-existentes"></datalist>
 
                     <div id="bd-resultados" style="min-height:80px; max-height:420px; overflow-y:auto;">
                         <p style="font-size:13px; color:var(--gris); padding:8px 0;">Aplica filtros y pulsa "Buscar" para ver rodeos sin jurado designado.</p>
@@ -434,8 +433,12 @@ function renderTarjetaJuradoPendiente(tipo, j) {
             <input type="text" id="pend-input-${j.id}" list="dl-comunas-busqueda" class="form-control" style="width:170px;" placeholder="Seleccionar comuna..." autocomplete="off">
             <button class="btn btn-pequeño btn-primario" onclick="_guardarComunaPendiente('${j.id}')">Guardar</button>`;
     } else if (tipo === 'sin_asociacion') {
+        const opciones = catalogoAsociaciones.map(a => `<option value="${a.id}">${sanitizar(a.nombre)}</option>`).join('');
         campoAccion = `
-            <input type="text" id="pend-input-${j.id}" list="dl-asociaciones-existentes" class="form-control" style="width:170px;" placeholder="Buscar o escribir asociación..." autocomplete="off">
+            <select id="pend-input-${j.id}" class="form-control" style="width:200px;">
+                <option value="">Seleccione la asociación...</option>
+                ${opciones}
+            </select>
             <button class="btn btn-pequeño btn-primario" onclick="_guardarAsociacionPendiente('${j.id}')">Guardar</button>`;
     }
 
@@ -475,14 +478,13 @@ async function _guardarComunaPendiente(id) {
 }
 
 async function _guardarAsociacionPendiente(id) {
-    const valor = document.getElementById('pend-input-' + id).value.trim();
-    if (!valor) { mostrarToast('Ingrese el nombre de la asociación', 'error'); return; }
+    const asociacionId = document.getElementById('pend-input-' + id).value;
+    if (!asociacionId) { mostrarToast('Seleccione una asociación del catálogo', 'error'); return; }
     try {
-        // Texto libre, tal como lo escribe el administrador — sin normalizar
-        // ni comparar contra otras asociaciones existentes (evita fusiones
-        // incorrectas: "MAIPO" y "MAIPO NORTE", por ejemplo, deben seguir
-        // siendo asociaciones distintas).
-        await api.patch('/admin/usuarios/' + id, { asociacion: valor });
+        // Seleccionada desde el catálogo oficial (tabla `asociaciones`) — ya
+        // no admite texto libre: PATCH /:id/asociacion valida el id contra el
+        // catálogo y registra el cambio en el historial administrativo.
+        await api.patch('/admin/usuarios/' + id + '/asociacion', { asociacion_id: asociacionId });
         mostrarToast('Asociación guardada correctamente', 'success');
         _quitarTarjetaPendiente(id);
     } catch (err) { mostrarError(err); }
@@ -579,17 +581,17 @@ async function cargarCatalogoComunasBusqueda() {
 }
 cargarCatalogoComunasBusqueda();
 
-// Sugerencias de asociación (valores EXISTENTES tal cual, sin normalizar ni
-// fusionar) para reducir errores de digitación al completar "Asociación
-// vacía o nula" — el campo sigue siendo texto libre, esto solo sugiere.
-async function cargarAsociacionesExistentes() {
+// Catálogo oficial de asociaciones (tabla `asociaciones`) para el selector de
+// "Asociación vacía o nula" en Datos pendientes — mismo catálogo que usa
+// Editar usuario (admin/usuarios.html), nunca texto libre.
+let catalogoAsociaciones = [];
+async function cargarCatalogoAsociaciones() {
     try {
-        const resp = await api.get('/admin/propuesta-designacion/asociaciones-existentes');
-        const dl = document.getElementById('dl-asociaciones-existentes');
-        dl.innerHTML = (resp.asociaciones || []).map(a => `<option value="${sanitizar(a)}">`).join('');
-    } catch (e) { console.warn('[Datos pendientes] no se pudieron cargar asociaciones existentes:', e.message); }
+        const resp = await api.get('/admin/usuarios/catalogos/asociaciones');
+        catalogoAsociaciones = resp.asociaciones || [];
+    } catch (e) { console.warn('[Datos pendientes] no se pudo cargar el catálogo de asociaciones:', e.message); }
 }
-cargarAsociacionesExistentes();
+cargarCatalogoAsociaciones();
 
 function limpiarFiltrosBusqueda() {
     document.getElementById('bd-fecha-desde').value = '';
@@ -1088,6 +1090,26 @@ function construirResumenAdvertenciaGlobal(a, detalleList) {
     return `Rodeo <strong>${sanitizar(datos.club || '—')}</strong> (${fechaTxt}) — Jurado: <strong>${sanitizar(datos.jurado || '—')}</strong> — Preferencias relajadas: ${sanitizar(preferencias)}`;
 }
 
+// ─── Banner de cupos del borrador (Auditoría de elegibilidad y gestión de
+// propuestas incompletas, Etapa D) — refuerza, con el mismo dato que ya usa
+// el backend para decidir si puede aplicarse (resumen.cobertura_completa,
+// calculado con obtenerJuradoEfectivo — nunca un cálculo paralelo en el
+// frontend), que GUARDAR un borrador incompleto siempre estuvo permitido:
+// solo APLICARLO como definitivo requiere cobertura completa. Corrige la
+// confusión real reportada ("el flujo me impide guardar cuando falta un
+// jurado") — técnicamente nunca lo impidió, pero nada reforzaba que sí se
+// podía seguir trabajando sobre un borrador parcial.
+function renderBannerCuposBorrador(resumen) {
+    if (!resumen || resumen.total_rodeos === 0) return '';
+    if (resumen.cobertura_completa) {
+        return `<div class="alerta alerta-exito" style="margin-bottom:14px; font-size:13px;">✓ Cupos completos: <strong>${resumen.cupos_cubiertos}/${resumen.total_rodeos}</strong> rodeos con jurado. Ya puede aplicarse como propuesta definitiva.</div>`;
+    }
+    return `<div class="alerta alerta-info" style="margin-bottom:14px; font-size:13px;">
+        📋 Borrador guardado — <strong>${resumen.cupos_cubiertos}/${resumen.total_rodeos}</strong> cupos cubiertos, quedan <strong>${resumen.cupos_pendientes}</strong> pendiente(s) de gestión.
+        Puede cerrar esta propuesta y retomarla más tarde: las selecciones ya hechas quedan guardadas. Solo "Aplicar propuesta a Rodeos" permanece bloqueada hasta completar los cupos restantes.
+    </div>`;
+}
+
 function renderCoberturaGlobal(og, coberturaCompleta, detalleList) {
     if (!og) return '';
     const pct = og.total_cupos ? Math.round((og.cobertura_obtenida / og.total_cupos) * 100) : 0;
@@ -1104,7 +1126,7 @@ function renderCoberturaGlobal(og, coberturaCompleta, detalleList) {
         </div>
         <div style="font-size:13px;">${sanitizar(ETIQUETAS_ESTADO_BUSQUEDA[og.estado_busqueda] || og.estado_busqueda || '—')}</div>
         ${(og.advertencias && og.advertencias.length > 0) ? `<ul style="margin:8px 0 0 20px; font-size:12px; color:var(--gris);">${og.advertencias.map(a => `<li>${construirResumenAdvertenciaGlobal(a, detalleList)}</li>`).join('')}</ul>` : ''}
-        ${!coberturaCompleta ? '<div style="margin-top:8px; font-size:12px; color:#CC6600;">Esta propuesta NO puede aplicarse como definitiva mientras queden cupos pendientes — complete manualmente los rodeos sin jurado antes de aplicar.</div>' : ''}
+        ${!coberturaCompleta ? '<div style="margin-top:8px; font-size:12px; color:#CC6600;">Esta propuesta NO puede <strong>aplicarse</strong> como definitiva mientras queden cupos pendientes — complete manualmente los rodeos sin jurado antes de aplicar. Esto no le impide <strong>guardarla como borrador</strong> ahora mismo y continuar más tarde.</div>' : ''}
     </div>`;
 }
 
@@ -1112,6 +1134,13 @@ function renderPreviewTemporal() {
     const cont = document.getElementById('resultado-dryrun');
     if (!previewTemporal) { cont.innerHTML = ''; return; }
     const r = previewResumen();
+    // Mismo banner que ya usa una propuesta guardada (Etapa D) — adaptado a
+    // la forma de previewResumen() (con_jurado_actual = cupos_cubiertos).
+    const resumenCupos = {
+        total_rodeos: r.total_rodeos, cupos_cubiertos: r.con_jurado_actual,
+        cupos_pendientes: r.total_rodeos - r.con_jurado_actual,
+        cobertura_completa: r.total_rodeos > 0 && r.con_jurado_actual === r.total_rodeos
+    };
     const avisoCambios = (previewTemporal.cambiosPendientes && previewTemporal.cambiosPendientes.length > 0)
         ? `<div class="alerta alerta-error" style="margin-bottom:16px;">
             <strong>⚠ ${previewTemporal.cambiosPendientes.length} selección(es) cambiaron desde que se generó esta propuesta y requieren revisión — no se guardó nada:</strong>
@@ -1126,6 +1155,7 @@ function renderPreviewTemporal() {
             ${indicadorConfiguracion(previewTemporal.configuracion)}
         </div>
         ${renderCoberturaGlobal(previewTemporal.optimizacion_global, previewTemporal.cobertura_completa, previewTemporal.detalle)}
+        ${renderBannerCuposBorrador(resumenCupos)}
         ${avisoCambios}
         <div class="kpi-grid" style="margin-bottom:16px;">
             ${kpi(r.total_rodeos, 'Rodeos')}
@@ -1190,7 +1220,15 @@ async function guardarComoPropuesta() {
             metricas_json: d.metricas_json
         }));
         const resp = await api.post('/admin/propuesta-designacion/propuestas', { preview_token: previewTemporal.preview_token, estado_temporal });
-        let msg = `Propuesta guardada como borrador (${resp.propuesta.resumen.total_rodeos} rodeo(s)), conservando las ediciones hechas.`;
+        // Auditoría de elegibilidad y gestión de propuestas incompletas,
+        // Etapa D — el mensaje de éxito ahora informa explícitamente la
+        // cobertura (ej. "27/28"), y si quedó incompleta, reafirma que
+        // puede retomarse después: refuerza que guardar NUNCA exigió
+        // cobertura completa (solo "Aplicar propuesta a Rodeos" sí la exige).
+        const resResumen = resp.propuesta.resumen;
+        let msg = resResumen.cobertura_completa
+            ? `Propuesta guardada como borrador (${resResumen.cupos_cubiertos}/${resResumen.total_rodeos} cupos cubiertos), conservando las ediciones hechas.`
+            : `Propuesta guardada como borrador (${resResumen.cupos_cubiertos}/${resResumen.total_rodeos} cupos cubiertos). Quedan ${resResumen.cupos_pendientes} pendiente(s) — puede retomarla cuando quiera para completarlos.`;
         if (resp.rodeos_ya_en_otra_propuesta?.length > 0) {
             msg += ` ⚠ ${resp.rodeos_ya_en_otra_propuesta.length} de estos rodeos ya estaban en otra propuesta borrador — no se bloqueó, revíselo antes de confirmar.`;
         }
@@ -1276,13 +1314,15 @@ function renderListaPropuestas(propuestas) {
     }
     cont.innerHTML = `<table>
         <thead><tr>
-            <th>Fecha</th><th>Temporada</th><th>Rodeos</th><th>✓ Aceptados</th><th>✏ Modificados</th>
+            <th>Fecha</th><th>Temporada</th><th>Cupos</th><th>✓ Aceptados</th><th>✏ Modificados</th>
             <th>⏳ Pendientes</th><th>⚠ Sin propuesta</th><th>⚠ No evaluables</th><th>Estado</th><th></th>
         </tr></thead>
         <tbody>${propuestas.map(p => `<tr>
             <td style="font-size:12px;">${new Date(p.created_at).toLocaleString('es-CL')}</td>
             <td style="font-size:12px;">${sanitizar(p.temporada || '—')}</td>
-            <td style="text-align:center;">${p.resumen.total_rodeos}</td>
+            <td style="text-align:center;" title="${p.resumen.cobertura_completa ? 'Cobertura completa' : (p.resumen.cupos_pendientes ?? 0) + ' cupo(s) pendiente(s) de gestión'}">
+                <span style="font-weight:600; ${p.resumen.cobertura_completa ? 'color:var(--verde);' : 'color:#CC6600;'}">${p.resumen.cupos_cubiertos ?? '—'}/${p.resumen.total_rodeos}</span>
+            </td>
             <td style="text-align:center;">${p.resumen.aceptados}</td>
             <td style="text-align:center;">${p.resumen.modificados}</td>
             <td style="text-align:center;">${p.resumen.pendientes}</td>
@@ -1352,6 +1392,7 @@ function renderVistaPropuesta() {
             </div>
         </div>
         ${renderCoberturaGlobal(propuesta.resultado_cobertura ? { ...propuesta.resultado_cobertura, advertencias: [] } : null, propuesta.resultado_cobertura?.cobertura_completa, detalle)}
+        ${renderBannerCuposBorrador(resumen)}
         <div class="kpi-grid" style="margin-bottom:16px;">
             ${kpi(resumen.total_rodeos, 'Rodeos')}
             ${kpi(resumen.aceptados, 'Aceptados', 'verde')}
@@ -1365,7 +1406,7 @@ function renderVistaPropuesta() {
         <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
             <button class="btn btn-primario" disabled title="Disponible en la siguiente etapa">Confirmar propuesta — Disponible en siguiente etapa</button>
         </div>
-        ${propuesta.estado === 'BORRADOR' && (resumen.aceptados + resumen.modificados) > 0 ? (
+        ${propuesta.estado === 'BORRADOR' ? (
             propuesta.aplicada
                 ? `<div style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                        <span class="badge-revision ACEPTADO">Aplicada a Rodeos</span>
@@ -1373,7 +1414,8 @@ function renderVistaPropuesta() {
                        <a href="rodeos.html" class="btn btn-secundario btn-pequeño">Ir a Rodeos</a>
                    </div>`
                 : `<div style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
-                       <button class="btn btn-primario" onclick="confirmarAplicarPropuesta()">Aplicar propuesta a Rodeos</button>
+                       <button class="btn btn-primario" ${resumen.cobertura_completa ? '' : 'disabled'} title="${resumen.cobertura_completa ? '' : `Faltan ${resumen.cupos_pendientes} cupo(s) con jurado — complete los rodeos pendientes (puede guardar y retomar esta propuesta cuando quiera) antes de aplicar`}" onclick="confirmarAplicarPropuesta()">Aplicar propuesta a Rodeos</button>
+                       ${!resumen.cobertura_completa ? `<div style="margin-top:8px; font-size:12px; color:var(--gris);">Faltan <strong>${resumen.cupos_pendientes}</strong> de <strong>${resumen.total_rodeos}</strong> cupo(s) con jurado. Esta propuesta ya está guardada como borrador — puede cerrarla y retomarla cuando tenga el jurado faltante, sin perder lo ya decidido.</div>` : ''}
                    </div>`
         ) : ''}
         ${propuesta.estado === 'BORRADOR' && !propuesta.bloqueada_para_eliminar ? `
@@ -1398,12 +1440,22 @@ function renderVistaPropuesta() {
 async function confirmarAplicarPropuesta() {
     if (!propuestaAbierta) return;
     const { propuesta, resumen } = propuestaAbierta;
-    const aplicables = resumen.aceptados + resumen.modificados;
-    const noAplicables = resumen.total_rodeos - aplicables;
+    // CORRECCIÓN (Auditoría de elegibilidad y gestión de propuestas
+    // incompletas — priorizad 6, mensajes contradictorios): el backend
+    // aplica esta propuesta en una sola operación transaccional, TODO O
+    // NADA (POST /propuestas/:id/aplicar rechaza con 409 si falta
+    // CUALQUIER cupo — nunca crea una parte y omite el resto en silencio).
+    // El mensaje anterior decía "se crearán X, no se aplicarán Y" como si
+    // fuera una aplicación parcial — eso nunca ocurre: si faltan cupos, NO
+    // se aplica nada en absoluto.
+    const cuposPendientes = resumen.cupos_pendientes ?? (resumen.total_rodeos - resumen.cupos_cubiertos);
+    if (cuposPendientes > 0) {
+        mostrarError(`No se puede aplicar esta propuesta: faltan ${cuposPendientes} de ${resumen.total_rodeos} cupo(s) con jurado. Complete manualmente los rodeos pendientes (o guarde los cambios y retómelos después) antes de intentar aplicar — mientras falte al menos uno, no se crea ninguna designación.`);
+        return;
+    }
     const mensaje = `<strong style="font-size:16px;">Aplicar propuesta a Rodeos</strong>
         <div style="text-align:left; margin-top:10px; font-size:14px; line-height:1.8;">
-            Se crearán <strong>${aplicables}</strong> designación(es) pendiente(s) de publicación.<br>
-            ${noAplicables > 0 ? `No se aplicarán <strong>${noAplicables}</strong> rodeo(s) sin una decisión final (pendientes, sin propuesta, no evaluables).<br>` : ''}
+            Se crearán <strong>${resumen.cupos_cubiertos}</strong> designación(es) pendiente(s) de publicación, en una sola operación.<br>
             <br>Las designaciones todavía <strong>NO</strong> serán visibles para los jurados hasta que publique desde Rodeos.<br><br>
             ¿Desea continuar?
         </div>`;
@@ -2018,6 +2070,12 @@ function aplicarFiltrosModal() {
 // automáticamente para Zona Extrema"), nunca el genérico "categoría
 // incompatible con este tipo de rodeo" (que describiría la matriz normal,
 // no la que realmente decidió).
+// Corrección final de seguridad, sección 1 — distingue causas obligatorias
+// (rojo, nunca seleccionable) de relajables (naranja, seleccionable con
+// excepción confirmada), igual que ya hace Rodeos → "Designar jurado". Usa
+// el split que ya trae el backend (c.causas_obligatorias/causas_relajables,
+// de separarCausas()) — si no vinieran (candidato de un flujo antiguo),
+// cae de vuelta a la lista plana anterior, sin romper nada.
 function renderMotivosCandidato(c) {
     if (!c.causas || c.causas.length === 0) {
         return `<div class="mc-reglas"><span class="check-linea ok">✓ Cumple todas las reglas duras</span></div>`;
@@ -2028,7 +2086,12 @@ function renderMotivosCandidato(c) {
         }
         return etiquetaCausaModal(cod);
     };
-    return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${lineaCausa(cod)}</div>`).join('')}</div>`;
+    if (!c.causas_obligatorias && !c.causas_relajables) {
+        return `<div class="mc-reglas">${c.causas.map(cod => `<div class="check-linea no">⚠ ${lineaCausa(cod)}</div>`).join('')}</div>`;
+    }
+    const obligatoriasHtml = (c.causas_obligatorias || []).map(cod => `<div class="check-linea no" style="color:#922b21;">✗ ${lineaCausa(cod)}</div>`).join('');
+    const relajablesHtml = (c.causas_relajables || []).map(cod => `<div class="check-linea no" style="color:#CC6600;">⚠ ${lineaCausa(cod)}</div>`).join('');
+    return `<div class="mc-reglas">${obligatoriasHtml}${relajablesHtml}</div>`;
 }
 
 // DISTANCIA_EXCEDIDA usa el km real de la configuración de ESTE modal (su
@@ -2059,13 +2122,20 @@ function renderHistorialCompactoCandidato(hist) {
     return hist.map(h => `${sanitizar(h.club || '—')} · ${sanitizar(h.asociacion || '—')} · ${h.fecha ? formatFecha(h.fecha) : '—'} · Nota: ${_fmtNotaCL(h.nota)}`).join('<br>');
 }
 
-function renderFilaCandidatoModal(c, esValido) {
+// Corrección final de seguridad, sección 1 — `estado` reemplaza al antiguo
+// booleano `esValido`: 'HABILITADO' (válidos, sin causas), 'ADVERTENCIA'
+// (descartados con solo causas relajables — confirmable) o 'NO_HABILITADO'
+// (descartados con alguna causa obligatoria — nunca confirmable, nunca
+// seleccionable desde acá: el botón "Seleccionar igualmente" se elimina).
+function renderFilaCandidatoModal(c, estado) {
     const { modo, id } = modalCandidatos;
     const detalle = `${sanitizar(c.comuna_nombre || '—')} · ${c.distancia_km !== null ? c.distancia_km + ' km' : 'distancia —'} · ${c.designaciones_antes} designación(es) esta temporada`;
     const nombreEscapado = sanitizar(c.nombre).replace(/'/g, "\\'");
-    const boton = esValido
+    const boton = estado === 'HABILITADO'
         ? `<button class="btn btn-primario" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar</button>`
-        : `<button class="btn btn-outline" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar igualmente</button>`;
+        : estado === 'NO_HABILITADO'
+            ? `<button class="btn btn-outline" disabled title="No cumple una restricción obligatoria — no se puede seleccionar">No habilitado</button>`
+            : `<button class="btn btn-outline" onclick="seleccionarCandidato('${modo}', '${id}', '${c.jurado_id}', false, '${nombreEscapado}')">Seleccionar igualmente</button>`;
 
     // Mejora "Equidad Visible de Designaciones" — línea compacta adicional
     // (sección 22-25), SOLO informativa (nunca decide el orden de la lista
@@ -2087,7 +2157,7 @@ function renderFilaCandidatoModal(c, esValido) {
         <button type="button" class="mc-hist-toggle" onclick="const h=this.nextElementSibling; h.hidden=!h.hidden; this.textContent=h.hidden?'[Ver historial]':'[Ocultar historial]';">[Ver historial]</button>
         <div class="mc-hist-cont" hidden>${renderHistorialCompactoCandidato(c.historial_reciente)}</div>`;
 
-    return `<div class="mc-fila ${esValido ? '' : 'con-advertencia'}">
+    return `<div class="mc-fila ${estado === 'HABILITADO' ? '' : 'con-advertencia'}">
         <div style="min-width:0;">
             <div class="mc-nombre">${sanitizar(c.nombre)} <span style="font-weight:400; font-size:13px; color:var(--gris);">Categoría ${sanitizar(c.categoria || '—')}${c.categoria_preferente ? ' ★ Preferente' : ''}</span></div>
             <div class="mc-detalle">${sanitizar(c.asociacion || '—')} · ${detalle}</div>
@@ -2100,9 +2170,17 @@ function renderFilaCandidatoModal(c, esValido) {
     </div>`;
 }
 
-// Sección 17 — válidos siempre primero, sin importar los filtros; orden
+// Sección 17 — habilitados siempre primero, sin importar los filtros; orden
 // dentro de cada grupo según el selector. Vacío por filtros ≠ vacío por
 // falta de candidatos del motor (sección 23.C).
+//
+// Corrección final de seguridad, sección 1 — `descartados` ya no se muestra
+// como un único grupo homogéneo: se separa por c.estado_elegibilidad en
+// "Con advertencias flexibles" (confirmable) y "No habilitados" (restricción
+// obligatoria real — nunca seleccionable, sin botón de excepción). Un
+// candidato sin estado_elegibilidad calculado (no debería ocurrir, el
+// backend siempre lo agrega) se trata como advertencia, igual que el
+// comportamiento anterior a esta corrección.
 function renderModalLista(validos, descartados, totalOriginal) {
     const lista = document.getElementById('mc-lista');
     if (validos.length === 0 && descartados.length === 0) {
@@ -2111,14 +2189,21 @@ function renderModalLista(validos, descartados, totalOriginal) {
             : `<div class="mc-vacio">No hay jurados que coincidan con los filtros actuales.<br><br><button class="btn btn-secundario" onclick="limpiarFiltrosModal()">Limpiar filtros</button></div>`;
         return;
     }
+    const noHabilitados = descartados.filter(c => c.estado_elegibilidad === 'NO_HABILITADO');
+    const conAdvertencias = descartados.filter(c => c.estado_elegibilidad !== 'NO_HABILITADO');
+
     let html = '';
     if (validos.length > 0) {
-        html += `<div class="mc-grupo-titulo">Candidatos válidos / disponibles (${validos.length})</div>`;
-        html += validos.map(c => renderFilaCandidatoModal(c, true)).join('');
+        html += `<div class="mc-grupo-titulo">Habilitados (${validos.length})</div>`;
+        html += validos.map(c => renderFilaCandidatoModal(c, 'HABILITADO')).join('');
     }
-    if (descartados.length > 0) {
-        html += `<div class="mc-grupo-titulo">Con advertencias / descartados (${descartados.length}) — requiere confirmar excepción</div>`;
-        html += descartados.map(c => renderFilaCandidatoModal(c, false)).join('');
+    if (conAdvertencias.length > 0) {
+        html += `<div class="mc-grupo-titulo">Con advertencias flexibles (${conAdvertencias.length}) — requiere confirmar excepción</div>`;
+        html += conAdvertencias.map(c => renderFilaCandidatoModal(c, 'ADVERTENCIA')).join('');
+    }
+    if (noHabilitados.length > 0) {
+        html += `<div class="mc-grupo-titulo">No habilitados por restricción obligatoria (${noHabilitados.length})</div>`;
+        html += noHabilitados.map(c => renderFilaCandidatoModal(c, 'NO_HABILITADO')).join('');
     }
     lista.innerHTML = html;
 }
@@ -2192,6 +2277,17 @@ function aplicarResultadoPreview(destino, origenLiberado, juradoNombre) {
 // otra fila ya aceptada/modificada de la MISMA propuesta. Nunca se guarda nada
 // en ese caso hasta que el administrador confirme explícitamente la excepción.
 async function manejarRespuestaSeleccion(modo, id, juradoId, err, juradoNombre, confirmarAdvertencias) {
+    // Corrección final de seguridad, sección 1 — una causa obligatoria
+    // (MISMA_ASOCIACION, CATEGORIA_INCOMPATIBLE, MISMO_FINDE, DISPONIBILIDAD,
+    // ASOCIACION_REPETIDA_INTERVALO) nunca es confirmable: el backend ya
+    // corta incondicionalmente, sin importar confirmar_advertencias. Acá
+    // solo se informa — nunca se ofrece un diálogo de confirmación para esto.
+    if (err.status === 409 && err.data?.bloqueadoPorRestriccionObligatoria) {
+        const causas = (err.data.causas || []).map(c => etiquetaCausaModal(c.tipo, modo)).join(', ');
+        const nombre = err.data.jurado?.nombre || juradoNombre || 'este jurado';
+        mostrarError(`No se puede seleccionar a ${nombre}: no cumple una restricción obligatoria (${causas}).`);
+        return;
+    }
     if (err.status === 409 && err.data?.requiereConfirmacion) {
         await mostrarConfirmacionAdvertencias(modo, id, juradoId || err.data.jurado?.id, err.data, juradoNombre);
         return;

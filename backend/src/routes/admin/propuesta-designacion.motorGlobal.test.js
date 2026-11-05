@@ -15,16 +15,26 @@ jest.mock('../../services/motorPropuestaDesignacion', () => {
     const real = jest.requireActual('../../services/motorPropuestaDesignacion');
     return { ...real, cargarDatosMotor: jest.fn(), ejecutarSimulacion: jest.fn(), generarSimulacion: jest.fn(), evaluarCandidatoDirecto: jest.fn() };
 });
-jest.mock('../../services/motorPropuestaDesignacionGlobal', () => ({ generarSimulacionGlobal: jest.fn() }));
+// Corrección final de seguridad, sección 4 — /aplicar ahora llama a
+// evaluarElegibilidadJurado() (elegibilidadJurado.js), que importa
+// CAUSAS_OBLIGATORIAS/CAUSAS_RELAJABLES de ESTE módulo. El mock original
+// (objeto literal con solo generarSimulacionGlobal) las dejaba undefined,
+// rompiendo cualquier clasificación de causas en este archivo — se
+// preserva el resto del módulo real, igual criterio que ya usa el mock de
+// motorPropuestaDesignacion más arriba.
+jest.mock('../../services/motorPropuestaDesignacionGlobal', () => {
+    const real = jest.requireActual('../../services/motorPropuestaDesignacionGlobal');
+    return { ...real, generarSimulacionGlobal: jest.fn() };
+});
 jest.mock('../../services/configuracionDesignacionRepositorio', () => ({
     cargarConfiguracionDesignacionActiva: jest.fn(),
     cargarConfiguracionDesignacionPorId: jest.fn()
 }));
 
 const supabase = require('../../config/supabase');
-const { generarSimulacion } = require('../../services/motorPropuestaDesignacion');
+const { generarSimulacion, cargarDatosMotor, evaluarCandidatoDirecto } = require('../../services/motorPropuestaDesignacion');
 const { generarSimulacionGlobal } = require('../../services/motorPropuestaDesignacionGlobal');
-const { cargarConfiguracionDesignacionActiva } = require('../../services/configuracionDesignacionRepositorio');
+const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId } = require('../../services/configuracionDesignacionRepositorio');
 const { construirConfiguracionDefaultV1 } = require('../../services/configuracionDesignacion');
 const router = require('./propuesta-designacion');
 
@@ -133,6 +143,14 @@ describe('POST /dry-run — selección de motor (Fase 2B, sección 3)', () => {
 });
 
 describe('POST /propuestas/:id/aplicar — bloqueo si faltan cupos (Fase 2B, sección 4)', () => {
+    // Corrección final de seguridad, sección 4 — default "sin causas" (ver
+    // propuesta-designacion.orquestacion.test.js, mismo criterio).
+    beforeEach(() => {
+        cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
+        cargarDatosMotor.mockResolvedValue({});
+        evaluarCandidatoDirecto.mockReturnValue({ evaluacion: { causas: [], distanciaKm: null, jurado: { id: 'x', nombre_completo: 'x', categoria: 'A', asociacion: 'A' } } });
+    });
+
     test('propuesta con un rodeo SIN_PROPUESTA mezclado con filas ACEPTADO -> 409, no se consulta rodeos/jurados/asignaciones, nada se inserta', async () => {
         const llamadas = crearSupabaseMock({
             propuestas_designacion: { data: { id: 'prop-incompleta', estado: 'BORRADOR', temporada_id: 't1' }, error: null },

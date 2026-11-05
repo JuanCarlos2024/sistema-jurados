@@ -23,9 +23,29 @@
 // ═════════════════════════════════════════════════════════════════════════
 jest.mock('../../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
 jest.mock('../../services/auditoria', () => ({ registrar: jest.fn().mockResolvedValue(undefined) }));
+// Corrección final de seguridad, sección 2 — POST /:id/reemplazar ahora
+// también revalida elegibilidad real antes de llamar a la RPC. Se mockea
+// igual que en asignaciones.auditoriaCierre.test.js, con un default
+// "DISPONIBLE_Y_HABILITADO" (beforeEach) para que los tests de este archivo
+// — centrados en otra cosa (mapeo de errores, recálculo de tarifa) — no
+// necesiten preocuparse de esto salvo que lo prueben explícitamente.
+jest.mock('../../services/motorPropuestaDesignacion', () => {
+    const real = jest.requireActual('../../services/motorPropuestaDesignacion');
+    return { ...real, cargarDatosMotor: jest.fn() };
+});
+jest.mock('../../services/configuracionDesignacionRepositorio', () => ({
+    cargarConfiguracionDesignacionActiva: jest.fn()
+}));
+jest.mock('../../services/elegibilidadJurado', () => ({
+    evaluarElegibilidadJurado: jest.fn(),
+    ESTADOS_ELEGIBILIDAD: { DISPONIBLE_Y_HABILITADO: 'DISPONIBLE_Y_HABILITADO', CON_ADVERTENCIAS: 'CON_ADVERTENCIAS', NO_HABILITADO: 'NO_HABILITADO' }
+}));
 
 const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
+const { cargarDatosMotor } = require('../../services/motorPropuestaDesignacion');
+const { cargarConfiguracionDesignacionActiva } = require('../../services/configuracionDesignacionRepositorio');
+const { evaluarElegibilidadJurado } = require('../../services/elegibilidadJurado');
 const router = require('./asignaciones');
 
 function crearSupabaseMock(porTabla) {
@@ -70,6 +90,9 @@ function llamarRuta({ method, url, body, params }) {
 
 beforeEach(() => {
     jest.clearAllMocks();
+    cargarConfiguracionDesignacionActiva.mockResolvedValue({ configuracion: { _fake: true } });
+    cargarDatosMotor.mockResolvedValue({ _contextoFake: true });
+    evaluarElegibilidadJurado.mockReturnValue({ estado: 'DISPONIBLE_Y_HABILITADO', causas: [], causas_obligatorias: [], causas_relajables: [], distancia_km: null });
 });
 
 describe('PATCH /:id — ya no permite cambiar usuario_pagado_id (punto 1)', () => {

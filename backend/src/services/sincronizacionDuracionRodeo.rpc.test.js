@@ -15,6 +15,22 @@ const ESQUEMA = fs.readFileSync(path.join(__dirname, '__fixtures__', 'esquemaSin
 const MIGRACION_083 = leer('083_fase1a_bitacora_designaciones_catalogo_motivos_snapshot_notas.sql');
 const MIGRACION_084 = leer('084_reemplazo_jurado_transaccional_con_bitacora.sql');
 const MIGRACION_091 = leer('091_sincronizacion_duracion_asignaciones_rodeo.sql');
+// Corrección final de seguridad, sección 3 (revisión puntual, punto 7) —
+// se carga también acá, en el mismo orden real de aplicación (después de
+// 091), para verificar que la versión de reemplazar_jurado_asignacion_con_
+// bitacora() que REALMENTE vive en producción (la de 091, no la de 084)
+// sigue llamando correctamente a registrar_movimiento_designacion() tras
+// su cambio de firma de 14 a 15 parámetros.
+const MIGRACION_094 = leer('094_designacion_manual_con_bitacora_atomica.sql');
+// Corrección final de seguridad — decisión explícita del usuario: 095
+// redefine reemplazar_jurado_asignacion_con_bitacora() (misma firma, CREATE
+// OR REPLACE real sobre la versión de 091, no una reimplementación aislada)
+// para que una designación rechazada en OTRO rodeo deje de contar como
+// cruce de disponibilidad. Se carga acá, en el mismo orden real de
+// aplicación (después de 091/094), para confirmar que la sincronización de
+// duración/pago y el resto de las pruebas de este archivo sigan
+// funcionando exactamente igual.
+const MIGRACION_095 = leer('095_correccion_falso_conflicto_rechazado_reemplazo.sql');
 
 let db; const ID = {};
 async function q(sql, p) { return (await db.query(sql, p)).rows; }
@@ -25,6 +41,8 @@ beforeAll(async () => {
     await db.exec(MIGRACION_083);
     await db.exec(MIGRACION_084);
     await db.exec(MIGRACION_091);
+    await db.exec(MIGRACION_094);
+    await db.exec(MIGRACION_095);
 
     await db.exec(`GRANT ALL ON TABLE administradores, temporadas, usuarios_pagados, rodeos, asignaciones,
         propuestas_designacion, propuestas_designacion_detalle, notas_rodeo, evaluaciones, evaluacion_casos,

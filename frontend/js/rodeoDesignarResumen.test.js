@@ -156,7 +156,11 @@ describe('rodeos.html: integración (guardas estáticas; la lógica de designaci
         expect(ren).toMatch(/rdrLineaHistorial\(h\)/);
         expect(ren).not.toMatch(/\$\{h\.fecha\}/);
         expect(ren).toMatch(/_juradosDesignacion\.filter\(j => !j\.repite_asociacion\)/);   // "ocultar que repiten" igual
-        expect(ren).toMatch(/onclick="designarJurado\('\$\{j\.id\}','\$\{sanitizar\(j\.nombre_completo\)\}',false\)"/);   // Designar: mismo candidato
+        // Auditoría de elegibilidad (Etapa B): designarJurado() pasó a recibir
+        // solo el id y buscar el jurado en _juradosDesignacion (necesita leer
+        // estado_elegibilidad/causas, no solo nombre/repite_asociacion) — el
+        // candidato sigue siendo el mismo, solo cambió cómo se le pasa el dato.
+        expect(ren).toMatch(/onclick="designarJurado\('\$\{j\.id\}'\)"/);   // Designar: mismo candidato
         expect(html).toMatch(/if \(q\.trim\(\)\.length >= 2\) qs\.set\('q', q\.trim\(\)\)/);   // búsqueda igual
         expect(html).toMatch(/if \(cat\) qs\.set\('categoria', cat\)/);   // filtro de categoría igual
     });
