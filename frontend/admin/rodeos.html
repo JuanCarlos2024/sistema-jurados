@@ -58,6 +58,13 @@
         </div>
 
         <div class="page-body">
+            <!-- Panel Central de Gestión Deportiva — contadores de pendientes
+                 (Prioridad 2): calculados sobre TODOS los rodeos que coinciden
+                 con los filtros actuales, nunca solo la página visible. Cada
+                 tarjeta es clickable y aplica el filtro equivalente más
+                 cercano (ver aplicarFiltroContador()). -->
+            <div id="contadores-pendientes" class="flex gap-12" style="margin-bottom:16px; flex-wrap:wrap;"></div>
+
             <!-- Filtros básicos -->
             <div class="filtros-barra">
                 <div class="form-grupo">
@@ -152,6 +159,7 @@
                             <option value="">Todos</option>
                             <option value="con">Con cartilla</option>
                             <option value="sin">Sin cartilla</option>
+                            <option value="reabierta">Reabierta (pendiente de corrección)</option>
                         </select>
                     </div>
                     <div class="form-grupo" style="margin-bottom:0;">
@@ -184,6 +192,94 @@
                             <option value="">Todas</option>
                             <option value="sin_temporada">Sin temporada</option>
                         </select>
+                    </div>
+                    <!-- Panel de Gestión Deportiva — Prioridad 3: estado detallado de
+                         Cartilla Delegado (fuente unificada digital+adjunto, Prioridad 1),
+                         modalidad y vista general de pendientes. -->
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Cartilla Delegado — estado</label>
+                        <select id="f-cd-estado" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="sin_iniciar">Sin iniciar</option>
+                            <option value="borrador">Borrador</option>
+                            <option value="enviada">Enviada</option>
+                            <option value="reenviada">Reenviada</option>
+                            <option value="observada">Observada</option>
+                            <option value="reabierta">Reabierta</option>
+                            <option value="aprobada">Aprobada</option>
+                            <option value="cerrada">Cerrada</option>
+                            <option value="adjunta_oficial">Adjunta oficial</option>
+                            <option value="adjunta_pendiente">Adjunta pendiente de clasificación</option>
+                            <option value="pendiente_correccion">Pendiente de corrección</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Modalidad Delegado</label>
+                        <select id="f-modalidad" class="form-control" onchange="cargar()">
+                            <option value="">Ambas</option>
+                            <option value="delegado_rentado">Delegado Rentado</option>
+                            <option value="delegado_asociacion">Delegado de Asociación</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Gestión general</label>
+                        <select id="f-gestion" class="form-control" onchange="cargar()">
+                            <option value="">Todos</option>
+                            <option value="con_pendientes">Con pendientes</option>
+                            <option value="completos">Completos</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Designaciones</label>
+                        <select id="f-designacion" class="form-control" onchange="cargar()">
+                            <option value="">Todas</option>
+                            <option value="pendientes_publicacion">Pendientes de publicación</option>
+                            <option value="sin_respuesta">Sin respuesta</option>
+                            <option value="aceptadas">Aceptadas</option>
+                            <option value="rechazadas">Rechazadas</option>
+                        </select>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Nota Comisión</label>
+                        <select id="f-nota-com" class="form-control" onchange="cargar()">
+                            <option value="">Todas</option>
+                            <option value="con">Con nota</option>
+                            <option value="sin">Sin nota</option>
+                        </select>
+                        <div style="display:flex; gap:4px; margin-top:4px;">
+                            <input type="number" id="f-nota-com-min" class="form-control" placeholder="Desde" min="1" max="7" step="0.1" onchange="cargar()" style="padding:4px 6px; font-size:12px;">
+                            <input type="number" id="f-nota-com-max" class="form-control" placeholder="Hasta" min="1" max="7" step="0.1" onchange="cargar()" style="padding:4px 6px; font-size:12px;">
+                        </div>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Nota Delegado</label>
+                        <select id="f-nota-del" class="form-control" onchange="cargar()">
+                            <option value="">Todas</option>
+                            <option value="con">Con nota</option>
+                            <option value="sin">Sin nota</option>
+                        </select>
+                        <div style="display:flex; gap:4px; margin-top:4px;">
+                            <input type="number" id="f-nota-del-min" class="form-control" placeholder="Desde" min="1" max="7" step="0.1" onchange="cargar()" style="padding:4px 6px; font-size:12px;">
+                            <input type="number" id="f-nota-del-max" class="form-control" placeholder="Hasta" min="1" max="7" step="0.1" onchange="cargar()" style="padding:4px 6px; font-size:12px;">
+                        </div>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label">Nota Área Deportiva</label>
+                        <select id="f-nota-ad" class="form-control" onchange="cargar()">
+                            <option value="">Todas</option>
+                            <option value="con">Con nota</option>
+                            <option value="sin">Sin nota</option>
+                        </select>
+                        <div style="display:flex; gap:4px; margin-top:4px;">
+                            <input type="number" id="f-nota-ad-min" class="form-control" placeholder="Desde" min="1" max="7" step="0.1" onchange="cargar()" style="padding:4px 6px; font-size:12px;">
+                            <input type="number" id="f-nota-ad-max" class="form-control" placeholder="Hasta" min="1" max="7" step="0.1" onchange="cargar()" style="padding:4px 6px; font-size:12px;">
+                        </div>
+                    </div>
+                    <div class="form-grupo" style="margin-bottom:0;">
+                        <label class="form-label" title="Reordena la tabla sin cambiar los filtros — los rodeos con más pendientes aparecen primero">
+                            <input type="checkbox" id="f-priorizar-pendientes" onchange="cargar()" style="margin-right:4px;">
+                            Priorizar pendientes
+                        </label>
                     </div>
                 </div>
             </div>
@@ -468,10 +564,16 @@ function toggleFiltros() {
 function limpiar() {
     ['f-mes','f-año','f-buscar','f-cat','f-tipo','f-asoc','f-club',
      'f-jurado','f-delegado','f-desde','f-hasta','f-est-j','f-est-d',
-     'f-cj','f-cd','f-video','f-origen','f-temporada'].forEach(id => {
+     'f-cj','f-cd','f-video','f-origen','f-temporada',
+     'f-cd-estado','f-modalidad','f-gestion','f-designacion',
+     'f-nota-com','f-nota-del','f-nota-ad',
+     'f-nota-com-min','f-nota-com-max','f-nota-del-min','f-nota-del-max',
+     'f-nota-ad-min','f-nota-ad-max'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    const chkPriorizar = document.getElementById('f-priorizar-pendientes');
+    if (chkPriorizar) chkPriorizar.checked = false;
     cargar();
 }
 
@@ -484,6 +586,13 @@ function gv(id) { const el = document.getElementById(id); return el ? el.value.t
 // nuevo que se agregue a la pantalla debe agregarse SOLO acá para que
 // ambos sigan viendo exactamente lo mismo.
 function obtenerFiltrosActuales() {
+    // Cartilla Jurado: "reabierta" es un estado detallado (viaja como
+    // cartilla_jurado_estado, igual que en el backend) — nunca se mezcla
+    // con el valor con/sin (cartilla_jurado), que sigue intacto.
+    const cjValor = gv('f-cj');
+    const cartillaJurado      = cjValor === 'reabierta' ? '' : cjValor;
+    const cartillaJuradoEstado = cjValor === 'reabierta' ? 'reabierta' : '';
+
     return {
         mes:             gv('f-mes'),
         año:             gv('f-año'),
@@ -498,11 +607,26 @@ function obtenerFiltrosActuales() {
         fecha_hasta:     gv('f-hasta'),
         estado_jurado:   gv('f-est-j'),
         estado_delegado: gv('f-est-d'),
-        cartilla_jurado: gv('f-cj'),
+        cartilla_jurado: cartillaJurado,
+        cartilla_jurado_estado: cartillaJuradoEstado,
         cartilla_delegado: gv('f-cd'),
         video:           gv('f-video'),
         origen:          gv('f-origen'),
-        temporada:       gv('f-temporada')
+        temporada:       gv('f-temporada'),
+        cartilla_delegado_estado: gv('f-cd-estado'),
+        modalidad_delegado:       gv('f-modalidad'),
+        gestion_general:          gv('f-gestion'),
+        designacion_estado:       gv('f-designacion'),
+        nota_comision_estado:     gv('f-nota-com'),
+        nota_comision_min:       gv('f-nota-com-min'),
+        nota_comision_max:       gv('f-nota-com-max'),
+        nota_delegado_estado:     gv('f-nota-del'),
+        nota_delegado_min:       gv('f-nota-del-min'),
+        nota_delegado_max:       gv('f-nota-del-max'),
+        nota_area_deportiva_estado: gv('f-nota-ad'),
+        nota_area_deportiva_min: gv('f-nota-ad-min'),
+        nota_area_deportiva_max: gv('f-nota-ad-max'),
+        priorizar_pendientes: document.getElementById('f-priorizar-pendientes')?.checked ? 'true' : ''
     };
 }
 
@@ -510,8 +634,9 @@ async function cargar(pagina = 1) {
     paginaActual = pagina;
     const wrap = document.getElementById('tabla-wrap');
     mostrarSpinner(wrap);
+    const filtros = obtenerFiltrosActuales();
     const p = toQueryString({
-        ...obtenerFiltrosActuales(),
+        ...filtros,
         page:  paginaActual,
         limit: POR_PAGINA
     });
@@ -522,11 +647,57 @@ async function cargar(pagina = 1) {
             const ids = data.data.map(r => r.id).join(',');
             try { indicadores = await api.get('/admin/adjuntos/resumen?rodeo_ids=' + ids); } catch(e) { /* ignorar */ }
         }
-        renderTabla(data.data, data.total, indicadores);
+        // "Priorizar pendientes" (Prioridad 5, cierre) — ya viene resuelto y
+        // ordenado por el backend sobre TODOS los rodeos que coinciden con
+        // los filtros (nunca solo esta página): ver priorizar_pendientes en
+        // obtenerFiltrosActuales() y GET /admin/rodeos. No se reordena de
+        // nuevo acá para no desarmar ese orden global con un criterio local.
+        const rodeos = data.data || [];
+        renderTabla(rodeos, data.total, indicadores);
         renderPag(data.total);
     } catch(err) {
         wrap.innerHTML = `<div class="alerta alerta-error">${err.message || 'Error al cargar rodeos'}</div>`;
     }
+    // Contadores de pendientes (Prioridad 2) — SOBRE TODOS los rodeos que
+    // coinciden con los filtros, nunca solo la página visible; se recalculan
+    // con los mismos filtros actuales, en paralelo, sin bloquear la tabla.
+    cargarContadoresPendientes(filtros);
+}
+
+async function cargarContadoresPendientes(filtros) {
+    const cont = document.getElementById('contadores-pendientes');
+    if (!cont) return;
+    try {
+        const p = toQueryString(filtros);
+        const c = await api.get('/admin/rodeos/contadores-pendientes?' + p);
+        const TARJETAS = [
+            { clave: 'designaciones',       label: 'Jurados sin responder / sin publicar', filtro: { designacion_estado: 'sin_respuesta' } },
+            { clave: 'cartilla_jurado',     label: 'Cartillas de Jurado pendientes',        filtro: { cartilla_jurado: 'sin' } },
+            { clave: 'cartilla_delegado',   label: 'Cartillas de Delegado pendientes',      filtro: { cartilla_delegado: 'sin' } },
+            { clave: 'cartilla_correccion', label: 'Cartillas que requieren corrección',    filtro: { cartilla_delegado_estado: 'pendiente_correccion' } },
+            { clave: 'notas',               label: 'Notas pendientes de registrar',         filtro: { nota_comision_estado: 'sin' } }
+        ];
+        cont.innerHTML = TARJETAS.map(t => `
+            <div class="card" style="padding:10px 16px; cursor:pointer; min-width:150px; border-left:4px solid ${c[t.clave] > 0 ? '#e67e22' : '#27ae60'};"
+                 onclick='aplicarFiltroContador(${JSON.stringify(t.filtro)})' title="Click para filtrar — calculado sobre los ${c.total} rodeo(s) que coinciden con los filtros actuales">
+                <div style="font-size:22px; font-weight:700; color:${c[t.clave] > 0 ? '#e67e22' : '#27ae60'};">${c[t.clave]}</div>
+                <div style="font-size:11px; color:var(--gris);">${t.label}</div>
+            </div>`).join('');
+    } catch (e) {
+        cont.innerHTML = ''; // no bloquea la pantalla si el contador falla
+    }
+}
+
+// Aplica el filtro equivalente al contador clickeado (Prioridad 2) — nunca
+// una condición nueva: los mismos parámetros que ya entiende
+// resolverFiltrosComplejos() en el backend.
+function aplicarFiltroContador(filtro) {
+    const MAPA = { designacion_estado: 'f-designacion', cartilla_jurado: 'f-cj', cartilla_delegado: 'f-cd', cartilla_delegado_estado: 'f-cd-estado', nota_comision_estado: 'f-nota-com' };
+    Object.entries(filtro).forEach(([clave, valor]) => {
+        const id = MAPA[clave];
+        if (id) { const el = document.getElementById(id); if (el) el.value = valor; }
+    });
+    cargar();
 }
 
 function renderTabla(rodeos, total, indicadores = {}) {
@@ -539,8 +710,10 @@ function renderTabla(rodeos, total, indicadores = {}) {
     wrap.innerHTML = `<table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo</th><th>Delegado</th><th>Jurados</th>
-            <th>Días</th><th>Asistencia J/D</th><th>Total pagos</th><th>Origen</th>
+            <th>Días</th><th>Asistencia J/D</th>
+            <th title="Nota Comisión y Nota Delegado son por rodeo; Nota Área Deportiva es individual por jurado (fuente notas_rodeo, evaluación técnica real — nunca una nota histórica importada mostrada como si lo fuera)">Notas</th>
             <th title="CJ=Cartilla Jurado · CD=Cartilla Delegado (documento adjunto) · 📱R/📱A=Cartilla digital de Delegado Rentado/Asociación (✓=ya enviada) · VY=Video YouTube">CJ/CD/VY</th>
+            <th title="Tareas pendientes de este rodeo — distingue rodeos futuros (aún no corresponde exigir cartillas/notas) de ya realizados">Pendientes</th>
             <th>Acciones</th>
         </tr></thead>
         <tbody>
@@ -613,6 +786,46 @@ function renderTabla(rodeos, total, indicadores = {}) {
                 digitalBadge = ` <span style="font-size:10px; font-weight:700; color:${color}; border:1px solid ${color}; border-radius:3px; padding:0 3px;" title="Cartilla digital de ${origenTxt} — ${estadoTxt}${fueEnviada ? ' (enviada)' : ''}">📱${letra}${checkTxt}</span>`;
             }
             const indicHtml = `<span style="font-size:12px; white-space:nowrap;">CJ ${ind.cj?si:no} CD ${cdHtml}${digitalBadge} VY ${ind.vy?si:no}</span>`;
+            // Panel de Gestión Deportiva (Prioridad 4) — Nota Comisión/Delegado
+            // son POR RODEO (rodeo_notas_secundarias); Nota Área Deportiva es
+            // POR JURADO (notas_rodeo) — nunca se mezclan en un solo valor.
+            // Una nota histórica (fuente='manual') se rotula explícitamente.
+            const notaTxt = (v) => (v === null || v === undefined)
+                ? '<span style="color:#e74c3c; font-weight:600;">Pendiente</span>' : v;
+            const notaAD = r.nota_area_deportiva || { actuales: [], historicas: [] };
+            let adHtml;
+            if (notaAD.actuales.length === 0 && notaAD.historicas.length === 0) {
+                adHtml = '<span style="color:#e74c3c; font-weight:600;">Pendiente</span>';
+            } else {
+                adHtml = [
+                    ...notaAD.actuales.map(n => `${sanitizar(n.jurado_nombre || '—')}: ${n.nota}`),
+                    ...notaAD.historicas.map(n => `${sanitizar(n.jurado_nombre || '—')}: ${n.nota} <span style="color:#888;">(histórica)</span>`)
+                ].join('<br>');
+            }
+            const notasHtml = `<div style="font-size:11px; line-height:1.6; white-space:nowrap;">
+                <div><span style="color:#888;">Comisión:</span> ${notaTxt(r.nota_comision)}</div>
+                <div><span style="color:#888;">Delegado:</span> ${notaTxt(r.nota_delegado)}</div>
+                <div><span style="color:#888;">Área Dep.:</span> ${adHtml}</div>
+            </div>`;
+            // Indicador de pendientes (Prioridad 5) — cada badge abre la
+            // acción/detalle ya existente cuando el usuario tiene permisos;
+            // "Designación sin publicar" abre directo "Publicar designaciones"
+            // (misma acción ya disponible en esta fila), el resto abre el
+            // detalle del rodeo (donde ya se gestionan cartillas/notas).
+            const PENDIENTES_LABEL = {
+                designacion_no_publicada: 'Designación sin publicar', jurado_sin_responder: 'Jurado sin responder',
+                cartilla_jurado_pendiente: 'Cartilla Jurado pendiente', cartilla_delegado_pendiente: 'Cartilla Delegado pendiente',
+                cartilla_requiere_correccion: 'Cartilla requiere corrección', nota_comision_pendiente: 'Nota Comisión pendiente',
+                nota_delegado_pendiente: 'Nota Delegado pendiente', nota_area_deportiva_pendiente: 'Nota Área Deportiva pendiente'
+            };
+            const pend = r.pendientes || [];
+            const pendientesHtml = pend.length === 0
+                ? '<span style="color:#27ae60; font-size:11px;">✔ Completo</span>'
+                : `<div style="font-size:10px; line-height:1.6;">` + pend.map(p => {
+                    const accion = p === 'designacion_no_publicada' && !esMonitor && !esAnalistaRodeos && !esComisionRodeos
+                        ? `abrirPublicarDesignaciones('${r.id}')` : `verDetalle('${r.id}')`;
+                    return `<span class="badge" style="background:#fdecea; color:#c0392b; display:inline-block; margin:1px; padding:1px 5px; border-radius:3px; cursor:pointer;" title="${PENDIENTES_LABEL[p] || p} — click para abrir" onclick="${accion}">${PENDIENTES_LABEL[p] || p}</span>`;
+                }).join('') + `</div>`;
             return `<tr>
             <td style="white-space:nowrap;">${formatFecha(r.fecha)}</td>
             <td>${sanitizar(r.club)}</td>
@@ -628,9 +841,9 @@ function renderTabla(rodeos, total, indicadores = {}) {
             })()}</td>
             <td style="text-align:center;">${r.duracion_dias}</td>
             <td style="text-align:center; font-size:13px;">${estadoHtml}</td>
-            <td class="monto-positivo">${formatCLP(r.total_pago_base || 0)}</td>
-            <td>${r.origen === 'importado' ? '<span class="badge badge-delegado">Excel</span>' : '<span class="badge">Manual</span>'}</td>
+            <td>${notasHtml}</td>
             <td style="text-align:center;">${indicHtml}</td>
+            <td>${pendientesHtml}</td>
             <td>
                 <div class="flex gap-8">
                     ${esComisionRodeos ? '' : `<button class="btn btn-pequeño btn-outline" onclick="verDetalle('${r.id}')">Ver</button>`}

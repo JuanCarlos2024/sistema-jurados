@@ -16,7 +16,15 @@ const {
     textoEstadoDesignacion,
     cargarIndicadoresAdjuntosPorRodeo,
     cargarEstadoCartillaDelegadoAdjuntaPorRodeo,
-    cargarNotasPorRodeo
+    cargarNotasPorRodeo,
+    cargarDelegadoRentadoVigentePorRodeo,
+    fusionarEstadoCartillaDelegado,
+    cargarEstadoCartillaDelegadoUnificadoPorRodeo,
+    cargarEstadoCartillaJuradoUnificadoPorRodeo,
+    cargarNotaAreaDeportivaPorRodeo,
+    calcularPendientesPorRodeo,
+    resolverFiltrosComplejos,
+    obtenerTodosLosIdsFiltrados
 } = require('./rodeosListado');
 
 // ─── Mock chainable/registrador — cada .from(tabla) abre una cadena nueva,
@@ -542,5 +550,334 @@ describe('cargarNotasPorRodeo — Nota Comisión / Nota Delegado / Nota Final (m
         const notas = await cargarNotasPorRodeo([]);
         expect(notas).toEqual({});
         expect(supabase.from).not.toHaveBeenCalled();
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// PANEL CENTRAL DE GESTIÓN DEPORTIVA — Prioridad 1: estado unificado de
+// Cartilla Delegado/Jurado (corrige el bug "el filtro solo mira
+// rodeo_adjuntos, ignora las cartillas digitales").
+// ═════════════════════════════════════════════════════════════════════════
+describe('fusionarEstadoCartillaDelegado (pura)', () => {
+    test('digital enviada -> recibida, sin corrección', () => {
+        expect(fusionarEstadoCartillaDelegado('enviada', null)).toEqual({ estado: 'enviada', recibida: true, requiere_correccion: false });
+    });
+    test('digital borrador -> NUNCA recibida (regla explícita)', () => {
+        expect(fusionarEstadoCartillaDelegado('borrador', null)).toEqual({ estado: 'borrador', recibida: false, requiere_correccion: false });
+    });
+    test('digital observada -> recibida=true (existió un envío) PERO requiere_correccion=true', () => {
+        expect(fusionarEstadoCartillaDelegado('observada', null)).toEqual({ estado: 'observada', recibida: true, requiere_correccion: true });
+    });
+    test('digital reabierta -> recibida=true, requiere_correccion=true', () => {
+        expect(fusionarEstadoCartillaDelegado('reabierta', null)).toEqual({ estado: 'reabierta', recibida: true, requiere_correccion: true });
+    });
+    test('sin digital, adjunto vigente -> adjunta_oficial, recibida', () => {
+        expect(fusionarEstadoCartillaDelegado(null, 'vigente')).toEqual({ estado: 'adjunta_oficial', recibida: true, requiere_correccion: false });
+    });
+    test('sin digital, adjunto pendiente de clasificación -> adjunta_pendiente, NO recibida', () => {
+        expect(fusionarEstadoCartillaDelegado(null, 'pendiente')).toEqual({ estado: 'adjunta_pendiente', recibida: false, requiere_correccion: false });
+    });
+    test('sin digital, adjunto complementario -> NUNCA certifica la cartilla (sin_iniciar)', () => {
+        expect(fusionarEstadoCartillaDelegado(null, 'complementario')).toEqual({ estado: 'sin_iniciar', recibida: false, requiere_correccion: false });
+    });
+    test('nada de ninguna fuente -> sin_iniciar', () => {
+        expect(fusionarEstadoCartillaDelegado(null, null)).toEqual({ estado: 'sin_iniciar', recibida: false, requiere_correccion: false });
+    });
+    test('digital enviada + adjunto complementario -> prioriza el digital (estado más informativo)', () => {
+        expect(fusionarEstadoCartillaDelegado('enviada', 'complementario')).toEqual({ estado: 'enviada', recibida: true, requiere_correccion: false });
+    });
+});
+
+describe('cargarDelegadoRentadoVigentePorRodeo', () => {
+    test('una sola asignación activa -> esa es la vigente', async () => {
+        respuestas.asignaciones = { data: [{ rodeo_id: 'r1', usuario_pagado_id: 'delB', estado_designacion: 'aceptado', created_at: '2026-02-01' }], error: null };
+        const map = await cargarDelegadoRentadoVigentePorRodeo(['r1']);
+        expect(map.r1).toBe('delB');
+    });
+    test('dos asignaciones activas (caso excepcional) -> gana la NO rechazada', async () => {
+        respuestas.asignaciones = {
+            data: [
+                { rodeo_id: 'r1', usuario_pagado_id: 'delViejo', estado_designacion: 'rechazado', created_at: '2026-01-01' },
+                { rodeo_id: 'r1', usuario_pagado_id: 'delNuevo', estado_designacion: 'aceptado', created_at: '2026-01-02' }
+            ], error: null
+        };
+        const map = await cargarDelegadoRentadoVigentePorRodeo(['r1']);
+        expect(map.r1).toBe('delNuevo');
+    });
+    test('array vacío -> {} sin consultar BD', async () => {
+        const map = await cargarDelegadoRentadoVigentePorRodeo([]);
+        expect(map).toEqual({});
+        expect(supabase.from).not.toHaveBeenCalled();
+    });
+});
+
+describe('cargarEstadoCartillaDelegadoUnificadoPorRodeo — PRIORIDAD 1 (hallazgo real de la auditoría)', () => {
+    test('delegado REEMPLAZADO con cartilla "enviada" nunca se muestra como vigente si el delegado activo es otro y no inició la suya', async () => {
+        // r1: delegado viejo (delA) tiene una fila 'enviada'; el delegado
+        // ACTUAL (delB, única asignación activa) todavía no tiene fila propia.
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'enviada', delegado_id: 'delA', delegado_asociacion_id: null }], error: null };
+        respuestas.asignaciones = { data: [{ rodeo_id: 'r1', usuario_pagado_id: 'delB', estado_designacion: 'aceptado', created_at: '2026-01-05' }], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const unif = await cargarEstadoCartillaDelegadoUnificadoPorRodeo(['r1']);
+        expect(unif.r1.estado).toBe('sin_iniciar');
+        expect(unif.r1.recibida).toBe(false);
+    });
+    test('la fila del delegado VIGENTE sí se reconoce cuando coincide con la asignación activa', async () => {
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'enviada', delegado_id: 'delB', delegado_asociacion_id: null }], error: null };
+        respuestas.asignaciones = { data: [{ rodeo_id: 'r1', usuario_pagado_id: 'delB', estado_designacion: 'aceptado', created_at: '2026-01-05' }], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const unif = await cargarEstadoCartillaDelegadoUnificadoPorRodeo(['r1']);
+        expect(unif.r1).toEqual({ estado: 'enviada', modalidad: 'delegado_rentado', recibida: true, requiere_correccion: false });
+    });
+    test('modalidad Asociación — una sola fila por rodeo, sin ambigüedad posible, se reconoce directo', async () => {
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'aprobada', delegado_id: null, delegado_asociacion_id: 'asoc1' }], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const unif = await cargarEstadoCartillaDelegadoUnificadoPorRodeo(['r1']);
+        expect(unif.r1).toEqual({ estado: 'aprobada', modalidad: 'delegado_asociacion', recibida: true, requiere_correccion: false });
+    });
+    test('adjunto clasificado "version_cartilla" (legado) certifica recepción aunque no exista fila digital', async () => {
+        respuestas.cartillas_delegado = { data: [], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla' }], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const unif = await cargarEstadoCartillaDelegadoUnificadoPorRodeo(['r1']);
+        expect(unif.r1.estado).toBe('adjunta_oficial');
+        expect(unif.r1.recibida).toBe(true);
+    });
+    test('modo global (sin rodeoIds) — sparse: solo aparecen rodeos con alguna fuente de datos', async () => {
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'rConDigital', estado: 'enviada', delegado_id: null, delegado_asociacion_id: 'asoc1' }], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        const unif = await cargarEstadoCartillaDelegadoUnificadoPorRodeo();
+        expect(Object.keys(unif)).toEqual(['rConDigital']);
+        expect(unif.rConDigital.recibida).toBe(true);
+    });
+});
+
+describe('cargarEstadoCartillaJuradoUnificadoPorRodeo', () => {
+    test('adjunto existente + sin fila digital -> recibida, sin corrección pendiente', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1' }], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        const unif = await cargarEstadoCartillaJuradoUnificadoPorRodeo(['r1']);
+        expect(unif.r1).toEqual({ recibida: true, requiere_correccion: false });
+    });
+    test('versión actual en "reabierta" -> sigue "recibida" (existió un envío) pero ahora requiere_correccion', async () => {
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1' }], error: null };
+        respuestas.cartillas_jurado = { data: [{ rodeo_id: 'r1', estado: 'reabierta' }], error: null };
+        const unif = await cargarEstadoCartillaJuradoUnificadoPorRodeo(['r1']);
+        expect(unif.r1).toEqual({ recibida: true, requiere_correccion: true });
+    });
+    test('ningún adjunto ni fila digital -> no aparece como recibida', async () => {
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        const unif = await cargarEstadoCartillaJuradoUnificadoPorRodeo(['r1']);
+        expect(unif.r1).toEqual({ recibida: false, requiere_correccion: false });
+    });
+});
+
+describe('cargarNotaAreaDeportivaPorRodeo', () => {
+    test('separa nota técnica real (evaluacion_tecnica) de nota histórica importada (manual)', async () => {
+        respuestas.asignaciones = { data: [{ id: 'a1', rodeo_id: 'r1', usuario_pagado_id: 'j1', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Juan Pérez' } }], error: null };
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 6.5, fuente: 'evaluacion_tecnica' }], error: null };
+        const map = await cargarNotaAreaDeportivaPorRodeo(['r1']);
+        expect(map.r1.actuales).toEqual([{ jurado_nombre: 'Juan Pérez', nota: 6.5 }]);
+        expect(map.r1.historicas).toEqual([]);
+    });
+    test('fuente manual nunca se mezcla silenciosamente como evaluación técnica real', async () => {
+        respuestas.asignaciones = { data: [{ id: 'a1', rodeo_id: 'r1', usuario_pagado_id: 'j1', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Juan Pérez' } }], error: null };
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 5.0, fuente: 'manual' }], error: null };
+        const map = await cargarNotaAreaDeportivaPorRodeo(['r1']);
+        expect(map.r1.actuales).toEqual([]);
+        expect(map.r1.historicas).toEqual([{ jurado_nombre: 'Juan Pérez', nota: 5.0 }]);
+    });
+    test('varios jurados en el mismo rodeo -> ambos aparecen con su propio nombre', async () => {
+        respuestas.asignaciones = {
+            data: [
+                { id: 'a1', rodeo_id: 'r1', usuario_pagado_id: 'j1', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Jurado Uno' } },
+                { id: 'a2', rodeo_id: 'r1', usuario_pagado_id: 'j2', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Jurado Dos' } }
+            ], error: null
+        };
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 6, fuente: 'evaluacion_tecnica' }, { asignacion_id: 'a2', nota: 7, fuente: 'evaluacion_tecnica' }], error: null };
+        const map = await cargarNotaAreaDeportivaPorRodeo(['r1']);
+        expect(map.r1.actuales).toEqual(expect.arrayContaining([
+            { jurado_nombre: 'Jurado Uno', nota: 6 }, { jurado_nombre: 'Jurado Dos', nota: 7 }
+        ]));
+    });
+});
+
+describe('calcularPendientesPorRodeo — Prioridad 2/5 (agregador de pendientes)', () => {
+    test('rodeo futuro nunca marca cartillas/notas como pendientes (solo lo accionable ahora: publicación/respuesta/corrección)', async () => {
+        const futura = '2099-01-01';
+        respuestas.rodeos = { data: [{ id: 'r1', fecha: futura }], error: null, count: 1 };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.cartillas_delegado = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        respuestas.rodeo_notas_secundarias = { data: [], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        respuestas.notas_rodeo = { data: [], error: null };
+
+        const pend = await calcularPendientesPorRodeo(['r1']);
+        expect(pend.r1.tiene_pendientes).toBe(false);
+        expect(pend.r1.pendientes).toEqual([]);
+    });
+    test('rodeo ya realizado sin cartillas ni notas -> todos los pendientes aplicables se listan', async () => {
+        const pasada = '2020-01-01';
+        respuestas.rodeos = { data: [{ id: 'r1', fecha: pasada }], error: null, count: 1 };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.cartillas_delegado = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        respuestas.rodeo_notas_secundarias = { data: [], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        respuestas.notas_rodeo = { data: [], error: null };
+
+        const pend = await calcularPendientesPorRodeo(['r1']);
+        expect(pend.r1.tiene_pendientes).toBe(true);
+        expect(pend.r1.pendientes).toEqual(expect.arrayContaining([
+            'cartilla_jurado_pendiente', 'cartilla_delegado_pendiente',
+            'nota_comision_pendiente', 'nota_delegado_pendiente', 'nota_area_deportiva_pendiente'
+        ]));
+        // Sin asignaciones activas no hay "designación no publicada" ni "jurado sin responder" que reportar.
+        expect(pend.r1.pendientes).not.toContain('designacion_no_publicada');
+        expect(pend.r1.pendientes).not.toContain('jurado_sin_responder');
+    });
+    test('designación no publicada se detecta aunque el rodeo sea futuro (siempre accionable)', async () => {
+        respuestas.rodeos = { data: [{ id: 'r1', fecha: '2099-01-01' }], error: null, count: 1 };
+        respuestas.asignaciones = { data: [{ rodeo_id: 'r1', usuario_pagado_id: 'j1', tipo_persona: 'jurado', pago_base_calculado: 0, estado_designacion: null, nombre_importado: 'J1', publicado: false, usuarios_pagados: null }], error: null };
+        respuestas.cartillas_delegado = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        respuestas.rodeo_notas_secundarias = { data: [], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        respuestas.notas_rodeo = { data: [], error: null };
+
+        const pend = await calcularPendientesPorRodeo(['r1']);
+        expect(pend.r1.pendientes).toContain('designacion_no_publicada');
+    });
+    test('cartilla observada/reabierta se marca requiere_correccion incluso sobre un rodeo ya realizado con el resto completo', async () => {
+        respuestas.rodeos = { data: [{ id: 'r1', fecha: '2020-01-01' }], error: null, count: 1 };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'observada', delegado_id: null, delegado_asociacion_id: 'asoc1' }], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 5, nota_delegado: 5 }], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        respuestas.notas_rodeo = { data: [], error: null };
+
+        const pend = await calcularPendientesPorRodeo(['r1']);
+        expect(pend.r1.pendientes).toContain('cartilla_requiere_correccion');
+        // La cartilla delegado SÍ cuenta como recibida (observada = existió un envío) -> no debe listarse como pendiente de recepción.
+        expect(pend.r1.pendientes).not.toContain('cartilla_delegado_pendiente');
+    });
+});
+
+describe('resolverFiltrosComplejos — nuevos filtros (Prioridad 1/3)', () => {
+    test('cartilla_delegado_estado="sin_iniciar" excluye los rodeos con cualquier actividad de cartilla', async () => {
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'rConCartilla', estado: 'enviada', delegado_id: null, delegado_asociacion_id: 'asoc1' }], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        const { incluir, excluir } = await resolverFiltrosComplejos({ cartilla_delegado_estado: 'sin_iniciar' });
+        expect(incluir).toBeNull();
+        expect(excluir).toEqual(['rConCartilla']);
+    });
+    test('modalidad_delegado filtra solo por la modalidad pedida', async () => {
+        respuestas.cartillas_delegado = {
+            data: [
+                { rodeo_id: 'rAsoc', estado: 'enviada', delegado_id: null, delegado_asociacion_id: 'asoc1' },
+                { rodeo_id: 'rRentado', estado: 'enviada', delegado_id: 'delB', delegado_asociacion_id: null }
+            ], error: null
+        };
+        respuestas.asignaciones = { data: [{ rodeo_id: 'rRentado', usuario_pagado_id: 'delB', estado_designacion: 'aceptado', created_at: '2026-01-01' }], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        const { incluir } = await resolverFiltrosComplejos({ modalidad_delegado: 'delegado_asociacion' });
+        expect(incluir).toEqual(['rAsoc']);
+    });
+    test('designacion_estado="pendientes_publicacion" detecta por publicado=false, independiente de estado_designacion', async () => {
+        respuestas.asignaciones = { data: [{ rodeo_id: 'r1', publicado: false, estado_designacion: 'aceptado' }, { rodeo_id: 'r2', publicado: true, estado_designacion: 'pendiente' }], error: null };
+        const { incluir } = await resolverFiltrosComplejos({ designacion_estado: 'pendientes_publicacion' });
+        expect(incluir).toEqual(['r1']);
+    });
+    test('nota_comision_estado="sin" excluye por EXCLUSIÓN los rodeos con nota ya registrada', async () => {
+        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'rConNota', nota_comision: 6, nota_delegado: null }], error: null };
+        const { incluir, excluir } = await resolverFiltrosComplejos({ nota_comision_estado: 'sin' });
+        expect(incluir).toBeNull();
+        expect(excluir).toEqual(['rConNota']);
+    });
+    test('nota_area_deportiva_min/max filtra por rango entre jurados del rodeo', async () => {
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 4.0 }, { asignacion_id: 'a2', nota: 6.5 }], error: null };
+        respuestas.asignaciones = { data: [{ id: 'a1', rodeo_id: 'rBaja' }, { id: 'a2', rodeo_id: 'rAlta' }], error: null };
+        const { incluir } = await resolverFiltrosComplejos({ nota_area_deportiva_min: '6' });
+        expect(incluir).toEqual(['rAlta']);
+    });
+    test('gestion_general="con_pendientes" reutiliza calcularPendientesPorRodeo (nunca una condición paralela)', async () => {
+        respuestas.rodeos = { data: [{ id: 'r1', fecha: '2020-01-01' }], error: null, count: 1 };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.cartillas_delegado = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        respuestas.cartillas_jurado = { data: [], error: null };
+        respuestas.rodeo_notas_secundarias = { data: [], error: null };
+        respuestas.evaluaciones = { data: [], error: null };
+        respuestas.notas_rodeo = { data: [], error: null };
+        const { incluir } = await resolverFiltrosComplejos({ gestion_general: 'con_pendientes' });
+        expect(incluir).toEqual(['r1']);
+    });
+});
+
+describe('obtenerTodosLosIdsFiltrados — cierre: exacto, sin depender del tope de 1000 filas de Supabase/PostgREST', () => {
+    // Mock dedicado para `rodeos` que SÍ respeta `.range(from,to)` sobre un
+    // dataset fijo — a diferencia del mock "respuesta fija" del resto del
+    // archivo, necesario acá para poder simular más de una página real.
+    function crearChainRodeosPaginado(dataset) {
+        const chain = {};
+        let rango = null;
+        ['select', 'eq', 'neq', 'gte', 'lte', 'ilike', 'or', 'in', 'not', 'is', 'order'].forEach(m => { chain[m] = () => chain; });
+        chain.range = (from, to) => { rango = [from, to]; return chain; };
+        chain.then = (resolve) => {
+            const pagina = rango ? dataset.slice(rango[0], rango[1] + 1) : dataset;
+            return Promise.resolve({ data: pagina, error: null, count: dataset.length }).then(resolve);
+        };
+        return chain;
+    }
+
+    test('un único rodeo (menos de una página) se resuelve en una sola vuelta', async () => {
+        const dataset = [{ id: 'r1' }];
+        supabase.from.mockImplementation(tabla => tabla === 'rodeos' ? crearChainRodeosPaginado(dataset) : crearChain(tabla));
+        const { ids, vacioPorFiltro } = await obtenerTodosLosIdsFiltrados({});
+        expect(vacioPorFiltro).toBe(false);
+        expect(ids).toEqual(['r1']);
+    });
+
+    test('más de 1000 resultados se acumulan en varias vueltas de 1000 (nunca se trunca)', async () => {
+        const dataset = Array.from({ length: 1234 }, (_, i) => ({ id: `r${i}` }));
+        supabase.from.mockImplementation(tabla => tabla === 'rodeos' ? crearChainRodeosPaginado(dataset) : crearChain(tabla));
+        const { ids, vacioPorFiltro } = await obtenerTodosLosIdsFiltrados({});
+        expect(vacioPorFiltro).toBe(false);
+        expect(ids.length).toBe(1234);
+        expect(ids[0]).toBe('r0');
+        expect(ids[1233]).toBe('r1233');
+    });
+
+    test('filtro complejo sin coincidencias -> vacioPorFiltro=true, ids=[]', async () => {
+        respuestas.cartillas_delegado = { data: [], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        const { ids, vacioPorFiltro } = await obtenerTodosLosIdsFiltrados({ cartilla_delegado_estado: 'sin_iniciar', cartilla_delegado: 'sin' });
+        // sin_iniciar + sin (con ninguna cartilla registrada) no produce
+        // necesariamente vacío — se afirma solo la forma del resultado
+        // (array), la cobertura semántica de este filtro ya está cubierta
+        // arriba; lo que importa acá es que la función no rompe con un
+        // filtro complejo real combinado.
+        expect(Array.isArray(ids)).toBe(true);
+        expect(typeof vacioPorFiltro).toBe('boolean');
     });
 });

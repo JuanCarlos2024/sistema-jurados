@@ -3,7 +3,11 @@ const router   = express.Router();
 const multer   = require('multer');
 const supabase = require('../../config/supabase');
 const { soloNoAnalista, soloNoComisionTecnica } = require('../../middleware/auth');
-const { cargarIndicadoresAdjuntosPorRodeo } = require('../../services/rodeosListado');
+const {
+    cargarIndicadoresAdjuntosPorRodeo,
+    cargarEstadoCartillaDelegadoUnificadoPorRodeo,
+    cargarEstadoCartillaJuradoUnificadoPorRodeo
+} = require('../../services/rodeosListado');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -35,7 +39,20 @@ router.get('/resumen', async (req, res) => {
     // Lógica movida a services/rodeosListado.js — fuente ÚNICA, reutilizada
     // también por la exportación a Excel de Rodeos (columnas Cartilla
     // Jurado/Cartilla Delegado/Video). Mismo resultado exacto que antes.
-    const result = await cargarIndicadoresAdjuntosPorRodeo(ids);
+    const [result, cdUnif, cjUnif] = await Promise.all([
+        cargarIndicadoresAdjuntosPorRodeo(ids),
+        // PRIORIDAD 1 (Panel de Gestión Deportiva) — estado real unificado
+        // (digital + adjunto, delegado vigente). Campo ADITIVO
+        // `cartilla_delegado_unificado`/`cartilla_jurado_unificado`: nunca
+        // reemplaza cj/cd/cd_estado/cd_digital, que siguen significando
+        // exactamente lo mismo de siempre para quien ya los consume.
+        cargarEstadoCartillaDelegadoUnificadoPorRodeo(ids),
+        cargarEstadoCartillaJuradoUnificadoPorRodeo(ids)
+    ]);
+    Object.keys(result).forEach(id => {
+        result[id].cartilla_delegado_unificado = cdUnif[id] || null;
+        result[id].cartilla_jurado_unificado = cjUnif[id] || null;
+    });
     res.json(result);
 });
 

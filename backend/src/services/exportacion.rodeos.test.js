@@ -61,18 +61,22 @@ async function leerCelda(res, filaDatos, colIndex0Based) {
     return { value: cell.value, fontColor: cell.font && cell.font.color ? cell.font.color.argb : null };
 }
 
-// Índices de columna (0-based) sobre el orden final:
+// Índices de columna (0-based) sobre el orden final (Panel de Gestión
+// Deportiva, Prioridad 1/4): se agrega "Requiere corrección" y "Nota Final"
+// pasa a ser "Nota Área Deportiva" (fuente notas_rodeo por jurado, nunca
+// evaluaciones.nota_final — ver Prioridad 4).
 // Fecha,Club,Asociación,Tipo Rodeo,Días,Jurado,Estado designación,Jurados,
-// Cartilla Jurado,Cartilla Delegado,Video,Nota Comisión,Nota Delegado,Nota Final,Total Pagos
+// Cartilla Jurado,Cartilla Delegado,Requiere corrección,Video,
+// Nota Comisión,Nota Delegado,Nota Área Deportiva,Total Pagos
 const COL = {
     FECHA: 0, CLUB: 1, ASOC: 2, TIPO: 3, DIAS: 4, JURADO: 5, ESTADO_DES: 6, JURADOS: 7,
-    CJ: 8, CD: 9, VIDEO: 10, NOTA_COM: 11, NOTA_DEL: 12, NOTA_FIN: 13, TOTAL: 14
+    CJ: 8, CD: 9, CORRECCION: 10, VIDEO: 11, NOTA_COM: 12, NOTA_DEL: 13, NOTA_AD: 14, TOTAL: 15
 };
 
 const RODEO_BASE = { id: 'r1', club: 'CLUB', asociacion: 'X', fecha: '2026-09-18', tipo_rodeo_nombre: 'Libre', duracion_dias: 1, origen: 'manual', estado: 'activo' };
 
 describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes + Cartillas/Video nuevas, Origen eliminado)', () => {
-    test('orden de columnas final: Fecha,Club,Asociación,Tipo Rodeo,Días,Jurado,Estado designación,Jurados,Cartilla Jurado,Cartilla Delegado,Video,Nota Comisión,Nota Delegado,Nota Final,Total Pagos', async () => {
+    test('orden de columnas final: Fecha,Club,Asociación,Tipo Rodeo,Días,Jurado,Estado designación,Jurados,Cartilla Jurado,Cartilla Delegado,Requiere corrección,Video,Nota Comisión,Nota Delegado,Nota Área Deportiva,Total Pagos', async () => {
         respuestas.rodeos = { data: [RODEO_BASE], error: null };
         const res = crearResFake();
         await exportarRodeos({}, res);
@@ -80,8 +84,8 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
         expect(headers).toEqual([
             'Fecha', 'Club', 'Asociación', 'Tipo Rodeo', 'Días',
             'Jurado', 'Estado designación', 'Jurados',
-            'Cartilla Jurado', 'Cartilla Delegado', 'Video',
-            'Nota Comisión', 'Nota Delegado', 'Nota Final', 'Total Pagos'
+            'Cartilla Jurado', 'Cartilla Delegado', 'Requiere corrección', 'Video',
+            'Nota Comisión', 'Nota Delegado', 'Nota Área Deportiva', 'Total Pagos'
         ]);
     });
 
@@ -94,11 +98,11 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
         expect(headers.some(h => /origen/i.test(h || ''))).toBe(false);
     });
 
-    test('CASO 1 del pedido — CJ ✓ CD ✓ VV ✓ -> Cartilla Jurado=Sí, Cartilla Delegado=Sí, Video=Sí', async () => {
+    test('CASO 1 del pedido — CJ ✓ CD oficial ✓ VV ✓ -> Cartilla Jurado=Sí, Cartilla Delegado=Sí, Video=Sí', async () => {
         respuestas.rodeos = { data: [RODEO_BASE], error: null };
         respuestas.rodeo_adjuntos = { data: [
             { rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' },
-            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado' }
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla' }
         ], error: null };
         respuestas.rodeo_links = { data: [{ rodeo_id: 'r1' }], error: null };
         const res = crearResFake();
@@ -109,11 +113,11 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
         expect(filas[0][COL.VIDEO]).toBe('Sí');
     });
 
-    test('CASO 2 del pedido — CJ ✓ CD ✓ VV sin check -> Video=No', async () => {
+    test('CASO 2 del pedido — CJ ✓ CD oficial ✓ VV sin check -> Video=No', async () => {
         respuestas.rodeos = { data: [RODEO_BASE], error: null };
         respuestas.rodeo_adjuntos = { data: [
             { rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' },
-            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado' }
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla' }
         ], error: null };
         respuestas.rodeo_links = { data: [], error: null };
         const res = crearResFake();
@@ -146,6 +150,52 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
         expect(filas[0][COL.CJ]).toBe('Sí');
     });
 
+    // ─── PRIORIDAD 1 (corrección del bug real): el chequeo anterior contaba
+    // CUALQUIER adjunto tipo_adjunto='cartilla_delegado' como "Sí", sin
+    // mirar su clasificación — un documento complementario o todavía sin
+    // clasificar quedaba indistinguible de una cartilla oficial recibida.
+    test('PRIORIDAD 1 — adjunto de Cartilla Delegado SIN clasificar (pendiente) NUNCA cuenta como recibida', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'pendiente' }], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.CD]).toBe('No');
+    });
+    test('PRIORIDAD 1 — adjunto clasificado "complementario" NUNCA certifica la cartilla real', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.rodeo_adjuntos = { data: [{ rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'complementario' }], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.CD]).toBe('No');
+    });
+    test('PRIORIDAD 1 — cartilla digital en "observada" marca "Requiere corrección"=Sí, pero Cartilla Delegado sigue "Sí" (existió un envío)', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'observada', delegado_id: null, delegado_asociacion_id: 'asoc1' }], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.CD]).toBe('Sí');
+        expect(filas[0][COL.CORRECCION]).toBe('Sí');
+    });
+    test('PRIORIDAD 1 — delegado rentado ya reemplazado: su cartilla "enviada" nunca se informa como vigente del rodeo', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.cartillas_delegado = { data: [{ rodeo_id: 'r1', estado: 'enviada', delegado_id: 'delViejo', delegado_asociacion_id: null }], error: null };
+        respuestas.asignaciones = { data: [{ rodeo_id: 'r1', usuario_pagado_id: 'delNuevo', estado_designacion: 'aceptado', created_at: '2026-01-01' }], error: null };
+        respuestas.rodeo_adjuntos = { data: [], error: null };
+        respuestas.rodeo_links = { data: [], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.CD]).toBe('No');
+    });
+
     test('CASO 6 del pedido — Total Pagos, Jurados y Estado designación se mantienen correctos junto a las columnas nuevas', async () => {
         respuestas.rodeos = { data: [{ ...RODEO_BASE, id: 'r1', club: 'EL VALLE DE RAUCO', asociacion: 'CURICÓ' }], error: null };
         respuestas.asignaciones = {
@@ -158,7 +208,7 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
         };
         respuestas.rodeo_adjuntos = { data: [
             { rodeo_id: 'r1', tipo_adjunto: 'cartilla_jurado' },
-            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado' }
+            { rodeo_id: 'r1', tipo_adjunto: 'cartilla_delegado', cartilla_clasificacion: 'version_cartilla' }
         ], error: null };
         respuestas.rodeo_links = { data: [{ rodeo_id: 'r1' }], error: null };
         const res = crearResFake();
@@ -215,111 +265,121 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
     });
 });
 
-describe('exportarRodeos — Nota Comisión / Nota Delegado / Nota Final', () => {
-    test('CASO 1 del pedido — las tres notas existen -> valores NUMÉRICOS exactos', async () => {
+describe('exportarRodeos — Nota Comisión / Nota Delegado (rodeo_notas_secundarias)', () => {
+    test('las dos notas existen -> valores NUMÉRICOS exactos', async () => {
         respuestas.rodeos = { data: [RODEO_BASE], error: null };
         respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 7, nota_delegado: 6.5 }], error: null };
-        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 5.5 }], error: null };
         const res = crearResFake();
         await exportarRodeos({}, res);
         const { filas } = await leerFilas(res);
         expect(filas[0][COL.NOTA_COM]).toBe(7);
         expect(filas[0][COL.NOTA_DEL]).toBe(6.5);
-        expect(filas[0][COL.NOTA_FIN]).toBe(5.5);
         expect(typeof filas[0][COL.NOTA_COM]).toBe('number');
         expect(typeof filas[0][COL.NOTA_DEL]).toBe('number');
-        expect(typeof filas[0][COL.NOTA_FIN]).toBe('number');
     });
 
-    test('CASO 2 del pedido — Nota Comisión presente, Nota Delegado NULL -> "Pendiente" en rojo, Nota Final numérica intacta', async () => {
+    test('Nota Comisión presente, Nota Delegado NULL -> "Pendiente" en rojo', async () => {
         respuestas.rodeos = { data: [RODEO_BASE], error: null };
         respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 7, nota_delegado: null }], error: null };
-        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 5.5 }], error: null };
         const res = crearResFake();
         await exportarRodeos({}, res);
         const { filas } = await leerFilas(res);
         expect(filas[0][COL.NOTA_COM]).toBe(7);
         expect(filas[0][COL.NOTA_DEL]).toBe('Pendiente');
-        expect(filas[0][COL.NOTA_FIN]).toBe(5.5);
         const celda = await leerCelda(res, 1, COL.NOTA_DEL);
         expect(celda.fontColor).toBe('FFCC0000'); // rojo
     });
 
-    test('CASO 3 del pedido — rodeo SIN evaluación asociada -> Nota Final = "Pendiente" en rojo, no falla la exportación', async () => {
-        respuestas.rodeos = { data: [RODEO_BASE], error: null };
-        respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 7, nota_delegado: 6 }], error: null };
-        respuestas.evaluaciones = { data: [], error: null }; // ninguna fila -> nunca hubo evaluación
-        const res = crearResFake();
-        await expect(exportarRodeos({}, res)).resolves.not.toThrow();
-        const { filas } = await leerFilas(res);
-        expect(filas[0][COL.NOTA_COM]).toBe(7);
-        expect(filas[0][COL.NOTA_DEL]).toBe(6);
-        expect(filas[0][COL.NOTA_FIN]).toBe('Pendiente');
-        const celda = await leerCelda(res, 1, COL.NOTA_FIN);
-        expect(celda.fontColor).toBe('FFCC0000');
-    });
-
-    test('CASO 4 del pedido — sin ninguna nota (ni fila en rodeo_notas_secundarias ni evaluación) -> las 3 "Pendiente", las 3 en rojo', async () => {
+    test('sin ninguna nota (sin fila en rodeo_notas_secundarias) -> las 2 "Pendiente", en rojo', async () => {
         respuestas.rodeos = { data: [RODEO_BASE], error: null };
         respuestas.rodeo_notas_secundarias = { data: [], error: null };
-        respuestas.evaluaciones = { data: [], error: null };
         const res = crearResFake();
         await exportarRodeos({}, res);
         const { filas } = await leerFilas(res);
         expect(filas[0][COL.NOTA_COM]).toBe('Pendiente');
         expect(filas[0][COL.NOTA_DEL]).toBe('Pendiente');
-        expect(filas[0][COL.NOTA_FIN]).toBe('Pendiente');
-        for (const col of [COL.NOTA_COM, COL.NOTA_DEL, COL.NOTA_FIN]) {
+        for (const col of [COL.NOTA_COM, COL.NOTA_DEL]) {
             const celda = await leerCelda(res, 1, col);
             expect(celda.fontColor).toBe('FFCC0000');
         }
     });
 
-    test('evaluación ANULADA no cuenta como fuente de Nota Final (mismo filtro anulada=false que usa el resto del sistema) -> "Pendiente"', async () => {
-        respuestas.rodeos = { data: [RODEO_BASE], error: null };
-        respuestas.rodeo_notas_secundarias = { data: [], error: null };
-        // La consulta real filtra .eq('anulada', false) en el propio query
-        // builder — el mock genérico no filtra por su cuenta, así que se
-        // simula acá el resultado YA filtrado (0 filas porque la única
-        // evaluación real estaba anulada).
-        respuestas.evaluaciones = { data: [], error: null };
-        const res = crearResFake();
-        await exportarRodeos({}, res);
-        const { filas } = await leerFilas(res);
-        expect(filas[0][COL.NOTA_FIN]).toBe('Pendiente');
-    });
-
     test('nota existente NO se transforma en 0 ni en texto — se preserva el valor numérico exacto, incluso decimales', async () => {
         respuestas.rodeos = { data: [{ ...RODEO_BASE, id: 'r1' }, { ...RODEO_BASE, id: 'r2' }], error: null };
         respuestas.rodeo_notas_secundarias = { data: [{ rodeo_id: 'r1', nota_comision: 1.0, nota_delegado: 7.0 }], error: null };
-        respuestas.evaluaciones = { data: [{ rodeo_id: 'r1', nota_final: 1.0 }], error: null };
         const res = crearResFake();
         await exportarRodeos({}, res);
         const { filas } = await leerFilas(res);
         // Nota mínima real (1.0) nunca debe confundirse con "ausente" (0/Pendiente).
         expect(filas[0][COL.NOTA_COM]).toBe(1);
         expect(filas[0][COL.NOTA_DEL]).toBe(7);
-        expect(filas[0][COL.NOTA_FIN]).toBe(1);
         expect(filas[0][COL.NOTA_COM]).not.toBe('Pendiente');
         // r2 sin ninguna fila -> Pendiente (no cae a 0 tampoco)
         expect(filas[1][COL.NOTA_COM]).toBe('Pendiente');
         expect(filas[1][COL.NOTA_COM]).not.toBe(0);
     });
 
-    test('no se introduce una consulta por rodeo (N+1) al cargar notas — 2 llamadas fijas independientes de la cantidad de rodeos', async () => {
+    test('no se introduce una consulta por rodeo (N+1) al cargar notas — 1 llamada fija independiente de la cantidad de rodeos', async () => {
         respuestas.rodeos = { data: [
             { ...RODEO_BASE, id: 'r1' }, { ...RODEO_BASE, id: 'r2' }, { ...RODEO_BASE, id: 'r3' }
         ], error: null };
         respuestas.rodeo_notas_secundarias = { data: [], error: null };
-        respuestas.evaluaciones = { data: [], error: null };
         const res = crearResFake();
         await exportarRodeos({}, res);
-        const llamadasNotas = supabase.from.mock.calls.filter(
-            c => c[0] === 'rodeo_notas_secundarias' || c[0] === 'evaluaciones'
-        );
-        // 1 llamada a rodeo_notas_secundarias + 1 a evaluaciones, sin importar
-        // que hayan sido 3 rodeos (nunca 3 llamadas por tabla).
-        expect(llamadasNotas.filter(c => c[0] === 'rodeo_notas_secundarias').length).toBe(1);
-        expect(llamadasNotas.filter(c => c[0] === 'evaluaciones').length).toBe(1);
+        const llamadasNotas = supabase.from.mock.calls.filter(c => c[0] === 'rodeo_notas_secundarias');
+        expect(llamadasNotas.length).toBe(1);
+    });
+});
+
+// Prioridad 4: "Nota Final" pasa a ser "Nota Área Deportiva" — fuente
+// notas_rodeo POR JURADO (vía asignacion_id), fuente='evaluacion_tecnica'
+// exclusivamente; evaluaciones.nota_final ya NO se usa para esta columna
+// (es un concepto distinto, ver rodeosListado.cargarNotasPorRodeo).
+describe('exportarRodeos — Nota Área Deportiva (Prioridad 4, notas_rodeo por jurado)', () => {
+    test('un jurado con nota técnica real -> "Nombre: nota"', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.asignaciones = { data: [{ id: 'a1', rodeo_id: 'r1', usuario_pagado_id: 'j1', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Juan Pérez' } }], error: null };
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 6.5, fuente: 'evaluacion_tecnica' }], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.NOTA_AD]).toBe('Juan Pérez: 6.5');
+    });
+
+    test('sin ningún jurado activo ni nota -> "Pendiente" en rojo (nunca 0/vacío)', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.asignaciones = { data: [], error: null };
+        respuestas.notas_rodeo = { data: [], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.NOTA_AD]).toBe('Pendiente');
+        const celda = await leerCelda(res, 1, COL.NOTA_AD);
+        expect(celda.fontColor).toBe('FFCC0000');
+    });
+
+    test('nota fuente="manual" (histórica importada) se rotula explícitamente, nunca se confunde con una evaluación técnica real', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.asignaciones = { data: [{ id: 'a1', rodeo_id: 'r1', usuario_pagado_id: 'j1', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Juan Pérez' } }], error: null };
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 5.0, fuente: 'manual' }], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.NOTA_AD]).toBe('Juan Pérez: 5 (histórica)');
+    });
+
+    test('dos jurados en el mismo rodeo -> ambas notas separadas, con sus nombres', async () => {
+        respuestas.rodeos = { data: [RODEO_BASE], error: null };
+        respuestas.asignaciones = {
+            data: [
+                { id: 'a1', rodeo_id: 'r1', usuario_pagado_id: 'j1', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Jurado Uno' } },
+                { id: 'a2', rodeo_id: 'r1', usuario_pagado_id: 'j2', nombre_importado: null, usuarios_pagados: { nombre_completo: 'Jurado Dos' } }
+            ], error: null
+        };
+        respuestas.notas_rodeo = { data: [{ asignacion_id: 'a1', nota: 6, fuente: 'evaluacion_tecnica' }, { asignacion_id: 'a2', nota: 7, fuente: 'evaluacion_tecnica' }], error: null };
+        const res = crearResFake();
+        await exportarRodeos({}, res);
+        const { filas } = await leerFilas(res);
+        expect(filas[0][COL.NOTA_AD]).toBe('Jurado Uno: 6 / Jurado Dos: 7');
     });
 });

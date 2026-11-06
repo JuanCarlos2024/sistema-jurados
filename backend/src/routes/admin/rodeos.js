@@ -18,7 +18,8 @@ const {
     resolverFiltroTemporadaRodeos, construirAuditoriaAsignacionTemporada
 } = require('../../services/temporadas');
 const {
-    construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo
+    construirQueryRodeosFiltrada, obtenerTodosLosIdsFiltrados, cargarStatsAsignacionesPorRodeo,
+    calcularPendientesPorRodeo, cargarNotasPorRodeo, cargarNotaAreaDeportivaPorRodeo
 } = require('../../services/rodeosListado');
 // Auditoría de elegibilidad (Etapa A) — GET /:id/jurados-disponibles (usado
 // por "Designar jurado") solo validaba disponibilidad + cruce de fechas,
@@ -47,18 +48,69 @@ function esAdminPleno(req) {
 router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
     const { page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
-
-    const { query, vacioPorFiltro } = await construirQueryRodeosFiltrada(req.query, `
+    const SELECT_RODEOS = `
             id, club, asociacion, fecha, tipo_rodeo_nombre, tipo_rodeo_id,
             categoria_rodeo_id, categoria_rodeo_nombre, duracion_dias, origen, estado, created_at,
             comuna_id, comunas_chile(nombre),
             temporada_id, temporadas(nombre),
             tipos_rodeo(categoria_rodeo_id, categorias_rodeo(nombre))
-    `);
-    if (vacioPorFiltro) return res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+    `;
 
-    const { data: rodeos, error, count } = await query.range(offset, offset + parseInt(limit) - 1);
-    if (error) return res.status(500).json({ error: error.message });
+    // "Priorizar pendientes" (Prioridad 5, cierre): antes reordenaba SOLO la
+    // página ya traída (25/50 filas) — nunca movía un rodeo pendiente desde
+    // la página 2 a la 1. Ahora, cuando se pide, se resuelve el universo
+    // COMPLETO de ids que coinciden con los filtros (obtenerTodosLosIdsFiltrados
+    // — sin el tope de 1000 filas de Supabase/PostgREST), se calculan sus
+    // pendientes UNA sola vez (calcularPendientesPorRodeo, misma fuente que
+    // el resto del panel, Prioridad 6) y se reordena ese universo completo
+    // (pendientes primero; dentro de cada grupo se conserva el orden por
+    // fecha descendente ya resuelto por la query) ANTES de cortar la página
+    // pedida, así page=2 ya refleja el orden global.
+    const priorizarPendientes = ['true', '1'].includes(String(req.query.priorizar_pendientes || '').toLowerCase());
+
+    let rodeos, count;
+    let pendPrecalculado = null;
+
+    if (priorizarPendientes) {
+        const { ids: todosIds, vacioPorFiltro } = await obtenerTodosLosIdsFiltrados(req.query);
+        if (vacioPorFiltro || todosIds.length === 0) {
+            return res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+        }
+
+        pendPrecalculado = await calcularPendientesPorRodeo(todosIds);
+        const conIndice = todosIds.map((id, i) => ({ id, i }));
+        conIndice.sort((a, b) => {
+            const pa = pendPrecalculado[a.id]?.tiene_pendientes ? 1 : 0;
+            const pb = pendPrecalculado[b.id]?.tiene_pendientes ? 1 : 0;
+            return (pb - pa) || (a.i - b.i);
+        });
+        const idsOrdenados = conIndice.map(x => x.id);
+        count = idsOrdenados.length;
+        const idsPagina = idsOrdenados.slice(offset, offset + parseInt(limit));
+
+        if (idsPagina.length === 0) {
+            rodeos = [];
+        } else {
+            const { query: queryPagina, vacioPorFiltro: vacioPagina } = await construirQueryRodeosFiltrada(req.query, SELECT_RODEOS);
+            if (vacioPagina) {
+                rodeos = [];
+            } else {
+                const { data, error } = await queryPagina.in('id', idsPagina);
+                if (error) return res.status(500).json({ error: error.message });
+                const porId = {};
+                (data || []).forEach(r => { porId[r.id] = r; });
+                rodeos = idsPagina.map(id => porId[id]).filter(Boolean);
+            }
+        }
+    } else {
+        const { query, vacioPorFiltro } = await construirQueryRodeosFiltrada(req.query, SELECT_RODEOS);
+        if (vacioPorFiltro) return res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+
+        const { data, error, count: countQuery } = await query.range(offset, offset + parseInt(limit) - 1);
+        if (error) return res.status(500).json({ error: error.message });
+        rodeos = data;
+        count = countQuery;
+    }
 
     // Herencia de categoría desde tipo_rodeo si el rodeo no tiene categoría propia
     if (rodeos) {
@@ -81,12 +133,75 @@ router.get('/', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
 
     // Stats de asignaciones split por J/D y estado (jurados/delegado,
     // publicación, respuesta) — misma fuente que usa la exportación.
+    // Pendientes (Panel de Gestión Deportiva, Prioridad 5): array de claves
+    // reutilizando EXCLUSIVAMENTE fuentes ya cargadas (calcularPendientesPorRodeo
+    // internamente vuelve a resolver stats/cartillas/notas de forma atómica
+    // para la página actual — nunca una condición paralela, Prioridad 6).
+    // Notas (Prioridad 4): Nota Comisión/Delegado por rodeo + Nota Área
+    // Deportiva por jurado — mismas fuentes exactas que la exportación a
+    // Excel, nunca recalculadas aparte (Prioridad 6).
     if (rodeos && rodeos.length > 0) {
-        const sp = await cargarStatsAsignacionesPorRodeo(rodeos.map(r => r.id));
-        rodeos.forEach(r => Object.assign(r, sp[r.id]));
+        const ids = rodeos.map(r => r.id);
+        // pendPrecalculado ya fue calculado sobre el universo completo
+        // (rama "priorizar pendientes" arriba) — reutilizarlo evita un
+        // segundo cálculo redundante para la misma página (Prioridad 6).
+        const [sp, pend, notas, notaAD] = await Promise.all([
+            cargarStatsAsignacionesPorRodeo(ids),
+            pendPrecalculado ? Promise.resolve(pendPrecalculado) : calcularPendientesPorRodeo(ids),
+            cargarNotasPorRodeo(ids),
+            cargarNotaAreaDeportivaPorRodeo(ids)
+        ]);
+        rodeos.forEach(r => {
+            Object.assign(r, sp[r.id]);
+            r.pendientes = pend[r.id]?.pendientes || [];
+            r.tiene_pendientes = pend[r.id]?.tiene_pendientes || false;
+            r.nota_comision = notas[r.id]?.nota_comision ?? null;
+            r.nota_delegado = notas[r.id]?.nota_delegado ?? null;
+            r.nota_area_deportiva = notaAD[r.id] || { actuales: [], historicas: [] };
+        });
     }
 
     res.json({ data: rodeos, total: count, page: parseInt(page), limit: parseInt(limit) });
+});
+
+// GET /api/admin/rodeos/contadores-pendientes — Prioridad 2 (Panel de
+// Gestión Deportiva): contadores de pendientes SOBRE TODOS los rodeos que
+// coincidan con los filtros actuales (nunca solo la página de 25/50
+// visible) — mismos filtros exactos que la tabla/exportación
+// (construirQueryRodeosFiltrada, fuente única). Delega el cálculo de cada
+// pendiente en calcularPendientesPorRodeo (Prioridad 6 — nunca una
+// condición paralela a la ya usada por la columna de indicadores y por el
+// filtro "Gestión general").
+// Cierre: el `.range(0, 9999)` original era un tope fijo que dependía de
+// que el volumen real de rodeos nunca lo superara. obtenerTodosLosIdsFiltrados
+// pagina en bloques de 1000 hasta agotar los resultados, así el conteo es
+// exacto sin importar cuántos rodeos coincidan con los filtros.
+router.get('/contadores-pendientes', soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
+    const vacio = { total: 0, designaciones: 0, cartilla_jurado: 0, cartilla_delegado: 0, cartilla_correccion: 0, notas: 0 };
+
+    let ids;
+    try {
+        const { ids: todosIds, vacioPorFiltro } = await obtenerTodosLosIdsFiltrados(req.query);
+        if (vacioPorFiltro) return res.json(vacio);
+        ids = todosIds;
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+    if (ids.length === 0) return res.json(vacio);
+
+    const pend = await calcularPendientesPorRodeo(ids);
+    const valores = Object.values(pend);
+    const contar = (clave) => valores.filter(p => p.pendientes.includes(clave)).length;
+    const contarAlguna = (...claves) => valores.filter(p => claves.some(c => p.pendientes.includes(c))).length;
+
+    res.json({
+        total: ids.length,
+        designaciones: contarAlguna('jurado_sin_responder', 'designacion_no_publicada'),
+        cartilla_jurado: contar('cartilla_jurado_pendiente'),
+        cartilla_delegado: contar('cartilla_delegado_pendiente'),
+        cartilla_correccion: contar('cartilla_requiere_correccion'),
+        notas: contarAlguna('nota_comision_pendiente', 'nota_delegado_pendiente', 'nota_area_deportiva_pendiente')
+    });
 });
 
 // GET /api/admin/rodeos/:id (con asignaciones)

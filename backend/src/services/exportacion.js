@@ -1,7 +1,10 @@
 const ExcelJS = require('exceljs');
 const supabase = require('../config/supabase');
 const { calcularResumenMensual, obtenerRetencion } = require('./calculo');
-const { construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo, cargarIndicadoresAdjuntosPorRodeo, cargarNotasPorRodeo } = require('./rodeosListado');
+const {
+    construirQueryRodeosFiltrada, cargarStatsAsignacionesPorRodeo, cargarIndicadoresAdjuntosPorRodeo, cargarNotasPorRodeo,
+    cargarEstadoCartillaDelegadoUnificadoPorRodeo, cargarEstadoCartillaJuradoUnificadoPorRodeo, cargarNotaAreaDeportivaPorRodeo
+} = require('./rodeosListado');
 
 // Estilo de encabezado estándar
 const HEADER_STYLE = {
@@ -323,13 +326,18 @@ async function exportarRodeos(filtros, res) {
 
     const ids = (rodeos || []).map(r => r.id);
     // Stats de asignaciones (pago total + jurados/estado de designación),
-    // indicadores de adjuntos (cartillas/video) y notas (comisión/delegado/
-    // final) — misma fuente que la tabla/pantallas existentes, 3 consultas
-    // fijas en paralelo (nunca una por rodeo, sin importar cuántos se exporten).
-    const [statsMap, indicMap, notasMap] = await Promise.all([
+    // estado UNIFICADO de Cartilla Jurado/Delegado (Prioridad 1 — mismo
+    // fuente que ya corrige el filtro "con/sin" de la pantalla, nunca el
+    // chequeo antiguo que solo miraba rodeo_adjuntos) y notas (comisión/
+    // delegado + Nota Área Deportiva por jurado, Prioridad 4) — consultas
+    // fijas en paralelo, nunca una por rodeo.
+    const [statsMap, cdMap, cjMap, indicMap, notasMap, notaADMap] = await Promise.all([
         cargarStatsAsignacionesPorRodeo(ids),
-        cargarIndicadoresAdjuntosPorRodeo(ids),
-        cargarNotasPorRodeo(ids)
+        cargarEstadoCartillaDelegadoUnificadoPorRodeo(ids),
+        cargarEstadoCartillaJuradoUnificadoPorRodeo(ids),
+        cargarIndicadoresAdjuntosPorRodeo(ids), // solo se usa el campo `vy` (video) — cj/cd quedan reemplazados por las fuentes unificadas de arriba
+        cargarNotasPorRodeo(ids),
+        cargarNotaAreaDeportivaPorRodeo(ids)
     ]);
 
     const wb = new ExcelJS.Workbook();
@@ -345,17 +353,18 @@ async function exportarRodeos(filtros, res) {
         { header: 'Jurado',             key: 'jurado',     width: 30 },
         { header: 'Estado designación', key: 'estado_des', width: 20 },
         { header: 'Jurados',            key: 'jurados',    width: 10 },
-        { header: 'Cartilla Jurado',    key: 'cj',         width: 15 },
-        { header: 'Cartilla Delegado',  key: 'cd',         width: 16 },
-        { header: 'Video',              key: 'video',      width: 10 },
-        { header: 'Nota Comisión',      key: 'nota_com',   width: 15 },
-        { header: 'Nota Delegado',      key: 'nota_del',   width: 15 },
-        { header: 'Nota Final',         key: 'nota_fin',   width: 13 },
-        { header: 'Total Pagos',        key: 'total',      width: 16 },
+        { header: 'Cartilla Jurado',      key: 'cj',         width: 15 },
+        { header: 'Cartilla Delegado',    key: 'cd',         width: 16 },
+        { header: 'Requiere corrección',  key: 'correccion', width: 18 },
+        { header: 'Video',                key: 'video',      width: 10 },
+        { header: 'Nota Comisión',        key: 'nota_com',   width: 15 },
+        { header: 'Nota Delegado',        key: 'nota_del',   width: 15 },
+        { header: 'Nota Área Deportiva',  key: 'nota_ad',    width: 28 },
+        { header: 'Total Pagos',          key: 'total',      width: 16 },
     ];
     ws.getRow(1).eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
-    // Columnas de notas (Nota Comisión, Nota Delegado, Nota Final) en ese orden.
-    const COL_NOTAS = [12, 13, 14];
+    // Columnas de notas (Nota Comisión, Nota Delegado, Nota Área Deportiva) en ese orden.
+    const COL_NOTAS = [13, 14, 15];
 
     (rodeos || []).forEach((r, i) => {
         const s = statsMap[r.id] || { jurados: 0, total_pago_base: 0, jurados_lista: [] };
@@ -365,16 +374,33 @@ async function exportarRodeos(filtros, res) {
         // orden, nunca se pierde ninguno.
         const jurado     = lista.length > 0 ? lista.map(j => j.nombre).join(' / ') : 'Sin jurado';
         const estadoDes  = lista.length > 0 ? lista.map(j => j.estado_designacion_texto).join(' / ') : '—';
-        const ind = indicMap[r.id] || { cj: false, cd: false, vy: false };
-        const notas = notasMap[r.id] || { nota_comision: null, nota_delegado: null, nota_final: null };
+        // Cartilla Jurado/Delegado: fuente UNIFICADA (Prioridad 1) — nunca el
+        // chequeo antiguo que solo miraba rodeo_adjuntos. `vy` (video) sigue
+        // viniendo de cargarIndicadoresAdjuntosPorRodeo, nunca duplicado.
+        const cd = cdMap[r.id] || { recibida: false, requiere_correccion: false };
+        const cj = cjMap[r.id] || { recibida: false, requiere_correccion: false };
+        const vy = (indicMap[r.id] || {}).vy || false;
+        const notas = notasMap[r.id] || { nota_comision: null, nota_delegado: null };
+        const notaAD = notaADMap[r.id] || { actuales: [], historicas: [] };
         const valNotaComision = valorNotaOPendiente(notas.nota_comision);
         const valNotaDelegado = valorNotaOPendiente(notas.nota_delegado);
-        const valNotaFinal    = valorNotaOPendiente(notas.nota_final);
+        // Nota Área Deportiva es POR JURADO (nunca un solo valor de rodeo,
+        // Prioridad 4) — se listan nombre:nota, alineados con la columna
+        // "Jurado" de más arriba; una nota histórica (fuente='manual') se
+        // rotula explícitamente, nunca mezclada en silencio como real.
+        const valNotaAD = notaAD.actuales.length === 0 && notaAD.historicas.length === 0
+            ? 'Pendiente'
+            : [
+                ...notaAD.actuales.map(n => `${n.jurado_nombre || '—'}: ${n.nota}`),
+                ...notaAD.historicas.map(n => `${n.jurado_nombre || '—'}: ${n.nota} (histórica)`)
+            ].join(' / ');
         const row = ws.addRow([
             r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias,
             jurado, estadoDes, s.jurados || 0,
-            ind.cj ? 'Sí' : 'No', ind.cd ? 'Sí' : 'No', ind.vy ? 'Sí' : 'No',
-            valNotaComision, valNotaDelegado, valNotaFinal,
+            cj.recibida ? 'Sí' : 'No', cd.recibida ? 'Sí' : 'No',
+            (cd.requiere_correccion || cj.requiere_correccion) ? 'Sí' : 'No',
+            vy ? 'Sí' : 'No',
+            valNotaComision, valNotaDelegado, valNotaAD,
             formatCLP(s.total_pago_base || 0)
         ]);
         if (i % 2 === 0) row.eachCell(c => { c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4F8' } }; });
