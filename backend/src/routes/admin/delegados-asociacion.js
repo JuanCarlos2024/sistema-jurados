@@ -58,6 +58,16 @@ async function contarReferencias(delegadoId) {
 // asociación (tabla distinta, join NUEVO en este archivo — primera vez que
 // se consulta cuentas_institucionales desde este módulo). Nunca se expone
 // password_hash: el SELECT la omite explícitamente.
+//
+// Fix (auditoría de producción, Nov-2026): el SELECT a cuentas_institucionales
+// NO filtraba por rol_institucional, y el mapa `cuentaPorAsociacion` solo
+// conserva UNA cuenta por asociación (la última recorrida) — si una
+// asociación tiene cuenta de Delegado Y de Comisión (caso normal desde la
+// 079), cuál de las dos "ganaba" dependía del orden en que Postgres
+// devolviera las filas, pudiendo mostrar el correo de Comisión en lugar del
+// de Delegado (ej. ARICA Y TARAPACA). Mismo criterio que
+// comisiones-asociacion.js:GET /asociaciones, que ya filtraba correctamente
+// por su propio rol — nunca se mezclan los dos roles institucionales.
 router.get('/', async (req, res) => {
     const buscar = (req.query.buscar || '').toString().trim();
 
@@ -74,7 +84,9 @@ router.get('/', async (req, res) => {
 
     const [{ data: delegados, error: errDel }, { data: cuentas, error: errCuentas }] = await Promise.all([
         supabase.from('delegados_asociacion').select('asociacion_id, activo'),
-        supabase.from('cuentas_institucionales').select('id, email, asociacion_id, activo, ultimo_acceso_en')
+        supabase.from('cuentas_institucionales')
+            .select('id, email, asociacion_id, activo, primer_login, ultimo_acceso_en')
+            .eq('rol_institucional', 'delegado_asociacion')
     ]);
     if (errDel) return res.status(500).json({ error: errDel.message });
     if (errCuentas) return res.status(500).json({ error: errCuentas.message });
@@ -105,6 +117,7 @@ router.get('/', async (req, res) => {
                 id: cuenta.id,
                 email: cuenta.email,
                 estado: cuenta.activo ? 'activa' : 'suspendida',
+                primer_login: cuenta.primer_login,
                 ultimo_acceso_en: cuenta.ultimo_acceso_en
             } : null
         };

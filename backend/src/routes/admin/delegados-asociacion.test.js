@@ -144,6 +144,57 @@ describe('GET / — catálogo oficial de asociaciones ordinarias + conteos', () 
             const res = await llamar(router);
             expect(res.jsonBody.asociaciones[0].cuenta_institucional.estado).toBe('suspendida');
         });
+
+        test('primer_login se expone en cuenta_institucional (igual criterio que comisiones-asociacion.js)', async () => {
+            respuestas.cuentas_institucionales = {
+                list: { data: [{ id: 'cta-1', email: 'osorno@ferochi.com', asociacion_id: 'asoc-osorno', activo: true, primer_login: true, ultimo_acceso_en: null }], error: null }
+            };
+            const res = await llamar(router);
+            expect(res.jsonBody.asociaciones[0].cuenta_institucional.primer_login).toBe(true);
+        });
+    });
+
+    // Auditoría de producción (Nov-2026): ARICA Y TARAPACA mostraba el correo
+    // de Comisión en vez del de Delegado. Causa: el SELECT a
+    // cuentas_institucionales no filtraba por rol_institucional, y el mapa
+    // "una cuenta por asociación" se quedaba con la ÚLTIMA fila recorrida —
+    // cuál de las dos "ganaba" dependía del orden en que Postgres devolviera
+    // los resultados. Este bloque usa un mock que SÍ respeta el `.eq()`
+    // sobre rol_institucional (a diferencia de `crearChain`, que ignora los
+    // filtros y siempre devuelve la lista fija) para probar, con ambos
+    // órdenes posibles, que el endpoint nunca devuelve la cuenta equivocada.
+    describe('cuentas_institucionales — nunca mezcla rol_institucional (bug: Delegado tapado por Comisión)', () => {
+        function crearChainCuentasPorRol(cuentas) {
+            const chain = {};
+            let filtroRol = null;
+            chain.select = () => chain;
+            chain.eq = (col, val) => { if (col === 'rol_institucional') filtroRol = val; return chain; };
+            chain.then = (resolve) => {
+                const data = filtroRol === null ? cuentas : cuentas.filter(c => c.rol_institucional === filtroRol);
+                resolve({ data, error: null });
+                return Promise.resolve();
+            };
+            return chain;
+        }
+
+        const CUENTA_DELEGADO = { id: 'cta-del-1', email: 'delegado-arica@ferochi.com', asociacion_id: 'asoc-osorno', activo: true, primer_login: false, ultimo_acceso_en: null, rol_institucional: 'delegado_asociacion' };
+        const CUENTA_COMISION = { id: 'cta-com-1', email: 'comision-arica@ferochi.com', asociacion_id: 'asoc-osorno', activo: true, primer_login: false, ultimo_acceso_en: null, rol_institucional: 'comision_asociacion' };
+
+        test('Comisión devuelta ANTES que Delegado por Supabase -> igual se expone la cuenta de Delegado', async () => {
+            supabase.from.mockImplementation(tabla =>
+                tabla === 'cuentas_institucionales' ? crearChainCuentasPorRol([CUENTA_COMISION, CUENTA_DELEGADO]) : crearChain(tabla)
+            );
+            const res = await llamar(router);
+            expect(res.jsonBody.asociaciones[0].cuenta_institucional).toMatchObject({ id: 'cta-del-1', email: 'delegado-arica@ferochi.com' });
+        });
+
+        test('Delegado devuelto ANTES que Comisión por Supabase -> mismo resultado (no depende del orden)', async () => {
+            supabase.from.mockImplementation(tabla =>
+                tabla === 'cuentas_institucionales' ? crearChainCuentasPorRol([CUENTA_DELEGADO, CUENTA_COMISION]) : crearChain(tabla)
+            );
+            const res = await llamar(router);
+            expect(res.jsonBody.asociaciones[0].cuenta_institucional).toMatchObject({ id: 'cta-del-1', email: 'delegado-arica@ferochi.com' });
+        });
     });
 });
 

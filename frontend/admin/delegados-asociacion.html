@@ -205,9 +205,9 @@ function renderTablaAsociaciones(asociaciones) {
 // (concepto distinto, no se muestra ni se toca en esta columna).
 function celdaEstadoAcceso(cuenta) {
     if (!cuenta) return '<span class="badge badge-sin-cuenta">Sin cuenta</span>';
-    return cuenta.estado === 'activa'
-        ? '<span class="badge badge-activo">Activa</span>'
-        : '<span class="badge badge-suspendido">Suspendida</span>';
+    if (cuenta.estado !== 'activa') return '<span class="badge badge-suspendido">Suspendida</span>';
+    if (cuenta.primer_login) return '<span class="badge badge-pendiente-cert">Primer ingreso pendiente</span>';
+    return '<span class="badge badge-activo">Activa</span>';
 }
 
 async function abrirNomina(asociacionId) {
