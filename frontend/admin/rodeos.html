@@ -3723,7 +3723,11 @@ function renderAccionesCartillaDelegado(c) {
     if (puedeReabrir) {
         botonesHtml += `<button class="btn btn-pequeño" style="background:#fff3cd;color:#856404;border:1px solid #ffc107;" onclick="abrirModalReabrirCd('${c.id}')">🔓 Reabrir</button> `;
     }
-    botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="descargarPdfCartillaDelegado('${c.id}')">📄 Exportar PDF</button> `;
+    // Ver vs Descargar — acciones independientes (pedido explícito del
+    // usuario): "Ver" abre el PDF en una pestaña nueva sin forzar su
+    // descarga; "Descargar" lo guarda con el nombre ASOCIACION_CLUB_FECHA.pdf.
+    botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="verPdfCartillaDelegado('${c.id}')">📄 Ver PDF</button> `;
+    botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="descargarPdfCartillaDelegado('${c.id}')">⬇ Descargar PDF</button> `;
 
     const emailDelegado = c.delegado?.email || '';
     botonesHtml += `<button class="btn btn-pequeño btn-outline" onclick="abrirModalCorreoCd('${c.id}', '${sanitizar(emailDelegado)}')">✉ Preparar correo</button>`;
@@ -3751,8 +3755,15 @@ async function cargarVersionesCartillaDelegado(cartillaId) {
             // registro del pendiente. Se ofrece regenerarlo EXACTO desde el
             // snapshot inmutable (nunca altera las respuestas históricas ni
             // crea una versión nueva).
+            // Ver vs Descargar — acciones independientes (pedido explícito
+            // del usuario): "Ver" abre la URL firmada tal cual (sin forzar
+            // descarga, el navegador la muestra inline); "Descargar" la
+            // trae como Blob y la guarda con nombre_archivo (ASOCIACION_
+            // CLUB_FECHA_V{n}.pdf). Nunca se modifica ni se reemplaza el
+            // PDF histórico al verlo o descargarlo — solo se lee.
             const btnPdf    = v.storage_path_pdf
-                ? '<button class="btn btn-pequeño btn-outline" onclick="verPdfVersionCartillaDelegado(\'' + v.id + '\')">📄 PDF</button>'
+                ? '<button class="btn btn-pequeño btn-outline" onclick="verPdfVersionCartillaDelegado(\'' + v.id + '\')">📄 Ver</button> '
+                  + '<button class="btn btn-pequeño btn-outline" onclick="descargarPdfVersionCartillaDelegado(\'' + v.id + '\')">⬇ Descargar</button>'
                 : '<button class="btn btn-pequeño" style="background:#f8d7da;color:#842029;border:1px solid #f1aeb5;" onclick="regenerarPdfVersionCartillaDelegado(\'' + v.id + '\')">⚠ Regenerar PDF</button>';
             html += '<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid #1a5276;">'
                 + '<span style="font-size:12px;font-weight:700;color:#1a5276;white-space:nowrap;">v' + v.numero_version + ' · ' + estadoTxt + '</span>'
@@ -3768,11 +3779,35 @@ async function cargarVersionesCartillaDelegado(cartillaId) {
     }
 }
 
+// "Ver": la URL firmada se pide SIN forzar descarga (el backend nunca le
+// pasa `download` a createSignedUrl) — se abre tal cual, el navegador la
+// muestra inline. Nunca modifica ni reemplaza el PDF histórico, solo lo lee.
 async function verPdfVersionCartillaDelegado(versionId) {
     try {
         const r = await api.get('/admin/cartillas-delegado/version/' + versionId + '/pdf');
         window.open(r.url, '_blank');
     } catch(e) { mostrarToast(e.message || 'Error al obtener PDF', 'error'); }
+}
+
+// "Descargar": misma URL firmada de arriba, pero traída como Blob y
+// guardada con el nombre real (`nombre_archivo`, ASOCIACION_CLUB_FECHA_
+// V{n}.pdf) — la URL firmada no necesita el header Authorization de
+// nuestra API, así que un fetch directo (sin api.obtenerBlob) es correcto.
+async function descargarPdfVersionCartillaDelegado(versionId) {
+    try {
+        const r = await api.get('/admin/cartillas-delegado/version/' + versionId + '/pdf');
+        const resp = await fetch(r.url);
+        if (!resp.ok) throw new Error('No se pudo descargar el PDF de esta versión.');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = r.nombre_archivo || 'cartilla-delegado.pdf';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch(e) { mostrarToast(e.message || 'Error al descargar el PDF', 'error'); }
 }
 
 // Punto B (revisión final) — regenera el PDF EXACTO de una versión histórica
@@ -3887,9 +3922,44 @@ async function aprobarCartillaDelegado(cartillaId) {
     }
 }
 
+// Mismo formato ASOCIACION_CLUB_FECHA.pdf del backend (ver services/
+// cartillaDelegadoPdfNombreArchivo.js) — se duplica acá porque
+// api.descargar() usa fetch + Blob + <a download>, que IGNORA por completo
+// el header Content-Disposition del backend (a diferencia de una
+// navegación directa del navegador). Nunca truncar nombres ni perder la
+// asociación.
+function nombreArchivoCartillaDelegadoPdf(c) {
+    const normalizar = (t) => (t || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const asociacion = normalizar(c?.rodeo?.asociacion) || 'ASOCIACION';
+    const club = normalizar(c?.rodeo?.club) || 'CLUB';
+    const fechaBruta = (c?.fecha_rodeo || c?.rodeo?.fecha || '').toString();
+    const fecha = /^\d{4}-\d{2}-\d{2}/.test(fechaBruta) ? fechaBruta.slice(0, 10) : 'SIN-FECHA';
+    return `${asociacion}_${club}_${fecha}.pdf`;
+}
+
+// "Ver PDF": abre el documento en una pestaña nueva SIN forzar su descarga
+// — endpoint autenticado (requiere el header Authorization), así que un
+// <a href> común no sirve; se pide como Blob (api.obtenerBlob) y se abre esa
+// URL local con window.open(). Independiente de "Descargar PDF" (pedido
+// explícito: mantener ambas acciones separadas).
+async function verPdfCartillaDelegado(cartillaId) {
+    try {
+        const blob = await api.obtenerBlob('/admin/cartillas-delegado/' + cartillaId + '/pdf');
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch(e) {
+        mostrarToast(e.message || 'Error al generar PDF', 'error');
+    }
+}
+
+// "Descargar PDF": fuerza la descarga con el nombre ASOCIACION_CLUB_FECHA.pdf.
 async function descargarPdfCartillaDelegado(cartillaId) {
     try {
-        await api.descargar('/admin/cartillas-delegado/' + cartillaId + '/pdf', 'cartilla-delegado.pdf');
+        const c = (_cdActivaData && _cdActivaData.id === cartillaId) ? _cdActivaData : null;
+        await api.descargar('/admin/cartillas-delegado/' + cartillaId + '/pdf', nombreArchivoCartillaDelegadoPdf(c));
     } catch(e) {
         mostrarToast(e.message || 'Error al generar PDF', 'error');
     }

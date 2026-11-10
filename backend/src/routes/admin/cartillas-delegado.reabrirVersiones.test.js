@@ -131,6 +131,49 @@ describe('GET /version/:version_id/pdf', () => {
         expect(res.jsonBody.url).toBe('https://signed.example/v1.pdf');
         expect(supabase.storage.from).toHaveBeenCalledWith('rodeo-adjuntos');
     });
+
+    // Mejora de nombre de archivo (ver cartillaDelegadoPdfNombreArchivo.js):
+    // antes la URL firmada no fijaba ningún nombre — el navegador usaba el
+    // último segmento de storage_path_pdf (ej. "v1_123.pdf"). Club/
+    // asociación se leen del rodeo EN VIVO (nunca del snapshot, que es
+    // inmutable) — mismo criterio que POST /regenerar-pdf.
+    //
+    // "Ver" vs "Descargar" (ajuste tras revisión del usuario): la URL
+    // firmada se pide SIN `download` — así el frontend puede usarla
+    // directamente para "Ver PDF" (vista previa en pestaña, sin forzar
+    // descarga) y, por separado, usar `nombre_archivo` para "Descargar PDF"
+    // (fetch + Blob + <a download>, en el frontend). Pasar `download` acá
+    // forzaría Content-Disposition: attachment y rompería la vista previa.
+    test('nombre de archivo: ASOCIACION_CLUB_FECHA_V{numero_version}.pdf, devuelto en nombre_archivo — createSignedUrl SIN `download` (nunca fuerza descarga)', async () => {
+        respuestas.cartillas_delegado_versiones = {
+            maybeSingle: {
+                data: { numero_version: 2, storage_path_pdf: 'rodeos/cart-1/v2_123.pdf', snapshot: { rodeo_id: 'rodeo-9', fecha_rodeo: '2026-11-01' } },
+                error: null
+            }
+        };
+        respuestas.rodeos = { maybeSingle: { data: { club: 'EL BOSQUE PONIENTE', asociacion: 'SANTIAGO PONIENTE', fecha: '2026-11-01' }, error: null } };
+        const createSignedUrl = jest.fn().mockResolvedValue({ data: { signedUrl: 'https://signed.example/v2.pdf' }, error: null });
+        supabase.storage.from.mockReturnValue({ createSignedUrl });
+
+        const res = await llamar('GET', '/version/v1/pdf');
+
+        expect(res.statusCode).toBe(200);
+        expect(res.jsonBody.url).toBe('https://signed.example/v2.pdf');
+        expect(res.jsonBody.nombre_archivo).toBe('SANTIAGO-PONIENTE_EL-BOSQUE-PONIENTE_2026-11-01_V2.pdf');
+        expect(createSignedUrl).toHaveBeenCalledWith('rodeos/cart-1/v2_123.pdf', 3600);
+    });
+
+    test('sin rodeo_id en el snapshot (dato histórico incompleto) -> nunca lanza excepción, usa placeholders', async () => {
+        respuestas.cartillas_delegado_versiones = {
+            maybeSingle: { data: { numero_version: 1, storage_path_pdf: 'rodeos/cart-1/v1_123.pdf', snapshot: {} }, error: null }
+        };
+        supabase.storage.from.mockReturnValue({
+            createSignedUrl: jest.fn().mockResolvedValue({ data: { signedUrl: 'https://signed.example/v1.pdf' }, error: null })
+        });
+        const res = await llamar('GET', '/version/v1/pdf');
+        expect(res.statusCode).toBe(200);
+        expect(res.jsonBody.nombre_archivo).toBe('ASOCIACION_CLUB_SIN-FECHA_V1.pdf');
+    });
 });
 
 // Punto B (revisión final) — recuperación del PDF cuando falló tras el envío.

@@ -49,8 +49,11 @@ describe('renderAccionesCartillaDelegado() — botón "🔓 Reabrir" (092)', () 
     test('estado "reabierta": el panel de acciones ya no queda vacío (antes de 092 no estaba en la lista de estados con acciones)', () => {
         const out = ejecutarRenderAcciones({ id: 'cart-1', estado: 'reabierta' });
         // Aunque no tenga botón propio, el contenedor debe renderizar algo
-        // (al menos "Exportar PDF"/"Preparar correo"), nunca quedar vacío.
-        expect(out).toContain('Exportar PDF');
+        // (al menos "Ver PDF"/"Descargar PDF"/"Preparar correo"), nunca
+        // quedar vacío. "Ver PDF"/"Descargar PDF" reemplazó al antiguo
+        // botón único "Exportar PDF" (mejora: acciones independientes).
+        expect(out).toContain('Ver PDF');
+        expect(out).toContain('Descargar PDF');
     });
 
     test('estado "borrador": el panel sigue vacío (sin cambios de comportamiento)', () => {

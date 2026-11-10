@@ -2,6 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../../config/supabase');
 const { generarCartillaDelegadoPDF } = require('../../services/cartilla-delegado-pdf');
+const { construirNombreArchivoCartillaDelegadoPdf } = require('../../services/cartillaDelegadoPdfNombreArchivo');
 const { enviarEmail } = require('../../services/emailService');
 // Fase 3.5 — mismo servicio ÚNICO de lectura de historial (basado 100% en
 // auditoria real, nunca fabricado) que usa institucional/cartilla.js.
@@ -213,23 +214,66 @@ router.get('/:id/versiones', async (req, res) => {
 // ─── GET /api/admin/cartillas-delegado/version/:version_id/pdf ───────────────
 // 092: URL firmada del PDF congelado de una versión histórica específica
 // (mismo patrón que GET /admin/cartillas-jurado/pdf/:id).
+//
+// Nombre de archivo (mejora): se calcula el mismo nombre
+// ASOCIACION_CLUB_FECHA_V{n}.pdf del resto del sistema y se devuelve en
+// `nombre_archivo` — el frontend decide qué hacer con él: "Ver PDF" abre
+// `url` directamente (URL firmada SIN `download`, para que el navegador la
+// muestre inline, igual que antes); "Descargar PDF" la trae como Blob y la
+// guarda con `nombre_archivo` (ver rodeos.html:descargarPdfVersionCartillaDelegado).
+// Nunca se le pasa `download` a createSignedUrl: eso forzaría Content-
+// Disposition: attachment y rompería la vista previa en pestaña, que el
+// usuario pidió mantener como acción independiente. Club/asociación se
+// leen del rodeo EN VIVO (nunca del snapshot) — mismo criterio ya usado en
+// el regenerar-pdf de abajo: el club/asociación de un rodeo no cambia con
+// el tiempo, y así nunca hay que tocar el snapshot inmutable para nombrar
+// el archivo.
+//
+// Formato visual actualizado (096, revisión Nov-2026): si la versión ya
+// tiene una regeneración con el diseño nuevo (storage_path_pdf_rediseno),
+// la visualización habitual la prefiere automáticamente — pero el PDF
+// ORIGINAL (storage_path_pdf) nunca deja de estar disponible: `?original=1`
+// lo fuerza explícitamente, y `tiene_rediseno`/`tiene_original` en la
+// respuesta le dicen al frontend si corresponde ofrecer ambos enlaces.
 router.get('/version/:version_id/pdf', async (req, res) => {
     try {
         const { data: version } = await supabase
             .from('cartillas_delegado_versiones')
-            .select('storage_path_pdf')
+            .select('numero_version, storage_path_pdf, storage_path_pdf_rediseno, snapshot')
             .eq('id', req.params.version_id)
             .maybeSingle();
 
         if (!version) return res.status(404).json({ error: 'Versión no encontrada.' });
         if (!version.storage_path_pdf) return res.status(404).json({ error: 'Esta versión aún no tiene un PDF adjunto.' });
 
+        const forzarOriginal = req.query?.original === '1';
+        const tieneRediseno = !!version.storage_path_pdf_rediseno;
+        const rutaAUsar = (!forzarOriginal && tieneRediseno) ? version.storage_path_pdf_rediseno : version.storage_path_pdf;
+
+        const rodeoId = version.snapshot?.rodeo_id;
+        const { data: rodeo } = rodeoId
+            ? await supabase.from('rodeos').select('club, asociacion, fecha').eq('id', rodeoId).maybeSingle()
+            : { data: null };
+
+        const nombre = construirNombreArchivoCartillaDelegadoPdf({
+            asociacion: rodeo?.asociacion,
+            club: rodeo?.club,
+            fecha: version.snapshot?.fecha_rodeo || rodeo?.fecha,
+            version: version.numero_version
+        });
+
         const { data, error } = await supabase.storage
             .from('rodeo-adjuntos')
-            .createSignedUrl(version.storage_path_pdf, 3600);
+            .createSignedUrl(rutaAUsar, 3600);
 
         if (error) return res.status(500).json({ error: error.message });
-        res.json({ url: data.signedUrl });
+        res.json({
+            url: data.signedUrl,
+            nombre_archivo: nombre,
+            tiene_rediseno: tieneRediseno,
+            tiene_original: true,
+            mostrando: (!forzarOriginal && tieneRediseno) ? 'rediseno' : 'original'
+        });
     } catch (err) {
         console.error('[CARTILLAS-DELEGADO version pdf]', err.message);
         res.status(500).json({ error: 'Error interno al obtener el PDF de la versión.' });
@@ -304,6 +348,96 @@ router.post('/version/:version_id/regenerar-pdf', async (req, res) => {
     } catch (err) {
         console.error('[CARTILLAS-DELEGADO regenerar-pdf]', err.message);
         res.status(500).json({ error: 'Error interno al regenerar el PDF.' });
+    }
+});
+
+// ─── POST /api/admin/cartillas-delegado/version/:version_id/actualizar-diseno-pdf ──
+// Formato visual actualizado (096, revisión Nov-2026): a diferencia de
+// regenerar-pdf (que SOBRESCRIBE storage_path_pdf, el PDF original), este
+// endpoint genera el PDF con el diseño nuevo a partir del MISMO snapshot
+// inmutable y lo adjunta en storage_path_pdf_rediseno (columna aparte) —
+// el PDF original jamás se toca ni se pierde. Motivo y actor SIEMPRE
+// obligatorios: esto nunca es una recuperación automática, siempre es una
+// decisión administrativa deliberada de actualizar la presentación visual
+// de un documento ya oficial.
+router.post('/version/:version_id/actualizar-diseno-pdf', async (req, res) => {
+    try {
+        const motivo = (req.body?.motivo || '').trim();
+        if (!motivo) {
+            return res.status(422).json({ error: 'Debe indicar el motivo de la actualización de diseño.', code: 'MOTIVO_REQUERIDO' });
+        }
+
+        const { data: version, error: errVer } = await supabase
+            .from('cartillas_delegado_versiones')
+            .select('id, cartilla_delegado_id, numero_version, snapshot, storage_path_pdf')
+            .eq('id', req.params.version_id)
+            .maybeSingle();
+
+        if (errVer || !version) return res.status(404).json({ error: 'Versión no encontrada.' });
+        if (!version.storage_path_pdf) {
+            return res.status(422).json({
+                error: 'Esta versión no tiene un PDF original adjunto. Use "Regenerar PDF" para generarlo por primera vez.',
+                code: 'SIN_PDF_ORIGINAL'
+            });
+        }
+
+        const rodeoId = version.snapshot?.rodeo_id;
+        const { data: rodeo } = await supabase
+            .from('rodeos')
+            .select('id, club, asociacion, fecha, tipo_rodeo_nombre, categoria_rodeo_nombre, temporada_id, temporadas(nombre)')
+            .eq('id', rodeoId)
+            .maybeSingle();
+
+        // Mismo snapshot inmutable que usa regenerar-pdf — nunca datos en
+        // vivo de otra versión. El PDF resultante refleja el diseño ACTUAL
+        // del generador (logo + portada nueva), no el que existía cuando
+        // esta versión se envió originalmente — es exactamente el objetivo
+        // de este endpoint, no un efecto secundario.
+        const buffer = await generarCartillaDelegadoPDF(version.snapshot, rodeo || {});
+        const storagePath = `${rodeoId}/cartillas-delegado-versiones/${version.cartilla_delegado_id}/v${version.numero_version}_rediseno_${Date.now()}.pdf`;
+
+        const { error: storageErr } = await supabase.storage
+            .from('rodeo-adjuntos')
+            .upload(storagePath, buffer, { contentType: 'application/pdf', upsert: false });
+        if (storageErr) return res.status(500).json({ error: 'Error al subir el PDF actualizado: ' + storageErr.message });
+
+        // confirmar_reemplazo (096, revisión): si esta versión ya tenía una
+        // actualización de diseño previa DISTINTA, la RPC exige esta
+        // confirmación explícita — así una segunda llamada nunca reemplaza
+        // en silencio un rediseño anterior. El proceso masivo (017) nunca
+        // la necesita (su consulta ya excluye versiones con rediseño).
+        const { data, error: errRpc } = await supabase.rpc('actualizar_diseno_pdf_version_cartilla_delegado', {
+            p_version_historica_id: req.params.version_id,
+            p_storage_path_pdf_rediseno: storagePath,
+            p_actor_id: req.usuario.id,
+            p_motivo: motivo,
+            p_actor_tipo: 'administrador',
+            p_reemplazo_confirmado: !!req.body?.confirmar_reemplazo
+        });
+        if (errRpc) {
+            // El PDF YA se subió a storagePath antes de este punto — si la
+            // RPC rechaza por cualquier motivo, ese archivo queda huérfano
+            // (nadie lo referencia) hasta que se reintente o se borre a
+            // mano. Se informa explícitamente en los 3 casos, nunca se
+            // intenta borrarlo automáticamente desde aquí.
+            if (errRpc.message?.includes('SIN_PDF_ORIGINAL')) {
+                return res.status(422).json({ error: 'Esta versión no tiene un PDF original adjunto.', code: 'SIN_PDF_ORIGINAL', storage_path_subido_sin_referenciar: storagePath });
+            }
+            if (errRpc.message?.includes('REEMPLAZO_NO_CONFIRMADO')) {
+                return res.status(409).json({
+                    error: 'Esta versión ya tiene una actualización de diseño previa. Reemplazarla exige confirmación explícita.',
+                    code: 'REEMPLAZO_NO_CONFIRMADO',
+                    storage_path_subido_sin_referenciar: storagePath
+                });
+            }
+            return res.status(500).json({ error: errRpc.message, storage_path_subido_sin_referenciar: storagePath });
+        }
+
+        const actualizada = Array.isArray(data) ? data[0] : data;
+        res.json({ mensaje: 'Diseño del PDF actualizado correctamente. El PDF original se conserva intacto.', version: actualizada });
+    } catch (err) {
+        console.error('[CARTILLAS-DELEGADO actualizar-diseno-pdf]', err.message);
+        res.status(500).json({ error: 'Error interno al actualizar el diseño del PDF.' });
     }
 });
 
@@ -385,11 +519,19 @@ router.get('/:id/pdf', async (req, res) => {
 
         const buffer = await generarCartillaDelegadoPDF(cartilla, cartilla.rodeo || {}, { historialResponsables });
 
-        const nombre = [
-            'cartilla-delegado',
-            (cartilla.rodeo?.club || 'rodeo').replace(/[^a-zA-Z0-9]/g, '-').slice(0, 30),
-            cartilla.fecha_rodeo || 'sin-fecha'
-        ].join('_') + '.pdf';
+        // Nombre real (ASOCIACION_CLUB_FECHA.pdf) — antes era fijo
+        // ('cartilla-delegado_CLUB_FECHA.pdf', truncando el club a 30
+        // caracteres e ignorando la asociación) y, además, el frontend lo
+        // sobrescribía igual con un nombre fijo propio (ver rodeos.html:
+        // descargarPdfCartillaDelegado) — este header nunca llegaba a
+        // usarse en el navegador. Se mantiene aquí para cualquier cliente
+        // que sí respete Content-Disposition (ej. una llamada directa a la
+        // API), con el mismo nombre que ahora construye el frontend.
+        const nombre = construirNombreArchivoCartillaDelegadoPdf({
+            asociacion: cartilla.rodeo?.asociacion,
+            club: cartilla.rodeo?.club,
+            fecha: cartilla.fecha_rodeo || cartilla.rodeo?.fecha
+        });
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);

@@ -8,7 +8,24 @@
 // (cartilla antigua), y que el detalle de la Sección VII se procese aparte
 // sin necesidad del campo general.
 // ═════════════════════════════════════════════════════════════════════════
+const fs = require('fs');
+const path = require('path');
 const { generarCartillaDelegadoPDF } = require('./cartilla-delegado-pdf');
+
+// MEJORA 3 (revisión de legibilidad, validación con datos reales): "→" no
+// existe en WinAnsiEncoding (la codificación de 1 byte de Helvetica/
+// Helvetica-Bold, las únicas fuentes usadas en todo este PDF) — pdfkit no
+// tiene glifo para ese carácter y lo corrompe en el PDF final (se ve como
+// "!" seguido de un carácter inválido, confirmado generando y decodificando
+// un PDF real). Nunca puede volver a aparecer un carácter fuera de ese
+// rango en un `.text()` de este archivo — los acentos/ñ/° sí están en
+// WinAnsiEncoding y se verifican por separado, no se incluyen aquí.
+describe('generarCartillaDelegadoPDF — nunca usa caracteres fuera de WinAnsiEncoding (Helvetica, base14)', () => {
+    test('el código fuente no contiene "→" (U+2192) — rompe el PDF, no tiene glifo en Helvetica', () => {
+        const fuente = fs.readFileSync(path.join(__dirname, 'cartilla-delegado-pdf.js'), 'utf8');
+        expect(fuente).not.toMatch(/→/);
+    });
+});
 
 const CARTILLA_BASE = {
     id: 'cart-1', estado: 'enviada',
@@ -433,5 +450,96 @@ describe('generarCartillaDelegadoPDF — Historial de Responsables (Fase 3.5)', 
             historialResponsables: [{ accion: 'accion_no_mapeada', created_at: '2026-01-01T12:00:00Z' }]
         });
         expect(Buffer.isBuffer(buffer)).toBe(true);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// TABLA DE GANADO — verificación de TEXTO REAL, no solo del Buffer (revisión
+// del usuario, Nov-2026). El encabezado de este archivo explica por qué el
+// resto de los tests son de humo (no hay librería de extracción de texto en
+// el proyecto); para el requisito explícito de "cero real vs. ausencia de
+// dato" eso no basta, así que estos tests decodifican el PDF real: inflan
+// los content streams (FlateDecode) y leen los hex strings de los
+// operadores Tj/TJ — para Helvetica/Helvetica-Bold (las únicas fuentes
+// usadas en todo el documento) esa codificación es 1 byte = 1 carácter
+// WinAnsi/Latin1, así que el texto decodificado es el texto real dibujado.
+// No es una librería nueva ni una dependencia: es un decodificador mínimo,
+// solo para este archivo de test.
+const zlib = require('zlib');
+// WinAnsiEncoding (== CP1252) difiere de Latin-1 solo en el rango 0x80-0x9F
+// (comillas tipográficas, guiones en/em, etc.) — fuera de ese rango,
+// codepoint = byte. Sin este mapa, el guion largo "—" (byte 0x97, usado en
+// TODO el documento para los valores "sin dato") decodificaría como el
+// carácter de control U+0097 en vez de U+2014, y los asserts de este
+// archivo nunca encontrarían el '—' real que el PDF efectivamente dibuja.
+const CP1252_0x80_0x9F = {
+    0x80: '€', 0x82: '‚', 0x83: 'ƒ', 0x84: '„', 0x85: '…',
+    0x86: '†', 0x87: '‡', 0x88: 'ˆ', 0x89: '‰', 0x8A: 'Š',
+    0x8B: '‹', 0x8C: 'Œ', 0x8E: 'Ž', 0x91: '‘', 0x92: '’',
+    0x93: '“', 0x94: '”', 0x95: '•', 0x96: '–', 0x97: '—',
+    0x98: '˜', 0x99: '™', 0x9A: 'š', 0x9B: '›', 0x9C: 'œ',
+    0x9E: 'ž', 0x9F: 'Ÿ'
+};
+function textoVisiblePDF(buffer) {
+    const txt = buffer.toString('latin1');
+    const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let m, salida = '';
+    while ((m = streamRe.exec(txt))) {
+        let contenido;
+        try { contenido = zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); }
+        catch (e) { continue; }
+        const tokenRe = /<([0-9A-Fa-f]+)>/g;
+        let t;
+        while ((t = tokenRe.exec(contenido))) {
+            const hex = t[1];
+            for (let i = 0; i < hex.length; i += 2) {
+                const byte = parseInt(hex.substr(i, 2), 16);
+                salida += CP1252_0x80_0x9F[byte] || String.fromCharCode(byte);
+            }
+        }
+        salida += '\n';
+    }
+    return salida;
+}
+
+// Nota sobre las aserciones: `textoVisiblePDF` concatena TODO el texto de
+// cada celda sin separadores (así dibuja pdfkit: cada celda es un `.text()`
+// independiente) — primero las 5 celdas del ENCABEZADO de la tabla
+// seguidas, después las 5 celdas de la fila de VALORES seguidas. Por eso se
+// compara el bloque exacto "encabezados + valores", no una cercanía
+// aproximada entre una etiqueta y su valor.
+describe('generarCartillaDelegadoPDF — resumen de Serie: cero real vs. ausencia de dato (revisión del usuario)', () => {
+    test('un animal con # Ganado=0 y Bajo/sobrepeso=0 realmente ingresados -> el resumen muestra "0" (nunca "—"), aunque los otros 3 animales no tengan datos', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { ganado_series: [{ nombre: 'Serie X', c1g: 0, f1c: 0, c2g: '', f2c: '', c3g: '', f3c: '', c4g: '', f4c: '' }] }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        // Total ganado utilizado=0, Total fuera de peso=0 (ambos datos reales,
+        // c1g/f1c=0) — ganado total es 0 así que el % no se puede calcular -> '—'.
+        expect(texto).toContain('Total ganado utilizadoTotal fuera de peso% fuera de peso00—');
+    });
+
+    test('ningún animal con # Ganado ni Bajo/sobrepeso ingresados -> el resumen muestra "—" en ambos (nunca un 0 inventado)', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { ganado_series: [{ nombre: 'Serie Y', c1g: '', f1c: '', c2g: null, f2c: null, c3g: undefined, f3c: undefined, c4g: '', f4c: '' }] }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('Total ganado utilizadoTotal fuera de peso% fuera de peso———');
+    });
+
+    test('formato anterior — fp_baj=0 ingresado pero fp_sob nunca ingresado -> "Bajo peso"="0" (real), "Sobre peso"="—" (sin dato), "Total fuera de peso" usa el 0 real (no "—")', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { ganado_series: [{ nombre: 'Serie Legacy', fp_tot: 20, fp_baj: 0 }] }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        // tot=20, baj=0 (real), sob='—' (sin dato), fuer=0 (real, porque baj SÍ
+        // tiene dato), pct=0.0% (tot=20>0) -> "20" + "0" + "—" + "0" + "0.0%".
+        expect(texto).toContain('Total ganado (Art. 242)Bajo pesoSobre pesoTotal fuera de peso% fuera de peso200—0');
     });
 });
