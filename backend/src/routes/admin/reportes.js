@@ -10,6 +10,7 @@ const express = require('express');
 const router  = express.Router();
 const supabase = require('../../config/supabase');
 const { obtenerRetencion } = require('../../services/calculo');
+const { obtenerResumenJurados } = require('../../services/resumenJurados');
 
 // ─── Helper: construir rango de fechas desde filtros ──────────
 function buildRango(año, mes, fechaDesde, fechaHasta) {
@@ -136,26 +137,22 @@ function calcularTotalesPorJurado(asignaciones, porcentajeRetencion) {
 
 // ══════════════════════════════════════════════════════════════
 // GET /api/admin/reportes/resumen-mensual
-// Resumen financiero agrupado por jurado
+// Resumen financiero agrupado por jurado, con una fila por rodeo
+// (rodeos_detalle). Usa la MISMA fuente que la exportación Excel/CSV
+// (services/resumenJurados.js) — pantalla y archivo no pueden divergir.
+// Acepta todos los filtros globales, incluido usuario_pagado_id (Jurado).
 // ══════════════════════════════════════════════════════════════
 router.get('/resumen-mensual', async (req, res) => {
     try {
-        const { año, mes, fechaDesde, fechaHasta, categoria, asociacion, club, tipo_rodeo_id, categoria_rodeo_id } = req.query;
-        const asignaciones = await queryAsignaciones({ año, mes, fechaDesde, fechaHasta, categoria, asociacion, club, tipo_rodeo_id, categoria_rodeo_id });
-        const conBonos     = await agregarBonos(asignaciones);
-        const porcentaje   = await obtenerRetencion();
-        const totales      = calcularTotalesPorJurado(conBonos, porcentaje);
-
-        const totalesGlobal = totales.reduce((acc, j) => ({
-            cant_rodeos:         acc.cant_rodeos         + j.cant_rodeos,
-            total_pago_base:     acc.total_pago_base     + j.total_pago_base,
-            total_bono_aprobado: acc.total_bono_aprobado + j.total_bono_aprobado,
-            bruto:               acc.bruto               + j.bruto,
-            retencion_monto:     acc.retencion_monto     + j.retencion_monto,
-            liquido:             acc.liquido             + j.liquido,
-        }), { cant_rodeos:0, total_pago_base:0, total_bono_aprobado:0, bruto:0, retencion_monto:0, liquido:0 });
-
-        res.json({ data: totales, totales_global: totalesGlobal, retencion_porcentaje: porcentaje, total: totales.length });
+        const r = await obtenerResumenJurados(req.query);
+        res.json({
+            data: r.jurados,
+            totales_global: r.totales_global,
+            retencion_porcentaje: r.retencion_porcentaje,
+            periodo: r.periodo,
+            conciliacion: r.conciliacion,
+            total: r.jurados.length,
+        });
     } catch(err) {
         res.status(500).json({ error: err.message });
     }

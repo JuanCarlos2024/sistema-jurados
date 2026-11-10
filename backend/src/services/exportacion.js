@@ -440,77 +440,231 @@ async function exportarRodeos(filtros, res) {
     await wb.xlsx.write(res);
 }
 
-/**
- * Exportar resumen mensual por jurado (Excel o CSV).
- * Datos ya calculados vienen como parámetro desde la ruta.
- */
-async function exportarResumenJurados(datos, retencionPct, formato, res) {
-    function fmtFecha(iso) {
-        if (!iso) return '—';
-        const [y, m, d] = iso.split('-');
-        return `${d}/${m}/${y}`;
+// ═════════════════════════════════════════════════════════════════════════
+// Resumen por jurado — detalle de rodeos (Excel / CSV)
+// Recibe el objeto de services/resumenJurados.js:obtenerResumenJurados()
+// (la MISMA estructura que muestra la pantalla). Nunca recalcula montos:
+// cada celda numérica es el valor ya calculado; las fórmulas solo
+// re-expresan esas mismas sumas y llevan su resultado precalculado.
+// ═════════════════════════════════════════════════════════════════════════
+const TITULO_RESUMEN_JURADOS = 'Reporte de Pagos por Jurado — Detalle de Rodeos';
+const NUMFMT_CLP = '"$"#,##0;-"$"#,##0';
+const COLOR_AZUL = 'FF1E3A5F';
+const COLOR_AZUL_CLARO = 'FFDCE8F5';
+const COLOR_FILA_ALTERNA = 'FFF5F8FC';
+const COLOR_ROJO = 'FFC0392B';
+const COLOR_VERDE = 'FF1E8449';
+const COLOR_GRIS = 'FF8A94A6';
+
+const COLUMNAS_RESUMEN_JURADOS = [
+    { header: 'Código',                  width: 11 },
+    { header: 'Jurado',                  width: 32 },
+    { header: 'RUT',                     width: 13 },
+    { header: 'N.º',                     width: 5  },
+    { header: 'Fecha',                   width: 11 },
+    { header: 'Asociación organizadora', width: 26 },
+    { header: 'Club organizador',        width: 26 },
+    { header: 'Categoría',               width: 10 },
+    { header: 'Tipo de rodeo',           width: 26 },
+    { header: 'Días',                    width: 6  },
+    { header: 'Pago base',               width: 14 },
+    { header: 'Bono',                    width: 12 },
+    { header: 'Total bruto',             width: 14 },
+    { header: 'Retención',               width: 13 },
+    { header: 'Líquido',                 width: 14 },
+];
+// Columnas (1-based) de montos.
+const C = { COD: 1, NOM: 2, RUT: 3, N: 4, FECHA: 5, ASOC: 6, CLUB: 7, CAT: 8, TIPO: 9, DIAS: 10, PB: 11, BONO: 12, BRUTO: 13, RET: 14, LIQ: 15 };
+const FILA_ENCABEZADO_RESUMEN = 6;
+
+function letraCol(n) { return String.fromCharCode(64 + n); }
+
+function textoSubtotalJurado(j) {
+    const n = j.cant_rodeos;
+    let t = `TOTAL JURADO: ${j.nombre_completo} (${n} ${n === 1 ? 'RODEO' : 'RODEOS'})`;
+    if (j.designaciones_rechazadas > 0 && n === 0) {
+        t += ` — ${j.designaciones_rechazadas} designación(es) rechazada(s), sin pago`;
     }
+    return t;
+}
 
-    const headers = ['Código', 'Nombre', 'RUT', 'Categoría', 'Tipo', 'Rodeos', 'Pago Base', 'Bonos Aprobados', 'Bruto', 'Retención', 'Líquido', 'Rodeos en el rango'];
+function textoTotalGeneral(t) {
+    return `TOTAL GENERAL DEL REPORTE — ${t.cant_jurados} ${t.cant_jurados === 1 ? 'jurado' : 'jurados'} · ${t.cant_rodeos} ${t.cant_rodeos === 1 ? 'asignación' : 'asignaciones'}`;
+}
 
-    if (formato === 'csv') {
-        const filas = datos.map(j => [
-            j.codigo_interno, j.nombre_completo, j.rut || '—', j.categoria || '—',
-            j.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado',
-            j.cant_rodeos, formatCLP(j.total_pago_base), formatCLP(j.total_bono_aprobado),
-            formatCLP(j.bruto), formatCLP(j.retencion_monto), formatCLP(j.liquido),
-            (j.rodeos_detalle || []).map(r => `${r.club} - ${fmtFecha(r.fecha)}`).join(' | ')
-        ]);
-        const csv = generarCSV(headers, filas);
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', 'attachment; filename=resumen_jurados.csv');
-        return res.send(csv);
+function construirCsvResumenJurados(resumen) {
+    const sep = ';';
+    const escapar = (v, esTexto) => {
+        if (v == null) return '';
+        let s = String(v);
+        // Evita que Excel interprete un texto como fórmula (inyección CSV).
+        if (esTexto && /^[=+\-@]/.test(s)) s = "'" + s;
+        return /[;"\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const headers = ['tipo_fila', 'codigo', 'jurado', 'rut', 'n_rodeo', 'fecha', 'asociacion_organizadora', 'club_organizador',
+        'categoria', 'tipo_rodeo', 'dias', 'pago_base', 'bono', 'total_bruto', 'retencion', 'liquido', 'rodeo_id', 'asignacion_id'];
+    const TEXTO = new Set([1, 2, 3, 6, 7, 8, 9]);
+    const lineas = [headers.join(sep)];
+    const push = arr => lineas.push(arr.map((v, i) => escapar(v, TEXTO.has(i))).join(sep));
+
+    for (const j of resumen.jurados) {
+        for (const f of j.rodeos_detalle) {
+            push(['detalle', j.codigo_interno, j.nombre_completo, j.rut, f.n, fechaDDMMAAAA(f.fecha), f.asociacion, f.club,
+                f.categoria, f.tipo_rodeo, f.duracion_dias, f.pago_base, f.bono_aprobado, f.bruto, '', '', f.rodeo_id, f.asignacion_id]);
+        }
+        push(['subtotal_jurado', j.codigo_interno, textoSubtotalJurado(j), j.rut, j.cant_rodeos, '', '', '',
+            '', '', '', j.total_pago_base, j.total_bono_aprobado, j.bruto, j.retencion_monto, j.liquido, '', '']);
     }
+    const t = resumen.totales_global;
+    push(['total_general', '', textoTotalGeneral(t), '', t.cant_rodeos, '', '', '',
+        '', '', '', t.total_pago_base, t.total_bono_aprobado, t.bruto, t.retencion_monto, t.liquido, '', '']);
+    return '﻿' + lineas.join('\r\n') + '\r\n';
+}
 
+function fechaDDMMAAAA(iso) {
+    if (!iso) return '';
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return `${d}/${m}/${y}`;
+}
+
+async function construirLibroResumenJurados(resumen, { filtrosTexto = 'Sin filtros adicionales', generado = new Date() } = {}) {
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Resumen Jurados');
-    ws.columns = [
-        { header: 'Código',            key: 'cod',  width: 12 },
-        { header: 'Nombre',            key: 'nom',  width: 30 },
-        { header: 'RUT',               key: 'rut',  width: 14 },
-        { header: 'Categoría',         key: 'cat',  width: 12 },
-        { header: 'Tipo',              key: 'tipo', width: 18 },
-        { header: 'Rodeos',            key: 'rod',  width: 10 },
-        { header: 'Pago Base',         key: 'pb',   width: 16 },
-        { header: 'Bonos',             key: 'bon',  width: 16 },
-        { header: 'Bruto',             key: 'bruto',width: 16 },
-        { header: 'Retención',         key: 'ret',  width: 16 },
-        { header: 'Líquido',           key: 'liq',  width: 16 },
-        { header: 'Rodeos en el rango',key: 'rng',  width: 40 },
-    ];
-    ws.getRow(1).eachCell(c => { c.font = HEADER_STYLE.font; c.fill = HEADER_STYLE.fill; c.alignment = HEADER_STYLE.alignment; });
-    ws.getRow(1).height = 20;
+    wb.creator = 'Sistema Jurados - Rodeo Chileno';
+    wb.created = generado;
+    wb.calcProperties = { fullCalcOnLoad: true };
+    const ws = wb.addWorksheet('Resumen por jurado', {
+        views: [{ state: 'frozen', xSplit: 3, ySplit: FILA_ENCABEZADO_RESUMEN }],
+        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    });
+    COLUMNAS_RESUMEN_JURADOS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
+    const ncol = COLUMNAS_RESUMEN_JURADOS.length;
+    const ultimaLetra = letraCol(ncol);
 
-    datos.forEach((j, i) => {
-        const rodeosTexto = (j.rodeos_detalle || []).map(r => `${r.club} - ${fmtFecha(r.fecha)}`).join('\n');
-        const row = ws.addRow([
-            j.codigo_interno, j.nombre_completo, j.rut || '—', j.categoria || '—',
-            j.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado',
-            j.cant_rodeos, formatCLP(j.total_pago_base), formatCLP(j.total_bono_aprobado),
-            formatCLP(j.bruto), formatCLP(j.retencion_monto), formatCLP(j.liquido),
-            rodeosTexto
-        ]);
-        row.getCell(12).alignment = { wrapText: true, vertical: 'top' };
-        if (i % 2 === 0) row.eachCell(c => { c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4F8' } }; });
+    // ── Encabezado institucional (sin celdas fusionadas) ──
+    const pct = resumen.retencion_porcentaje;
+    ws.getCell('A1').value = TITULO_RESUMEN_JURADOS;
+    ws.getCell('A1').font = { bold: true, size: 14, color: { argb: COLOR_AZUL } };
+    ws.getCell('A2').value = `Período: ${resumen.periodo?.descripcion || 'Todos los períodos'}`;
+    ws.getCell('A2').font = { bold: true };
+    ws.getCell('A3').value = `Filtros: ${filtrosTexto}`;
+    ws.getCell('A4').value = `Retención ${String(pct).replace('.', ',')} %: se calcula sobre el bruto total de cada jurado en el período (cálculo oficial) y se informa en su fila de subtotal.`;
+    ws.getCell('A4').font = { italic: true, color: { argb: 'FF555555' } };
+    const fechaGen = generado.toLocaleString('es-CL', { timeZone: 'America/Santiago' });
+    ws.getCell('A5').value = `Generado: ${fechaGen}`;
+    ws.getCell('A5').font = { size: 9, color: { argb: COLOR_GRIS } };
+
+    const borde = { top: { style: 'thin', color: { argb: 'FFD5DCE6' } }, bottom: { style: 'thin', color: { argb: 'FFD5DCE6' } },
+        left: { style: 'thin', color: { argb: 'FFD5DCE6' } }, right: { style: 'thin', color: { argb: 'FFD5DCE6' } } };
+
+    const hdr = ws.getRow(FILA_ENCABEZADO_RESUMEN);
+    hdr.values = COLUMNAS_RESUMEN_JURADOS.map(c => c.header);
+    hdr.height = 22;
+    hdr.eachCell((c, col) => {
+        c.font = HEADER_STYLE.font;
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR_AZUL } };
+        c.alignment = { horizontal: col >= C.PB ? 'right' : (col === C.N || col === C.DIAS ? 'center' : 'left'), vertical: 'middle', wrapText: true };
+        c.border = HEADER_STYLE.border;
     });
 
-    // Fila de totales
-    const totRow = ws.addRow(['', 'TOTALES', '', '', '',
-        datos.reduce((s,j) => s+j.cant_rodeos, 0),
-        formatCLP(datos.reduce((s,j) => s+j.total_pago_base, 0)),
-        formatCLP(datos.reduce((s,j) => s+j.total_bono_aprobado, 0)),
-        formatCLP(datos.reduce((s,j) => s+j.bruto, 0)),
-        formatCLP(datos.reduce((s,j) => s+j.retencion_monto, 0)),
-        formatCLP(datos.reduce((s,j) => s+j.liquido, 0)),
-        ''
-    ]);
-    totRow.eachCell(c => { c.font = { bold: true }; c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFE0B2' } }; });
+    const estiloMontos = (row, desde = C.PB) => {
+        for (let col = desde; col <= C.LIQ; col++) row.getCell(col).numFmt = NUMFMT_CLP;
+    };
 
+    let r = FILA_ENCABEZADO_RESUMEN + 1;
+    const primeraFilaDatos = r;
+
+    for (const j of resumen.jurados) {
+        const ini = r;
+        j.rodeos_detalle.forEach((f, i) => {
+            const row = ws.getRow(r);
+            row.values = [
+                j.codigo_interno, j.nombre_completo, j.rut, f.n, fechaExcelReal(f.fecha),
+                f.asociacion, f.club, f.categoria, f.tipo_rodeo, f.duracion_dias,
+                f.pago_base, f.bono_aprobado,
+                { formula: `${letraCol(C.PB)}${r}+${letraCol(C.BONO)}${r}`, result: f.bruto },
+                null, null,
+            ];
+            row.getCell(C.FECHA).numFmt = NUMFMT_FECHA_CHILENA;
+            estiloMontos(row);
+            const fill = i % 2 === 1 ? { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR_FILA_ALTERNA } } : null;
+            for (let col = 1; col <= ncol; col++) {
+                const cell = row.getCell(col);
+                cell.border = { ...borde, ...(i === 0 ? { top: { style: 'medium', color: { argb: COLOR_AZUL } } } : {}) };
+                cell.alignment = { vertical: 'top', wrapText: [C.NOM, C.ASOC, C.CLUB, C.TIPO].includes(col), horizontal: (col === C.N || col === C.DIAS || col === C.CAT) ? 'center' : undefined };
+                if (fill) cell.fill = fill;
+            }
+            // Identificación del jurado: presente en cada fila (ordenable/filtrable),
+            // destacada en la primera y atenuada en las siguientes.
+            [C.COD, C.NOM, C.RUT].forEach(col => {
+                row.getCell(col).font = i === 0 ? { bold: col === C.NOM } : { color: { argb: COLOR_GRIS } };
+            });
+            row.getCell(C.BRUTO).font = { bold: true };
+            r++;
+        });
+        const fin = r - 1;
+
+        const sub = ws.getRow(r);
+        const tieneFilas = j.rodeos_detalle.length > 0;
+        const subtotal = (col, valor) => tieneFilas
+            ? { formula: `SUBTOTAL(9,${letraCol(col)}${ini}:${letraCol(col)}${fin})`, result: valor }
+            : valor;
+        sub.values = [
+            j.codigo_interno, textoSubtotalJurado(j), j.rut, j.cant_rodeos, null, null, null, null, null, null,
+            subtotal(C.PB, j.total_pago_base), subtotal(C.BONO, j.total_bono_aprobado), subtotal(C.BRUTO, j.bruto),
+            j.retencion_monto,
+            { formula: `${letraCol(C.BRUTO)}${r}-${letraCol(C.RET)}${r}`, result: j.liquido },
+        ];
+        estiloMontos(sub);
+        for (let col = 1; col <= ncol; col++) {
+            const cell = sub.getCell(col);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR_AZUL_CLARO } };
+            cell.font = { bold: true, color: { argb: COLOR_AZUL } };
+            cell.border = { ...borde, bottom: { style: 'medium', color: { argb: COLOR_AZUL } } };
+            cell.alignment = { vertical: 'middle', horizontal: col === C.N ? 'center' : undefined };
+        }
+        sub.getCell(C.RET).font = { bold: true, color: { argb: COLOR_ROJO } };
+        sub.getCell(C.LIQ).font = { bold: true, color: { argb: COLOR_VERDE } };
+        r++;
+    }
+    const ultimaFilaDatos = r - 1;
+
+    // ── Total general ──
+    const t = resumen.totales_global;
+    const hayDatos = ultimaFilaDatos >= primeraFilaDatos;
+    const totalCol = (col, valor) => hayDatos
+        ? { formula: `SUBTOTAL(9,${letraCol(col)}${primeraFilaDatos}:${letraCol(col)}${ultimaFilaDatos})`, result: valor }
+        : valor;
+    const tot = ws.getRow(r);
+    tot.values = [
+        null, textoTotalGeneral(t), null, t.cant_rodeos, null, null, null, null, null, null,
+        totalCol(C.PB, t.total_pago_base), totalCol(C.BONO, t.total_bono_aprobado), totalCol(C.BRUTO, t.bruto),
+        totalCol(C.RET, t.retencion_monto), totalCol(C.LIQ, t.liquido),
+    ];
+    estiloMontos(tot);
+    tot.height = 22;
+    for (let col = 1; col <= ncol; col++) {
+        const cell = tot.getCell(col);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR_AZUL } };
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.alignment = { vertical: 'middle', horizontal: col === C.N ? 'center' : undefined };
+    }
+
+    if (hayDatos) ws.autoFilter = `A${FILA_ENCABEZADO_RESUMEN}:${ultimaLetra}${ultimaFilaDatos}`;
+    return wb;
+}
+
+/**
+ * Exportar resumen por jurado con detalle de rodeos (Excel o CSV).
+ * @param {object} resumen  resultado de obtenerResumenJurados() — misma
+ *                          estructura que GET /admin/reportes/resumen-mensual.
+ */
+async function exportarResumenJurados(resumen, formato, res, opciones = {}) {
+    if (formato === 'csv') {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename=resumen_jurados.csv');
+        return res.send(construirCsvResumenJurados(resumen));
+    }
+    const wb = await construirLibroResumenJurados(resumen, opciones);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename=resumen_jurados.xlsx');
     await wb.xlsx.write(res);
@@ -717,5 +871,6 @@ async function exportarHistorialHojaVida(perfil, filas, resumen, res) {
 module.exports = {
     exportarResumenMensual, exportarBonos, exportarPendientes,
     exportarRodeos, exportarResumenJurados, exportarDetalleJurado, exportarAgregado,
-    exportarHistorialHojaVida
+    exportarHistorialHojaVida,
+    construirLibroResumenJurados, construirCsvResumenJurados, TITULO_RESUMEN_JURADOS
 };

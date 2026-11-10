@@ -20,6 +20,34 @@
         .export-bar strong { font-size:13px; color:var(--gris); margin-right:4px; }
         table td.monto { text-align:right; font-variant-numeric:tabular-nums; }
         table th.monto { text-align:right; }
+        /* ── Resumen por jurado: tabla única agrupada ── */
+        #tabla-resumen { overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--gris-borde); }
+        .rj-tabla { min-width:1280px; font-size:13px; }
+        .rj-tabla th { padding:9px 10px; position:sticky; top:0; z-index:1; }
+        .rj-tabla th.centro, .rj-tabla td.centro { text-align:center; }
+        .rj-tabla td { padding:7px 10px; vertical-align:top; }
+        .rj-tabla td.monto { white-space:nowrap; }
+        .rj-tabla tr.rj-detalle:hover td:not(.rj-id) { background:#eef4fb; }
+        .rj-tabla tbody.rj-grupo:hover td.rj-id { background:#f3f7fc; }
+        .rj-grupo { border-top:2px solid var(--azul); }
+        .rj-grupo:first-of-type { border-top:none; }
+        .rj-detalle td { border-bottom:1px solid var(--gris-claro); }
+        .rj-alt td:not(.rj-id) { background:#f7f9fc; }
+        .rj-id { background:#fff; border-right:1px solid var(--gris-borde); font-size:12px; }
+        .rj-nombre { min-width:200px; font-size:13px; }
+        .rj-nombre .rj-ver { margin-top:6px; }
+        .rj-tipo { font-size:11px; color:var(--gris); margin-top:2px; }
+        .rj-fecha { white-space:nowrap; }
+        .rj-texto { min-width:150px; overflow-wrap:anywhere; }
+        .rj-nota { font-size:11px; color:var(--gris); font-weight:normal; }
+        .rj-vacio { color:var(--gris); font-style:italic; }
+        .rj-sin-monto { background:#fafbfc; }
+        .rj-subtotal td { background:#dce8f5 !important; color:var(--azul); font-weight:700; border-bottom:1px solid #b8cbe2; }
+        .rj-subtotal .rj-ret { color:var(--rojo); }
+        .rj-subtotal .rj-liq { color:#1e8449; }
+        .rj-total td { background:var(--azul) !important; color:#fff; font-weight:700; padding:10px; }
+        .rj-leyenda { font-size:12px; color:var(--gris); margin:0 0 8px; padding:8px 10px 0; }
+        .rj-advert { margin:8px; font-size:13px; }
     </style>
 </head>
 <body>
@@ -123,7 +151,7 @@
             <div id="panel-resumen" class="panel activo">
                 <div class="card">
                     <div class="card-titulo flex justify-between items-center">
-                        <span>Resumen mensual por jurado</span>
+                        <span>Resumen por jurado — detalle de rodeos</span>
                         <div class="export-bar">
                             <strong>Exportar:</strong>
                             <button class="btn btn-outline btn-pequeño" onclick="exportar('resumen-jurados','xlsx')">Excel</button>
@@ -291,6 +319,7 @@
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
+<script src="/js/resumenJuradosTabla.js"></script>
 <script>
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
@@ -400,10 +429,12 @@ async function cargarResumen() {
     } catch(err) { wrap.innerHTML = `<div class="alerta alerta-error">${err.message}</div>`; }
 }
 
+// Tabla única agrupada por jurado (una fila por rodeo + subtotal + total
+// general). El HTML lo arma frontend/js/resumenJuradosTabla.js; los montos
+// vienen ya calculados del backend (misma fuente que el Excel/CSV).
 function renderResumen(data) {
     const wrap = document.getElementById('tabla-resumen');
     const stats = document.getElementById('stats-resumen');
-    const t = data.totales_global || {};
 
     if (!data.data || data.data.length === 0) {
         wrap.innerHTML = '<p class="tabla-vacia">Sin datos para los filtros seleccionados</p>';
@@ -412,44 +443,14 @@ function renderResumen(data) {
     }
 
     stats.style.display = 'grid';
-    stats.innerHTML = `
-        <div class="stat-card"><div class="val">${data.data.length}</div><div class="lbl">Jurados</div></div>
-        <div class="stat-card"><div class="val">${t.cant_rodeos||0}</div><div class="lbl">Asignaciones</div></div>
-        <div class="stat-card"><div class="val">${formatCLP(t.total_pago_base||0)}</div><div class="lbl">Total pago base</div></div>
-        <div class="stat-card"><div class="val">${formatCLP(t.total_bono_aprobado||0)}</div><div class="lbl">Total bonos</div></div>
-        <div class="stat-card"><div class="val">${formatCLP(t.bruto||0)}</div><div class="lbl">Total bruto</div></div>
-        <div class="stat-card"><div class="val">${formatCLP(t.liquido||0)}</div><div class="lbl">Total líquido</div></div>`;
-
-    wrap.innerHTML = `<table>
-        <thead><tr>
-            <th>Código</th><th>Nombre</th><th>RUT</th><th>Cat.</th>
-            <th style="text-align:center;">Rodeos</th>
-            <th class="monto">Pago base</th><th class="monto">Bonos</th>
-            <th class="monto">Bruto</th><th class="monto">Retención</th><th class="monto">Líquido</th>
-            <th>Rodeos en el rango</th><th>Detalle</th>
-        </tr></thead>
-        <tbody>
-        ${data.data.map(j => {
-            const rodeosHtml = j.rodeos_detalle && j.rodeos_detalle.length > 0
-                ? j.rodeos_detalle.map(r => `${sanitizar(r.club)} - ${formatFecha(r.fecha)}`).join('<br>')
-                : '<span class="texto-gris">—</span>';
-            return `<tr>
-            <td style="font-size:12px;">${sanitizar(j.codigo_interno)}</td>
-            <td><strong>${sanitizar(j.nombre_completo)}</strong></td>
-            <td style="font-size:12px;">${sanitizar(j.rut||'—')}</td>
-            <td><span class="badge badge-${(j.categoria||'').toLowerCase()}">${j.categoria||'—'}</span></td>
-            <td style="text-align:center;">${j.cant_rodeos}</td>
-            <td class="monto">${formatCLP(j.total_pago_base)}</td>
-            <td class="monto">${formatCLP(j.total_bono_aprobado)}</td>
-            <td class="monto"><strong>${formatCLP(j.bruto)}</strong></td>
-            <td class="monto" style="color:#c0392b;">-${formatCLP(j.retencion_monto)}</td>
-            <td class="monto monto-positivo"><strong>${formatCLP(j.liquido)}</strong></td>
-            <td style="font-size:12px; line-height:1.7;">${rodeosHtml}</td>
-            <td><button class="btn btn-pequeño btn-outline" onclick="verDetalleJurado('${j.id}','${sanitizar(j.nombre_completo)}')">Ver</button></td>
-        </tr>`;}).join('')}
-        </tbody>
-    </table>`;
+    stats.innerHTML = ResumenJuradosTabla.renderStatsResumen(data);
+    wrap.innerHTML = ResumenJuradosTabla.renderTablaResumenJurados(data);
 }
+
+document.getElementById('tabla-resumen').addEventListener('click', e => {
+    const btn = e.target.closest('.rj-ver');
+    if (btn) verDetalleJurado(btn.dataset.juradoId, btn.dataset.juradoNombre);
+});
 
 function verDetalleJurado(id, nombre) {
     document.getElementById('g-jurado').value = id;

@@ -5,9 +5,34 @@ const {
     exportarRodeos, exportarResumenJurados, exportarDetalleJurado, exportarAgregado
 } = require('../../services/exportacion');
 
-// Los reportes usan la misma lógica de cálculo — importamos el helper
-const reportesRouter = require('./reportes');
 const { obtenerRetencion } = require('../../services/calculo');
+const { obtenerResumenJurados } = require('../../services/resumenJurados');
+
+// Texto legible de los filtros activos para el encabezado del Excel.
+async function describirFiltrosResumen(q, resumen) {
+    const partes = [];
+    if (q.usuario_pagado_id) {
+        const j = (resumen.jurados || []).find(x => x.id === q.usuario_pagado_id);
+        partes.push(`Jurado: ${j ? j.nombre_completo : q.usuario_pagado_id}`);
+    }
+    if (q.categoria)  partes.push(`Categoría: ${q.categoria}`);
+    if (q.asociacion) partes.push(`Asociación contiene: "${q.asociacion}"`);
+    if (q.club)       partes.push(`Club contiene: "${q.club}"`);
+    if (q.tipo_rodeo_id) {
+        const f = (resumen.jurados || []).flatMap(j => j.rodeos_detalle)[0];
+        partes.push(`Tipo de rodeo: ${f ? f.tipo_rodeo : q.tipo_rodeo_id}`);
+    }
+    if (q.categoria_rodeo_id) {
+        let nombre = q.categoria_rodeo_id;
+        try {
+            const supabase = require('../../config/supabase');
+            const { data } = await supabase.from('categorias_rodeo').select('nombre').eq('id', q.categoria_rodeo_id).maybeSingle();
+            if (data && data.nombre) nombre = data.nombre;
+        } catch (_) { /* se informa el id */ }
+        partes.push(`Categoría de rodeo: ${nombre}`);
+    }
+    return partes.length ? partes.join(' · ') : 'Sin filtros adicionales';
+}
 
 // ── Exportaciones existentes ──────────────────────────────────
 
@@ -52,16 +77,15 @@ router.get('/rodeos', async (req, res) => {
 });
 
 // GET /api/admin/exportacion/resumen-jurados?año=&mes=&...&formato=xlsx|csv
-// Reutiliza la misma query de reportes para consistencia
+// MISMA fuente que la pantalla (services/resumenJurados.js →
+// GET /admin/reportes/resumen-mensual): mismos filtros, mismas reglas,
+// mismos montos. Antes tenía una copia propia que sumaba designaciones
+// rechazadas e ignoraba categoria_rodeo_id.
 router.get('/resumen-jurados', async (req, res) => {
     try {
-        const supabase = require('../../config/supabase');
-        const { calcularTotalesPorJurado, queryAsignaciones, agregarBonos } = _buildReportHelpers(supabase);
-        const asignaciones = await queryAsignaciones(req.query);
-        const conBonos     = await agregarBonos(asignaciones);
-        const porcentaje   = await obtenerRetencion();
-        const datos        = calcularTotalesPorJurado(conBonos, porcentaje);
-        await exportarResumenJurados(datos, porcentaje, req.query.formato || 'xlsx', res);
+        const resumen = await obtenerResumenJurados(req.query);
+        const filtrosTexto = await describirFiltrosResumen(req.query, resumen);
+        await exportarResumenJurados(resumen, req.query.formato || 'xlsx', res, { filtrosTexto });
     } catch (err) {
         res.status(500).json({ error: 'Error al generar exportación: ' + err.message });
     }
@@ -211,34 +235,7 @@ function _buildReportHelpers(supabase) {
         });
     }
 
-    function calcularTotalesPorJurado(asignaciones, pct) {
-        const mapa = {};
-        for (const a of asignaciones) {
-            const u = a.usuarios_pagados;
-            if (!u) continue;
-            const esRechazada = a.estado_designacion === 'rechazado';
-            if (!mapa[u.id]) mapa[u.id] = { id: u.id, codigo_interno: u.codigo_interno, nombre_completo: u.nombre_completo, rut: u.rut||'—', categoria: u.categoria||'—', tipo_persona: u.tipo_persona, cant_rodeos: 0, total_pago_base: 0, total_bono_aprobado: 0, rodeos_detalle: [], _seenRodeos: new Set() };
-            if (!esRechazada) {
-                mapa[u.id].cant_rodeos++;
-                mapa[u.id].total_pago_base     += (a.pago_base_calculado || 0);
-                mapa[u.id].total_bono_aprobado += (a.bono_aprobado || 0);
-                const rid = a.rodeos?.id;
-                if (rid && !mapa[u.id]._seenRodeos.has(rid)) {
-                    mapa[u.id]._seenRodeos.add(rid);
-                    mapa[u.id].rodeos_detalle.push({ club: a.rodeos?.club || '—', fecha: a.rodeos?.fecha || '' });
-                }
-            }
-        }
-        return Object.values(mapa).map(j => {
-            const bruto = j.total_pago_base + j.total_bono_aprobado;
-            const ret   = Math.round(bruto * pct / 100);
-            j.rodeos_detalle.sort((a, b) => a.fecha.localeCompare(b.fecha));
-            delete j._seenRodeos;
-            return { ...j, bruto, retencion_monto: ret, liquido: bruto - ret };
-        }).sort((a, b) => a.nombre_completo.localeCompare(b.nombre_completo));
-    }
-
-    return { queryAsignaciones, agregarBonos, calcularTotalesPorJurado };
+    return { queryAsignaciones, agregarBonos };
 }
 
 module.exports = router;
