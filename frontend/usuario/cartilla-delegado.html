@@ -254,6 +254,15 @@ let _disc    = {};  // disciplina
 let _recinto = {};  // recinto deportivo
 let _col     = {};  // colleras invitadas
 let _ree     = {};  // reemplazo jinetes
+// "Corre por los premios" / "Deja puntos para la próxima temporada" (nuevo):
+// cada una con su propia respuesta Sí/No/null y su propia colección de
+// colleras — completamente independientes entre sí (ver toggleRespuestaSeccion
+// / agregarColleraNueve, nunca se copian ni se sincronizan entre ambas).
+// `respuesta` arranca en null (nunca preseleccionado, nunca asumido "No") —
+// así una cartilla histórica sin estas preguntas se distingue de una
+// respuesta real "No".
+let _premios = {}; // { respuesta: 'si'|'no'|null, items: [] }
+let _puntos  = {}; // { respuesta: 'si'|'no'|null, items: [] }
 // Informe general de accidentes (bloque breve, dentro de la Sección I
 // unificada, documento oficial 2026-2027): TEXTO LIBRE independiente del
 // detalle estructurado de "VI. Reporte de accidentes" (`_acc`). Comparte
@@ -299,9 +308,22 @@ async function init() {
 // ═════════════════════════════════════════════════════════════════════════════
 function renderCartilla(r) {
     const { rodeo, perfil, cartilla, jurados, conflicto_rentado, delegado_rentado_designado, bloqueada_por_designacion_posterior, cartilla_delegado_adjunta, cartilla_delegado_estado, historial_responsables, delegado_confirmado } = r;
-    // Corrección "Delegado Oficial": fuente única y autoritativa (nunca el
-    // perfil de la cuenta institucional ni el input editable) — ver más abajo.
-    _delegadoOficialNombre = _esInstitucional ? (cartilla?.delegado_nombre || delegado_confirmado?.nombre || '') : null;
+    // Corrección "Delegado Oficial": fuente única y autoritativa en AMBAS
+    // modalidades — nunca el perfil de la cuenta institucional (esa cuenta
+    // es de la asociación, no de una persona) ni un campo de texto libre.
+    // Delegado de Asociación: el responsable YA CONFIRMADO para este rodeo
+    // (`delegado_confirmado`, desde "Mis Rodeos"); una vez creada la
+    // cartilla, `cartilla.delegado_nombre` (snapshot fijado por el backend
+    // al crear/reemplazar) tiene prioridad para ESE registro específico.
+    // Delegado Rentado: `perfil.nombre_completo` — GET /rodeo/:rodeo_id ya
+    // exige una asignación vigente (activa, publicada, no rechazada) para
+    // ESTE usuario y ESTE rodeo antes de devolver cualquier dato (ver
+    // backend/src/routes/usuario/cartilla-delegado.js), así que el perfil
+    // del usuario autenticado YA ES el delegado designado y autorizado —
+    // nunca un nombre libre.
+    _delegadoOficialNombre = _esInstitucional
+        ? (cartilla?.delegado_nombre || delegado_confirmado?.nombre || '')
+        : (cartilla?.delegado_nombre || perfil?.nombre_completo || '');
     _bloqueadaPorDesignacionPosterior = !!bloqueada_por_designacion_posterior;
     // Verificación previa a publicación: solo aplica cuando YA existe un
     // borrador (si no existe ninguno, se corta el render más abajo con el
@@ -531,10 +553,10 @@ function renderCartilla(r) {
             <div class="campo-grid" style="margin-bottom:14px;">
                 <div>
                     <label class="form-label">Delegado Oficial <span class="req">*</span></label>
-                    ${_esInstitucional
-                        ? `<input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(_delegadoOficialNombre || '')}" readonly disabled>
-                           <div style="font-size:11px;color:var(--gris);margin-top:4px;">Delegado confirmado desde "Mis Rodeos". Para cambiarlo, solicite un reemplazo al Administrador.</div>`
-                        : `<input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(fld('delegado_nombre', perfil?.nombre_completo || ''))}" ${ya ? 'readonly' : ''}>`}
+                    <input type="text" id="f-delegado_nombre" class="form-control" value="${sanitizar(_delegadoOficialNombre || '')}" readonly disabled>
+                    ${!_delegadoOficialNombre
+                        ? `<div class="alerta alerta-advertencia" style="font-size:11px;padding:6px 10px;margin-top:4px;">⚠ Aún no hay un delegado confirmado para este rodeo. Debe seleccionarlo y confirmarlo desde "Mis Rodeos" antes de completar o enviar esta cartilla.</div>`
+                        : `<div style="font-size:11px;color:var(--gris);margin-top:4px;">${_esInstitucional ? 'Delegado confirmado desde "Mis Rodeos". Para cambiarlo, solicite un reemplazo al Administrador.' : 'Delegado Rentado con asignación vigente para este rodeo.'}</div>`}
                 </div>
                 <div>
                     <label class="form-label">Teléfono</label>
@@ -647,6 +669,26 @@ function renderCartilla(r) {
                     <label><input type="radio" name="incluye_informe_ganado_bajo_peso" value="no" ${bool2radio('incluye_informe_ganado_bajo_peso') === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''}> No</label>
                 </div>
             </div>
+            <!-- "Corre por los premios" / "Deja puntos para la próxima
+                 temporada" (nuevo): dos preguntas INDEPENDIENTES entre sí —
+                 cada una habilita su propia sección de colleras más abajo
+                 (ver renderSeccionColleraNueve). Nunca preseleccionadas en
+                 cartillas nuevas (_premios.respuesta/_puntos.respuesta
+                 arrancan en null). -->
+            <div style="margin-bottom:14px;">
+                <label class="form-label">¿Hay colleras que corren por los premios?</label>
+                <div class="radio-grupo">
+                    <label><input type="radio" name="pregunta_premios" value="si" ${_premios.respuesta === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''} onchange="toggleRespuestaSeccion('premios','si')"> Sí</label>
+                    <label><input type="radio" name="pregunta_premios" value="no" ${_premios.respuesta === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''} onchange="toggleRespuestaSeccion('premios','no')"> No</label>
+                </div>
+            </div>
+            <div style="margin-bottom:14px;">
+                <label class="form-label">¿El rodeo deja puntos para la próxima temporada?</label>
+                <div class="radio-grupo">
+                    <label><input type="radio" name="pregunta_puntos" value="si" ${_puntos.respuesta === 'si' ? 'checked' : ''} ${ya ? 'disabled' : ''} onchange="toggleRespuestaSeccion('puntos','si')"> Sí</label>
+                    <label><input type="radio" name="pregunta_puntos" value="no" ${_puntos.respuesta === 'no' ? 'checked' : ''} ${ya ? 'disabled' : ''} onchange="toggleRespuestaSeccion('puntos','no')"> No</label>
+                </div>
+            </div>
             <hr style="margin:18px 0; border:none; border-top:1px solid #eee;">
             <div style="font-size:13px; font-weight:700; color:#1a3c6e; margin-bottom:12px;">Certificación del Club Organizador</div>
             <div class="checkbox-grupo">
@@ -755,6 +797,22 @@ function renderCartilla(r) {
     html += `<div class="bloque">
         <div class="bloque-header">VIII. Informe de colleras invitadas</div>
         <div class="bloque-body" id="sec-colleras"></div>
+    </div>`;
+
+    // ─── Colleras que corren por los premios / dejan puntos (nuevo) ─────────
+    // Secciones completamente DISTINTAS de "Colleras Invitadas" (requisito
+    // explícito: no mezclar). Cada una muestra su propio contenedor solo si
+    // la pregunta correspondiente (más arriba, antecedentes del rodeo) está
+    // en "Sí" — ver renderSeccionColleraNueve, que oculta el bloque entero
+    // (incluso el título) cuando la respuesta no es "Sí", para no mostrar un
+    // bloque vacío sin sentido.
+    html += `<div class="bloque" id="bloque-colleras-premios" style="display:${_premios.respuesta === 'si' ? 'block' : 'none'};">
+        <div class="bloque-header">Colleras que corren por los premios</div>
+        <div class="bloque-body" id="sec-colleras-premios"></div>
+    </div>`;
+    html += `<div class="bloque" id="bloque-colleras-puntos" style="display:${_puntos.respuesta === 'si' ? 'block' : 'none'};">
+        <div class="bloque-header">Colleras que dejan puntos para la próxima temporada</div>
+        <div class="bloque-body" id="sec-colleras-puntos"></div>
     </div>`;
 
     // ─── SECCIÓN IX — Informe delegado / veterinario condiciones de
@@ -1161,6 +1219,11 @@ function setSerieNombre(idx, valor) {
     if (_seriesGanado[idx]) _seriesGanado[idx].nombre = valor;
     renderSeriesGanadoUnificado(ya); // refresca disabled= de las demás series
     renderFaltasPorSerie(ya);
+    // MEJORA 1 — refresca el selector de "Serie" de cada situación
+    // disciplinaria (Sección VI): nunca se toca `s.serie` acá (una situación
+    // ya asociada a un nombre antiguo lo conserva como opción "ya no
+    // corresponde..." hasta que el delegado elija una nueva explícitamente).
+    renderTablaDisciplina(ya);
 }
 
 function serieTieneDatos(s) {
@@ -1170,14 +1233,24 @@ function serieTieneDatos(s) {
 function quitarSerie(idx){
     const s = _seriesGanado[idx];
     if (!s) return;
-    const msg = serieTieneDatos(s)
+    let msg = serieTieneDatos(s)
         ? 'Esta serie contiene información. ¿Seguro que deseas eliminarla?'
         : '¿Quitar esta serie?';
+    // MEJORA 1 (regla 5) — advertir explícitamente si hay situaciones
+    // disciplinarias asociadas a esta serie: nunca se les quita el valor en
+    // silencio, pero sí se le avisa al delegado que quedará "huérfano" y
+    // deberá volver a seleccionar una serie (el selector de la situación lo
+    // mostrará como "ya no corresponde a una serie registrada").
+    const situacionesAfectadas = s.nombre ? _disc.situaciones.filter(st => st.serie === s.nombre).length : 0;
+    if (situacionesAfectadas > 0) {
+        msg += `\n\nATENCIÓN: ${situacionesAfectadas} situación(es) disciplinaria(s) está(n) asociada(s) a la serie "${s.nombre}". Al eliminarla deberá seleccionar una nueva serie para esa(s) situación(es).`;
+    }
     if (!confirm(msg)) return;
     _seriesGanado.splice(idx, 1);
     const ya = esSoloLectura();
     renderSeriesGanadoUnificado(ya);
     renderFaltasPorSerie(ya);
+    renderTablaDisciplina(ya);
 }
 
 function setCelda(idx,campo,valor){ if(_seriesGanado[idx]) _seriesGanado[idx][campo]=valor; }
@@ -1198,6 +1271,8 @@ function _initSecciones3(cartilla) {
     _recinto = Object.assign({}, rj.recinto_deportivo || {});
     _col     = Object.assign({ no_hubo:false, items:[] }, rj.colleras_invitadas || {});
     _ree     = Object.assign({ hubo:null, items:[] }, rj.reemplazo_jinetes || {});
+    _premios = Object.assign({ respuesta:null, items:[] }, rj.corre_premios || {});
+    _puntos  = Object.assign({ respuesta:null, items:[] }, rj.deja_puntos_temporada || {});
     // Antecedentes disciplinarios complementarios — se edita ahora DENTRO de
     // la Sección VI unificada (ver renderSeccionDisciplina), no en un bloque
     // aparte. Se inicializa acá para estar disponible antes de ese render.
@@ -1211,6 +1286,8 @@ function _initSecciones3(cartilla) {
     renderSeccionDisciplina(ya);
     renderSeccionRecinto(ya);
     renderSeccionColleras(ya);
+    renderSeccionColleraNueve('premios', ya);
+    renderSeccionColleraNueve('puntos', ya);
     renderSeccionReemplazo(ya);
     renderFaltasPorSerie(ya);
 }
@@ -1405,6 +1482,23 @@ function renderSeccionDisciplina(ya) {
     renderTablaDisciplina(ya);
 }
 
+// Selector dinámico "Serie en que ocurrió la situación" (MEJORA 1): nunca un
+// catálogo fijo — las opciones son siempre los nombres REALES ya registrados
+// en `_seriesGanado` (Sección I). Si `valorActual` ya no coincide con
+// ninguna serie vigente (serie eliminada, renombrada, o cartilla histórica
+// de antes de este campo) se agrega como opción adicional marcada — nunca se
+// pierde el dato ya guardado ni se reemplaza en silencio (mismo criterio que
+// `optsSerieSelect`, de la Sección I, para su propio selector de nombre).
+function optsSerieDisciplina(valorActual) {
+    const nombres = [...new Set(_seriesGanado.map(s => s.nombre).filter(Boolean))];
+    let opts = `<option value="">— Seleccionar serie —</option>`;
+    if (valorActual && !nombres.includes(valorActual)) {
+        opts += `<option value="${esc(valorActual)}" selected>${esc(valorActual)} (ya no corresponde a una serie registrada)</option>`;
+    }
+    opts += nombres.map(n => `<option value="${esc(n)}" ${n === valorActual ? 'selected' : ''}>${esc(n)}</option>`).join('');
+    return opts;
+}
+
 function renderTablaDisciplina(ya) {
     const cont = document.getElementById('disc-situaciones-cont');
     if (!cont) return;
@@ -1414,13 +1508,38 @@ function renderTablaDisciplina(ya) {
     }
     const dis = ya ? 'disabled' : '';
     const ro  = ya ? 'readonly' : '';
-    cont.innerHTML = _disc.situaciones.map((s,i) => `
+    cont.innerHTML = _disc.situaciones.map((s,i) => {
+        // Serie: en lectura (cartilla ya enviada) se muestra como texto fijo
+        // ("No informado" si la cartilla histórica nunca tuvo este campo —
+        // nunca se inventa una serie). Editando, si todavía no hay NINGUNA
+        // serie registrada en la Sección I y esta situación tampoco tiene
+        // una guardada, se pide registrar la serie primero en vez de ofrecer
+        // un selector vacío.
+        let campoSerie;
+        if (ya) {
+            campoSerie = `<div class="campo-form-sm">
+                <label>Serie en que ocurrió la situación</label>
+                <input type="text" value="${esc(s.serie || 'No informado')}" readonly>
+            </div>`;
+        } else if (_seriesGanado.length === 0 && !s.serie) {
+            campoSerie = `<div class="campo-form-sm">
+                <label>Serie en que ocurrió la situación</label>
+                <p style="font-size:11px;color:#888;font-style:italic;margin:4px 0;">Primero debe registrar al menos una serie en la Sección I (Información de las Series e Informe del Ganado).</p>
+            </div>`;
+        } else {
+            campoSerie = `<div class="campo-form-sm">
+                <label>Serie en que ocurrió la situación</label>
+                <select onchange="setSituacion(${i},'serie',this.value)">${optsSerieDisciplina(s.serie)}</select>
+            </div>`;
+        }
+        return `
     <div class="sit-card">
         <div class="sit-card-hdr">
             Situación N° ${i+1}
             ${ya ? '' : `<button class="btn-q" onclick="quitarSituacion(${i})">✕ Eliminar</button>`}
         </div>
         <div class="sit-card-body">
+            ${campoSerie}
             <div class="campo-form-sm">
                 <label>Nombre del infractor</label>
                 <input type="text" value="${esc(s.nombre_infractor||'')}" ${ro} oninput="setSituacion(${i},'nombre_infractor',this.value)" placeholder="Nombre completo">
@@ -1454,7 +1573,8 @@ function renderTablaDisciplina(ya) {
                 <textarea rows="2" ${ro} oninput="setSituacion(${i},'observaciones',this.value)" placeholder="Observaciones, evidencias disponibles (fotos, videos, audios)...">${esc(s.observaciones||'')}</textarea>
             </div>
         </div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
 }
 
 function setDiscHubo(val) {
@@ -1472,7 +1592,7 @@ function setDiscHubo(val) {
 function setSituacion(idx, campo, valor) { if (_disc.situaciones[idx]) _disc.situaciones[idx][campo] = valor; }
 
 function agregarSituacion() {
-    _disc.situaciones.push({ nombre_infractor:'', rut:'', num_socio:'', tipo_falta:'', articulo:'', detalle:'', testigos:'', observaciones:'' });
+    _disc.situaciones.push({ serie:'', nombre_infractor:'', rut:'', num_socio:'', tipo_falta:'', articulo:'', detalle:'', testigos:'', observaciones:'' });
     renderTablaDisciplina(false);
 }
 
@@ -1628,6 +1748,163 @@ function quitarColleraInvitada(idx) {
     if (!confirm('¿Quitar esta collera invitada?')) return;
     _col.items.splice(idx, 1);
     renderTablaCollerasInv(false);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// "CORRE POR LOS PREMIOS" / "DEJA PUNTOS PARA LA PRÓXIMA TEMPORADA" (nuevo)
+// Dos secciones INDEPENDIENTES entre sí (misma estructura de 9 campos, cada
+// una con su propia colección _premios/_puntos) — nunca se copian ni
+// sincronizan entre ambas: una collera puede aparecer en ninguna, una o
+// ambas listas, sin relación automática alguna.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const CAMPOS_COLLERA_NUEVA = [
+    { key: 'rut1',            label: 'RUT Jinete 1',       placeholder: '11.111.111-1' },
+    { key: 'nombre1',         label: 'Nombre Jinete 1',    placeholder: 'Nombre completo' },
+    { key: 'rut2',            label: 'RUT Jinete 2',       placeholder: '11.111.111-1' },
+    { key: 'nombre2',         label: 'Nombre Jinete 2',    placeholder: 'Nombre completo' },
+    { key: 'num_caballo1',    label: 'N° Caballo 1',       placeholder: 'N°' },
+    { key: 'nombre_caballo1', label: 'Nombre Caballo 1',   placeholder: 'Nombre' },
+    { key: 'num_caballo2',    label: 'N° Caballo 2',       placeholder: 'N°' },
+    { key: 'nombre_caballo2', label: 'Nombre Caballo 2',   placeholder: 'Nombre' },
+    { key: 'lugar',           label: 'Lugar Obtenido',     placeholder: '1°, 2°, ...' }
+];
+
+// Mismo algoritmo (módulo 11) que backend/src/services/rut.js:calcularDv —
+// se porta acá SOLO para dar feedback inmediato en el formulario; el backend
+// nunca valida el contenido de respuestas_json (es un JSONB opaco), así que
+// esta es la única validación real de dígito verificador para estos campos.
+function calcularDvRutFormulario(cuerpo) {
+    let suma = 0, multiplo = 2;
+    const str = String(cuerpo);
+    for (let i = str.length - 1; i >= 0; i--) {
+        suma += parseInt(str[i], 10) * multiplo;
+        multiplo = multiplo < 7 ? multiplo + 1 : 2;
+    }
+    const resto = suma % 11;
+    if (resto === 0) return '0';
+    if (resto === 1) return 'K';
+    return String(11 - resto);
+}
+function validarRutConDv(rutRaw) {
+    if (!rutRaw) return { valido: false };
+    const rut = String(rutRaw).trim().replace(/\./g, '').toUpperCase();
+    if (!rut.includes('-')) return { valido: false };
+    const [cuerpo, dv] = rut.split('-');
+    if (!/^\d+$/.test(cuerpo) || !/^[0-9K]$/.test(dv || '')) return { valido: false };
+    return { valido: calcularDvRutFormulario(cuerpo) === dv };
+}
+
+function estadoColleraSeccion(tipo) { return tipo === 'premios' ? _premios : _puntos; }
+function idsColleraSeccion(tipo) {
+    return {
+        bloque: tipo === 'premios' ? 'bloque-colleras-premios' : 'bloque-colleras-puntos',
+        cont:   tipo === 'premios' ? 'sec-colleras-premios' : 'sec-colleras-puntos',
+        tabla:  'tabla-cont-' + tipo
+    };
+}
+
+function renderSeccionColleraNueve(tipo, ya) {
+    const estado = estadoColleraSeccion(tipo);
+    const ids = idsColleraSeccion(tipo);
+    const bloque = document.getElementById(ids.bloque);
+    if (bloque) bloque.style.display = estado.respuesta === 'si' ? 'block' : 'none';
+    const cont = document.getElementById(ids.cont);
+    if (!cont) return;
+    if (estado.respuesta !== 'si') { cont.innerHTML = ''; return; }
+    cont.innerHTML = `
+    <div class="tabla-wrap-ganado" id="${ids.tabla}"></div>
+    ${ya ? '' : `<button class="btn btn-outline btn-agregar-serie" onclick="agregarColleraNueve('${tipo}')">+ Agregar otra collera</button>`}`;
+    renderTablaColleraNueve(tipo, ya);
+}
+
+function renderTablaColleraNueve(tipo, ya) {
+    const estado = estadoColleraSeccion(tipo);
+    const wrap = document.getElementById(idsColleraSeccion(tipo).tabla);
+    if (!wrap) return;
+    if (estado.items.length === 0) {
+        wrap.innerHTML = '<p style="font-size:12px;color:#888;font-style:italic;margin:4px 0 8px;">Sin colleras registradas. Agregue al menos una.</p>';
+        return;
+    }
+    const dis = ya ? 'disabled' : '';
+    const filas = estado.items.map((c, i) => {
+        const celdas = CAMPOS_COLLERA_NUEVA.map(f => {
+            const esRut = f.key === 'rut1' || f.key === 'rut2';
+            const valor = c[f.key] || '';
+            const rutInvalido = esRut && valor.trim() !== '' && !validarRutConDv(valor).valido;
+            return `<td><input class="inp-din" style="${rutInvalido ? 'border-color:#c0392b;background:#fff5f5;' : ''}" value="${esc(valor)}" ${dis}
+                oninput="setColleraNueve('${tipo}',${i},'${f.key}',this.value)" placeholder="${esc(f.placeholder)}" title="${esRut ? 'RUT con dígito verificador, ej: 11.111.111-1' : ''}"></td>`;
+        }).join('');
+        return `<tr>${celdas}${ya ? '' : `<td style="width:36px;text-align:center;"><button class="btn-q" onclick="quitarColleraNueve('${tipo}',${i})">✕</button></td>`}</tr>`;
+    }).join('');
+    wrap.innerHTML = `<table class="tbl-din"><thead><tr>
+        ${CAMPOS_COLLERA_NUEVA.map(f => `<th>${esc(f.label)}</th>`).join('')}
+        ${ya ? '' : '<th></th>'}
+    </tr></thead><tbody>${filas}</tbody></table>`;
+}
+
+function setColleraNueve(tipo, idx, campo, valor) {
+    const estado = estadoColleraSeccion(tipo);
+    if (estado.items[idx]) estado.items[idx][campo] = valor;
+}
+
+function agregarColleraNueve(tipo) {
+    const estado = estadoColleraSeccion(tipo);
+    estado.items.push({ rut1:'', nombre1:'', rut2:'', nombre2:'', num_caballo1:'', nombre_caballo1:'', num_caballo2:'', nombre_caballo2:'', lugar:'' });
+    renderTablaColleraNueve(tipo, false);
+}
+
+function quitarColleraNueve(tipo, idx) {
+    const etiqueta = tipo === 'premios' ? 'collera que corre por los premios' : 'collera que deja puntos para la próxima temporada';
+    if (!confirm('¿Quitar esta ' + etiqueta + '?')) return;
+    const estado = estadoColleraSeccion(tipo);
+    estado.items.splice(idx, 1);
+    renderTablaColleraNueve(tipo, false);
+}
+
+// Regla D/E del pedido: cambiar de "Sí" a "No" con colleras ya registradas
+// exige confirmación explícita antes de dejar de considerarlas vigentes —
+// nunca se borran datos por accidente, y nunca se asume que "Sí" en una
+// pregunta implica algo sobre la otra (cada estado es 100% independiente).
+function toggleRespuestaSeccion(tipo, valor) {
+    const estado = estadoColleraSeccion(tipo);
+    const nombreSeccion = tipo === 'premios' ? 'colleras que corren por los premios' : 'colleras que dejan puntos para la próxima temporada';
+    if (valor === 'no' && estado.respuesta === 'si' && estado.items.length > 0) {
+        const cantidad = estado.items.length;
+        if (!confirm(`Ya hay ${cantidad} ${nombreSeccion} registrada(s). Si cambia la respuesta a "No", esos registros dejarán de enviarse como vigentes. ¿Confirma el cambio?`)) {
+            document.querySelectorAll(`input[name="pregunta_${tipo}"]`).forEach(r => { r.checked = (r.value === estado.respuesta); });
+            return;
+        }
+        estado.items = []; // confirmado: ya no es una colección vigente (nunca se "guarda como vigente si la respuesta es No")
+    }
+    estado.respuesta = valor;
+    renderSeccionColleraNueve(tipo, false);
+}
+
+// Requisito F del pedido: al enviar oficialmente, cada sección marcada "Sí"
+// debe tener al menos una collera con los 9 campos completos y RUT válido
+// (dígito verificador). Si la respuesta es "No", nunca se exige nada —
+// nunca se piden colleras para una sección no habilitada.
+const CAMPOS_OBLIGATORIOS_COLLERA_NUEVA = ['rut1','nombre1','rut2','nombre2','num_caballo1','nombre_caballo1','num_caballo2','nombre_caballo2','lugar'];
+function validarSeccionColleraNueve(estado, nombreSeccion) {
+    if (estado.respuesta !== 'si') return null;
+    if (!estado.items || estado.items.length === 0) {
+        return `Ha indicado "Sí" en "${nombreSeccion}". Debe agregar al menos una collera.`;
+    }
+    const hayCompleta = estado.items.some(c => CAMPOS_OBLIGATORIOS_COLLERA_NUEVA.every(k => c[k] && String(c[k]).trim() !== ''));
+    if (!hayCompleta) {
+        return `En "${nombreSeccion}" debe haber al menos una collera con todos sus datos completos.`;
+    }
+    const rutsInvalidos = [];
+    estado.items.forEach((c, i) => {
+        [['rut1','RUT Jinete 1'],['rut2','RUT Jinete 2']].forEach(([k, label]) => {
+            if (c[k] && String(c[k]).trim() !== '' && !validarRutConDv(c[k]).valido) rutsInvalidos.push(`Collera ${i + 1} — ${label}`);
+        });
+    });
+    if (rutsInvalidos.length > 0) {
+        return `${nombreSeccion}: RUT con dígito verificador inválido en ${rutsInvalidos.join(', ')}.`;
+    }
+    return null;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2369,6 +2646,8 @@ function recolectarDatos() {
         disciplina_informe:   _disc,
         recinto_deportivo:    _recinto,
         colleras_invitadas:   _col,
+        corre_premios:            _premios,
+        deja_puntos_temporada:    _puntos,
         reemplazo_jinetes:    _ree,
         accidentes_informe:   _acc,
         bienestar_animal:     _ba,
@@ -2389,11 +2668,11 @@ function recolectarDatos() {
         // nunca depender solo de un atributo HTML). Se envía siempre
         // _delegadoOficialNombre, la fuente autoritativa ya confirmada —
         // así coincide exactamente con cartilla.delegado_nombre y el backend
-        // nunca rechaza el guardado por esta causa. Delegado Rentado sigue
-        // leyendo el input de siempre (su propio nombre, editable).
-        delegado_nombre: _esInstitucional
-            ? (_delegadoOficialNombre || null)
-            : (document.getElementById('f-delegado_nombre')?.value.trim() || null),
+        // nunca rechaza el guardado por esta causa. Delegado Rentado AHORA
+        // también usa la fuente autoritativa (_delegadoOficialNombre,
+        // sourced de perfil.nombre_completo) — el campo del formulario es
+        // de solo lectura en ambas modalidades, nunca texto libre.
+        delegado_nombre: _delegadoOficialNombre || null,
         delegado_telefono:                   document.getElementById('f-delegado_telefono')?.value.trim() || null,
         // Columnas antiguas (secretario_jurado/secretario_numero_socio) se
         // conservan escribiéndose en paralelo desde el objeto `_sec` nuevo
@@ -2515,12 +2794,35 @@ async function enviarCartilla() {
         mostrarToast('Ha indicado que hubo informe de disciplina. Debe agregar al menos una situación disciplinaria.', 'advertencia');
         return;
     }
+    // MEJORA 1 — la serie es obligatoria ANTES del envío oficial solo
+    // cuando efectivamente hay series registradas (si no hay ninguna, el
+    // selector ni siquiera se ofrece — ver renderTablaDisciplina — así que
+    // nunca se bloquea el envío por un campo imposible de completar).
+    // También cubre la referencia HUÉRFANA (serie renombrada o eliminada
+    // después de asociarla): el valor histórico se conserva en el dato
+    // (nunca se borra solo), pero un envío oficial nuevo no puede dejarla
+    // sin resolver en silencio — debe coincidir con una serie VIGENTE.
+    if (_disc.hubo_informe === 'si' && _seriesGanado.length > 0) {
+        const nombresSeriesVigentes = new Set(_seriesGanado.map(s => s.nombre).filter(Boolean));
+        const sinSerie = (_disc.situaciones || []).filter(s => !s.serie || !s.serie.trim() || !nombresSeriesVigentes.has(s.serie));
+        if (sinSerie.length > 0) {
+            mostrarToast('Debe seleccionar la serie correspondiente a cada situación disciplinaria antes de enviar (una serie eliminada o renombrada debe volver a seleccionarse).', 'advertencia');
+            return;
+        }
+    }
 
     // Validación ETAPA 3 — reemplazo de jinetes
     if (_ree.hubo === 'si' && (!_ree.items || _ree.items.length === 0)) {
         mostrarToast('Ha indicado que hubo reemplazo de jinetes. Debe agregar al menos un registro.', 'advertencia');
         return;
     }
+
+    // Validación — "Corre por los premios" / "Deja puntos para la próxima
+    // temporada" (nuevo, Requisito F): independientes entre sí.
+    const errorPremios = validarSeccionColleraNueve(_premios, 'Corre por los premios');
+    if (errorPremios) { mostrarToast(errorPremios, 'advertencia'); return; }
+    const errorPuntos = validarSeccionColleraNueve(_puntos, 'Deja puntos para la próxima temporada');
+    if (errorPuntos) { mostrarToast(errorPuntos, 'advertencia'); return; }
 
     // Validación Sección V — Situaciones a revisar (máximo 3, defensa en
     // profundidad; la UI ya impide agregar una 4ª situación).

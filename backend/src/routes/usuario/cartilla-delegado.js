@@ -5,6 +5,7 @@ const {
     ASPECTOS_DESEMPENO_JURADO, validarAspectosDesempeno, calcularPromedioDesempeno,
     sincronizarNotaDelegado
 } = require('../../services/cartillaDelegadoNotas');
+const { validarSeccionColleraNueva } = require('../../services/cartillaDelegadoColleraNueva');
 // Reapertura/versionado (092): el PDF de cada versión oficial se genera y
 // sube a Storage DESPUÉS de que la RPC confirma el envío — el generador es
 // el mismo que ya usa el administrador, nunca un diseño paralelo.
@@ -51,8 +52,22 @@ router.use((req, res, next) => {
 // escribir/aceptar como defensa en profundidad, pero la columna y
 // cualquier valor histórico existente se conservan intactos (Administrador
 // y PDF lo siguen mostrando si una cartilla anterior ya lo tenía).
+//
+// Validación final — corrección "Delegado Oficial": `delegado_nombre` TAMBIÉN
+// se retira (mismo tratamiento de defensa en profundidad de los 3 campos
+// anteriores). Antes (punto 6 de la segunda revisión, intencional en su
+// momento) un PATCH/envío podía sobrescribirlo con cualquier texto —
+// "NOMBRE ESCRITO A MANO" pasaba sin exigir que calzara con ninguna
+// asignación. Ahora el frontend es de solo lectura en ambas modalidades
+// (ver cartilla-delegado.html), pero la garantía real debe ser del backend,
+// no de un campo editable del navegador: la columna solo se fija UNA VEZ al
+// crear la cartilla (POST /rodeo/:rodeo_id, desde `perfil.nombre_completo`
+// para Delegado Rentado / desde el delegado confirmado para institucional),
+// y de ahí en adelante es inmutable por esta vía — un reemplazo legítimo de
+// delegado sigue su propio camino (reemplazar_delegado_institucional_rodeo),
+// nunca el PATCH genérico.
 const CAMPOS_EDITABLES = [
-    'delegado_nombre', 'delegado_telefono',
+    'delegado_telefono',
     'secretario_jurado', 'secretario_numero_socio',
     'serie_campeones_dos_vueltas', 'incluye_informe_disciplinario', 'incluye_informe_ganado_bajo_peso',
     'certificacion_medialuna_comuna', 'certificacion_mas_200_personas',
@@ -298,6 +313,15 @@ router.post('/:id/enviar', async (req, res) => {
         const chk = validarAspectosDesempeno(djMerged);
         if (!chk.valido) return res.status(422).json({ error: chk.error, campos: chk.camposInvalidos });
     }
+
+    // "Corre por los premios" / "Deja puntos para la próxima temporada"
+    // (Requisito F) — defensa en profundidad: el frontend ya valida esto,
+    // pero nunca es la única barrera (ej. una llamada directa a la API).
+    // Nunca exige nada si la respuesta es distinta de "sí".
+    const chkPremios = validarSeccionColleraNueva(merged.respuestas_json?.corre_premios, 'Corre por los premios');
+    if (!chkPremios.valido) return res.status(422).json({ error: chkPremios.error });
+    const chkPuntos = validarSeccionColleraNueva(merged.respuestas_json?.deja_puntos_temporada, 'Deja puntos para la próxima temporada');
+    if (!chkPuntos.valido) return res.status(422).json({ error: chkPuntos.error });
 
     const ahora = new Date().toISOString();
     // 092: si estaba observada O reabierta, pasar a reenviada; si no,

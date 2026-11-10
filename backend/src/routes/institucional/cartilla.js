@@ -23,6 +23,7 @@ const { construirIndiceCatalogo, resolverAsociacion } = require('../../services/
 const {
     validarAspectosDesempeno, calcularPromedioDesempeno, sincronizarNotaDelegado
 } = require('../../services/cartillaDelegadoNotas');
+const { validarSeccionColleraNueva } = require('../../services/cartillaDelegadoColleraNueva');
 // Fase 3.4 — "Descargar PDF": se reutiliza el MISMO generador que ya usa el
 // administrador (backend/src/services/cartilla-delegado-pdf.js), sin crear
 // un diseño paralelo. Ese generador no tiene ninguna restricción de estado
@@ -531,6 +532,14 @@ router.post('/:id/enviar', async (req, res) => {
         const chk = validarAspectosDesempeno(djMerged);
         if (!chk.valido) return res.status(422).json({ error: chk.error, campos: chk.camposInvalidos });
     }
+
+    // "Corre por los premios" / "Deja puntos para la próxima temporada"
+    // (Requisito F) — defensa en profundidad, mismo criterio que Delegado
+    // Rentado (usuario/cartilla-delegado.js).
+    const chkPremios = validarSeccionColleraNueva(merged.respuestas_json?.corre_premios, 'Corre por los premios');
+    if (!chkPremios.valido) return res.status(422).json({ error: chkPremios.error });
+    const chkPuntos = validarSeccionColleraNueva(merged.respuestas_json?.deja_puntos_temporada, 'Deja puntos para la próxima temporada');
+    if (!chkPuntos.valido) return res.status(422).json({ error: chkPuntos.error });
 
     // Fase 3.5: mismo bloqueo que PATCH — el nombre del responsable
     // confirmado no es un campo libre editable para cartillas institucionales.

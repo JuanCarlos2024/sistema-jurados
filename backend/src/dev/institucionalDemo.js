@@ -379,8 +379,14 @@ const cartillasDemoPorRodeo = {
     // ANTERIOR, visible solo en el historial (ver historialDemoPorRodeo abajo).
     'demo-rodeo-21': cartillaDemoPreSembrada({ rodeoId: 'demo-rodeo-21', estado: 'borrador', delegadoAsociacionId: 'demo-del-2', delegadoNombre: 'Bruno Hernández Díaz (DEMO)', fechaRodeo: '2026-12-04' })
 };
+// Validación final — corrección "Delegado Oficial": `delegado_nombre` se
+// retira, igual que en el backend real (usuario/cartilla-delegado.js) — el
+// ambiente de demostración debe comportarse igual que producción. La
+// columna queda fijada por la creación (POST /cartilla/rodeo/:rodeo_id,
+// desde el delegado confirmado) y es inmutable por esta vía de ahí en
+// adelante, nunca un valor que el cliente pueda imponer.
 const CAMPOS_EDITABLES_DEMO = [
-    'delegado_nombre', 'delegado_telefono', 'secretario_jurado', 'secretario_numero_socio',
+    'delegado_telefono', 'secretario_jurado', 'secretario_numero_socio',
     'serie_campeones_dos_vueltas', 'incluye_informe_disciplinario', 'incluye_informe_ganado_bajo_peso',
     'certificacion_medialuna_comuna', 'certificacion_mas_200_personas',
     'certificacion_mas_250_personas', 'certificacion_vinculacion_comunidad', 'respuestas_json'
@@ -414,6 +420,14 @@ router.get('/cartilla/rodeo/:rodeo_id', soloCuentaInstitucionalDemo, (req, res) 
     if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado para su asociación.' });
     const rentadoDesignado = !!rodeo.delegado_rentado_designado;
     const cartillaExistente = cartillasDemoPorRodeo[req.params.rodeo_id] || null;
+    // MEJORA 2 (corrección "Delegado Oficial") — mismo campo y misma fuente
+    // que institucional/cartilla.js real: el responsable YA CONFIRMADO para
+    // este rodeo (vía seleccionar-delegado), nunca el perfil de la cuenta
+    // institucional compartida. Antes de este fix, esta ruta demo nunca
+    // devolvía `delegado_confirmado` -> el campo quedaba vacío en
+    // localhost:3100 para cualquier cartilla todavía sin crear (borrador),
+    // aunque el delegado ya estuviera confirmado.
+    const confirmadoDemo = responsableConfirmadoDemo(req.params.rodeo_id);
     res.json({
         rodeo: { id: rodeo.id, club: rodeo.club, asociacion: rodeo.asociacion, fecha: rodeo.fecha, estado: rodeo.estado_rodeo, tipo_rodeo_nombre: rodeo.tipo_rodeo, temporadas: { nombre: TEMPORADA_DEMO.nombre } },
         cartilla: cartillaExistente,
@@ -426,7 +440,8 @@ router.get('/cartilla/rodeo/:rodeo_id', soloCuentaInstitucionalDemo, (req, res) 
         jurados: ['Jurado Demo Uno', 'Jurado Demo Dos'],
         // Fase 3.5 — mismo campo que el backend real: nunca fabrica un evento,
         // viene vacío si registrarEventoHistorialDemo nunca se llamó para este rodeo.
-        historial_responsables: historialDemoPorRodeo[req.params.rodeo_id] || []
+        historial_responsables: historialDemoPorRodeo[req.params.rodeo_id] || [],
+        delegado_confirmado: confirmadoDemo ? { id: confirmadoDemo.delegado_asociacion_id, nombre: confirmadoDemo.nombre } : null
     });
 });
 

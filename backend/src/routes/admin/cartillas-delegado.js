@@ -199,7 +199,7 @@ router.get('/:id/versiones', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('cartillas_delegado_versiones')
-            .select('id, numero_version, estado_version, storage_path_pdf, motivo_reapertura_previa, reabierta_por_previa, reabierta_en_previa, enviada_en, enviada_por, enviada_por_tipo, created_at')
+            .select('id, numero_version, estado_version, storage_path_pdf, storage_path_pdf_rediseno, motivo_reapertura_previa, reabierta_por_previa, reabierta_en_previa, enviada_en, enviada_por, enviada_por_tipo, created_at')
             .eq('cartilla_delegado_id', req.params.id)
             .order('numero_version', { ascending: false });
 

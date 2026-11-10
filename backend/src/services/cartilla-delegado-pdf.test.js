@@ -324,6 +324,55 @@ describe('generarCartillaDelegadoPDF — VI. Disciplina y antecedentes disciplin
     });
 });
 
+// MEJORA 1 — "Serie en que ocurrió la situación" dentro del registro
+// disciplinario del PDF oficial. Usa textoVisiblePDF (definido más abajo en
+// este mismo archivo) para verificar el texto REAL renderizado, no solo
+// "resuelve sin lanzar excepción".
+describe('generarCartillaDelegadoPDF — VI. Disciplina: Serie en que ocurrió la situación (MEJORA 1)', () => {
+    test('situación con serie informada -> el PDF muestra "Serie: <nombre>" en el registro', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                disciplina_informe: { hubo_informe: 'si', situaciones: [{ serie: 'Criaderos', nombre_infractor: 'Juan Pérez', rut: '1-9', num_socio: '1', tipo_falta: 'Reglamentaria', articulo: '45' }] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('1. Serie: Criaderos — Juan Pérez');
+    });
+
+    test('situación histórica sin el campo serie -> el PDF muestra "Serie: No informado" (nunca inventa una serie ni la omite)', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                disciplina_informe: { hubo_informe: 'si', situaciones: [{ nombre_infractor: 'Juan Pérez', rut: '1-9', num_socio: '1', tipo_falta: 'Reglamentaria', articulo: '45' }] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('1. Serie: No informado — Juan Pérez');
+    });
+
+    test('dos situaciones con series distintas -> cada una muestra su propia serie, nunca la misma para ambas', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                disciplina_informe: {
+                    hubo_informe: 'si',
+                    situaciones: [
+                        { serie: 'Criaderos', nombre_infractor: 'Uno', rut: '1-9', num_socio: '1', tipo_falta: 'A', articulo: '1' },
+                        { serie: 'Campeones', nombre_infractor: 'Dos', rut: '2-7', num_socio: '2', tipo_falta: 'B', articulo: '2' }
+                    ]
+                }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('1. Serie: Criaderos — Uno');
+        expect(texto).toContain('2. Serie: Campeones — Dos');
+    });
+});
+
 describe('generarCartillaDelegadoPDF — VIII. Colleras invitadas (campos reales jinete1/jinete2/club/asociacion)', () => {
     test('items con la estructura real del formulario -> resuelve sin lanzar excepción', async () => {
         const cartilla = {
@@ -541,5 +590,206 @@ describe('generarCartillaDelegadoPDF — resumen de Serie: cero real vs. ausenci
         // tot=20, baj=0 (real), sob='—' (sin dato), fuer=0 (real, porque baj SÍ
         // tiene dato), pct=0.0% (tot=20>0) -> "20" + "0" + "—" + "0" + "0.0%".
         expect(texto).toContain('Total ganado (Art. 242)Bajo pesoSobre pesoTotal fuera de peso% fuera de peso200—0');
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// MEJORA 1 (Nov-2026) — Colleras Invitadas como TABLA institucional (ya no
+// registros de texto uno debajo del otro). Verificación de TEXTO REAL
+// (textoVisiblePDF, ver más arriba) — ocho o más colleras, nombres largos,
+// observaciones particulares, y que las tablas de ganado permanecen 100%
+// intactas (no se tocó cartillaDelegadoPdfTabla.js).
+// ═════════════════════════════════════════════════════════════════════════
+describe('generarCartillaDelegadoPDF — MEJORA 1: tabla de Colleras Invitadas', () => {
+    function collera(i) {
+        return { jinete1: `Jinete Uno N${i}`, jinete2: `Jinete Dos N${i}`, club: `Club N${i}`, asociacion: `Asociación N${i}` };
+    }
+
+    test('encabezado de la tabla (N°, Jinete 1, Jinete 2, Club, Asociación) aparece en el PDF', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { colleras_invitadas: { no_hubo: false, items: [collera(1)] } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('N°Jinete 1Jinete 2ClubAsociación');
+    });
+
+    test('ocho colleras invitadas -> las ocho aparecen en el texto real del PDF, ninguna se pierde', async () => {
+        const items = Array.from({ length: 8 }, (_, i) => collera(i + 1));
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { colleras_invitadas: { no_hubo: false, items } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        for (let i = 1; i <= 8; i++) {
+            expect(texto).toContain(`Jinete Uno N${i}`);
+            expect(texto).toContain(`Club N${i}`);
+            expect(texto).toContain(`Asociación N${i}`);
+        }
+    });
+
+    test('nombre largo de club/asociación se conserva completo (ajuste automático, nunca se corta)', async () => {
+        const nombreLargo = 'Asociación de Rodeo y Tradición Campesina de la Zona Centro Sur de Chile';
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { colleras_invitadas: { no_hubo: false, items: [{ jinete1: 'Juan', jinete2: 'Pedro', club: 'Club X', asociacion: nombreLargo }] } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain(nombreLargo);
+    });
+
+    test('observaciones particulares de una collera se conservan, asociadas a su número (fila adicional legible, nunca se pierden)', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                colleras_invitadas: {
+                    no_hubo: false,
+                    items: [
+                        { jinete1: 'Juan', jinete2: 'Pedro', club: 'Club A', asociacion: 'Asoc A' },
+                        { jinete1: 'Luis', jinete2: 'Ana', club: 'Club B', asociacion: 'Asoc B', observaciones: 'Collera invitada de otra región, con autorización especial.' }
+                    ]
+                }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('Observaciones por collera');
+        expect(texto).toContain('COLLERA N° 2');
+        expect(texto).toContain('Collera invitada de otra región, con autorización especial.');
+    });
+
+    test('sin colleras invitadas (no_hubo=true) -> mantiene la indicación, nunca dibuja una tabla vacía', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { colleras_invitadas: { no_hubo: true, items: [] } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('SIN COLLERAS INVITADASSí');
+        expect(texto).not.toContain('N°Jinete 1Jinete 2ClubAsociación');
+    });
+
+    test('las tablas de ganado permanecen intactas (mismo encabezado azul, sin cambios) junto con la nueva tabla de colleras', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                ganado_series: [{ nombre: 'Serie Única', c1n: 1, c1g: 25, v1v: 3, v1t: 'Overo', v1p: 420, q1c: 2, q1r: 0, q1k: 'Bueno', f1c: 2 }],
+                colleras_invitadas: { no_hubo: false, items: [collera(1)] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('AnimalN° colleras# GanadoVueltasTipoPeso (kg)CorridoRepetidoCalidadBajo/sobrepesoPorcentaje');
+        expect(texto).toContain('N°Jinete 1Jinete 2ClubAsociación');
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// MEJORA 4 (Nov-2026) — "Corre por los premios" / "Deja puntos para la
+// próxima temporada": pregunta Sí/No/No informado + tabla de 9 campos,
+// completamente independientes entre sí y de Colleras Invitadas.
+// ═════════════════════════════════════════════════════════════════════════
+describe('generarCartillaDelegadoPDF — MEJORA 4: Corre por los premios / Deja puntos temporada', () => {
+    function collera9(sufijo) {
+        return {
+            rut1: '11.111.111-1', nombre1: `Jinete Uno ${sufijo}`,
+            rut2: '7.654.321-6', nombre2: `Jinete Dos ${sufijo}`,
+            num_caballo1: '12', nombre_caballo1: `Caballo Uno ${sufijo}`,
+            num_caballo2: '7', nombre_caballo2: `Caballo Dos ${sufijo}`,
+            lugar: '1°'
+        };
+    }
+
+    test('cartilla histórica SIN estas preguntas -> "No informado" para ambas, nunca "No" asumido, nunca dibuja tabla', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: {} };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('¿HAY COLLERAS QUE CORREN POR LOS PREMIOS?No informado');
+        expect(texto).toContain('¿EL RODEO DEJA PUNTOS PARA LA PRÓXIMA TEMPORADA?No informado');
+        expect(texto).not.toContain('CaballoLugar'); // ningún encabezado de tabla se dibuja
+    });
+
+    test('respuesta explícita "No" -> muestra "No" (nunca se confunde con "No informado")', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { corre_premios: { respuesta: 'no', items: [] } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('¿HAY COLLERAS QUE CORREN POR LOS PREMIOS?No');
+        expect(texto).not.toContain('¿HAY COLLERAS QUE CORREN POR LOS PREMIOS?No informado');
+    });
+
+    test('"Sí" en Premios con colleras -> tabla con los 6 encabezados agrupados y el contenido real', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: { corre_premios: { respuesta: 'si', items: [collera9('P1')] } }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('N°Jinete 1Jinete 2Caballo 1Caballo 2Lugar');
+        expect(texto).toContain('Jinete Uno P1');
+        expect(texto).toContain('11.111.111-1');
+        expect(texto).toContain('Caballo Uno P1');
+    });
+
+    test('INDEPENDENCIA TOTAL (Regla D): Premios con colleras A/B/C y Puntos con colleras D/E — nunca se mezclan ni se copian entre sí', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                corre_premios:         { respuesta: 'si', items: [collera9('PREMIO_A'), collera9('PREMIO_B'), collera9('PREMIO_C')] },
+                deja_puntos_temporada: { respuesta: 'si', items: [collera9('PUNTOS_D'), collera9('PUNTOS_E')] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        // Las 3 de premios y las 2 de puntos están TODAS presentes.
+        ['PREMIO_A', 'PREMIO_B', 'PREMIO_C'].forEach(s => expect(texto).toContain(`Jinete Uno ${s}`));
+        ['PUNTOS_D', 'PUNTOS_E'].forEach(s => expect(texto).toContain(`Jinete Uno ${s}`));
+        // Ninguna de premios aparece mezclada como si fuera de puntos (ni viceversa) —
+        // cada colección tiene exactamente su propia cantidad de filas, nunca una copia cruzada.
+        const vecesTotal = (texto.match(/Jinete Uno (PREMIO_[ABC]|PUNTOS_[DE])/g) || []).length;
+        expect(vecesTotal).toBe(5); // 3 + 2, cada una UNA sola vez — ninguna duplicada entre secciones
+    });
+
+    test('una collera puede coincidir en ambas secciones (ejemplo del pedido) sin romper nada', async () => {
+        const colleraCompartida = collera9('COMPARTIDA');
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                corre_premios:         { respuesta: 'si', items: [colleraCompartida] },
+                deja_puntos_temporada: { respuesta: 'si', items: [colleraCompartida] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        const veces = (texto.match(/Jinete Uno COMPARTIDA/g) || []).length;
+        expect(veces).toBe(2); // aparece una vez en cada sección, independientemente
+    });
+
+    test('Premios="Sí" pero Puntos="No" -> solo la tabla de Premios se dibuja (comportamiento condicional, caso Sí/No)', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                corre_premios:         { respuesta: 'si', items: [collera9('UNICA')] },
+                deja_puntos_temporada: { respuesta: 'no', items: [] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('Jinete Uno UNICA');
+        expect(texto).toContain('¿EL RODEO DEJA PUNTOS PARA LA PRÓXIMA TEMPORADA?No');
+    });
+
+    test('"Sí" sin colleras registradas (borrador incompleto) -> nunca lanza excepción, muestra aviso en vez de tabla vacía', async () => {
+        const cartilla = { ...CARTILLA_BASE, respuestas_json: { corre_premios: { respuesta: 'si', items: [] } } };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('Sin colleras registradas.');
+    });
+
+    test('se mantiene el logo, el encabezado institucional y la paginación — el PDF sigue siendo válido y completo con las secciones nuevas', async () => {
+        const cartilla = {
+            ...CARTILLA_BASE,
+            respuestas_json: {
+                ganado_series: [{ nombre: 'Serie Única', c1n: 1, c1g: 25, v1v: 3, v1t: 'Overo', v1p: 420, q1c: 2, q1r: 0, q1k: 'Bueno', f1c: 2 }],
+                corre_premios: { respuesta: 'si', items: [collera9('X')] },
+                deja_puntos_temporada: { respuesta: 'si', items: [collera9('Y')] }
+            }
+        };
+        const buffer = await generarCartillaDelegadoPDF(cartilla, RODEO);
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        const texto = textoVisiblePDF(buffer);
+        expect(texto).toContain('Federación de Rodeo Chileno');
+        expect(texto).toContain('COLLERAS QUE CORREN POR LOS PREMIOS');
+        expect(texto).toContain('COLLERAS QUE DEJAN PUNTOS PARA LA PRÓXIMA TEMPORADA');
     });
 });

@@ -79,10 +79,14 @@ async function apiFetch(endpoint, options = {}) {
 }
 
 /**
- * Descarga un archivo desde el backend con autenticación JWT.
- * Usa fetch + Blob para evitar necesitar el token en la URL.
+ * Pide un archivo al backend con autenticación JWT y devuelve el Blob crudo
+ * — sin decidir qué hacer con él. Lo usan tanto `descargar()` (fuerza la
+ * descarga con un nombre) como cualquier pantalla que necesite "Ver" un PDF
+ * en una pestaña nueva sin forzar su descarga (ver rodeos.html:
+ * verPdfCartillaDelegado) — un `<a>` común no puede llevar el header
+ * Authorization, así que ambas acciones necesitan pasar primero por acá.
  */
-async function descargarArchivo(endpoint, nombreArchivo) {
+async function obtenerBlob(endpoint) {
     const token = getToken();
     const response = await fetch(`${API_BASE}${endpoint}`, {
         method: 'GET',
@@ -92,10 +96,20 @@ async function descargarArchivo(endpoint, nombreArchivo) {
     if (response.status === 401) { cerrarSesion(); return; }
     if (!response.ok) {
         const data = await response.json().catch(() => null);
-        throw { message: data?.error || 'Error al descargar archivo' };
+        throw { message: data?.error || 'Error al obtener archivo' };
     }
 
-    const blob = await response.blob();
+    return response.blob();
+}
+
+/**
+ * Descarga un archivo desde el backend con autenticación JWT.
+ * Usa fetch + Blob para evitar necesitar el token en la URL.
+ */
+async function descargarArchivo(endpoint, nombreArchivo) {
+    const blob = await obtenerBlob(endpoint);
+    if (!blob) return; // 401 -> obtenerBlob ya redirigió a cerrarSesion()
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -116,6 +130,7 @@ const api = {
     deleteBody: (endpoint, body) => apiFetch(endpoint, { method: 'DELETE', body: JSON.stringify(body) }),
     upload:   (endpoint, formData) => apiFetch(endpoint, { method: 'POST', body: formData }),
     descargar: descargarArchivo,
+    obtenerBlob,
     getToken,
     getUsuario,
     guardarSesion,

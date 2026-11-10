@@ -3269,16 +3269,19 @@ function renderAccidentesModal(rj) {
 // ═══════════════════════════════════════════════════════════════════
 // ETAPA 3 — Vista modal admin (solo lectura)
 // ═══════════════════════════════════════════════════════════════════
-function renderEtapa3Modal(rj) {
-    if (!rj) return '';
+function renderEtapa3Modal(rjParam) {
+    // "Corre por los premios" / "Deja puntos para la próxima temporada"
+    // (nuevo) deben mostrarse SIEMPRE, incluso en una cartilla sin ningún
+    // otro dato de esta función (requisito "No informado" para histéricas
+    // sin la pregunta) — por eso esta función ya NO retorna '' temprano
+    // cuando faltan los campos antiguos; `rj` nunca queda null/undefined.
+    const rj      = rjParam || {};
     const dj      = rj.desempeno_jurado   || null;
     const disc    = rj.disciplina_informe  || null;
     const ant     = rj.antecedentes_disciplinarios || null;
     const sitRev  = rj.situaciones_revisar || null;
     const recinto = rj.recinto_deportivo   || null;
     const col     = rj.colleras_invitadas  || null;
-
-    if (!dj && !disc && !ant && !sitRev && !recinto && !col) return '';
 
     const thS  = 'style="background:#1a3c6e;color:#fff;padding:5px 7px;font-size:11px;white-space:nowrap;border:1px solid #14316a;text-align:left;"';
     const tdC  = 'style="padding:4px 8px;font-size:12px;border:1px solid #dde3ec;"';
@@ -3370,12 +3373,13 @@ function renderEtapa3Modal(rj) {
                         <div style="background:#f0f4fb;border-bottom:1px solid #dde3ec;padding:6px 12px;font-size:12px;font-weight:700;color:#1a3c6e;">Situación N° ${i+1}</div>
                         <div style="padding:10px 12px;">
                         <table style="border-collapse:collapse;width:100%;font-size:12px;">
-                            <tr><td ${tdH}>Nombre del infractor</td><td ${tdC}>${val(s.nombre_infractor)}</td>
-                                <td ${tdH}>RUT</td><td ${tdC}>${val(s.rut)}</td></tr>
-                            <tr><td ${tdH}>N° de socio</td><td ${tdC}>${val(s.num_socio)}</td>
-                                <td ${tdH}>Tipo de falta</td><td ${tdC}>${val(s.tipo_falta)}</td></tr>
-                            <tr><td ${tdH}>Artículo reglamentario</td><td ${tdC}>${val(s.articulo)}</td>
-                                <td ${tdH}>Testigos</td><td ${tdC}>${val(s.testigos)}</td></tr>
+                            <tr><td ${tdH}>Serie en que ocurrió</td><td ${tdC}>${s.serie ? sanitizar(s.serie) : 'No informado'}</td>
+                                <td ${tdH}>Nombre del infractor</td><td ${tdC}>${val(s.nombre_infractor)}</td></tr>
+                            <tr><td ${tdH}>RUT</td><td ${tdC}>${val(s.rut)}</td>
+                                <td ${tdH}>N° de socio</td><td ${tdC}>${val(s.num_socio)}</td></tr>
+                            <tr><td ${tdH}>Tipo de falta</td><td ${tdC}>${val(s.tipo_falta)}</td>
+                                <td ${tdH}>Artículo reglamentario</td><td ${tdC}>${val(s.articulo)}</td></tr>
+                            <tr><td ${tdH}>Testigos</td><td ${tdC} colspan="3">${val(s.testigos)}</td></tr>
                         </table>
                         ${s.detalle ? `<div style="margin-top:6px;font-size:12px;"><strong>Detalle:</strong> ${sanitizar(s.detalle)}</div>` : ''}
                         ${s.observaciones ? `<div style="margin-top:4px;font-size:12px;"><strong>Observaciones:</strong> ${sanitizar(s.observaciones)}</div>` : ''}
@@ -3467,6 +3471,39 @@ function renderEtapa3Modal(rj) {
             out += `<p style="font-size:12px;color:#888;font-style:italic;">Sin colleras invitadas registradas.</p>`;
         }
     }
+
+    // ── Colleras que corren por los premios / dejan puntos para la próxima
+    // temporada (nuevo) — secciones INDEPENDIENTES entre sí y de Colleras
+    // Invitadas (nunca se mezclan). "No informado" (nunca "No" asumido)
+    // para cartillas anteriores a esta pregunta, que no tienen el campo.
+    const renderColleraNueva = (estado, titulo, pregunta) => {
+        let bloque = bloqueTitulo(titulo);
+        const respuesta = estado?.respuesta;
+        const respuestaTxt = respuesta === 'si' ? 'Sí' : respuesta === 'no' ? 'No' : 'No informado';
+        bloque += `<p style="font-size:12px;margin:0 0 8px;"><strong>${sanitizar(pregunta)}</strong> ${respuestaTxt}</p>`;
+        if (respuesta === 'si') {
+            const items = Array.isArray(estado?.items) ? estado.items : [];
+            if (items.length === 0) {
+                bloque += `<p style="font-size:12px;color:#888;font-style:italic;">Sin colleras registradas.</p>`;
+            } else {
+                const filas = items.map((c, i) => `<tr>
+                    <td ${tdH}>${i + 1}</td>
+                    <td ${tdC}>${val(c.nombre1)}<br><span style="color:#888;">${val(c.rut1)}</span></td>
+                    <td ${tdC}>${val(c.nombre2)}<br><span style="color:#888;">${val(c.rut2)}</span></td>
+                    <td ${tdC}>${val(c.nombre_caballo1)}<br><span style="color:#888;">N° ${val(c.num_caballo1)}</span></td>
+                    <td ${tdC}>${val(c.nombre_caballo2)}<br><span style="color:#888;">N° ${val(c.num_caballo2)}</span></td>
+                    <td ${tdC} style="text-align:center;">${val(c.lugar)}</td>
+                </tr>`).join('');
+                bloque += wrapTbl(`<table style="border-collapse:collapse;width:100%;font-size:12px;">
+                    <thead><tr><th ${thS}>N°</th><th ${thS}>Jinete 1</th><th ${thS}>Jinete 2</th><th ${thS}>Caballo 1</th><th ${thS}>Caballo 2</th><th ${thS}>Lugar</th></tr></thead>
+                    <tbody>${filas}</tbody>
+                </table>`);
+            }
+        }
+        return bloque;
+    };
+    out += renderColleraNueva(rj.corre_premios, 'Colleras que corren por los premios', '¿Hay colleras que corren por los premios?');
+    out += renderColleraNueva(rj.deja_puntos_temporada, 'Colleras que dejan puntos para la próxima temporada', '¿El rodeo deja puntos para la próxima temporada?');
 
     return out;
 }
@@ -3780,14 +3817,31 @@ async function cargarVersionesCartillaDelegado(cartillaId) {
             // trae como Blob y la guarda con nombre_archivo (ASOCIACION_
             // CLUB_FECHA_V{n}.pdf). Nunca se modifica ni se reemplaza el
             // PDF histórico al verlo o descargarlo — solo se lee.
+            // "Debe quedar claro que corresponde al formato conservado del
+            // documento original" (revisión del usuario): si esta versión
+            // todavía NO tiene una actualización de diseño (096), se rotula
+            // explícitamente — así nadie confunde el diseño antiguo del
+            // documento histórico con una regresión del generador. Si SÍ la
+            // tiene, "Ver"/"Descargar" muestran el rediseño (el backend ya
+            // lo prefiere) y se ofrece un enlace aparte para el original.
+            const tieneRediseno = !!v.storage_path_pdf_rediseno;
+            const etiquetaFormato = v.storage_path_pdf
+                ? (tieneRediseno
+                    ? '<span style="font-size:10px;color:#1e7a34;background:#eafaf1;border:1px solid #c3e6cb;border-radius:4px;padding:1px 6px;white-space:nowrap;">Diseño actualizado disponible</span>'
+                    : '<span style="font-size:10px;color:#6c757d;background:#f1f1f1;border:1px solid #ddd;border-radius:4px;padding:1px 6px;white-space:nowrap;">Documento original conservado (diseño de la fecha de envío)</span>')
+                : '';
             const btnPdf    = v.storage_path_pdf
                 ? '<button class="btn btn-pequeño btn-outline" onclick="verPdfVersionCartillaDelegado(\'' + v.id + '\')">📄 Ver</button> '
                   + '<button class="btn btn-pequeño btn-outline" onclick="descargarPdfVersionCartillaDelegado(\'' + v.id + '\')">⬇ Descargar</button>'
+                  + (tieneRediseno ? ' <button class="btn btn-pequeño btn-outline" style="font-size:10px;" onclick="verPdfVersionCartillaDelegado(\'' + v.id + '\', true)">Ver original</button>' : '')
                 : '<button class="btn btn-pequeño" style="background:#f8d7da;color:#842029;border:1px solid #f1aeb5;" onclick="regenerarPdfVersionCartillaDelegado(\'' + v.id + '\')">⚠ Regenerar PDF</button>';
-            html += '<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid #1a5276;">'
+            html += '<div style="display:flex;flex-direction:column;gap:3px;padding:7px 12px;background:#f8f9fa;border-radius:6px;border-left:3px solid #1a5276;">'
+                + '<div style="display:flex;align-items:center;gap:8px;">'
                 + '<span style="font-size:12px;font-weight:700;color:#1a5276;white-space:nowrap;">v' + v.numero_version + ' · ' + estadoTxt + '</span>'
                 + '<span style="font-size:11px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + fechaStr + motivo + '</span>'
                 + btnPdf
+                + '</div>'
+                + (etiquetaFormato ? '<div>' + etiquetaFormato + '</div>' : '')
                 + '</div>';
         });
         html += '</div>';
@@ -3801,9 +3855,9 @@ async function cargarVersionesCartillaDelegado(cartillaId) {
 // "Ver": la URL firmada se pide SIN forzar descarga (el backend nunca le
 // pasa `download` a createSignedUrl) — se abre tal cual, el navegador la
 // muestra inline. Nunca modifica ni reemplaza el PDF histórico, solo lo lee.
-async function verPdfVersionCartillaDelegado(versionId) {
+async function verPdfVersionCartillaDelegado(versionId, forzarOriginal) {
     try {
-        const r = await api.get('/admin/cartillas-delegado/version/' + versionId + '/pdf');
+        const r = await api.get('/admin/cartillas-delegado/version/' + versionId + '/pdf' + (forzarOriginal ? '?original=1' : ''));
         window.open(r.url, '_blank');
     } catch(e) { mostrarToast(e.message || 'Error al obtener PDF', 'error'); }
 }

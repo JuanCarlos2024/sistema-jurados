@@ -36,7 +36,11 @@ function autoWidth(sheet) {
     sheet.columns.forEach(col => {
         let maxLen = col.header ? col.header.length : 10;
         col.eachCell({ includeEmpty: false }, cell => {
-            const len = cell.value ? String(cell.value).length : 0;
+            // Una celda de fecha REAL (ver fechaExcelReal) mide su ancho por el
+            // formato visible ("dd/mm/yyyy" = 10 caracteres), nunca por
+            // `String(dateObject)` (que da algo como "Sat Nov 07 2026 00:00:00
+            // GMT+0000...", ensanchando la columna sin necesidad).
+            const len = cell.value instanceof Date ? 10 : (cell.value ? String(cell.value).length : 0);
             if (len > maxLen) maxLen = len;
         });
         col.width = Math.min(maxLen + 4, 50);
@@ -47,6 +51,25 @@ function formatCLP(monto) {
     if (monto == null) return '$0';
     return '$' + Number(monto).toLocaleString('es-CL');
 }
+
+// ─── Fecha real de Excel (dd/mm/yyyy, ordenable/filtrable) ────────────────
+// `rodeos.fecha` es columna DATE (database/schema.sql) — Supabase/PostgREST
+// la entrega como texto "YYYY-MM-DD" (sin hora ni zona). Se parsean los
+// componentes Y/M/D explícitamente y se construye un Date con
+// Date.UTC(...): su getTime() (único dato que usa ExcelJS para calcular el
+// número de serie, ver node_modules/exceljs/lib/utils/utils.js:dateToExcel)
+// queda fijado a la medianoche UTC de ese día exacto — nunca depende de la
+// zona horaria del servidor donde corre Node, así que nunca se desplaza un
+// día para atrás ni adelante. Se usa el string explícitamente (nunca
+// `new Date(iso)` directo) para no depender de que el motor de JS siga
+// interpretando un string "YYYY-MM-DD" como UTC.
+function fechaExcelReal(fechaIso) {
+    if (!fechaIso) return null;
+    const [y, m, d] = String(fechaIso).slice(0, 10).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    return new Date(Date.UTC(y, m - 1, d));
+}
+const NUMFMT_FECHA_CHILENA = 'dd/mm/yyyy';
 
 /**
  * Exportar resumen mensual completo del sistema.
@@ -345,7 +368,7 @@ async function exportarRodeos(filtros, res) {
     const ws = wb.addWorksheet('Rodeos');
 
     ws.columns = [
-        { header: 'Fecha',              key: 'fecha',     width: 14 },
+        { header: 'Fecha',              key: 'fecha',     width: 14, style: { numFmt: NUMFMT_FECHA_CHILENA } },
         { header: 'Club',               key: 'club',       width: 28 },
         { header: 'Asociación',         key: 'asoc',       width: 22 },
         { header: 'Tipo Rodeo',         key: 'tipo',       width: 30 },
@@ -395,7 +418,7 @@ async function exportarRodeos(filtros, res) {
                 ...notaAD.historicas.map(n => `${n.jurado_nombre || '—'}: ${n.nota} (histórica)`)
             ].join(' / ');
         const row = ws.addRow([
-            r.fecha, r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias,
+            fechaExcelReal(r.fecha), r.club, r.asociacion, r.tipo_rodeo_nombre, r.duracion_dias,
             jurado, estadoDes, s.jurados || 0,
             cj.recibida ? 'Sí' : 'No', cd.recibida ? 'Sí' : 'No',
             (cd.requiere_correccion || cj.requiere_correccion) ? 'Sí' : 'No',

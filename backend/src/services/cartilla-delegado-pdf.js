@@ -419,9 +419,14 @@ function generarCartillaDelegadoPDF(cartilla, rodeo, { historialResponsables = [
                 if (disc.hubo_informe === 'si' && Array.isArray(disc.situaciones) && disc.situaciones.length > 0) {
                     subtitulo(doc, 'Situaciones disciplinarias');
                     disc.situaciones.forEach((s, i) => {
+                        // MEJORA 1 — "No informado" explícito (nunca celdaValor,
+                        // que usaría "—") para distinguir sin ambigüedad una
+                        // cartilla histórica sin este campo de una serie
+                        // deliberadamente vacía.
+                        const serieTxt = s.serie && String(s.serie).trim() ? celdaValor(s.serie) : 'No informado';
                         registro(doc, {
                             numero: i + 1,
-                            titulo: `${celdaValor(s.nombre_infractor)} (RUT: ${celdaValor(s.rut)}, N° socio: ${celdaValor(s.num_socio)}) — ${celdaValor(s.tipo_falta)} — Art. ${celdaValor(s.articulo)}`,
+                            titulo: `Serie: ${serieTxt} — ${celdaValor(s.nombre_infractor)} (RUT: ${celdaValor(s.rut)}, N° socio: ${celdaValor(s.num_socio)}) — ${celdaValor(s.tipo_falta)} — Art. ${celdaValor(s.articulo)}`,
                             detalles: [
                                 { label: 'Testigos', texto: s.testigos },
                                 { label: 'Detalle', texto: s.detalle },
@@ -468,21 +473,54 @@ function generarCartillaDelegadoPDF(cartilla, rodeo, { historialResponsables = [
             if (rec.otros) parrafo(doc, 'Otros aspectos', rec.otros);
         }
 
-        // ── VIII. Colleras Invitadas ────────────────────────────────
+        // ── VIII. Colleras Invitadas — tabla institucional (revisión
+        // Nov-2026, reemplaza los registros de texto uno debajo del otro):
+        // reutiliza dibujarTabla (el mismo helper de la tabla de ganado, SIN
+        // modificarlo) — ya maneja salto de página con encabezado repetido y
+        // ajuste de alto de fila para nombres largos, en cualquier
+        // orientación (ver cartillaDelegadoPdfTabla.js). Las observaciones
+        // particulares de una collera (si existen) se listan aparte, debajo
+        // de la tabla, asociadas a su número — nunca se pierden, nunca se
+        // fuerzan dentro de una columna angosta. ────────────────────────
         const col = rj.colleras_invitadas;
         if (col) {
             tituloSeccion(doc, 'VIII. INFORME DE COLLERAS INVITADAS');
             filaInfo(doc, [{ label: 'Sin colleras invitadas', value: yn(col.no_hubo) }]);
             if (!col.no_hubo && Array.isArray(col.items) && col.items.length > 0) {
-                col.items.forEach((c2, i) => {
-                    registro(doc, {
-                        numero: i + 1,
-                        titulo: `Jinetes: ${[c2.jinete1, c2.jinete2].filter(Boolean).join(' / ') || '—'} — Club: ${celdaValor(c2.club)} — Asociación: ${celdaValor(c2.asociacion)}`,
-                        detalles: [{ label: 'Observaciones', texto: c2.observaciones }]
-                    });
-                });
+                const COLUMNAS_COLLERAS_INV = [
+                    { header: 'N°',         width: 26,  align: 'center' },
+                    { header: 'Jinete 1',   width: 128, align: 'left'   },
+                    { header: 'Jinete 2',   width: 128, align: 'left'   },
+                    { header: 'Club',       width: 122, align: 'left'   },
+                    { header: 'Asociación', width: 91,  align: 'left'   }
+                ];
+                const filasCollerasInv = col.items.map((c2, i) => [
+                    String(i + 1), celdaValor(c2.jinete1), celdaValor(c2.jinete2), celdaValor(c2.club), celdaValor(c2.asociacion)
+                ]);
+                asegurarEspacio(doc, 60);
+                dibujarTabla(doc, { columnas: COLUMNAS_COLLERAS_INV, filas: filasCollerasInv, fontSize: 9 });
+                doc.fillColor('#333').font('Helvetica');
+                doc.moveDown(0.4);
+
+                const observacionesCollerasInv = col.items
+                    .map((c2, i) => ({ numero: i + 1, texto: c2.observaciones }))
+                    .filter(o => o.texto !== undefined && o.texto !== null && String(o.texto).trim() !== '');
+                if (observacionesCollerasInv.length > 0) {
+                    subtitulo(doc, 'Observaciones por collera');
+                    observacionesCollerasInv.forEach(o => parrafo(doc, `Collera N° ${o.numero}`, o.texto));
+                }
             }
         }
+
+        // ── Colleras que corren por los premios / dejan puntos para la
+        // próxima temporada (nuevo) — dos secciones INDEPENDIENTES entre sí
+        // y de "Colleras Invitadas" (requisito explícito del usuario: nunca
+        // mezclarlas). Cada una tiene su propia pregunta Sí/No/No informado
+        // y su propia tabla de 9 campos — se agrupan en una sola función
+        // porque comparten exactamente la misma estructura, nunca se
+        // duplica la lógica de dibujo.
+        tablaColleraNueve(doc, rj.corre_premios, 'COLLERAS QUE CORREN POR LOS PREMIOS', '¿Hay colleras que corren por los premios?');
+        tablaColleraNueve(doc, rj.deja_puntos_temporada, 'COLLERAS QUE DEJAN PUNTOS PARA LA PRÓXIMA TEMPORADA', '¿El rodeo deja puntos para la próxima temporada?');
 
         // ── IX. Informe delegado / veterinario condiciones de Bienestar
         // Animal (UNIFICADA) — se responde una sola vez, sobre `ba`. Si la
@@ -616,6 +654,50 @@ function yn(v) {
     if (v === 'si' || v === true)  return 'Sí';
     if (v === 'no' || v === false) return 'No';
     return '—';
+}
+
+// "Corre por los premios" / "Deja puntos para la próxima temporada" (nuevo):
+// pregunta Sí/No/No informado + tabla de 9 campos por collera, agrupados en
+// 6 columnas (Jinete/Caballo combinan nombre+RUT o nombre+N° en la MISMA
+// celda, en dos líneas) para que la tabla completa entre en el ancho útil de
+// A4 vertical sin comprimir la letra hasta volverla ilegible — pedido
+// explícito del usuario. Reutiliza dibujarTabla (tabla de ganado) sin
+// modificarlo. "No informado" (nunca "No" asumido) es para cartillas
+// anteriores a esta pregunta, que no tienen `estado` en absoluto.
+function tablaColleraNueve(doc, estado, tituloTexto, preguntaTexto) {
+    tituloSeccion(doc, tituloTexto);
+    const respuesta = estado?.respuesta;
+    const respuestaTexto = respuesta === 'si' ? 'Sí' : respuesta === 'no' ? 'No' : 'No informado';
+    filaInfo(doc, [{ label: preguntaTexto, value: respuestaTexto }]);
+
+    if (respuesta !== 'si') return; // nunca se dibuja la tabla si la respuesta no es "Sí" (tampoco para "No informado")
+
+    const items = Array.isArray(estado?.items) ? estado.items : [];
+    if (items.length === 0) {
+        lineaSimple(doc, 'Sin colleras registradas.', { fontSize: 9, color: GRIS_NOTA, cursiva: true });
+        return;
+    }
+
+    const COLUMNAS_COLLERA_9 = [
+        { header: 'N°',        width: 22,  align: 'center' },
+        { header: 'Jinete 1',  width: 128, align: 'left'   },
+        { header: 'Jinete 2',  width: 128, align: 'left'   },
+        { header: 'Caballo 1', width: 84,  align: 'left'   },
+        { header: 'Caballo 2', width: 84,  align: 'left'   },
+        { header: 'Lugar',     width: 49,  align: 'center' }
+    ];
+    const filasCollera9 = items.map((c, i) => [
+        String(i + 1),
+        `${celdaValor(c.nombre1)}\n${celdaValor(c.rut1)}`,
+        `${celdaValor(c.nombre2)}\n${celdaValor(c.rut2)}`,
+        `${celdaValor(c.nombre_caballo1)}\nN° ${celdaValor(c.num_caballo1)}`,
+        `${celdaValor(c.nombre_caballo2)}\nN° ${celdaValor(c.num_caballo2)}`,
+        celdaValor(c.lugar)
+    ]);
+    asegurarEspacio(doc, 60);
+    dibujarTabla(doc, { columnas: COLUMNAS_COLLERA_9, filas: filasCollera9, fontSize: 8.5 });
+    doc.fillColor('#333').font('Helvetica');
+    doc.moveDown(0.4);
 }
 
 function fmtFecha(iso) {

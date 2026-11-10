@@ -193,6 +193,61 @@ describe('Simulación de Cartilla de Delegado en modo demostración (Fase 3)', (
         expect(res.jsonBody.rodeo.id).toBe('demo-rodeo-1');
     });
 
+    // MEJORA 2 — corrección "Delegado Oficial" en el ambiente de demostración:
+    // antes de este fix, GET /cartilla/rodeo/:rodeo_id nunca devolvía
+    // `delegado_confirmado` (a diferencia de institucional/cartilla.js real),
+    // así que el campo quedaba vacío en localhost:3100 para cualquier rodeo
+    // con delegado ya confirmado pero SIN borrador todavía — exactamente el
+    // bug reportado. Usa demo-rodeo-18 (OSORNO, activo, SIN cartilla
+    // pre-sembrada — a diferencia de demo-rodeo-2/14/20/21 — y nunca tocado
+    // por otro test de este archivo).
+    test('MEJORA 2 — GET sin ninguna selección todavía: delegado_confirmado=null (no se inventa un responsable)', async () => {
+        const res = await llamar('GET', '/cartilla/rodeo/demo-rodeo-18', {}, auth());
+        expect(res.statusCode).toBe(200);
+        expect(res.jsonBody.delegado_confirmado).toBeNull();
+    });
+
+    test('MEJORA 2 — tras confirmar el delegado (seleccionar-delegado) pero ANTES de crear la cartilla: delegado_confirmado ya trae nombre e id (el bug real: antes esto quedaba vacío)', async () => {
+        await llamar('POST', '/rodeos/demo-rodeo-18/seleccionar-delegado', { delegado_asociacion_id: 'demo-del-3' }, auth());
+        const res = await llamar('GET', '/cartilla/rodeo/demo-rodeo-18', {}, auth());
+        expect(res.jsonBody.cartilla).toBeNull(); // todavía sin borrador
+        expect(res.jsonBody.delegado_confirmado).toEqual({ id: 'demo-del-3', nombre: 'Carla Muñoz Rojas (DEMO)' });
+    });
+
+    test('MEJORA 2 — con la cartilla ya creada, delegado_confirmado sigue coincidiendo con cartilla.delegado_nombre (misma persona, ninguna fuente contradice a la otra)', async () => {
+        const creada = await llamar('POST', '/cartilla/rodeo/demo-rodeo-18', {}, auth());
+        expect(creada.statusCode).toBe(201);
+        const res = await llamar('GET', '/cartilla/rodeo/demo-rodeo-18', {}, auth());
+        expect(res.jsonBody.cartilla.delegado_nombre).toBe('Carla Muñoz Rojas (DEMO)');
+        expect(res.jsonBody.delegado_confirmado.nombre).toBe('Carla Muñoz Rojas (DEMO)');
+    });
+
+    // Validación final (punto 3 del pedido) — el backend (incluido el
+    // ambiente de demostración, que debe comportarse igual que producción)
+    // es la fuente autorizada del Delegado Oficial. El guard explícito de
+    // esta ruta YA bloqueaba un delegado_nombre distinto con 403 (igual que
+    // institucional/cartilla.js real) — eso no cambió. Lo que confirma este
+    // test es que, con el MISMO valor (sin intento de cambio real), el
+    // guardado sigue funcionando y los demás campos editables no se ven
+    // afectados por retirar delegado_nombre de CAMPOS_EDITABLES_DEMO.
+    test('MEJORA 2 (validación final) — PATCH enviando delegado_nombre IGUAL al ya confirmado (sin intento de cambio real) sigue permitido; con uno DISTINTO sigue bloqueado con 403 (el guard explícito no cambió)', async () => {
+        const conMismoValor = await llamar('PATCH', '/cartilla/demo-cart-demo-rodeo-18', {
+            version: 1, delegado_nombre: 'Carla Muñoz Rojas (DEMO)', delegado_telefono: '+56900000000'
+        }, auth());
+        expect(conMismoValor.statusCode).toBe(200);
+        expect(conMismoValor.jsonBody.cartilla.delegado_nombre).toBe('Carla Muñoz Rojas (DEMO)');
+        expect(conMismoValor.jsonBody.cartilla.delegado_telefono).toBe('+56900000000');
+
+        const conOtroValor = await llamar('PATCH', '/cartilla/demo-cart-demo-rodeo-18', {
+            version: 2, delegado_nombre: 'NOMBRE ESCRITO A MANO'
+        }, auth());
+        expect(conOtroValor.statusCode).toBe(403);
+        expect(conOtroValor.jsonBody.code).toBe('RESPONSABLE_YA_CONFIRMADO');
+
+        const verificar = await llamar('GET', '/cartilla/rodeo/demo-rodeo-18', {}, auth());
+        expect(verificar.jsonBody.cartilla.delegado_nombre).toBe('Carla Muñoz Rojas (DEMO)'); // nunca cambió
+    });
+
     test('Fase 3.3 — crear sin delegado_asociacion_id en el body y SIN selección previa guardada -> 422 DELEGADO_NO_SELECCIONADO', async () => {
         const res = await llamar('POST', '/cartilla/rodeo/demo-rodeo-17', {}, auth());
         expect(res.statusCode).toBe(422);

@@ -94,7 +94,15 @@ describe('Historial de versiones (092) — cargarVersionesCartillaDelegado / ver
 
     test('verPdfVersionCartillaDelegado consulta GET /admin/cartillas-delegado/version/:id/pdf', () => {
         const FN = extraerFuncion('verPdfVersionCartillaDelegado');
-        expect(FN).toMatch(/api\.get\('\/admin\/cartillas-delegado\/version\/' \+ versionId \+ '\/pdf'\)/);
+        expect(FN).toMatch(/api\.get\('\/admin\/cartillas-delegado\/version\/' \+ versionId \+ '\/pdf'/);
+    });
+
+    // 096 (revisión del usuario): "Ver original" debe forzar explícitamente
+    // el PDF original (nunca el rediseño) agregando ?original=1 — así queda
+    // claro que se está consultando el documento conservado, no un error.
+    test('verPdfVersionCartillaDelegado(id, true) agrega ?original=1 para forzar el PDF original (096)', () => {
+        const FN = extraerFuncion('verPdfVersionCartillaDelegado');
+        expect(FN).toMatch(/forzarOriginal \? '\?original=1' : ''/);
     });
 
     test('verCartillaDelegadoDigital() dispara la carga del historial al abrir el modal', () => {
@@ -108,6 +116,17 @@ describe('Punto B (revisión final) — recuperación de PDF: botón "Regenerar 
         const FN = extraerFuncion('cargarVersionesCartillaDelegado');
         expect(FN).toContain('⚠ Regenerar PDF');
         expect(FN).toMatch(/regenerarPdfVersionCartillaDelegado\(\\'' \+ v\.id \+ '\\'\)/);
+    });
+
+    // 096 (revisión del usuario): "debe quedar claro que corresponde al
+    // formato conservado del documento original" — nunca debe confundirse
+    // con una regresión del generador.
+    test('cargarVersionesCartillaDelegado(): rotula "Documento original conservado" cuando NO hay rediseño, y "Diseño actualizado disponible" + botón "Ver original" cuando SÍ lo hay', () => {
+        const FN = extraerFuncion('cargarVersionesCartillaDelegado');
+        expect(FN).toContain('Documento original conservado (diseño de la fecha de envío)');
+        expect(FN).toContain('Diseño actualizado disponible');
+        expect(FN).toMatch(/verPdfVersionCartillaDelegado\(\\'' \+ v\.id \+ '\\', true\)/);
+        expect(FN).toContain('v.storage_path_pdf_rediseno');
     });
 
     test('regenerarPdfVersionCartillaDelegado() llama a POST /admin/cartillas-delegado/version/:id/regenerar-pdf', () => {

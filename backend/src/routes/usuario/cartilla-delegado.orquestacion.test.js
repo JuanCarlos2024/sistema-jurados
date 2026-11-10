@@ -216,23 +216,31 @@ describe('POST /rodeo/:rodeo_id — creación: temporada real, SIN duplicar asoc
     });
 });
 
-describe('Nombre del Delegado — manual vs automático (punto 6 de la segunda revisión)', () => {
-    test('un nombre editado manualmente por el delegado se guarda tal cual, sin exigir que coincida con ninguna asignación', async () => {
+describe('Nombre del Delegado — SIEMPRE el backend es la fuente autorizada, nunca un campo editable del navegador (corrección final)', () => {
+    // CORREGIDO — antes (punto 6 de la segunda revisión) un PATCH con
+    // delegado_nombre pasaba sin exigir que calzara con ninguna asignación
+    // ("NOMBRE ESCRITO A MANO"). delegado_nombre ya no está en
+    // CAMPOS_EDITABLES: se fija UNA VEZ al crear la cartilla (desde la
+    // fuente autoritativa, ver POST /rodeo/:rodeo_id) y queda inmutable por
+    // esta vía de ahí en adelante — incluso si el cliente lo envía.
+    test('un PATCH que envía delegado_nombre lo IGNORA por completo: nunca llega al update, el valor ya guardado en BD se conserva intacto', async () => {
         const llamadas = crearSupabaseMock({
             cartillas_delegado: [
                 { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },
-                { data: { id: 'cart-1', delegado_nombre: 'NOMBRE ESCRITO A MANO' }, error: null }
+                { data: { id: 'cart-1' }, error: null }
             ]
         });
         const { status } = await llamarRuta({
             method: 'PATCH', url: '/cart-1',
-            body: { delegado_nombre: 'NOMBRE ESCRITO A MANO' }
+            body: { delegado_nombre: 'NOMBRE ESCRITO A MANO', secretario_jurado: 'PEDRO' }
         });
-        expect(status).toBe(200); // nunca rechaza por no calzar con usuarios_pagados/asignacion_id
-        expect(llamadas.cartillas_delegado.updates[0].delegado_nombre).toBe('NOMBRE ESCRITO A MANO');
+        expect(status).toBe(200);
+        const update = llamadas.cartillas_delegado.updates[0];
+        expect(update).not.toHaveProperty('delegado_nombre'); // ignorado por completo
+        expect(update.secretario_jurado).toBe('PEDRO'); // los demás campos editables siguen funcionando normalmente
     });
 
-    test('PATCH sin enviar delegado_nombre en el body NUNCA lo sobrescribe con vacío/NULL (solo se actualizan los campos presentes en el body)', async () => {
+    test('PATCH sin enviar delegado_nombre en el body tampoco lo sobrescribe con vacío/NULL (comportamiento sin cambios)', async () => {
         const llamadas = crearSupabaseMock({
             cartillas_delegado: [
                 { data: { id: 'cart-1', estado: 'borrador', delegado_id: 'delegado-1' }, error: null },

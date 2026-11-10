@@ -249,6 +249,78 @@ describe('exportarRodeos — columnas (Jurado/Estado designación ya existentes 
         expect(filas[0][COL.ESTADO_DES]).toBe('Confirmado / Rechazado');
     });
 
+    // Fecha real de Excel (mejora Nov-2026): antes se escribía r.fecha tal
+    // cual (texto "2026-09-18") — Excel no podía ordenarlo/filtrarlo
+    // cronológicamente como fecha. Ahora debe ser una celda de fecha REAL
+    // (cell.value instanceof Date), con formato dd/mm/yyyy.
+    describe('Fecha — celda de fecha real dd/mm/yyyy (nunca texto)', () => {
+        test('cell.value es un Date real con el día/mes/año exactos (nunca el texto "2026-09-18")', async () => {
+            respuestas.rodeos = { data: [{ ...RODEO_BASE, fecha: '2026-11-07' }], error: null };
+            const res = crearResFake();
+            await exportarRodeos({}, res);
+            const celda = await leerCelda(res, 1, COL.FECHA);
+            expect(celda.value).toBeInstanceOf(Date);
+            expect(celda.value.getUTCFullYear()).toBe(2026);
+            expect(celda.value.getUTCMonth()).toBe(10); // 0-based -> noviembre
+            expect(celda.value.getUTCDate()).toBe(7);
+        });
+
+        test('numFmt de la celda es dd/mm/yyyy -> Excel la muestra como "07/11/2026"', async () => {
+            respuestas.rodeos = { data: [{ ...RODEO_BASE, fecha: '2026-11-07' }], error: null };
+            const res = crearResFake();
+            await exportarRodeos({}, res);
+            const wb = new ExcelJS.Workbook();
+            await wb.xlsx.load(res.getBuffer());
+            const ws = wb.getWorksheet('Rodeos');
+            const cell = ws.getRow(2).getCell(COL.FECHA + 1);
+            expect(cell.numFmt).toBe('dd/mm/yyyy');
+        });
+
+        test('nunca se desplaza un día por la zona horaria del servidor (TZ=America/Santiago, UTC-3/-4)', async () => {
+            const tzOriginal = process.env.TZ;
+            process.env.TZ = 'America/Santiago';
+            try {
+                respuestas.rodeos = { data: [{ ...RODEO_BASE, fecha: '2026-11-07' }], error: null };
+                const res = crearResFake();
+                await exportarRodeos({}, res);
+                const celda = await leerCelda(res, 1, COL.FECHA);
+                expect(celda.value.getUTCFullYear()).toBe(2026);
+                expect(celda.value.getUTCMonth()).toBe(10);
+                expect(celda.value.getUTCDate()).toBe(7); // nunca 6 (día anterior) ni 8
+            } finally {
+                process.env.TZ = tzOriginal;
+            }
+        });
+
+        test('fecha límite de fin de mes/año (31/12) tampoco se desplaza', async () => {
+            respuestas.rodeos = { data: [{ ...RODEO_BASE, fecha: '2026-12-31' }], error: null };
+            const res = crearResFake();
+            await exportarRodeos({}, res);
+            const celda = await leerCelda(res, 1, COL.FECHA);
+            expect(celda.value.getUTCFullYear()).toBe(2026);
+            expect(celda.value.getUTCMonth()).toBe(11);
+            expect(celda.value.getUTCDate()).toBe(31);
+        });
+
+        test('sin fecha (null) -> celda vacía, nunca lanza excepción ni inventa una fecha', async () => {
+            respuestas.rodeos = { data: [{ ...RODEO_BASE, fecha: null }], error: null };
+            const res = crearResFake();
+            await expect(exportarRodeos({}, res)).resolves.not.toThrow();
+            const celda = await leerCelda(res, 1, COL.FECHA);
+            expect(celda.value).toBeNull();
+        });
+
+        test('otras columnas (Club, Asociación, Total Pagos) no se vieron afectadas por el cambio de Fecha', async () => {
+            respuestas.rodeos = { data: [{ ...RODEO_BASE, fecha: '2026-11-07', club: 'EL VALLE', asociacion: 'CURICÓ' }], error: null };
+            const res = crearResFake();
+            await exportarRodeos({}, res);
+            const { filas } = await leerFilas(res);
+            expect(filas[0][COL.CLUB]).toBe('EL VALLE');
+            expect(filas[0][COL.ASOC]).toBe('CURICÓ');
+            expect(filas[0][COL.TOTAL]).toBe('$0');
+        });
+    });
+
     test('CASO 5 del pedido — con fecha_desde/fecha_hasta, exportarRodeos sigue delegando el filtrado a construirQueryRodeosFiltrada (no re-implementa su propia query)', async () => {
         let gteVisto = null, lteVisto = null;
         const chainRodeos = {};
