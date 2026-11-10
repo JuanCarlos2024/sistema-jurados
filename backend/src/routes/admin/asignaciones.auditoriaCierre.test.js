@@ -149,8 +149,13 @@ describe('Comprobación 1 — trazabilidad de excepciones (confirmar_advertencia
         });
 
         expect(body.creadas).toHaveLength(1);
+        // CORRECCIÓN URGENTE (caso LO BARNECHEA) — p_causas_confirmadas es
+        // JSONB; debe llegar como arreglo JS real (supabase-js lo serializa
+        // una sola vez al armar el body), NUNCA pre-serializado con
+        // JSON.stringify() (eso lo convertía en un string JSON, que
+        // jsonb_typeof() ve como 'string' y la RPC rechazaba siempre).
         expect(supabase.rpc).toHaveBeenCalledWith('crear_asignacion_con_bitacora', expect.objectContaining({
-            p_motivo_catalogo_id: 'mot-1', p_causas_confirmadas: JSON.stringify(['DISTANCIA_EXCEDIDA']),
+            p_motivo_catalogo_id: 'mot-1', p_causas_confirmadas: ['DISTANCIA_EXCEDIDA'],
             p_motivo_detalle: 'Único disponible en la zona'
         }));
 

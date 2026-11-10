@@ -1540,6 +1540,23 @@ function seleccionarPersona(id, nombre, tipo, cat) {
     info.classList.remove('oculto');
 }
 
+// CORRECCIÓN URGENTE (caso LO BARNECHEA) — nunca confiar en un HTTP 2xx por
+// sí solo para mostrar "designado correctamente": el backend ahora responde
+// con error real cuando no se creó nada (ver asignaciones.js), pero esto es
+// defensa en profundidad para CUALQUIER respuesta 2xx (incluido un 207 de
+// éxito parcial) que no incluya, con un id válido, la asignación que se pidió.
+// Lanza (nunca retorna false en silencio) para que el único `catch` de cada
+// llamador reutilice el mismo camino de error que ya usan hoy (mostrarError
+// + modal disponible, sin cerrar).
+function verificarAsignacionCreada(resp, usuarioPagadoId) {
+    const creada = (resp?.creadas || []).find(a => a.usuario_pagado_id === usuarioPagadoId && a.id);
+    if (!creada) {
+        const err = (resp?.errores || []).find(e => e.usuario_pagado_id === usuarioPagadoId);
+        throw { message: err?.error || 'No se pudo confirmar la creación de la asignación.' };
+    }
+    return creada;
+}
+
 async function guardarAsignacion(e, rodeoId) {
     e.preventDefault();
     const usr = document.getElementById('usr-seleccionado').value;
@@ -1568,10 +1585,11 @@ async function guardarAsignacion(e, rodeoId) {
     }
 
     try {
-        await api.post('/admin/asignaciones', {
+        const resp = await api.post('/admin/asignaciones', {
             rodeo_id: rodeoId,
             personas: [{ usuario_pagado_id: usr, tipo_persona: tipo }]
         });
+        verificarAsignacionCreada(resp, usr);
         mostrarToast('Persona asignada correctamente', 'success');
         verDetalle(rodeoId);
     } catch(err) { mostrarError(err); }
@@ -1914,13 +1932,14 @@ async function designarJurado(usuarioId) {
     }
 
     try {
-        await api.post('/admin/asignaciones', {
+        const resp = await api.post('/admin/asignaciones', {
             rodeo_id: _designarRodeoId,
             personas: [{
                 usuario_pagado_id: usuarioId, tipo_persona: 'jurado', confirmar_advertencias: confirmarAdvertencias,
                 motivo_codigo: motivo?.motivo_codigo, motivo_detalle: motivo?.motivo_detalle
             }]
         });
+        verificarAsignacionCreada(resp, usuarioId);
         mostrarToast(`${nombre} designado correctamente`, 'success');
         cerrarModal();
         verDetalle(_designarRodeoId);

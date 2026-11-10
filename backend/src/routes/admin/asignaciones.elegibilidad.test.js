@@ -126,7 +126,11 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
 
         const { status, body } = await llamarPost([{ usuario_pagado_id: 'J1', tipo_persona: 'jurado' }]);
 
-        expect(status).toBe(201); // la ruta siempre responde 201 e informa el detalle en "errores"
+        // CORRECCIÓN URGENTE (caso LO BARNECHEA) — un fracaso total
+        // (creadas.length===0) ya nunca responde 2xx: el frontend dejó de
+        // mostrar "designado correctamente" por el solo hecho de recibir un
+        // HTTP exitoso sin inspeccionar el cuerpo.
+        expect(status).toBe(422);
         expect(body.creadas).toHaveLength(0);
         expect(body.errores).toHaveLength(1);
         expect(body.errores[0]).toEqual(expect.objectContaining({ usuario_pagado_id: 'J1', estado_elegibilidad: 'NO_HABILITADO', causas: ['MISMA_ASOCIACION'] }));
@@ -179,16 +183,22 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
         evaluarElegibilidadJurado.mockReturnValue({ estado: 'CON_ADVERTENCIAS', causas: ['DISTANCIA_EXCEDIDA'], causas_obligatorias: [], causas_relajables: ['DISTANCIA_EXCEDIDA'], distancia_km: 800 });
         supabase.rpc.mockResolvedValue({ data: { asignacion: { id: 'asig-1', usuario_pagado_id: 'J1' }, bitacora_id: 'bit-1' }, error: null });
 
-        const { body } = await llamarPost([{
+        const { status, body } = await llamarPost([{
             usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true,
             motivo_codigo: 'criterio_tecnico_area_deportiva', motivo_detalle: 'Único disponible en la zona'
         }]);
 
+        expect(status).toBe(201);
         expect(body.creadas).toHaveLength(1);
         expect(body.errores).toHaveLength(0);
+        // CORRECCIÓN URGENTE (caso LO BARNECHEA) — p_causas_confirmadas debe
+        // llegar como arreglo JS real, nunca pre-serializado con
+        // JSON.stringify() (ver asignaciones.js: la RPC lo rechazaba siempre
+        // con CAUSAS_CONFIRMADAS_REQUERIDAS, porque jsonb_typeof() de un
+        // string JSON es 'string', no 'array').
         expect(supabase.rpc).toHaveBeenCalledWith('crear_asignacion_con_bitacora', expect.objectContaining({
             p_rodeo_id: 'R1', p_usuario_pagado_id: 'J1', p_motivo_catalogo_id: 'mot-1',
-            p_causas_confirmadas: JSON.stringify(['DISTANCIA_EXCEDIDA']), p_motivo_detalle: 'Único disponible en la zona'
+            p_causas_confirmadas: ['DISTANCIA_EXCEDIDA'], p_motivo_detalle: 'Único disponible en la zona'
         }));
     });
 
@@ -262,11 +272,15 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
         });
         evaluarElegibilidadJurado.mockReturnValue({ estado: 'NO_HABILITADO', causas: ['MISMA_ASOCIACION'], causas_obligatorias: ['MISMA_ASOCIACION'], causas_relajables: [], distancia_km: null });
 
-        const { body } = await llamarPost([
+        const { status, body } = await llamarPost([
             { usuario_pagado_id: 'J1', tipo_persona: 'jurado' },
             { usuario_pagado_id: 'D1', tipo_persona: 'delegado_rentado' }
         ]);
 
+        // CORRECCIÓN URGENTE — éxito parcial explícito: nunca un 201 llano
+        // cuando una de varias personas falló; 207 deja claro que no "todo
+        // se guardó".
+        expect(status).toBe(207);
         expect(body.creadas).toHaveLength(1);
         expect(body.creadas[0].usuario_pagado_id).toBe('D1');
         expect(body.errores).toHaveLength(1);

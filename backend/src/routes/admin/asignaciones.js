@@ -383,7 +383,20 @@ router.post('/', async (req, res) => {
                     p_pago_base_calculado: calculo.pago_base_calculado,
                     p_motivo_catalogo_id: excepcion.motivoCatalogoId,
                     p_actor_id: req.usuario.id,
-                    p_causas_confirmadas: JSON.stringify(excepcion.causasConfirmadas),
+                    // CORRECCIÓN (caso LO BARNECHEA) — p_causas_confirmadas es
+                    // JSONB en la RPC (migración 094, exige
+                    // jsonb_typeof(...) = 'array'). supabase-js serializa el
+                    // BODY completo una sola vez: un array JS ya llega como
+                    // arreglo JSON real. Pre-serializarlo acá con
+                    // JSON.stringify() lo convertía en un STRING JSON (un
+                    // escalar, jsonb_typeof='string'), así que la RPC
+                    // SIEMPRE rechazaba la excepción con
+                    // CAUSAS_CONFIRMADAS_REQUERIDAS — nunca se creaba la
+                    // asignación, pero el error quedaba enterrado en
+                    // erroresCreacion mientras el endpoint seguía
+                    // respondiendo 201 (ver corrección del contrato de
+                    // respuesta más abajo).
+                    p_causas_confirmadas: excepcion.causasConfirmadas,
                     p_motivo_detalle: excepcion.motivoDetalle
                 });
                 if (errRpc) {
@@ -399,7 +412,15 @@ router.post('/', async (req, res) => {
                     } else if (msg.includes('CRUCE_DISPONIBILIDAD')) {
                         erroresCreacion.push({ error: 'El jurado ya está asignado a otro rodeo en fechas que se cruzan', usuario_pagado_id });
                     } else {
-                        erroresCreacion.push({ error: msg, usuario_pagado_id });
+                        // Mensaje comprensible para cualquier otro rechazo de
+                        // la RPC (p.ej. CAUSAS_CONFIRMADAS_REQUERIDAS,
+                        // CAUSA_CONFIRMADA_DESCONOCIDA, SIN_DISPONIBILIDAD_
+                        // DECLARADA, DURACION_INCONSISTENTE_CON_RODEO,
+                        // PAGO_BASE_INCONSISTENTE) sin mantener una lista
+                        // paralela de códigos: el propio RAISE EXCEPTION de
+                        // la función SQL ya redacta una frase humana después
+                        // de "CODIGO: " — solo se quita el código técnico.
+                        erroresCreacion.push({ error: msg.replace(/^[A-Z_]+:\s*/, '') || msg, usuario_pagado_id });
                     }
                     continue;
                 }
@@ -464,10 +485,27 @@ router.post('/', async (req, res) => {
         }
     }
 
-    res.status(201).json({
+    // CORRECCIÓN URGENTE (caso LO BARNECHEA) — este endpoint respondía
+    // SIEMPRE 201, incluso cuando creadas.length===0 (ninguna asignación se
+    // creó realmente): el frontend mostraba "designado correctamente" por el
+    // solo hecho de recibir un HTTP 2xx, sin inspeccionar el cuerpo.
+    //   - 0 creadas, con errores -> 422: fracaso total, nunca un 2xx.
+    //   - creadas y errores mezclados (varias personas) -> 207: éxito
+    //     parcial explícito, nunca "todo se guardó".
+    //   - sin errores -> 201, igual que siempre.
+    const huboErrores = erroresCreacion.length > 0;
+    const huboCreadas = creadas.length > 0;
+    const estadoHttp = !huboCreadas && huboErrores ? 422 : (huboCreadas && huboErrores ? 207 : 201);
+    res.status(estadoHttp).json({
         creadas,
         errores: erroresCreacion,
-        mensaje: `${creadas.length} asignación(es) creada(s)${erroresCreacion.length > 0 ? `, ${erroresCreacion.length} con error` : ''}`
+        mensaje: huboCreadas
+            ? `${creadas.length} asignación(es) creada(s)${huboErrores ? `, ${erroresCreacion.length} con error` : ''}`
+            : 'No se pudo crear ninguna asignación.',
+        // `error` (singular) es el campo que api.js/apiFetch lee para el
+        // mensaje de la excepción en un fracaso total — nunca un texto
+        // genérico cuando ya existe el motivo real de la RPC/validación.
+        ...(estadoHttp === 422 ? { error: erroresCreacion[0]?.error || 'No se pudo crear ninguna asignación.' } : {})
     });
 });
 
