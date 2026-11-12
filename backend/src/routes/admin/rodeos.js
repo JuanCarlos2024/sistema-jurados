@@ -865,6 +865,9 @@ router.post('/:id/publicar-designaciones', soloNoMonitor, soloNoAnalista, soloNo
         tabla: 'asignaciones',
         registro_id: req.params.id,
         accion: 'publicar_designaciones',
+        // Trazabilidad: qué asignaciones exactas se publicaron (registro_id
+        // es el rodeo). Aditivo, no cambia el comportamiento.
+        datos_nuevos: { rodeo_id: req.params.id, asignacion_ids: publicadas.map(a => a.id) },
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
         descripcion: `Designaciones publicadas para ${rodeo.club} - ${rodeo.fecha} (${publicadas.length}): ${nombres.join(', ')}`,

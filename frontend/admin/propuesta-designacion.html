@@ -63,6 +63,35 @@
         .badge-revision.NO_EVALUABLE { background: #f0f1f2; color: #6b7280; }
         .badge-revision.SIN_JURADO_ACTUAL { background: #fdeee0; color: #b9560a; }
 
+        /* ── Revisión administrativa: check verde, modificado, sin jurado ── */
+        .resultado-rodeo-card.rev-CONFIRMADO { border-left: 5px solid #27ae60; background: #f6fcf8; }
+        .resultado-rodeo-card.rev-MODIFICADO { border-left: 5px solid #2d5a8e; background: #f7fafd; }
+        .resultado-rodeo-card.rev-MODIFICADO.rev-revisado { box-shadow: inset 0 0 0 1px #c7e8d3; }
+        .resultado-rodeo-card.rev-SIN_JURADO { border-left: 5px solid #e67e22; }
+        .resultado-rodeo-card.rev-PENDIENTE { border-left: 5px solid #d5dae1; }
+        .resultado-rodeo-card.rev-SIN_EVIDENCIA { border-left: 5px dashed #b7950b; background: #fffdf3; }
+        .rev-cabecera { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+        .rev-posicion { font-size:12px; color:var(--gris); font-weight:700; letter-spacing:.3px; }
+        .rev-check { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:5px; border:2px solid #b8c0cc; font-size:14px; font-weight:700; color:#fff; flex:0 0 auto; }
+        .rev-check.marcado { background:#27ae60; border-color:#27ae60; }
+        .rev-badge { font-size:12px; font-weight:700; padding:3px 10px; border-radius:12px; }
+        .rev-badge.confirmado { background:#27ae60; color:#fff; }
+        .rev-badge.modificado { background:#2d5a8e; color:#fff; }
+        .rev-badge.pendiente { background:#eef0f3; color:#4b5563; }
+        .rev-badge.sinjurado { background:#fdeee0; color:#b9560a; }
+        .rev-badge.sinevidencia { background:#fdf6d8; color:#7d6608; border:1px solid #e9d68a; }
+        .rev-badge.aplicado { background:#e8eef6; color:#1f3b5c; border:1px solid #b9c9de; }
+        .rev-aplicada-nota { font-size:13px; color:#1f3b5c; background:#f1f5fa; border-radius:6px; padding:6px 10px; }
+        .rev-autor { font-size:12px; color:var(--gris); }
+        .rev-sustitucion { font-size:14px; margin-top:8px; padding:8px 10px; background:#eaf4fb; border-radius:6px; color:#1a5276; }
+        .rev-fijada { font-size:12px; margin-bottom:8px; padding:6px 10px; background:#fff3cd; border-radius:6px; color:#7a5200; }
+        .rev-barra { position:sticky; top:0; z-index:5; background:#fff; padding:10px 0 8px; margin-bottom:10px; border-bottom:1px solid var(--gris-borde); }
+        .rev-barra input[type=search] { width:100%; max-width:520px; }
+        .rev-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; align-items:center; }
+        .rev-chip { border:1px solid var(--gris-borde); background:#fff; border-radius:16px; padding:4px 12px; font-size:13px; cursor:pointer; }
+        .rev-chip.activo { background:var(--azul, #1e3a5f); color:#fff; border-color:var(--azul, #1e3a5f); }
+        .rev-contador { font-size:13px; color:var(--gris); margin-left:auto; }
+
         /* ── Modal Designar/Modificar jurado — mejora de legibilidad + UX ──
            Rediseño compacto (sección 16-21 de la mejora "Equidad Visible de
            Designaciones + Historial + Modal Compacto"): modal ancho/alto,
@@ -299,6 +328,8 @@
 <script src="/js/sidebar-toggle.js"></script>
 <script src="/js/candidatosFiltro.js"></script>
 <script src="/js/propuestaDesignacionGlobalUI.js"></script>
+<script src="/js/propuestaRevisionUI.js"></script>
+<script src="/js/historialDesignacionesUI.js"></script>
 <script>
 protegerRuta('administrador');
 document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
@@ -980,6 +1011,9 @@ function construirFilaPreviewDesdeResultado(r) {
         const advertenciasPreaceptadas = construirAdvertenciasPreaceptadas(jp);
         return {
             ...base, jurado_id_propuesto: jp.jurado_id, nombre_propuesto: jp.nombre,
+            // Categoría del motor en esta corrida (solo presentación).
+            categoria_propuesto: { categoria: jp.categoria ?? null, categoria_fuente: 'MOTOR' },
+            categoria_efectivo: { categoria: jp.categoria ?? null, categoria_fuente: 'MOTOR' },
             estado_revision: 'PENDIENTE',
             // Fase 2C, sección 1 — para distinguir visualmente una designación
             // natural de una que necesitó reacomodo global (renderFilaDetallePropuesta).
@@ -1020,7 +1054,11 @@ function construirFilaPreviewDesdeResultado(r) {
 }
 
 function iniciarPreviewTemporal(resp) {
-    const detalle = resp.resultados.map(construirFilaPreviewDesdeResultado);
+    // Posición estable: el orden en que el motor entregó los resultados (el
+    // mismo que se firma en el preview_token y se persiste al guardar).
+    const detalle = resp.resultados.map(construirFilaPreviewDesdeResultado).map((d, i) => ({ ...d, posicion: i + 1 }));
+    filtroRevision.preview = { texto: '', estado: 'todos' };
+    fijadosRevision.preview.clear();
     previewTemporal = {
         preview_token: resp.preview_token,
         temporada: resp.temporada,
@@ -1157,14 +1195,8 @@ function renderPreviewTemporal() {
         ${renderCoberturaGlobal(previewTemporal.optimizacion_global, previewTemporal.cobertura_completa, previewTemporal.detalle)}
         ${renderBannerCuposBorrador(resumenCupos)}
         ${avisoCambios}
-        <div class="kpi-grid" style="margin-bottom:16px;">
-            ${kpi(r.total_rodeos, 'Rodeos')}
-            ${kpi(r.con_jurado_actual, 'Con jurado propuesto', 'verde')}
-            ${kpi(r.modificados, 'Modificados manualmente')}
-            ${kpi(r.sin_propuesta, 'Sin propuesta', 'naranja')}
-            ${kpi(r.sin_jurado_actual, 'Sin jurado (movido)', 'naranja')}
-            ${kpi(r.no_evaluables, 'No evaluables')}
-        </div>
+        ${renderKpisRevision(prvContadores(previewTemporal.detalle))}
+        <div style="font-size:12px; color:var(--gris); margin:-8px 0 14px;">Guardar el borrador <strong>no</strong> confirma jurados: las sugerencias del motor quedan como «Pendientes de revisión» hasta que usted las confirme.</div>
         <div class="form-acciones" style="margin-bottom:16px;">
             <button class="btn btn-primario" id="btn-guardar-propuesta" onclick="guardarComoPropuesta()">💾 Guardar como propuesta (borrador)</button>
         </div>
@@ -1172,7 +1204,7 @@ function renderPreviewTemporal() {
             ${previewTemporal.metricas.tiempo_ejecucion_ms} ms total (carga BD: ${previewTemporal.metricas.tiempo_carga_bd_ms} ms · motor en memoria: ${previewTemporal.metricas.tiempo_motor_memoria_ms} ms)
             · ~${previewTemporal.metricas.queries_aproximadas} consultas · ${previewTemporal.metricas.jurados_activos_considerados} jurados activos considerados
         </div>
-        <div>${previewTemporal.detalle.map(d => renderFilaDetallePropuesta(d, 'preview')).join('')}</div>`;
+        ${renderBarraRevision('preview')}`;
 
     if (previewTemporal.jurados_utilizados.length > 0) {
         html += `
@@ -1192,7 +1224,25 @@ function renderPreviewTemporal() {
         </div>`;
     }
 
+    const y = window.scrollY;
     cont.innerHTML = html;
+    renderListaRevision('preview');
+    window.scrollTo(0, y);
+}
+
+// Indicadores independientes: cobertura ≠ aprobación administrativa.
+function renderKpisRevision(c) {
+    return `<div class="kpi-grid" style="margin-bottom:16px;">
+        ${kpi(c.total, 'Total de rodeos')}
+        ${kpi(c.cubiertos, 'Cupos cubiertos', c.cubiertos === c.total ? 'verde' : 'naranja')}
+        ${kpi(c.pendientes, 'Pendientes de revisión administrativa', c.pendientes > 0 ? 'naranja' : 'verde')}
+        ${kpi(c.confirmados, 'Confirmados', 'verde')}
+        ${kpi(c.modificados, 'Modificados')}
+        ${kpi(c.sin_jurado, 'Sin jurado', c.sin_jurado > 0 ? 'rojo' : '')}
+        ${kpi(c.con_advertencias, 'Con advertencias del motor')}
+        ${c.sin_evidencia > 0 ? kpi(c.sin_evidencia, 'Sin confirmación individual registrada (clasificación automática)', 'naranja') : ''}
+        ${c.aplicados > 0 ? kpi(c.aplicados, 'Aplicados a Rodeos') : ''}
+    </div>`;
 }
 
 // ─── Guardar como propuesta (BORRADOR) — resumen previo + confirmación ───
@@ -1292,6 +1342,78 @@ const ETIQUETAS_USO_CORTO = {
     YA_USADO_EN_PROPUESTA: 'ℹ️ Otra fecha, sin conflicto de reglas'
 };
 
+// ═════════════════════════════════════════════════════════════════════════
+// Revisión administrativa: buscador + filtros por estado + orden estable.
+// Los filtros SOLO afectan la vista (nunca asignaciones ni historial). El
+// orden es siempre el que entrega el backend (estable, persistido) — nunca
+// se reordena por estado, nombre ni fecha de actualización.
+// ═════════════════════════════════════════════════════════════════════════
+const filtroRevision = { preview: { texto: '', estado: 'todos' }, borrador: { texto: '', estado: 'todos' } };
+// Filas recién editadas que dejaron de cumplir el filtro activo: se
+// mantienen visibles (marcadas) hasta que el usuario cambie el filtro.
+const fijadosRevision = { preview: new Set(), borrador: new Set() };
+
+function detallePorModo(modo) {
+    return modo === 'preview' ? (previewTemporal?.detalle || []) : (propuestaAbierta?.detalle || []);
+}
+
+function fijarFilaEditada(modo, id) {
+    const f = filtroRevision[modo];
+    if (f.texto || f.estado !== 'todos') fijadosRevision[modo].add(id);
+}
+
+// Re-render conservando la posición vertical del administrador.
+function conservandoScroll(fn) {
+    const y = window.scrollY;
+    fn();
+    window.scrollTo(0, y);
+}
+
+function renderBarraRevision(modo) {
+    const f = filtroRevision[modo];
+    const c = prvContadores(detallePorModo(modo));
+    const conteoChip = { todos: c.total, pendientes: c.pendientes, confirmados: c.confirmados, modificados: c.modificados, advertencias: c.con_advertencias, sin_jurado: c.sin_jurado };
+    return `<div class="rev-barra">
+        <input type="search" class="form-control" id="rev-busqueda-${modo}" value="${sanitizar(f.texto)}"
+               placeholder="Buscar club, asociación, tipo de rodeo o jurado..." oninput="cambiarBusquedaRevision('${modo}', this.value)" aria-label="Buscar en la propuesta">
+        <div class="rev-chips" role="group" aria-label="Filtrar por estado de revisión">
+            ${Object.entries(PRV_FILTROS_ESTADO).map(([clave, def]) =>
+                `<button type="button" class="rev-chip${f.estado === clave ? ' activo' : ''}" onclick="cambiarEstadoRevision('${modo}', '${clave}')">${def.etiqueta} (${conteoChip[clave]})</button>`).join('')}
+            <button type="button" class="btn btn-secundario btn-pequeño" onclick="limpiarFiltrosRevision('${modo}')">Limpiar filtros</button>
+            <span class="rev-contador" id="rev-contador-${modo}"></span>
+        </div>
+    </div>
+    <div id="lista-filas-${modo}"></div>`;
+}
+
+// Solo repinta la lista (no la barra): el campo de búsqueda conserva el foco.
+function renderListaRevision(modo) {
+    const cont = document.getElementById('lista-filas-' + modo);
+    if (!cont) return;
+    const { visibles, total } = prvFiltrar(detallePorModo(modo), filtroRevision[modo], fijadosRevision[modo]);
+    const contador = document.getElementById('rev-contador-' + modo);
+    if (contador) contador.textContent = `Mostrando ${visibles.length} de ${total} rodeos`;
+    cont.innerHTML = visibles.length === 0
+        ? '<p style="font-size:14px; color:var(--gris); padding:12px 0;">Ningún rodeo coincide con la búsqueda y el filtro actuales.</p>'
+        : visibles.map(({ fila, fijada }) => renderFilaDetallePropuesta(fila, modo, { fijada, total })).join('');
+}
+
+function cambiarBusquedaRevision(modo, texto) {
+    filtroRevision[modo].texto = texto;
+    fijadosRevision[modo].clear();
+    renderListaRevision(modo);
+}
+function cambiarEstadoRevision(modo, estado) {
+    filtroRevision[modo].estado = estado;
+    fijadosRevision[modo].clear();
+    conservandoScroll(() => rerenderModo(modo));
+}
+function limpiarFiltrosRevision(modo) {
+    filtroRevision[modo] = { texto: '', estado: 'todos' };
+    fijadosRevision[modo].clear();
+    conservandoScroll(() => rerenderModo(modo));
+}
+
 let propuestaAbierta = null; // { propuesta, resumen, detalle } de la propuesta actualmente abierta en pantalla (BORRADOR ya guardado)
 let ultimaListaPropuestas = []; // última respuesta de GET /propuestas — usada por el botón "Eliminar" del listado
 
@@ -1345,6 +1467,8 @@ async function abrirPropuesta(id) {
     cont.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     try {
         propuestaAbierta = await api.get('/admin/propuesta-designacion/propuestas/' + id);
+        filtroRevision.borrador = { texto: '', estado: 'todos' };
+        fijadosRevision.borrador.clear();
         renderVistaPropuesta();
     } catch (err) {
         cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(err.message)}</div>`;
@@ -1393,16 +1517,9 @@ function renderVistaPropuesta() {
         </div>
         ${renderCoberturaGlobal(propuesta.resultado_cobertura ? { ...propuesta.resultado_cobertura, advertencias: [] } : null, propuesta.resultado_cobertura?.cobertura_completa, detalle)}
         ${renderBannerCuposBorrador(resumen)}
-        <div class="kpi-grid" style="margin-bottom:16px;">
-            ${kpi(resumen.total_rodeos, 'Rodeos')}
-            ${kpi(resumen.aceptados, 'Aceptados', 'verde')}
-            ${kpi(resumen.modificados, 'Modificados')}
-            ${kpi(resumen.pendientes, 'Pendientes', 'naranja')}
-            ${kpi(resumen.sin_propuesta, 'Sin propuesta', 'naranja')}
-            ${kpi(resumen.sin_jurado_actual, 'Sin jurado (movido)', 'naranja')}
-            ${kpi(resumen.no_evaluables, 'No evaluables')}
-        </div>
-        <div>${detalle.map(d => renderFilaDetallePropuesta(d, 'borrador')).join('')}</div>
+        ${renderKpisRevision(prvContadores(detalle))}
+        ${resumen.cobertura_completa && prvContadores(detalle).pendientes > 0 ? `<div style="font-size:12px; color:var(--gris); margin:-8px 0 14px;">Cobertura completa no significa aprobación: quedan <strong>${prvContadores(detalle).pendientes}</strong> rodeo(s) pendientes de revisión administrativa.</div>` : ''}
+        ${renderBarraRevision('borrador')}
         <div class="form-acciones" style="margin-top:14px; border-top:1px solid var(--gris-borde); padding-top:14px;">
             <button class="btn btn-primario" disabled title="Disponible en la siguiente etapa">Confirmar propuesta — Disponible en siguiente etapa</button>
         </div>
@@ -1427,6 +1544,7 @@ function renderVistaPropuesta() {
             <span style="font-size:12px; color:var(--gris);" title="Esta propuesta ya generó designaciones reales en Rodeos y no puede eliminarse.">Ya aplicada a Rodeos — no se puede eliminar</span>
         </div>` : ''}
     </div>`;
+    renderListaRevision('borrador');
 }
 
 // ─── Aplicar propuesta a Rodeos — convierte las filas ACEPTADO/MODIFICADO
@@ -1692,9 +1810,50 @@ function renderHistorialReciente(j) {
 // detalles"), junto con los datos del jurado propuesto/seleccionado y —
 // cuando el jurado efectivo sigue siendo el propuesto por el motor— las
 // reglas/"por qué ganó"/descartes (sección 2 del pedido de preview).
-function renderFilaDetallePropuesta(d, modo) {
+// Cabecera de revisión: posición estable, check y estado administrativo.
+function renderCabeceraRevision(d, modo, opts) {
+    const estado = prvEstadoVisual(d);
+    const total = opts?.total || detallePorModo(modo).length;
+    const rev = d.revision_administrativa || d.metricas_json?.revision_administrativa || null;
+    const fechaRev = rev?.fecha ? new Date(rev.fecha).toLocaleString('es-CL') : null;
+    let badge = '';
+    const sinRegistro = d.decision_evidencia?.decision === 'MODIFICACION_SIN_REGISTRO';
+    if (estado === 'SIN_EVIDENCIA') badge = '<span class="rev-badge sinevidencia">Sin confirmación individual registrada</span><span class="rev-autor">El estado se asignó automáticamente al guardar el borrador (regla anterior al 11/11/2026); no es una decisión del administrador.</span>';
+    else if (estado === 'CONFIRMADO') badge = `<span class="rev-badge confirmado">✓ Confirmado</span>${fechaRev ? `<span class="rev-autor">por administración · ${fechaRev}${rev.en_vista_previa ? ' (vista previa)' : ''}</span>` : ''}`;
+    else if (estado === 'MODIFICADO') badge = `<span class="rev-badge modificado">✏ Modificado por administración</span>${fechaRev ? `<span class="rev-autor">${fechaRev}</span>` : ''}${sinRegistro ? '<span class="rev-autor">Autor y motivo: sin información registrada</span>' : ''}`;
+    else if (estado === 'PENDIENTE') badge = '<span class="rev-badge pendiente">Pendiente de revisión</span>';
+    else badge = `<span class="rev-badge sinjurado">${estado === 'NO_EVALUABLE' ? 'No evaluable' : 'Sin jurado — resolver cupo'}</span>`;
+    const ap = d.aplicacion_real;
+    if (ap?.aplicada) badge += `<span class="rev-badge aplicado">Aplicado a Rodeos${ap.anuladas > 0 ? ` · ${ap.anuladas} designación(es) anulada(s)` : ''}${ap.publicadas > 0 ? ' · publicado' : ''}</span>`;
+    const marcado = estado === 'CONFIRMADO' || estado === 'MODIFICADO';
+    const fijada = opts?.fijada ? '<div class="rev-fijada">Este rodeo ya no coincide con el filtro activo; se mantiene visible para no perder la referencia. Desaparecerá al cambiar o limpiar el filtro.</div>' : '';
+    return `${fijada}<div class="rev-cabecera">
+        <span class="rev-check${marcado ? ' marcado' : ''}" role="img" aria-label="${marcado ? 'Revisado' : 'Sin revisar'}">${marcado ? '✓' : ''}</span>
+        <span class="rev-posicion">Rodeo ${d.posicion || '—'} de ${total}</span>
+        ${badge}
+    </div>`;
+}
+
+// Categoría junto al nombre del jurado (solo presentación) — mismo badge que
+// el Historial Unificado (hdBadgeCategoria, /js/historialDesignacionesUI.js).
+// info = { categoria, categoria_fuente } (DESIGNACION / MOTOR / ACTUAL). En una
+// fila ya aplicada (registro histórico) la categoría sin registro se rotula
+// "actual"; en el borrador vivo es simplemente la categoría vigente.
+function badgeCatFila(d, info) {
+    if (!info) return '';
+    return hdBadgeCategoria(info, { marcarActual: !!d?.aplicacion_real?.aplicada });
+}
+function catEfectivoFila(d) {
+    if (d.categoria_efectivo) return d.categoria_efectivo;
+    const j = d.jurado_efectivo;
+    return j && j.id ? { categoria: j.categoria || null, categoria_fuente: 'ACTUAL' } : null;
+}
+
+function renderFilaDetallePropuesta(d, modo, opts) {
+    const claseRevision = `rev-${prvEstadoVisual(d)}${d.estado_revision === 'MODIFICADO' ? ' rev-revisado' : ''}`;
     if (d.estado_revision === 'NO_EVALUABLE') {
-        return `<div class="resultado-rodeo-card">
+        return `<div class="resultado-rodeo-card ${claseRevision}" id="fila-detalle-${modo}-${d.id}">
+            ${renderCabeceraRevision(d, modo, opts)}
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
                 <div style="font-size:15px;"><strong>${sanitizar(d.rodeo?.club || '—')}</strong> ${d.rodeo?.fecha ? '— ' + formatFecha(d.rodeo.fecha) : ''}</div>
                 <span class="badge-revision ${d.estado_revision}">${ETIQUETAS_REVISION[d.estado_revision] || d.estado_revision}</span>
@@ -1705,8 +1864,9 @@ function renderFilaDetallePropuesta(d, modo) {
 
     const r = d.rodeo || {};
     const j = d.jurado_efectivo;
-    const infoOrigen = (d.jurado_id_seleccionado && d.jurado_id_propuesto && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
-        ? `<div style="font-size:14px; color:var(--gris); margin-top:6px;">El motor propuso a <strong>${sanitizar(d.nombre_propuesto)}</strong>; el administrador eligió a <strong>${sanitizar(d.nombre_seleccionado)}</strong>.</div>`
+    // Sustitución explícita: el verde/revisado nunca oculta que hubo un cambio.
+    const infoOrigen = (d.jurado_id_seleccionado && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
+        ? `<div class="rev-sustitucion">✏ Sustitución administrativa — propuesto originalmente por el motor: <strong>${sanitizar(d.nombre_propuesto || 'sin candidato del motor')}</strong>${d.nombre_propuesto ? badgeCatFila(d, d.categoria_propuesto) : ''} · seleccionado: <strong>${sanitizar(d.nombre_seleccionado || (j && j.nombre) || '—')}</strong>${badgeCatFila(d, d.categoria_seleccionado || catEfectivoFila(d))}</div>`
         : '';
     // Reglas/"por qué ganó"/descartes — solo mientras el jurado efectivo
     // siga siendo el que el motor propuso originalmente (si se modificó
@@ -1792,8 +1952,12 @@ function renderFilaDetallePropuesta(d, modo) {
     // sepa si trabajar en memoria (preview) o contra la propuesta persistida.
     const etiquetaBoton = j ? 'Modificar' : 'Designar jurado';
     let acciones = '';
-    if (d.estado_revision === 'PENDIENTE') {
-        acciones = `<button class="btn btn-primario" style="font-size:14px;" onclick="aceptarDetalle('${modo}', '${d.id}')">Aceptar</button>
+    if (d.aplicacion_real?.aplicada) {
+        // Fila ya aplicada: el borrador es registro histórico (el backend
+        // rechaza Confirmar/Modificar/Revertir con FILA_YA_APLICADA).
+        acciones = '<div class="rev-aplicada-nota">Este rodeo ya fue aplicado a Rodeos. El borrador se conserva como registro histórico; cualquier cambio de jurado se hace desde Rodeos (reemplazo o anulación).</div>';
+    } else if (d.estado_revision === 'PENDIENTE' && d.jurado_id_propuesto) {
+        acciones = `<button class="btn btn-primario" style="font-size:14px;" onclick="aceptarDetalle('${modo}', '${d.id}')" title="Aprueba al jurado propuesto por el motor. No crea ni publica designaciones.">✓ Confirmar jurado propuesto</button>
                     <button class="btn btn-outline" style="font-size:14px;" onclick="abrirModalCandidatos('${modo}', '${d.id}')">${etiquetaBoton}</button>`;
     } else if (d.estado_revision === 'ACEPTADO' || d.estado_revision === 'MODIFICADO') {
         acciones = `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirModalCandidatos('${modo}', '${d.id}')">${etiquetaBoton}</button>
@@ -1809,11 +1973,19 @@ function renderFilaDetallePropuesta(d, modo) {
     // designaciones, atada a un propuesta_detalle_id real — un preview
     // todavía no tiene uno) y solo cuando la fila MODIFICADO (jurado_id_
     // seleccionado distinto del propuesto por el motor).
-    if (modo === 'borrador' && d.estado_revision === 'MODIFICADO') {
-        acciones += `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirHistorialDetalle('${d.id}')">🕘 Ver historial (V1 vs. actual)</button>`;
+    // "Ver historial" (V1 vs. actual) solo con evidencia real: movimientos en
+    // bitácora o un jurado efectivamente distinto del propuesto — nunca por
+    // el solo valor de estado_revision.
+    const ev = d.historial_evidencia;
+    if (modo === 'borrador' && ev && (ev.movimientos_bitacora > 0 || ev.jurado_cambiado)) {
+        acciones += `<button class="btn btn-outline" style="font-size:14px;" onclick="abrirHistorialDetalle('${d.id}')">🕘 Ver cambios (V1 vs. actual)</button>`;
+    }
+    if (modo === 'borrador') {
+        acciones += `<button class="btn btn-outline" style="font-size:14px;" onclick="hdAbrirHistorialRodeo('${d.rodeo_id}')">📜 Historial de designaciones</button>`;
     }
 
-    return `<div class="resultado-rodeo-card" id="fila-detalle-${modo}-${d.id}">
+    return `<div class="resultado-rodeo-card ${claseRevision}" id="fila-detalle-${modo}-${d.id}">
+        ${renderCabeceraRevision(d, modo, opts)}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
             <div style="flex:1 1 260px;">
                 <div style="font-size:13px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Rodeo</div>
@@ -1829,7 +2001,7 @@ function renderFilaDetallePropuesta(d, modo) {
             <div style="flex:1 1 220px;">
                 <div style="font-size:13px; font-weight:700; letter-spacing:.5px; color:var(--gris); text-transform:uppercase; margin-bottom:4px;">Propuesta</div>
                 ${j ? `
-                    <div style="font-weight:700; font-size:16px;">${sanitizar(j.nombre || '—')}</div>
+                    <div style="font-weight:700; font-size:16px;">${sanitizar(j.nombre || '—')}${badgeCatFila(d, catEfectivoFila(d))}</div>
                     <div style="font-size:14px; color:var(--gris); line-height:1.75; margin-top:2px;">
                         Categoría ${sanitizar(j.categoria || '—')}${j.categoria_preferente ? ' (preferente)' : ''}<br>
                         ${j.comuna ? 'Comuna: ' + sanitizar(j.comuna) + '<br>' : ''}
@@ -1840,7 +2012,7 @@ function renderFilaDetallePropuesta(d, modo) {
                     ${renderRendimientoTemporada(j)}
                     ${renderTrasladosTemporada(j)}
                     ${renderHistorialReciente(j)}` : (d.estado_revision === 'SIN_JURADO_ACTUAL'
-                        ? `<div style="font-size:14px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong><br>
+                        ? `<div style="font-size:14px; color:var(--gris);">Motor propuso originalmente: <strong>${d.nombre_propuesto ? sanitizar(d.nombre_propuesto) : '—'}</strong>${d.nombre_propuesto ? badgeCatFila(d, d.categoria_propuesto) : ''}<br>
                            <span style="color:#b9560a;">Ese jurado fue movido a otro rodeo de esta propuesta — requiere una nueva decisión.</span></div>`
                         : '<span style="color:#aaa; font-size:15px;">Sin jurado designado</span>')}
             </div>
@@ -1860,7 +2032,8 @@ async function recargarPropuestaAbierta() {
     if (!propuestaAbierta) return;
     const id = propuestaAbierta.propuesta.id;
     propuestaAbierta = await api.get('/admin/propuesta-designacion/propuestas/' + id);
-    renderVistaPropuesta();
+    // Mantiene búsqueda, filtro, orden y desplazamiento vertical.
+    conservandoScroll(() => renderVistaPropuesta());
     cargarListaPropuestas(); // refresca contadores del listado general
 }
 
@@ -1884,7 +2057,8 @@ async function aceptarDetalle(modo, id) {
     }
     try {
         await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/aceptar`, {});
-        mostrarToast('Jurado propuesto aceptado.', 'success');
+        fijarFilaEditada('borrador', id);
+        mostrarToast('Jurado propuesto confirmado por administración (no se crea ni publica ninguna designación).', 'success');
         await recargarPropuestaAbierta();
     } catch (err) {
         await manejarRespuestaSeleccion('borrador', id, null, err);
@@ -1957,7 +2131,7 @@ function renderModalContexto() {
     const nombreActual = fila?.nombre_seleccionado || fila?.nombre_propuesto;
     const huboCambio = fila?.nombre_seleccionado && fila?.nombre_propuesto && fila.nombre_seleccionado !== fila.nombre_propuesto;
     const lineaActual = nombreActual
-        ? `Jurado actual: <strong>${sanitizar(nombreActual)}</strong>${huboCambio ? ' <span style="color:var(--gris);">(motor propuso: ' + sanitizar(fila.nombre_propuesto) + ')</span>' : ''}`
+        ? `Jurado actual: <strong>${sanitizar(nombreActual)}</strong>${badgeCatFila(fila, fila.nombre_seleccionado ? (fila.categoria_seleccionado || catEfectivoFila(fila)) : (fila.categoria_propuesto || catEfectivoFila(fila)))}${huboCambio ? ' <span style="color:var(--gris);">(motor propuso: ' + sanitizar(fila.nombre_propuesto) + badgeCatFila(fila, fila.categoria_propuesto) + ')</span>' : ''}`
         : `<span style="color:#aaa;">Sin jurado designado todavía</span>`;
 
     // Mejora "Zonas Extremas" — cabecera compacta (sección 27 del pedido de
@@ -2219,6 +2393,8 @@ async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, j
                 estado_temporal: estadoTemporalPayload(), confirmar_advertencias: confirmarAdvertencias
             });
             aplicarResultadoPreview(resp.destino, resp.origen_liberado, juradoNombre);
+            fijarFilaEditada('preview', id);
+            if (resp.origen_liberado) fijarFilaEditada('preview', resp.origen_liberado.rodeo_id);
             mostrarToast(resp.origen_liberado ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección aplicada (todavía sin guardar).', 'success');
             cerrarModalCandidatos();
             renderPreviewTemporal();
@@ -2232,6 +2408,8 @@ async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, j
             jurado_id: juradoId, confirmar_advertencias: confirmarAdvertencias,
             motivo_catalogo_id: motivo?.motivo_catalogo_id || undefined, motivo_detalle: motivo?.motivo_detalle || undefined
         });
+        fijarFilaEditada('borrador', id);
+        if (resp.jurado_movido_desde) fijarFilaEditada('borrador', resp.jurado_movido_desde);
         mostrarToast(resp.jurado_movido_desde ? 'Jurado movido: seleccionado aquí y liberado de su rodeo anterior.' : 'Selección guardada.', 'success');
         cerrarModalCandidatos();
         await recargarPropuestaAbierta();
@@ -2244,6 +2422,11 @@ async function seleccionarCandidato(modo, id, juradoId, confirmarAdvertencias, j
 // (nunca lo que decidiría el frontend por su cuenta) — sección 9 del pedido.
 function aplicarResultadoPreview(destino, origenLiberado, juradoNombre) {
     const filaDestino = previewTemporal.detalle.find(f => f.rodeo_id === destino.rodeo_id);
+    // Categoría del candidato elegido (ya cargada en el modal; solo presentación).
+    const candElegido = modalCandidatos
+        ? [...(modalCandidatos.candidatosValidos || []), ...(modalCandidatos.candidatosDescartados || [])].find(c => c.jurado_id === destino.jurado_id_seleccionado)
+        : null;
+    const catElegido = { categoria: candElegido?.categoria ?? null, categoria_fuente: 'ACTUAL' };
     if (filaDestino) {
         filaDestino.jurado_id_seleccionado = destino.jurado_id_seleccionado;
         filaDestino.nombre_seleccionado = juradoNombre || null;
@@ -2252,7 +2435,10 @@ function aplicarResultadoPreview(destino, origenLiberado, juradoNombre) {
         filaDestino.metricas_json = { ...(filaDestino.metricas_json || {}) };
         if (destino.advertencias_aceptadas) filaDestino.metricas_json.advertencias_aceptadas = destino.advertencias_aceptadas;
         else delete filaDestino.metricas_json.advertencias_aceptadas;
-        filaDestino.jurado_efectivo = { id: destino.jurado_id_seleccionado, nombre: juradoNombre || null, categoria: null, categoria_preferente: null, comuna: null, distancia_km: null, designaciones_temporada_antes: null };
+        filaDestino.jurado_efectivo = { id: destino.jurado_id_seleccionado, nombre: juradoNombre || null, categoria: catElegido.categoria, categoria_preferente: null, comuna: null, distancia_km: null, designaciones_temporada_antes: null };
+        const esElPropuesto = destino.jurado_id_seleccionado === filaDestino.jurado_id_propuesto;
+        filaDestino.categoria_seleccionado = esElPropuesto ? (filaDestino.categoria_propuesto || catElegido) : catElegido;
+        filaDestino.categoria_efectivo = filaDestino.categoria_seleccionado;
     }
     if (origenLiberado) {
         const filaOrigen = previewTemporal.detalle.find(f => f.rodeo_id === origenLiberado.rodeo_id);
@@ -2264,8 +2450,10 @@ function aplicarResultadoPreview(destino, origenLiberado, juradoNombre) {
             filaOrigen.metricas_json = { ...(filaOrigen.metricas_json || {}) };
             delete filaOrigen.metricas_json.advertencias_aceptadas;
             filaOrigen.jurado_efectivo = origenLiberado.estado_revision === 'PENDIENTE'
-                ? { id: filaOrigen.jurado_id_propuesto, nombre: filaOrigen.nombre_propuesto, categoria: null, categoria_preferente: null, comuna: null, distancia_km: null, designaciones_temporada_antes: null }
+                ? { id: filaOrigen.jurado_id_propuesto, nombre: filaOrigen.nombre_propuesto, categoria: filaOrigen.categoria_propuesto?.categoria ?? null, categoria_preferente: null, comuna: null, distancia_km: null, designaciones_temporada_antes: null }
                 : null;
+            filaOrigen.categoria_seleccionado = null;
+            filaOrigen.categoria_efectivo = origenLiberado.estado_revision === 'PENDIENTE' ? (filaOrigen.categoria_propuesto || null) : null;
         }
     }
     // Guardar ya no está bloqueado por un cambio previo que el administrador acaba de resolver.
@@ -2354,14 +2542,17 @@ async function revertirDetalle(modo, id) {
         // guardada al ejecutar el dry-run, sin llamar al backend.
         const original = previewTemporal.originalPorRodeo.get(id);
         const idx = previewTemporal.detalle.findIndex(f => f.rodeo_id === id);
-        if (original && idx !== -1) previewTemporal.detalle[idx] = JSON.parse(JSON.stringify(original));
+        // Conserva la posición estable de la fila al restaurarla.
+        if (original && idx !== -1) previewTemporal.detalle[idx] = { ...JSON.parse(JSON.stringify(original)), posicion: previewTemporal.detalle[idx].posicion };
+        fijarFilaEditada('preview', id);
         mostrarToast('Selección revertida.', 'success');
         renderPreviewTemporal();
         return;
     }
     try {
         await api.post(`/admin/propuesta-designacion/propuestas/${propuestaAbierta.propuesta.id}/detalle/${id}/revertir`, {});
-        mostrarToast('Selección revertida.', 'success');
+        fijarFilaEditada('borrador', id);
+        mostrarToast('Selección revertida (el historial de la decisión anterior se conserva).', 'success');
         await recargarPropuestaAbierta();
     } catch (err) {
         mostrarError(err);
@@ -2449,21 +2640,21 @@ function renderHistorialDetalle(h) {
         <div style="display:flex; gap:20px; margin-bottom:16px; flex-wrap:wrap;">
             <div style="flex:1;">
                 <div style="font-size:12px; color:var(--gris); text-transform:uppercase; font-weight:700;">V1 — propuesto originalmente</div>
-                <div style="font-size:16px; font-weight:700;">${sanitizar(h.v1.nombre || 'Sin propuesta')}</div>
+                <div style="font-size:16px; font-weight:700;">${sanitizar(h.v1.nombre || 'Sin propuesta')}${h.v1.nombre ? hdBadgeCategoria(h.categorias?.v1) : ''}</div>
             </div>
             <div style="flex:1;">
                 <div style="font-size:12px; color:var(--gris); text-transform:uppercase; font-weight:700;">Actual</div>
-                <div style="font-size:16px; font-weight:700;">${sanitizar(h.actual.nombre || 'Sin jurado')}</div>
+                <div style="font-size:16px; font-weight:700;">${sanitizar(h.actual.nombre || 'Sin jurado')}${h.actual.nombre ? hdBadgeCategoria(h.categorias?.actual, { marcarActual: false }) : ''}</div>
             </div>
         </div>`;
     if (!h.modificado) {
-        html += `<div class="alerta alerta-info">Este rodeo conserva la propuesta original del motor — nunca fue modificado manualmente.</div>`;
+        html += `<div class="alerta alerta-info">Se mantiene la propuesta original del motor. Sin modificaciones administrativas registradas.</div>`;
         return html;
     }
     html += `<div class="dash-seccion-titulo" style="border:none; padding:0; margin-bottom:8px;">Historial de modificaciones (${h.historial.length})</div>`;
-    html += h.historial.map(m => `
+    html += h.historial.map((m, i) => `
         <div class="card" style="padding:10px; margin-bottom:8px;">
-            <div style="font-size:14px;"><strong>${sanitizar(m.jurado_anterior.nombre || 'Sin jurado')}</strong> → <strong>${sanitizar(m.jurado_nuevo.nombre || '—')}</strong></div>
+            <div style="font-size:14px;"><strong>${sanitizar(m.jurado_anterior.nombre || 'Sin jurado')}</strong>${m.jurado_anterior.id ? hdBadgeCategoria(h.categorias?.historial?.[i]?.anterior) : ''} → <strong>${sanitizar(m.jurado_nuevo.nombre || '—')}</strong>${m.jurado_nuevo.id ? hdBadgeCategoria(h.categorias?.historial?.[i]?.nuevo) : ''}</div>
             <div style="font-size:12px; color:var(--gris); margin-top:4px;">
                 Motivo: ${sanitizar(m.motivo || '—')}${m.motivo_detalle ? ' — ' + sanitizar(m.motivo_detalle) : ''}<br>
                 Fecha: ${m.fecha_efectiva ? new Date(m.fecha_efectiva).toLocaleString('es-CL') : '—'}

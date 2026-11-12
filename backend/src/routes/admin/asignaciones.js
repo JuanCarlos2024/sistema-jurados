@@ -1051,13 +1051,22 @@ router.delete('/:id', async (req, res) => {
         .update({ estado: 'anulado', updated_at: ahora })
         .eq('id', req.params.id);
 
+    // Trazabilidad (Historial Unificado de Designaciones): identidad
+    // estructurada del jurado anulado y motivo opcional, en vez de solo el
+    // texto de la descripción. No cambia el comportamiento de la anulación.
+    const motivoAnulacion = typeof req.body?.motivo === 'string' && req.body.motivo.trim() ? req.body.motivo.trim().slice(0, 500) : null;
     await auditoria.registrar({
         tabla: 'asignaciones',
         registro_id: req.params.id,
         accion: 'eliminar',
+        datos_anteriores: {
+            rodeo_id: asig.rodeo_id, usuario_pagado_id: asig.usuario_pagado_id,
+            tipo_persona: asig.tipo_persona, nombre: asig.nombre_importado || null
+        },
+        datos_nuevos: { estado: 'anulado', motivo: motivoAnulacion },
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: `Asignación eliminada: ${asig.nombre_importado || asig.usuario_pagado_id} del rodeo ${asig.rodeo_id}`,
+        descripcion: `Asignación eliminada: ${asig.nombre_importado || asig.usuario_pagado_id} del rodeo ${asig.rodeo_id}${motivoAnulacion ? ' — motivo: ' + motivoAnulacion : ''}`,
         ip_address: req.ip
     });
 

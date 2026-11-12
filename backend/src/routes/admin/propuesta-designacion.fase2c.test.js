@@ -204,10 +204,10 @@ describe('POST .../seleccionar — motivo obligatorio para modificación manual 
     // motor global) -> decidirEstadoSeleccion() devuelve MANUAL_CON_
     // ADVERTENCIA, pero NO hay ningún cambio de identidad que justificar
     // (juradoId === jurado_id_propuesto) -> nunca debe exigir motivo.
-    test('aceptar al mismo jurado propuesto, con advertencias vigentes -> confirma advertencias pero NUNCA exige motivo (no hay cambio de identidad)', async () => {
-        mockBase(
+    test('aceptar al mismo jurado propuesto, con advertencias vigentes -> ACEPTADO (no MODIFICADO), NUNCA exige motivo (no hay cambio de identidad)', async () => {
+        const llamadas = mockBase(
             { data: { id: 'det-1', rodeo_id: 'r1', estado_revision: 'PENDIENTE', jurado_id_propuesto: 'j1', jurado_id_seleccionado: null, metricas_json: {} }, error: null },
-            { data: { id: 'det-1', jurado_id_seleccionado: 'j1', estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL_CON_ADVERTENCIA' }, error: null }
+            { data: { id: 'det-1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO', origen_seleccion: 'MOTOR' }, error: null }
         );
         cargarConfiguracionDesignacionPorId.mockResolvedValue({ configuracion: CONFIG_V1, meta: META_V1 });
         cargarDatosMotor.mockResolvedValue({ rodeosPorId: new Map([['r1', { club: 'Club R1', fecha: '2026-05-01', asociacion: 'Asoc', duracion_dias: 1 }]]) });
@@ -219,7 +219,12 @@ describe('POST .../seleccionar — motivo obligatorio para modificación manual 
         });
 
         expect(status).toBe(200);
-        expect(body.detalle.estado_revision).toBe('MODIFICADO');
+        expect(body.detalle.estado_revision).toBe('ACEPTADO');
+        // Lo que REALMENTE se escribe: ACEPTADO/MOTOR, advertencias confirmadas registradas aparte.
+        const upd = llamadas.propuestas_designacion_detalle.updates.find(u => u.jurado_id_seleccionado === 'j1');
+        expect(upd).toMatchObject({ estado_revision: 'ACEPTADO', origen_seleccion: 'MOTOR' });
+        expect(upd.metricas_json.advertencias_aceptadas.map(a => a.tipo)).toEqual(['DISTANCIA_EXCEDIDA']);
+        expect(upd.metricas_json.revision_administrativa).toMatchObject({ accion: 'CONFIRMAR', actor_id: 'admin-test', advertencias_confirmadas: ['DISTANCIA_EXCEDIDA'] });
         expect(supabase.rpc).not.toHaveBeenCalled(); // sin motivo, sin bitácora: no cambió la identidad del jurado
     });
 

@@ -48,8 +48,18 @@ const { calcularBloqueRodeo } = require('../../services/feriados');
 const {
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
     resolverFilaALiberar, obtenerJuradoEfectivo, ESTADOS_REVISION,
-    evaluarCambiosParaGuardar, construirComparacionVersiones
+    evaluarCambiosParaGuardar, construirComparacionVersiones,
+    decidirEstadoAlGuardar, ordenarDetallePorPresentacion
 } = require('../../services/propuestaDesignacion');
+
+// Registro liviano de la ÚLTIMA acción administrativa vigente sobre una fila
+// (quién y cuándo confirmó/modificó) — dentro de metricas_json, sin
+// migración. La fuente oficial e inmutable de cada acción sigue siendo
+// auditoria (+ bitacora_designaciones para cambios de jurado); este campo
+// solo permite mostrar el check verde con su autor sin otra consulta.
+function marcaRevisionAdministrativa(accion, actorId, extra = {}) {
+    return { accion, actor_id: actorId, fecha: new Date().toISOString(), ...extra };
+}
 const { firmarPreview, verificarPreviewToken, mapaPorRodeo } = require('../../services/previewIntegridad');
 const { cargarConfiguracionDesignacionActiva, cargarConfiguracionDesignacionPorId } = require('../../services/configuracionDesignacionRepositorio');
 // Etapa 4, sección 41/43/44: resumen liviano (id/numero_version + reglas de
@@ -63,6 +73,60 @@ const { obtenerTarifas, calcularPagoBase } = require('../../services/calculo');
 // Fase 2C, sección 5 — exportación Excel/PDF de una propuesta (borrador o
 // ya aplicada), reutilizando exceljs/pdfkit (ya presentes en el proyecto).
 const { exportarPropuestaExcel, exportarPropuestaPDF } = require('../../services/propuestaDesignacionExport');
+const { DECISION, clasificarDecisionFila, indexarEvidencia, contarDecisiones } = require('../../services/evidenciaDecisionPropuesta');
+const { categoriaJurado } = require('../../services/categoriaJurado');
+
+// Asignaciones REALES creadas desde filas de propuesta (activas o anuladas).
+// Una fila con asignación vinculada es registro histórico de una aplicación
+// ya consumada: el borrador no se edita (los cambios van por Rodeos, con su
+// propia trazabilidad de reemplazo/anulación).
+async function asignacionesDeFilas(detalleIds) {
+    const ids = (detalleIds || []).filter(Boolean);
+    if (ids.length === 0) return [];
+    const { data, error } = await supabase.from('asignaciones')
+        .select('id, propuesta_detalle_id, estado, estado_designacion, publicado')
+        .in('propuesta_detalle_id', ids);
+    if (error) throw new Error(error.message);
+    return data || [];
+}
+// Evidencia de decisión individual de varias filas (solo lecturas). Devuelve
+// la función de indexarEvidencia, o null si alguna lectura falla.
+async function cargarEvidenciaDecisionFilas(detalleIds) {
+    const ids = (detalleIds || []).filter(Boolean);
+    if (ids.length === 0) return indexarEvidencia({});
+    try {
+        const bit = [], aud = [];
+        for (let i = 0; i < ids.length; i += 150) {
+            const lote = ids.slice(i, i + 150);
+            const [rb, ra] = await Promise.all([
+                supabase.from('bitacora_designaciones').select('propuesta_detalle_id, tipo_movimiento').in('propuesta_detalle_id', lote),
+                supabase.from('auditoria').select('tabla, registro_id, accion, datos_nuevos').eq('tabla', 'propuestas_designacion_detalle').in('registro_id', lote),
+            ]);
+            if (rb.error || ra.error) return null;
+            bit.push(...(rb.data || [])); aud.push(...(ra.data || []));
+        }
+        return indexarEvidencia({ bitacora: bit, auditoria: aud });
+    } catch (_) {
+        return null;
+    }
+}
+const DESCRIPCION_DECISION_APLICADA = {
+    CONFIRMACION_COMPROBADA: 'confirmado individualmente por el administrador',
+    MODIFICACION_COMPROBADA: 'modificación administrativa registrada',
+    MODIFICACION_SIN_REGISTRO: 'jurado cambiado en el borrador sin registro individual',
+    CLASIFICACION_AUTOMATICA: 'sin confirmación individual registrada — estado automático del borrador',
+    PENDIENTE: 'sugerencia del motor, sin revisión manual',
+    NO_VERIFICADA: 'revisión individual no verificable al momento de aplicar',
+};
+
+function responderFilaYaAplicada(res, asigs) {
+    return res.status(409).json({
+        code: 'FILA_YA_APLICADA',
+        error: 'Este rodeo ya fue aplicado a Rodeos: existe una designación real creada desde esta fila. ' +
+            'El borrador se conserva como registro histórico y no se modifica; cualquier cambio de jurado debe hacerse desde Rodeos (reemplazo o anulación).',
+        asignaciones: asigs.length
+    });
+}
 
 // ─── Respuesta uniforme cuando la configuración de designación no se pudo
 // resolver o resultó inválida — NUNCA se ejecuta el motor en ese caso
@@ -836,6 +900,13 @@ router.post('/propuestas', async (req, res) => {
 
     const cambiosDetectados = [];
     const filasParaPersistir = [];
+    // Orden de presentación estable: posición de cada rodeo en el orden
+    // FIRMADO del preview_token (el mismo en que se mostró la vista previa).
+    const ordenPorRodeo = new Map(idsUnicos.map((id, i) => [id, i]));
+    const conOrden = (fila) => ({
+        ...fila,
+        metricas_json: { ...(fila.metricas_json || {}), orden_presentacion: ordenPorRodeo.get(fila.rodeo_id) }
+    });
 
     for (const rodeoId of idsUnicos) {
         const fresco = frescoPorRodeo.get(rodeoId);
@@ -924,21 +995,27 @@ router.post('/propuestas', async (req, res) => {
             continue;
         }
 
-        // Sin cambios que revisar — el backend RECONSTRUYE la clasificación
-        // (nunca confía en estado_revision/origen_seleccion que mande el
-        // frontend, sección 9) usando la misma función pura que todo el
-        // resto del sistema, a partir del jurado efectivo ya validado y las
-        // advertencias frescas (vacías, o solo las ya aceptadas).
-        const { estado_revision, origen_seleccion } = decidirEstadoSeleccion(juradoEfectivo, original.jurado_id_propuesto, advertenciasFrescas);
+        // Sin cambios que revisar. CORRECCIÓN (estados falsos): guardar el
+        // borrador NO es una aprobación administrativa. Una fila que el
+        // administrador no confirmó ni modificó en la vista previa queda
+        // PENDIENTE (con sus advertencias como advertencias DEL MOTOR); solo
+        // una acción expresa del preview (ACEPTADO/MODIFICADO con
+        // jurado_id_seleccionado) se clasifica con decidirEstadoSeleccion().
+        const decision = decidirEstadoAlGuardar(temporal, juradoEfectivo, original.jurado_id_propuesto, advertenciasFrescas);
         filasParaPersistir.push({
             rodeo_id: rodeoId,
             jurado_id_propuesto: original.jurado_id_propuesto, // SIEMPRE el histórico firmado, nunca el ganador fresco
-            jurado_id_seleccionado: juradoEfectivo,
-            estado_revision, origen_seleccion,
+            jurado_id_seleccionado: decision.jurado_id_seleccionado,
+            estado_revision: decision.estado_revision, origen_seleccion: decision.origen_seleccion,
             explicacion_json: construirExplicacionHistorica(fresco, original.jurado_id_propuesto),
             metricas_json: {
                 candidatos_evaluados: fresco.candidatos_evaluados, candidatos_potenciales_bd: fresco.candidatos_potenciales_bd, descartes: fresco.descartes,
-                ...(advertenciasFrescas.length > 0 ? { advertencias_aceptadas: advertenciasFrescas } : {})
+                ...(advertenciasFrescas.length > 0 ? { advertencias_aceptadas: advertenciasFrescas } : {}),
+                ...(decision.decision_administrativa ? {
+                    revision_administrativa: marcaRevisionAdministrativa(
+                        decision.estado_revision === 'ACEPTADO' ? 'CONFIRMAR' : 'MODIFICAR', req.usuario.id, { en_vista_previa: true }
+                    )
+                } : {})
             }
         });
     }
@@ -968,12 +1045,31 @@ router.post('/propuestas', async (req, res) => {
         .single();
     if (errProp) return res.status(500).json({ error: errProp.message });
 
-    const filas = filasParaPersistir.map(f => ({ propuesta_id: propuesta.id, ...f }));
+    const filas = filasParaPersistir.map(f => ({ propuesta_id: propuesta.id, ...conOrden(f) }));
     const { data: detalles, error: errDet } = await supabase
         .from('propuestas_designacion_detalle')
         .insert(filas)
         .select();
     if (errDet) return res.status(500).json({ error: errDet.message });
+
+    // Evidencia individual de cada decisión administrativa REAL tomada en la
+    // vista previa (Confirmar/Modificar antes de guardar) — nunca para filas
+    // que solo traen la sugerencia del motor. Alimenta el Historial Unificado.
+    for (const d of (detalles || [])) {
+        const rev = d.metricas_json?.revision_administrativa;
+        if (!rev?.en_vista_previa) continue;
+        await auditoria.registrar({
+            tabla: 'propuestas_designacion_detalle',
+            registro_id: d.id,
+            accion: 'editar',
+            datos_anteriores: { jurado_id_propuesto: d.jurado_id_propuesto, estado_revision: 'PENDIENTE' },
+            datos_nuevos: { jurado_id_seleccionado: d.jurado_id_seleccionado, estado_revision: d.estado_revision, origen_seleccion: d.origen_seleccion, en_vista_previa: true },
+            actor_id: req.usuario.id,
+            actor_tipo: 'administrador',
+            descripcion: `Decisión tomada en la vista previa y guardada con el borrador: ${d.estado_revision === 'ACEPTADO' ? 'jurado propuesto confirmado' : 'jurado modificado'}`,
+            ip_address: req.ip
+        });
+    }
 
     await auditoria.registrar({
         tabla: 'propuestas_designacion',
@@ -1107,6 +1203,23 @@ async function detectarAplicacionReal(propuestaId, detalles) {
     return mapa.get(propuestaId);
 }
 
+// Contadores de revisión basados en EVIDENCIA (no en estado_revision solo):
+// `confirmados` = confirmaciones individuales comprobadas;
+// `clasificacion_automatica` = ACEPTADO/MODIFICADO puestos al guardar sin
+// decisión registrada (regla anterior al 11/11/2026). Los demás campos de
+// resumenPropuesta se conservan tal cual.
+function resumenConEvidencia(resumen, detalleFinal) {
+    const c = contarDecisiones(detalleFinal.map(d => d.decision_evidencia));
+    return {
+        ...resumen,
+        confirmados: c[DECISION.CONFIRMACION_COMPROBADA],
+        modificados_comprobados: c[DECISION.MODIFICACION_COMPROBADA],
+        modificados_sin_registro: c[DECISION.MODIFICACION_SIN_REGISTRO],
+        clasificacion_automatica: c[DECISION.CLASIFICACION_AUTOMATICA],
+        filas_aplicadas: detalleFinal.filter(d => d.aplicacion_real?.aplicada).length,
+    };
+}
+
 // ─── GET /propuestas/:id — detalle completo de una propuesta ──────────────
 router.get('/propuestas/:id', async (req, res) => {
     // Etapa 4, sección 41: embed liviano (misma FK que ya usa Etapa 3 en
@@ -1147,8 +1260,28 @@ router.get('/propuestas/:id', async (req, res) => {
             )
         `)
         .eq('propuesta_id', req.params.id)
-        .order('created_at');
+        .order('id'); // solo para una respuesta determinista; el orden visible lo decide ordenarDetallePorPresentacion
     if (errD) return res.status(500).json({ error: errD.message });
+    const detallesOrdenados = ordenarDetallePorPresentacion(detalles || []);
+
+    // Evidencia real de historial por fila (movimientos en bitácora) — una
+    // sola consulta para todas las filas. "Ver historial" solo se ofrece
+    // cuando existe evidencia, nunca por el solo valor de estado_revision.
+    // Además: evidencia de DECISIÓN INDIVIDUAL (evidenciaDecisionPropuesta.js)
+    // y aplicación real por fila — un ACEPTADO/MODIFICADO sin evidencia no se
+    // muestra como confirmado por el administrador.
+    const movimientosPorDetalle = new Map();
+    let evidenciaDe = () => ({ bitacora: [], auditoria: [], asignaciones: [] });
+    if (detallesOrdenados.length > 0) {
+        const idsDetalle = detallesOrdenados.map(d => d.id);
+        const [{ data: movs }, { data: auds }, { data: asigs }] = await Promise.all([
+            supabase.from('bitacora_designaciones').select('propuesta_detalle_id, tipo_movimiento').in('propuesta_detalle_id', idsDetalle),
+            supabase.from('auditoria').select('tabla, registro_id, accion, datos_nuevos').eq('tabla', 'propuestas_designacion_detalle').in('registro_id', idsDetalle),
+            supabase.from('asignaciones').select('id, propuesta_detalle_id, estado, estado_designacion, publicado, usuario_pagado_id, categoria_aplicada').in('propuesta_detalle_id', idsDetalle),
+        ]);
+        (movs || []).forEach(m => movimientosPorDetalle.set(m.propuesta_detalle_id, (movimientosPorDetalle.get(m.propuesta_detalle_id) || 0) + 1));
+        evidenciaDe = indexarEvidencia({ bitacora: movs || [], auditoria: auds || [], asignaciones: asigs || [] });
+    }
 
     // Nombres + datos básicos de jurados en una sola consulta adicional (evita
     // el problema de relaciones ambiguas de PostgREST al tener dos FKs
@@ -1159,8 +1292,15 @@ router.get('/propuestas/:id', async (req, res) => {
         const { data: jurados } = await supabase.from('usuarios_pagados').select('id, nombre_completo, categoria, asociacion, comuna').in('id', juradoIds);
         (jurados || []).forEach(j => { juradoPorId[j.id] = j; });
     }
+    // Categoría junto al nombre (solo presentación): registro histórico
+    // (designación aplicada → snapshot del motor) y, si no existe, la actual
+    // rotulada como tal — services/categoriaJurado.js.
+    const fuentesCategoria = { categorias: new Map(Object.values(juradoPorId).map(j => [String(j.id), j.categoria || null])) };
+    const categoriaDe = (juradoId, d, asigsFila) => categoriaJurado(fuentesCategoria, juradoId, {
+        detalle: d, asignacion: (asigsFila || []).find(a => String(a.usuario_pagado_id) === String(juradoId)) || null,
+    });
 
-    const detalleFinal = (detalles || []).map(d => {
+    const detalleFinal = detallesOrdenados.map((d, indice) => {
         const rodeoRaw = d.rodeos || null;
         const rodeo = rodeoRaw ? {
             club: rodeoRaw.club, fecha: rodeoRaw.fecha, asociacion: rodeoRaw.asociacion,
@@ -1184,14 +1324,20 @@ router.get('/propuestas/:id', async (req, res) => {
         const esElPropuestoPorElMotor = juradoEfectivoId && juradoEfectivoId === d.jurado_id_propuesto &&
             (!d.jurado_id_seleccionado || d.jurado_id_seleccionado === d.jurado_id_propuesto);
         const metricasMotor = esElPropuestoPorElMotor ? (d.explicacion_json?.jurado_propuesto || null) : null;
+        const evidenciaFila = evidenciaDe(d.id);
+        const decision = clasificarDecisionFila(d, evidenciaFila);
 
         return {
             id: d.id, rodeo_id: d.rodeo_id,
             rodeo,
             jurado_id_propuesto: d.jurado_id_propuesto,
             nombre_propuesto: d.jurado_id_propuesto ? (juradoPorId[d.jurado_id_propuesto]?.nombre_completo || null) : null,
+            // El propuesto por el motor: su categoría del snapshot del motor.
+            categoria_propuesto: d.jurado_id_propuesto ? categoriaDe(d.jurado_id_propuesto, d, []) : null,
             jurado_id_seleccionado: d.jurado_id_seleccionado,
             nombre_seleccionado: d.jurado_id_seleccionado ? (juradoPorId[d.jurado_id_seleccionado]?.nombre_completo || null) : null,
+            categoria_seleccionado: d.jurado_id_seleccionado ? categoriaDe(d.jurado_id_seleccionado, d, evidenciaFila.asignaciones) : null,
+            categoria_efectivo: juradoEfectivoId ? categoriaDe(juradoEfectivoId, d, evidenciaFila.asignaciones) : null,
             jurado_efectivo: juradoEfectivoId ? {
                 id: juradoEfectivoId,
                 nombre: infoJurado?.nombre_completo || null,
@@ -1234,6 +1380,17 @@ router.get('/propuestas/:id', async (req, res) => {
             origen_seleccion: d.origen_seleccion,
             explicacion_json: d.explicacion_json,
             metricas_json: d.metricas_json,
+            // Posición estable "Rodeo N de M" (no cambia al editar la fila).
+            posicion: indice + 1,
+            revision_administrativa: d.metricas_json?.revision_administrativa || null,
+            historial_evidencia: {
+                movimientos_bitacora: movimientosPorDetalle.get(d.id) || 0,
+                jurado_cambiado: !!(d.jurado_id_seleccionado && d.jurado_id_propuesto && d.jurado_id_seleccionado !== d.jurado_id_propuesto)
+            },
+            // Decisión individual según EVIDENCIA + aplicación real (activas,
+            // publicadas, anuladas). La pantalla usa esto, no estado_revision.
+            decision_evidencia: { decision: decision.decision, etiqueta: decision.etiqueta, comprobada: decision.comprobada, fuentes: decision.fuentes },
+            aplicacion_real: decision.aplicacion,
             created_at: d.created_at, updated_at: d.updated_at
         };
     });
@@ -1264,7 +1421,7 @@ router.get('/propuestas/:id', async (req, res) => {
             // exacto que aplica el backend en DELETE /propuestas/:id.
             bloqueada_para_eliminar: infoAplicacion.algunaAplicada
         },
-        resumen: resumenPropuesta(detalles || []),
+        resumen: resumenConEvidencia(resumenPropuesta(detalles || []), detalleFinal),
         detalle: detalleFinal
     });
 });
@@ -1477,7 +1634,7 @@ router.post('/propuestas/:id/aplicar', async (req, res) => {
         // SIN_PROPUESTA/NO_EVALUABLE/SIN_JURADO_ACTUAL.
         const { data: detalles, error: errDet } = await supabase
             .from('propuestas_designacion_detalle')
-            .select('id, rodeo_id, jurado_id_seleccionado, jurado_id_propuesto, estado_revision')
+            .select('id, rodeo_id, jurado_id_seleccionado, jurado_id_propuesto, estado_revision, metricas_json')
             .eq('propuesta_id', req.params.id);
         if (errDet) return res.status(500).json({ error: errDet.message });
 
@@ -1842,15 +1999,26 @@ router.post('/propuestas/:id/aplicar', async (req, res) => {
         // Fase 2C, sección 6 — transparencia: toda fila PENDIENTE aplicada
         // (sin revisión explícita del administrador) queda marcada, nunca
         // indistinguible de una ACEPTADO/MODIFICADO.
+        //
+        // 2026-11-11 — "revisado por administrador" se decide por EVIDENCIA
+        // (evidenciaDecisionPropuesta.js), nunca por estado_revision solo: un
+        // ACEPTADO/MODIFICADO puesto automáticamente al guardar no es una
+        // confirmación. Solo LECTURAS, después de la RPC (que no cambia): si
+        // fallan, la aplicación ya consumada no se bloquea — se registra
+        // 'NO_VERIFICADA' en vez de afirmar algo sin respaldo.
         const detallePorId = new Map(pendientesDeAplicar.map(d => [d.id, d]));
+        const evidenciaDe = await cargarEvidenciaDecisionFilas((rpcData.aplicadas || []).map(a => a.detalle_id));
         const aplicadas = (rpcData.aplicadas || []).map(a => {
             const d = detallePorId.get(a.detalle_id);
             const rodeo = rodeoPorId.get(a.rodeo_id);
             const jurado = juradoPorId.get(a.usuario_pagado_id);
-            const revisadoPorAdmin = d.estado_revision === 'ACEPTADO' || d.estado_revision === 'MODIFICADO';
+            const decision = evidenciaDe ? clasificarDecisionFila(d, evidenciaDe(a.detalle_id)).decision : 'NO_VERIFICADA';
             return {
                 rodeo_id: a.rodeo_id, club: rodeo?.club, fecha: rodeo?.fecha, jurado: jurado?.nombre_completo,
-                asignacion_id: a.asignacion_id, revisado_por_admin: revisadoPorAdmin,
+                asignacion_id: a.asignacion_id,
+                revisado_por_admin: decision === 'NO_VERIFICADA' ? null : (decision === DECISION.CONFIRMACION_COMPROBADA || decision === DECISION.MODIFICACION_COMPROBADA),
+                decision_individual: decision,
+                estado_revision_borrador: d.estado_revision,
                 detalle_id: a.detalle_id, usuario_pagado_id: a.usuario_pagado_id
             };
         });
@@ -1860,10 +2028,14 @@ router.post('/propuestas/:id/aplicar', async (req, res) => {
                 tabla: 'asignaciones',
                 registro_id: a.asignacion_id,
                 accion: 'crear',
-                datos_nuevos: { rodeo_id: a.rodeo_id, usuario_pagado_id: a.usuario_pagado_id, tipo_persona: 'jurado', origen: 'propuesta_designacion', propuesta_id: propuesta.id, detalle_id: a.detalle_id, revisado_por_admin: a.revisado_por_admin },
+                datos_nuevos: {
+                    rodeo_id: a.rodeo_id, usuario_pagado_id: a.usuario_pagado_id, tipo_persona: 'jurado', origen: 'propuesta_designacion',
+                    evento: 'APLICACION_COLECTIVA', propuesta_id: propuesta.id, detalle_id: a.detalle_id,
+                    revisado_por_admin: a.revisado_por_admin, decision_individual: a.decision_individual, estado_revision_borrador: a.estado_revision_borrador
+                },
                 actor_id: req.usuario.id,
                 actor_tipo: 'administrador',
-                descripcion: `Asignación creada desde propuesta de designación: ${a.jurado} a rodeo ${a.club} - ${a.fecha}${a.revisado_por_admin ? '' : ' (sugerencia del motor, sin revisión manual)'}`,
+                descripcion: `Asignación creada por aplicación colectiva de la propuesta: ${a.jurado} a rodeo ${a.club} - ${a.fecha} (${DESCRIPCION_DECISION_APLICADA[a.decision_individual] || 'sin confirmación individual registrada'})`,
                 ip_address: req.ip
             });
         }
@@ -2128,7 +2300,7 @@ async function enriquecerConHistorialReciente(validos, descartados) {
 router.get('/propuestas/:propuestaId/detalle/:detalleId/historial', async (req, res) => {
     const { data: detalle, error } = await supabase
         .from('propuestas_designacion_detalle')
-        .select('id, rodeo_id, jurado_id_propuesto, jurado_id_seleccionado, estado_revision')
+        .select('id, rodeo_id, jurado_id_propuesto, jurado_id_seleccionado, estado_revision, explicacion_json')
         .eq('id', req.params.detalleId)
         .eq('propuesta_id', req.params.propuestaId)
         .single();
@@ -2141,13 +2313,26 @@ router.get('/propuestas/:propuestaId/detalle/:detalleId/historial', async (req, 
         .order('created_at', { ascending: true });
     if (errBit) return res.status(500).json({ error: errBit.message });
 
-    const idsJurados = [detalle.jurado_id_propuesto, detalle.jurado_id_seleccionado].filter(Boolean);
+    const idsJurados = [...new Set([detalle.jurado_id_propuesto, detalle.jurado_id_seleccionado,
+        ...(movimientos || []).flatMap(m => [m.usuario_pagado_id_anterior, m.usuario_pagado_id_nuevo])].filter(Boolean))];
     const { data: jurados } = idsJurados.length > 0
-        ? await supabase.from('usuarios_pagados').select('id, nombre_completo').in('id', idsJurados)
+        ? await supabase.from('usuarios_pagados').select('id, nombre_completo, categoria').in('id', idsJurados)
         : { data: [] };
     const nombresPorId = new Map((jurados || []).map(j => [j.id, j.nombre_completo]));
 
-    res.json(construirComparacionVersiones(detalle, movimientos, nombresPorId));
+    const comparacion = construirComparacionVersiones(detalle, movimientos, nombresPorId);
+    // Categoría junto a cada nombre (solo presentación; campo paralelo para no
+    // alterar la forma existente de la respuesta). Sin registro histórico de la
+    // categoría en la bitácora: snapshot del motor para el propuesto, actual
+    // (rotulada) para el resto.
+    const fuentesCategoria = { categorias: new Map((jurados || []).map(j => [String(j.id), j.categoria || null])) };
+    const cat = id => (id ? categoriaJurado(fuentesCategoria, id, { detalle }) : null);
+    comparacion.categorias = {
+        v1: cat(comparacion.v1.jurado_id),
+        actual: cat(comparacion.actual.jurado_id),
+        historial: comparacion.historial.map(m => ({ anterior: cat(m.jurado_anterior.id), nuevo: cat(m.jurado_nuevo.id) })),
+    };
+    res.json(comparacion);
 });
 
 router.get('/propuestas/:propuestaId/detalle/:detalleId/candidatos', async (req, res) => {
@@ -2413,6 +2598,12 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias, moti
     if (detalle.estado_revision === 'NO_EVALUABLE') {
         return res.status(400).json({ error: 'Este rodeo no es evaluable — no se puede seleccionar un jurado' });
     }
+    try {
+        const asigsFila = await asignacionesDeFilas([detalleId]);
+        if (asigsFila.length > 0) return responderFilaYaAplicada(res, asigsFila);
+    } catch (err) {
+        return res.status(500).json({ error: 'No se pudo verificar si la fila ya fue aplicada: ' + err.message });
+    }
 
     let otrasFilasEnriquecidas = [];
     try {
@@ -2454,6 +2645,19 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias, moti
     // histórico de lo que el motor propuso, se conserva siempre).
     const filaALiberar = resolverFilaALiberar(otrasFilasEnriquecidas, juradoId);
     if (filaALiberar) {
+        // La fila de origen tampoco puede tocarse si ya fue aplicada.
+        try {
+            const asigsOrigen = await asignacionesDeFilas([filaALiberar.detalle_id]);
+            if (asigsOrigen.length > 0) {
+                return res.status(409).json({
+                    code: 'FILA_YA_APLICADA',
+                    error: `${jurado.nombre_completo} ya está designado en otro rodeo de esta propuesta que fue aplicado a Rodeos; no se puede mover desde el borrador.`,
+                    asignaciones: asigsOrigen.length
+                });
+            }
+        } catch (err) {
+            return res.status(500).json({ error: 'No se pudo verificar si la fila de origen ya fue aplicada: ' + err.message });
+        }
         const { data: detalleAnterior } = await supabase
             .from('propuestas_designacion_detalle')
             .select('jurado_id_seleccionado, estado_revision, metricas_json')
@@ -2461,6 +2665,7 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias, moti
             .single();
         const metricasAnteriorLimpias = { ...(detalleAnterior?.metricas_json || {}) };
         delete metricasAnteriorLimpias.advertencias_aceptadas;
+        delete metricasAnteriorLimpias.revision_administrativa; // ya no hay una aprobación vigente en esa fila
 
         const { error: errLiberar } = await supabase
             .from('propuestas_designacion_detalle')
@@ -2489,6 +2694,12 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias, moti
     const metricas_json = { ...(detalle.metricas_json || {}) };
     if (advertencias.length > 0) metricas_json.advertencias_aceptadas = advertencias;
     else delete metricas_json.advertencias_aceptadas;
+    // Quién y cuándo aprobó/modificó (check verde persistente). La
+    // evidencia oficial sigue siendo auditoria/bitácora más abajo.
+    metricas_json.revision_administrativa = marcaRevisionAdministrativa(
+        estado_revision === 'ACEPTADO' ? 'CONFIRMAR' : 'MODIFICAR', req.usuario.id,
+        advertencias.length > 0 ? { advertencias_confirmadas: advertencias.map(a => a.tipo) } : {}
+    );
 
     // Fase 2C, sección 3 — "Solicitar motivo obligatorio antes de aplicar el
     // cambio": la señal real de "esto es una modificación" es que el jurado
@@ -2559,10 +2770,10 @@ async function procesarSeleccion(req, res, juradoId, confirmarAdvertencias, moti
             registro_id: detalleId,
             accion: 'editar',
             datos_anteriores: { jurado_id_seleccionado: detalle.jurado_id_seleccionado, estado_revision: detalle.estado_revision },
-            datos_nuevos: { jurado_id_seleccionado: juradoId, estado_revision, origen_seleccion },
+            datos_nuevos: { jurado_id_seleccionado: juradoId, estado_revision, origen_seleccion, advertencias_confirmadas: advertencias.map(a => a.tipo) },
             actor_id: req.usuario.id,
             actor_tipo: 'administrador',
-            descripcion: `Selección en propuesta: ${jurado.nombre_completo} → ${estado_revision}`,
+            descripcion: `Jurado propuesto confirmado por el administrador: ${jurado.nombre_completo}${advertencias.length ? ' (con advertencias confirmadas: ' + advertencias.map(a => a.tipo).join(', ') + ')' : ''}`,
             ip_address: req.ip
         });
     }
@@ -2700,10 +2911,19 @@ router.post('/propuestas/:propuestaId/detalle/:detalleId/revertir', async (req, 
     if (!['ACEPTADO', 'MODIFICADO'].includes(detalle.estado_revision)) {
         return res.status(400).json({ error: 'Solo se puede revertir una fila ACEPTADA o MODIFICADA' });
     }
+    try {
+        const asigsFila = await asignacionesDeFilas([detalle.id]);
+        if (asigsFila.length > 0) return responderFilaYaAplicada(res, asigsFila);
+    } catch (err) {
+        return res.status(500).json({ error: 'No se pudo verificar si la fila ya fue aplicada: ' + err.message });
+    }
 
     const nuevoEstado = detalle.jurado_id_propuesto ? 'PENDIENTE' : 'SIN_PROPUESTA';
     const metricas_json = { ...(detalle.metricas_json || {}) };
     delete metricas_json.advertencias_aceptadas;
+    // La aprobación deja de estar vigente; su registro histórico permanece
+    // intacto en auditoria/bitácora (revertir nunca borra historial).
+    delete metricas_json.revision_administrativa;
 
     const { data: actualizado, error } = await supabase
         .from('propuestas_designacion_detalle')

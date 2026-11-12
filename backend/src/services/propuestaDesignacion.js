@@ -196,23 +196,106 @@ function detectarConflictoInterno(rodeoActual, juradoId, otrasFilas) {
     return conflictos;
 }
 
-// ─── Decide estado_revision/origen_seleccion tras una selección ──────────
-// (aceptar el propuesto, modificar por otro válido, o excepción manual con
-// advertencias ya confirmadas por el administrador). No decide SI hay
-// advertencias — eso ya viene calculado (causas del motor + conflictos
-// internos); esta función solo traduce esa información a un estado.
+// ─── Decide estado_revision/origen_seleccion tras una ACCIÓN EXPRESA del ──
+// administrador (confirmar el propuesto, o cambiarlo por otro jurado). Solo
+// debe llamarse cuando hubo una acción administrativa real — guardar un
+// borrador sin tocar una fila NO lo es (ver decidirEstadoAlGuardar).
+//
+// Semántica (corrección "estados falsos ACEPTADO/MODIFICADO", 2026-11-11):
+//   - MISMO jurado que propuso el motor → ACEPTADO / MOTOR, tenga o no
+//     advertencias flexibles. Confirmar al propuesto nunca es una
+//     modificación: las advertencias confirmadas quedan registradas aparte
+//     (metricas_json.advertencias_aceptadas), sin cambiar el estado.
+//     Antes, cualquier advertencia producía MODIFICADO/MANUAL_CON_ADVERTENCIA
+//     aunque el jurado fuera exactamente el propuesto.
+//   - Jurado DISTINTO (o fila sin propuesta del motor) → MODIFICADO, con
+//     origen MANUAL o MANUAL_CON_ADVERTENCIA según haya advertencias.
 //
 // @param juradoId - candidato finalmente seleccionado
 // @param juradoIdPropuesto - jurado_id_propuesto original de esta fila (o null)
 // @param advertencias - array combinado de causas de regla + conflictos internos
 function decidirEstadoSeleccion(juradoId, juradoIdPropuesto, advertencias) {
-    if (advertencias && advertencias.length > 0) {
-        return { estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL_CON_ADVERTENCIA' };
-    }
     if (juradoIdPropuesto && juradoId === juradoIdPropuesto) {
         return { estado_revision: 'ACEPTADO', origen_seleccion: 'MOTOR' };
     }
+    if (advertencias && advertencias.length > 0) {
+        return { estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL_CON_ADVERTENCIA' };
+    }
     return { estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL' };
+}
+
+// ─── Estado de una fila al GUARDAR el borrador (POST /propuestas) ─────────
+// CAUSA RAÍZ de los estados falsos (propuesta 27c6bc5d…, 25 filas: 9
+// ACEPTADO/MOTOR + 16 MODIFICADO/MANUAL_CON_ADVERTENCIA sin ninguna acción
+// administrativa): el guardado pasaba TODA fila con jurado efectivo por
+// decidirEstadoSeleccion(), incluidas las PENDIENTE que el administrador
+// nunca tocó. Guardar un borrador NO es una aprobación administrativa.
+//
+// Regla: solo hay decisión administrativa si la fila del estado temporal
+// trae ACEPTADO/MODIFICADO con un jurado_id_seleccionado — es decir, el
+// administrador usó Confirmar/Modificar durante la vista previa (cada una
+// de esas acciones ya pasó por /preview/seleccionar). Cualquier otra fila
+// con jurado efectivo es la sugerencia del motor sin revisar → PENDIENTE,
+// incluidas las elegidas por el optimizador con relajaciones flexibles (sus
+// advertencias se conservan como advertencias DEL MOTOR, nunca como una
+// modificación manual).
+//
+// @param temporal { estado_revision, jurado_id_seleccionado } — fila del preview
+// @param juradoEfectivo - jurado ya validado para esta fila
+// @param juradoIdPropuesto - histórico firmado en el preview_token
+// @param advertencias - advertencias frescas (regla + conflicto interno)
+// @returns { estado_revision, origen_seleccion, jurado_id_seleccionado, decision_administrativa }
+function decidirEstadoAlGuardar(temporal, juradoEfectivo, juradoIdPropuesto, advertencias) {
+    const huboDecisionAdmin = !!temporal &&
+        ['ACEPTADO', 'MODIFICADO'].includes(temporal.estado_revision) &&
+        !!temporal.jurado_id_seleccionado;
+    if (!huboDecisionAdmin) {
+        return { estado_revision: 'PENDIENTE', origen_seleccion: null, jurado_id_seleccionado: null, decision_administrativa: false };
+    }
+    const decision = decidirEstadoSeleccion(juradoEfectivo, juradoIdPropuesto, advertencias);
+    return { ...decision, jurado_id_seleccionado: juradoEfectivo, decision_administrativa: true };
+}
+
+// ─── Orden de presentación ESTABLE de las filas de una propuesta ──────────
+// Las filas de un borrador se insertan en UNA sola sentencia, así que todas
+// comparten el mismo created_at: ordenar por created_at (lo que se hacía)
+// devolvía un orden arbitrario que cambiaba tras cada UPDATE — el rodeo de
+// la posición 5 saltaba a la 10. Ahora:
+//   1) metricas_json.orden_presentacion — el índice que la fila tenía en la
+//      vista previa (orden firmado en el preview_token), guardado al crear
+//      el borrador y preservado por todas las escrituras posteriores (todas
+//      hacen spread de metricas_json).
+//   2) Respaldo para borradores antiguos sin ese dato: fecha del rodeo,
+//      club y finalmente id (determinista, nunca updated_at ni estado).
+// Nunca ordena por estado_revision, nombre del jurado ni updated_at.
+function ordenarDetallePorPresentacion(detalles) {
+    const orden = d => {
+        const o = d?.metricas_json?.orden_presentacion;
+        return Number.isInteger(o) ? o : null;
+    };
+    return (detalles || []).slice().sort((a, b) => {
+        const oa = orden(a), ob = orden(b);
+        if (oa !== null && ob !== null && oa !== ob) return oa - ob;
+        if (oa !== null && ob === null) return -1;
+        if (oa === null && ob !== null) return 1;
+        const ra = a.rodeos || a.rodeo || {}, rb = b.rodeos || b.rodeo || {};
+        return String(ra.fecha || '').localeCompare(String(rb.fecha || ''))
+            || String(ra.club || '').localeCompare(String(rb.club || ''), 'es')
+            || String(a.id || a.rodeo_id || '').localeCompare(String(b.id || b.rodeo_id || ''));
+    });
+}
+
+// ─── Advertencias del MOTOR de una fila (no decisiones administrativas) ──
+// Relajaciones del optimizador global (explicacion_json.jurado_propuesto.
+// optimizacion_global_relajaciones) o, en filas aún no revisadas, las
+// advertencias guardadas junto a la sugerencia del motor.
+function advertenciasDelMotor(detalle) {
+    const relajaciones = detalle?.explicacion_json?.jurado_propuesto?.optimizacion_global_relajaciones || [];
+    if (relajaciones.length > 0) return relajaciones;
+    if (detalle?.estado_revision === 'PENDIENTE') {
+        return (detalle?.metricas_json?.advertencias_aceptadas || []).map(a => a.tipo).filter(Boolean);
+    }
+    return [];
 }
 
 // ─── Resolver qué fila anterior liberar al "mover" un jurado ─────────────
@@ -342,6 +425,12 @@ function resumenPropuesta(filasDetalle) {
         aceptados: contar('ACEPTADO'),
         modificados: contar('MODIFICADO'),
         pendientes: contar('PENDIENTE'),
+        // Indicadores de revisión administrativa (independientes de la
+        // cobertura: 25/25 cupos cubiertos NO implica 25 aprobaciones).
+        confirmados: contar('ACEPTADO'),
+        pendientes_revision: contar('PENDIENTE'),
+        sin_jurado: filas.length - cuposCubiertos,
+        con_advertencias_motor: filas.filter(f => advertenciasDelMotor(f).length > 0).length,
         sin_propuesta: contar('SIN_PROPUESTA'),
         no_evaluables: contar('NO_EVALUABLE'),
         sin_jurado_actual: contar('SIN_JURADO_ACTUAL'),
@@ -394,6 +483,7 @@ module.exports = {
     ESTADOS_REVISION, ORIGENES_SELECCION,
     obtenerJuradoEfectivo,
     construirDetalleDesdeResultado, detectarConflictoInterno, decidirEstadoSeleccion, resumenPropuesta,
+    decidirEstadoAlGuardar, ordenarDetallePorPresentacion, advertenciasDelMotor,
     resolverFilaALiberar,
     fingerprintAdvertencia, evaluarCambiosParaGuardar,
     construirAdvertenciasPreaceptadas, construirComparacionVersiones

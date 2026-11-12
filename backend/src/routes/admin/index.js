@@ -56,6 +56,7 @@ router.use('/informe-gestion', require('./informe-gestion'));
 router.use('/notificaciones', require('./notificaciones'));
 router.use('/material-complementario', require('./material-complementario'));
 router.use('/propuesta-designacion', require('./propuesta-designacion'));
+router.use('/historial-designaciones', require('./historial-designaciones'));
 router.use('/configuracion-designacion', require('./configuracion-designacion'));
 router.use('/temporadas', require('./temporadas'));
 

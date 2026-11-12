@@ -1152,8 +1152,82 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
             propuestas_designacion: { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
             propuestas_designacion_detalle: {
                 data: [
-                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO' },
-                    { id: 'd2', rodeo_id: 'r2', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO' }
+                    // Evidencia real (2026-11-11): d1 confirmado con check verde; d2 modificado vía RPC con bitácora.
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_propuesto: 'j1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO', metricas_json: { revision_administrativa: { accion: 'CONFIRMAR', actor_id: 'admin-1' } } },
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_propuesto: 'j9', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO', metricas_json: {} }
+                ], error: null
+            },
+            bitacora_designaciones: { data: [{ propuesta_detalle_id: 'd2', tipo_movimiento: 'modificacion_manual_borrador' }], error: null },
+            rodeos: {
+                data: [
+                    { id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' },
+                    { id: 'r2', club: 'Club B', fecha: '2026-05-10', duracion_dias: 1, estado: 'activo' }
+                ], error: null
+            },
+            usuarios_pagados: {
+                data: [
+                    { id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true },
+                    { id: 'j2', nombre_completo: 'Pedro Gomez', categoria: 'B', tipo_persona: 'jurado', activo: true }
+                ], error: null
+            },
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }, { usuario_pagado_id: 'j2', fecha: '2026-05-10' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [], error: null }, // SELECT ya-aplicadas (propuesta_detalle_id)
+                { data: [], error: null }, // SELECT ya-designados (rodeo_id)
+                { data: [], error: null } // SELECT otras fechas del jurado
+            ]
+        });
+        // Fase 2C (revisión correctiva) — la creación real pasa por UNA sola
+        // llamada a aplicar_propuesta_designacion_completa (086, lote
+        // atómico), nunca por supabase.from('asignaciones').insert() directo
+        // ni por una RPC separada por fila (ver propuestaDesignacionVersion
+        // Control.rpc.test.js para la cobertura de la RPC en sí, contra
+        // Postgres real, incluida la prueba de atomicidad 20/20).
+        supabase.rpc.mockResolvedValueOnce({
+            data: {
+                aplicadas: [
+                    { detalle_id: 'd1', asignacion_id: 'asig-1', rodeo_id: 'r1', usuario_pagado_id: 'j1', bitacora_id: 'bit-1' },
+                    { detalle_id: 'd2', asignacion_id: 'asig-2', rodeo_id: 'r2', usuario_pagado_id: 'j2', bitacora_id: 'bit-2' }
+                ]
+            },
+            error: null
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-1/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 2, conflictos: 0 });
+        expect(llamadas.asignaciones.inserts.length).toBe(0); // sin INSERT directo — todo vía RPC
+        expect(supabase.rpc).toHaveBeenCalledTimes(1); // UNA sola llamada para TODO el lote
+        expect(supabase.rpc).toHaveBeenCalledWith('aplicar_propuesta_designacion_completa', expect.objectContaining({
+            p_propuesta_id: 'prop-1',
+            p_aplicaciones: expect.arrayContaining([
+                expect.objectContaining({ detalle_id: 'd1', usuario_pagado_id: 'j1', categoria_aplicada: 'A' }),
+                expect.objectContaining({ detalle_id: 'd2', usuario_pagado_id: 'j2' })
+            ])
+        }));
+        expect(body.aplicadas[0]).toMatchObject({ revisado_por_admin: true, decision_individual: 'CONFIRMACION_COMPROBADA' }); // confirmación con evidencia
+        expect(body.aplicadas[1]).toMatchObject({ revisado_por_admin: true, decision_individual: 'MODIFICACION_COMPROBADA' }); // modificación con bitácora
+
+        const auditsAsig = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
+        expect(auditsAsig.length).toBe(2);
+        expect(auditsAsig[0].accion).toBe('crear');
+        expect(auditsAsig[0].datos_nuevos.propuesta_id).toBe('prop-1');
+        expect(auditsAsig[0].datos_nuevos.detalle_id).toBe('d1');
+
+        const auditResumen = llamadas.auditoria.inserts.find(a => a.tabla === 'propuestas_designacion');
+        expect(auditResumen.accion).toBe('aplicar');
+        expect(auditResumen.datos_nuevos).toEqual({ aplicadas: 2, ya_aplicadas_antes: 0 });
+    });
+
+    test('2026-11-11 — ACEPTADO/MODIFICADO SIN evidencia (estado automático del guardado): se aplica igual, pero la auditoría NO registra una confirmación ficticia: crea 2 asignaciones con el jurado_id_seleccionado exacto (no recalcula), publicado:false, propuesta_detalle_id en la MISMA sentencia, audita cada una + un resumen', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: {
+                data: [
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_propuesto: 'j1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO', metricas_json: {} },
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_propuesto: 'j2', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO', metricas_json: { advertencias_aceptadas: [{ tipo: 'FINDE_CONSECUTIVO' }] } }
                 ], error: null
             },
             rodeos: {
@@ -1205,8 +1279,101 @@ describe('POST /propuestas/:id/aplicar — Aplicar propuesta a Rodeos', () => {
                 expect.objectContaining({ detalle_id: 'd2', usuario_pagado_id: 'j2' })
             ])
         }));
-        expect(body.aplicadas[0].revisado_por_admin).toBe(true); // ACEPTADO
-        expect(body.aplicadas[1].revisado_por_admin).toBe(true); // MODIFICADO
+        // Misma RPC, mismas validaciones, mismo lote atómico — solo cambia la interpretación auditada.
+        expect(body.aplicadas.map(a => [a.revisado_por_admin, a.decision_individual, a.estado_revision_borrador])).toEqual([
+            [false, 'CLASIFICACION_AUTOMATICA', 'ACEPTADO'],
+            [false, 'CLASIFICACION_AUTOMATICA', 'MODIFICADO'],
+        ]);
+        const audsCrear = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
+        audsCrear.forEach(a => {
+            expect(a.datos_nuevos).toMatchObject({ evento: 'APLICACION_COLECTIVA', revisado_por_admin: false, decision_individual: 'CLASIFICACION_AUTOMATICA' });
+            expect(a.descripcion).toMatch(/aplicación colectiva/);
+            expect(a.descripcion).toMatch(/sin confirmación individual registrada/);
+        });
+        // Nunca se escribe una "confirmación" en la fila del borrador.
+        expect(llamadas.auditoria.inserts.filter(a => a.tabla === 'propuestas_designacion_detalle')).toEqual([]);
+        expect((llamadas.propuestas_designacion_detalle?.updates || [])).toEqual([]);
+
+        const auditsAsig = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
+        expect(auditsAsig.length).toBe(2);
+        expect(auditsAsig[0].accion).toBe('crear');
+        expect(auditsAsig[0].datos_nuevos.propuesta_id).toBe('prop-1');
+        expect(auditsAsig[0].datos_nuevos.detalle_id).toBe('d1');
+
+        const auditResumen = llamadas.auditoria.inserts.find(a => a.tabla === 'propuestas_designacion');
+        expect(auditResumen.accion).toBe('aplicar');
+        expect(auditResumen.datos_nuevos).toEqual({ aplicadas: 2, ya_aplicadas_antes: 0 });
+    });
+
+    test('2026-11-11 — si la lectura de evidencia falla DESPUÉS de la RPC, la aplicación consumada no se bloquea y se registra NO_VERIFICADA (nunca una confirmación): crea 2 asignaciones con el jurado_id_seleccionado exacto (no recalcula), publicado:false, propuesta_detalle_id en la MISMA sentencia, audita cada una + un resumen', async () => {
+        const llamadas = crearSupabaseMock({
+            propuestas_designacion: { data: { id: 'prop-1', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
+            propuestas_designacion_detalle: {
+                data: [
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_propuesto: 'j1', jurado_id_seleccionado: 'j1', estado_revision: 'ACEPTADO', metricas_json: {} },
+                    { id: 'd2', rodeo_id: 'r2', jurado_id_propuesto: 'j2', jurado_id_seleccionado: 'j2', estado_revision: 'MODIFICADO', metricas_json: { advertencias_aceptadas: [{ tipo: 'FINDE_CONSECUTIVO' }] } }
+                ], error: null
+            },
+            bitacora_designaciones: { data: null, error: { message: 'timeout' } },
+            rodeos: {
+                data: [
+                    { id: 'r1', club: 'Club A', fecha: '2026-05-01', duracion_dias: 1, estado: 'activo' },
+                    { id: 'r2', club: 'Club B', fecha: '2026-05-10', duracion_dias: 1, estado: 'activo' }
+                ], error: null
+            },
+            usuarios_pagados: {
+                data: [
+                    { id: 'j1', nombre_completo: 'Juan Perez', categoria: 'A', tipo_persona: 'jurado', activo: true },
+                    { id: 'j2', nombre_completo: 'Pedro Gomez', categoria: 'B', tipo_persona: 'jurado', activo: true }
+                ], error: null
+            },
+            disponibilidad_usuarios: { data: [{ usuario_pagado_id: 'j1', fecha: '2026-05-01' }, { usuario_pagado_id: 'j2', fecha: '2026-05-10' }], error: null },
+            configuracion_tarifas: { data: TARIFAS, error: null },
+            asignaciones: [
+                { data: [], error: null }, // SELECT ya-aplicadas (propuesta_detalle_id)
+                { data: [], error: null }, // SELECT ya-designados (rodeo_id)
+                { data: [], error: null } // SELECT otras fechas del jurado
+            ]
+        });
+        // Fase 2C (revisión correctiva) — la creación real pasa por UNA sola
+        // llamada a aplicar_propuesta_designacion_completa (086, lote
+        // atómico), nunca por supabase.from('asignaciones').insert() directo
+        // ni por una RPC separada por fila (ver propuestaDesignacionVersion
+        // Control.rpc.test.js para la cobertura de la RPC en sí, contra
+        // Postgres real, incluida la prueba de atomicidad 20/20).
+        supabase.rpc.mockResolvedValueOnce({
+            data: {
+                aplicadas: [
+                    { detalle_id: 'd1', asignacion_id: 'asig-1', rodeo_id: 'r1', usuario_pagado_id: 'j1', bitacora_id: 'bit-1' },
+                    { detalle_id: 'd2', asignacion_id: 'asig-2', rodeo_id: 'r2', usuario_pagado_id: 'j2', bitacora_id: 'bit-2' }
+                ]
+            },
+            error: null
+        });
+
+        const { status, body } = await llamarRuta({ method: 'POST', url: '/propuestas/prop-1/aplicar' });
+
+        expect(status).toBe(200);
+        expect(body.resumen).toEqual({ aplicadas: 2, conflictos: 0 });
+        expect(llamadas.asignaciones.inserts.length).toBe(0); // sin INSERT directo — todo vía RPC
+        expect(supabase.rpc).toHaveBeenCalledTimes(1); // UNA sola llamada para TODO el lote
+        expect(supabase.rpc).toHaveBeenCalledWith('aplicar_propuesta_designacion_completa', expect.objectContaining({
+            p_propuesta_id: 'prop-1',
+            p_aplicaciones: expect.arrayContaining([
+                expect.objectContaining({ detalle_id: 'd1', usuario_pagado_id: 'j1', categoria_aplicada: 'A' }),
+                expect.objectContaining({ detalle_id: 'd2', usuario_pagado_id: 'j2' })
+            ])
+        }));
+        // Misma RPC, mismas validaciones, mismo lote atómico — solo cambia la interpretación auditada.
+        expect(body.aplicadas.map(a => [a.revisado_por_admin, a.decision_individual])).toEqual([[null, 'NO_VERIFICADA'], [null, 'NO_VERIFICADA']]);
+        const audsCrear = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
+        audsCrear.forEach(a => {
+            expect(a.datos_nuevos).toMatchObject({ evento: 'APLICACION_COLECTIVA', revisado_por_admin: null, decision_individual: 'NO_VERIFICADA' });
+            expect(a.descripcion).toMatch(/no verificable/);
+        });
+        // Nunca se escribe una "confirmación" en la fila del borrador.
+        expect(llamadas.auditoria.inserts.filter(a => a.tabla === 'propuestas_designacion_detalle')).toEqual([]);
+        expect((llamadas.propuestas_designacion_detalle?.updates || [])).toEqual([]);
 
         const auditsAsig = llamadas.auditoria.inserts.filter(a => a.tabla === 'asignaciones');
         expect(auditsAsig.length).toBe(2);

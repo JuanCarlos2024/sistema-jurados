@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historial de Designaciones — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .hdr-filtros { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:12px; margin-bottom:14px; }
+        .hdr-acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+        .hdr-nota { font-size:12px; color:var(--gris); margin-top:8px; }
+        .hdr-kpis { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px; margin-bottom:16px; }
+        .hdr-kpi { background:var(--fondo); border:1px solid var(--gris-borde); border-radius:8px; padding:12px 14px; text-align:center; }
+        .hdr-kpi .val { font-size:22px; font-weight:700; color:var(--azul); }
+        .hdr-kpi .lbl { font-size:12px; color:var(--gris); margin-top:2px; }
+        #hdr-tabla table { min-width:1200px; font-size:13px; }
+        #hdr-tabla td { vertical-align:top; }
+        #hdr-tabla td.txt { min-width:150px; overflow-wrap:anywhere; }
+        .hdr-fila-linea td { background:#fafbfc; padding:12px 16px; }
+        .hdr-num { text-align:center; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px; height:72px; object-fit:contain; margin-bottom:6px;"><h2>Sistema de Jurados<br>Rodeo Chileno</h2></div>
+        <nav class="sidebar-nav"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>Historial de Designaciones</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-titulo" style="margin-bottom:12px;">🔍 Filtros</div>
+                <div class="hdr-filtros">
+                    <div class="form-grupo"><label class="form-label" for="f-temporada">Temporada</label>
+                        <select id="f-temporada" class="form-control"><option value="">Todas</option></select></div>
+                    <div class="form-grupo"><label class="form-label" for="f-desde">Rodeos desde</label>
+                        <input type="date" id="f-desde" class="form-control"></div>
+                    <div class="form-grupo"><label class="form-label" for="f-hasta">Rodeos hasta</label>
+                        <input type="date" id="f-hasta" class="form-control"></div>
+                    <div class="form-grupo"><label class="form-label" for="f-asociacion">Asociación</label>
+                        <input type="text" id="f-asociacion" class="form-control" placeholder="Contiene..."></div>
+                    <div class="form-grupo"><label class="form-label" for="f-club">Club</label>
+                        <input type="text" id="f-club" class="form-control" placeholder="Contiene..."></div>
+                    <div class="form-grupo"><label class="form-label" for="f-jurado">Jurado</label>
+                        <select id="f-jurado" class="form-control"><option value="">Todos</option></select></div>
+                    <div class="form-grupo"><label class="form-label" for="f-propuesta">Propuesta</label>
+                        <select id="f-propuesta" class="form-control"><option value="">Todas</option></select></div>
+                    <div class="form-grupo"><label class="form-label" for="f-tipo">Tipo de movimiento</label>
+                        <select id="f-tipo" class="form-control"><option value="">Todos</option></select></div>
+                    <div class="form-grupo"><label class="form-label" for="f-origen">Origen de la operación</label>
+                        <select id="f-origen" class="form-control"><option value="">Todos</option></select></div>
+                </div>
+                <div class="hdr-acciones">
+                    <button class="btn btn-primario" onclick="consultar()">Generar reporte</button>
+                    <button class="btn btn-outline" onclick="exportarExcel()">⬇ Exportar Excel</button>
+                    <button class="btn btn-secundario" onclick="limpiar()">Limpiar filtros</button>
+                </div>
+                <div class="hdr-nota">El período selecciona los <strong>rodeos</strong> (un rodeo de varios días se incluye si cualquiera de sus días cae en el período) y luego se muestra <strong>todo</strong> su historial, aunque los movimientos ocurrieran antes o después de esas fechas. Pantalla y Excel usan la misma consulta y los mismos filtros.</div>
+            </div>
+
+            <div id="hdr-kpis" class="hdr-kpis" style="display:none;"></div>
+            <div class="card" style="padding:0;">
+                <div id="hdr-tabla" class="tabla-wrap"><p class="tabla-vacia">Aplique filtros y haga clic en "Generar reporte".</p></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script src="/js/historialDesignacionesUI.js"></script>
+<script>
+protegerRuta('administrador');
+document.getElementById('nombre-admin').textContent = api.getUsuario()?.nombre || '';
+hdAsegurarCss();
+
+let ultimoResultado = null;
+
+function filtros() {
+    const v = id => document.getElementById(id).value.trim();
+    return {
+        temporada_id: v('f-temporada'), fecha_desde: v('f-desde'), fecha_hasta: v('f-hasta'),
+        asociacion: v('f-asociacion'), club: v('f-club'), jurado_id: v('f-jurado'),
+        propuesta_id: v('f-propuesta'), tipo_movimiento: v('f-tipo'), origen: v('f-origen'),
+    };
+}
+
+function limpiar() {
+    ['f-temporada', 'f-desde', 'f-hasta', 'f-asociacion', 'f-club', 'f-jurado', 'f-propuesta', 'f-tipo', 'f-origen']
+        .forEach(id => { document.getElementById(id).value = ''; });
+}
+
+async function poblarFiltros() {
+    const opcion = (sel, value, text) => { const o = document.createElement('option'); o.value = value; o.textContent = text; document.getElementById(sel).appendChild(o); };
+    try {
+        const cat = await api.get('/admin/historial-designaciones/catalogos');
+        cat.tipos.forEach(t => opcion('f-tipo', t.codigo, t.etiqueta));
+        cat.origenes.forEach(o => opcion('f-origen', o, o));
+    } catch (e) { /* los filtros opcionales quedan vacíos */ }
+    try {
+        const temps = await api.get('/admin/temporadas');
+        (Array.isArray(temps) ? temps : (temps.data || [])).forEach(t => opcion('f-temporada', t.id, t.nombre + (t.activa ? ' (activa)' : '')));
+    } catch (e) {}
+    try {
+        const jur = await api.get('/admin/usuarios?tipo=jurado&limit=500');
+        (jur.data || []).sort((a, b) => (a.nombre_completo || '').localeCompare(b.nombre_completo || '', 'es'))
+            .forEach(u => opcion('f-jurado', u.id, u.nombre_completo));
+    } catch (e) {}
+    try {
+        const p = await api.get('/admin/propuesta-designacion/propuestas');
+        (p.propuestas || []).forEach(x => opcion('f-propuesta', x.id, `${new Date(x.created_at).toLocaleString('es-CL')} — ${x.estado} (${x.resumen?.total_rodeos ?? '—'} rodeos)`));
+    } catch (e) {}
+}
+
+async function consultar() {
+    const cont = document.getElementById('hdr-tabla');
+    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    document.getElementById('hdr-kpis').style.display = 'none';
+    try {
+        ultimoResultado = await api.get('/admin/historial-designaciones?' + toQueryString(filtros()));
+        renderResultado();
+    } catch (err) {
+        cont.innerHTML = `<div class="alerta alerta-error" style="margin:14px;">${sanitizar(err.message)}</div>`;
+    }
+}
+
+function renderResultado() {
+    const r = ultimoResultado;
+    const cont = document.getElementById('hdr-tabla');
+    const kpis = document.getElementById('hdr-kpis');
+    if (!r || r.rodeos.length === 0) {
+        kpis.style.display = 'none';
+        cont.innerHTML = '<p class="tabla-vacia">Sin rodeos para los filtros seleccionados.</p>';
+        return;
+    }
+    const res = r.rodeos.map(x => x.resumen);
+    const sum = k => res.reduce((s, x) => s + (x[k] || 0), 0);
+    kpis.style.display = 'grid';
+    kpis.innerHTML = `
+        <div class="hdr-kpi"><div class="val">${r.totales.rodeos}</div><div class="lbl">Rodeos</div></div>
+        <div class="hdr-kpi"><div class="val">${r.totales.eventos}</div><div class="lbl">Movimientos registrados</div></div>
+        <div class="hdr-kpi"><div class="val">${res.filter(x => x.propuesta_aplicada_id).length}</div><div class="lbl">Con propuesta aplicada</div></div>
+        <div class="hdr-kpi"><div class="val">${sum('modificaciones_administrativas')}</div><div class="lbl">Modificaciones administrativas</div></div>
+        <div class="hdr-kpi"><div class="val">${sum('reemplazos_posteriores')}</div><div class="lbl">Reemplazos posteriores</div></div>`;
+
+    cont.innerHTML = `<table>
+        <thead><tr>
+            <th>Fecha</th><th>Club</th><th>Asociación</th><th>Tipo / clasificación</th>
+            <th>Propuesto por el motor</th><th>Confirmado por administración</th><th>Jurado vigente</th><th>Estado actual</th>
+            <th class="hdr-num">Modif.</th><th class="hdr-num">Reempl.</th><th>Último cambio</th><th></th>
+        </tr></thead>
+        <tbody>${r.rodeos.map((x, i) => {
+            const s = x.resumen;
+            return `<tr>
+                <td style="white-space:nowrap;">${hdFechaDia(s.fecha)}${s.duracion_dias > 1 ? `<br><span style="font-size:11px; color:var(--gris);">${s.duracion_dias} días</span>` : ''}</td>
+                <td class="txt"><strong>${sanitizar(s.club || '—')}</strong></td>
+                <td class="txt">${sanitizar(s.asociacion || '—')}</td>
+                <td class="txt">${sanitizar(s.tipo_rodeo || '—')}${s.clasificacion ? `<br><span style="font-size:11px; color:var(--gris);">${sanitizar(s.clasificacion)}</span>` : ''}</td>
+                <td class="txt">${hdResumenPropuesto(s, { negrita: false })}</td>
+                <td class="txt">${hdResumenConfirmado(s, { negrita: false })}${s.decision_borrador ? `<br><span style="font-size:11px; color:var(--gris);">${sanitizar(s.decision_borrador)}</span>` : ''}</td>
+                <td class="txt">${hdResumenVigente(s)}</td>
+                <td class="txt">${sanitizar(s.estado_actual || '—')}</td>
+                <td class="hdr-num">${s.modificaciones_administrativas}</td>
+                <td class="hdr-num">${s.reemplazos_posteriores}${s.motivo_ultimo_reemplazo ? `<br><span style="font-size:11px; color:var(--gris);">${sanitizar(s.motivo_ultimo_reemplazo)}</span>` : ''}</td>
+                <td style="white-space:nowrap; font-size:12px;">${s.fecha_ultimo_cambio ? new Date(s.fecha_ultimo_cambio).toLocaleString('es-CL') : '—'}</td>
+                <td><button class="btn btn-pequeño btn-outline" onclick="alternarLinea(${i}, this)">Ver línea de tiempo</button></td>
+            </tr>
+            <tr class="hdr-fila-linea" id="hdr-linea-${i}" style="display:none;"><td colspan="12"></td></tr>`;
+        }).join('')}</tbody>
+    </table>`;
+}
+
+function alternarLinea(i, btn) {
+    const fila = document.getElementById('hdr-linea-' + i);
+    const abierta = fila.style.display !== 'none';
+    if (!abierta && !fila.dataset.render) {
+        fila.firstElementChild.innerHTML = hdRenderLineaTiempo(ultimoResultado.rodeos[i]);
+        fila.dataset.render = '1';
+    }
+    fila.style.display = abierta ? 'none' : '';
+    btn.textContent = abierta ? 'Ver línea de tiempo' : 'Ocultar';
+}
+
+async function exportarExcel() {
+    try {
+        await api.descargar('/admin/historial-designaciones/exportar?' + toQueryString(filtros()), 'historial_designaciones.xlsx');
+    } catch (err) { mostrarError(err); }
+}
+
+poblarFiltros();
+</script>
+</body>
+</html>

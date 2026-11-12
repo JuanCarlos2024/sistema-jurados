@@ -94,8 +94,13 @@ describe('CASO 2 — distinción entre excepción automática del motor y modifi
 describe('CASO 3 — indicador "Con jurado propuesto" (antes "Con jurado actual")', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'admin', 'propuesta-designacion.html'), 'utf8');
 
-    test('el KPI de la simulación usa la etiqueta "Con jurado propuesto"', () => {
-        expect(html).toMatch(/kpi\(r\.con_jurado_actual, 'Con jurado propuesto'/);
+    // Revisión administrativa (2026-11-11): los indicadores de la simulación
+    // separan cobertura ("Cupos cubiertos") de aprobación ("Pendientes de
+    // revisión administrativa"); sigue sin sugerir designación preexistente.
+    test('los KPI de la simulación separan cupos cubiertos de revisión administrativa', () => {
+        expect(html).toMatch(/kpi\(c\.cubiertos, 'Cupos cubiertos'/);
+        expect(html).toMatch(/kpi\(c\.pendientes, 'Pendientes de revisión administrativa'/);
+        expect(html).toMatch(/renderKpisRevision\(prvContadores\(previewTemporal\.detalle\)\)/);
     });
 
     test('el resumen de confirmación antes de guardar usa la misma etiqueta corregida', () => {

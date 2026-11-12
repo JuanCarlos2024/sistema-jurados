@@ -217,7 +217,8 @@ describe('POST /propuestas/:id/aplicar — bloqueo si faltan cupos (Fase 2B, sec
             propuestas_designacion: { data: { id: 'prop-mixta', estado: 'BORRADOR', temporada_id: 't1' }, error: null },
             propuestas_designacion_detalle: {
                 data: [
-                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', jurado_id_propuesto: 'j1', estado_revision: 'ACEPTADO' },
+                    // d1: confirmación explícita con evidencia (marca escrita por "Confirmar jurado propuesto").
+                    { id: 'd1', rodeo_id: 'r1', jurado_id_seleccionado: 'j1', jurado_id_propuesto: 'j1', estado_revision: 'ACEPTADO', metricas_json: { revision_administrativa: { accion: 'CONFIRMAR', actor_id: 'admin-1' } } },
                     { id: 'd2', rodeo_id: 'r2', jurado_id_seleccionado: null, jurado_id_propuesto: 'j2', estado_revision: 'PENDIENTE' }
                 ], error: null
             },
@@ -261,6 +262,7 @@ describe('POST /propuestas/:id/aplicar — bloqueo si faltan cupos (Fase 2B, sec
         const d2Aplicada = body.aplicadas.find(a => a.rodeo_id === 'r2');
         expect(d1Aplicada.revisado_por_admin).toBe(true); // ACEPTADO — decisión explícita
         expect(d2Aplicada.revisado_por_admin).toBe(false); // PENDIENTE — sugerencia del motor, nunca ocultado
+        expect([d1Aplicada.decision_individual, d2Aplicada.decision_individual]).toEqual(['CONFIRMACION_COMPROBADA', 'PENDIENTE']);
     });
 });
 

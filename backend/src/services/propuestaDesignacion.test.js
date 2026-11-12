@@ -53,8 +53,15 @@ describe('decidirEstadoSeleccion — CASO 2, 3, 5', () => {
         expect(r).toEqual({ estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL' });
     });
 
-    test('CASO 5: selección con advertencias (aunque sea el mismo propuesto) → MODIFICADO / MANUAL_CON_ADVERTENCIA', () => {
+    // Corrección 2026-11-11: confirmar al MISMO jurado propuesto nunca es una
+    // modificación, aunque tenga advertencias flexibles confirmadas.
+    test('CASO 5: confirmar al mismo propuesto CON advertencias → ACEPTADO / MOTOR (no MODIFICADO)', () => {
         const r = decidirEstadoSeleccion('j1', 'j1', [{ tipo: 'DISTANCIA_EXCEDIDA' }]);
+        expect(r).toEqual({ estado_revision: 'ACEPTADO', origen_seleccion: 'MOTOR' });
+    });
+
+    test('CASO 5b: cambiar a OTRO jurado con advertencias → MODIFICADO / MANUAL_CON_ADVERTENCIA', () => {
+        const r = decidirEstadoSeleccion('j2', 'j1', [{ tipo: 'DISTANCIA_EXCEDIDA' }]);
         expect(r).toEqual({ estado_revision: 'MODIFICADO', origen_seleccion: 'MANUAL_CON_ADVERTENCIA' });
     });
 
@@ -275,6 +282,7 @@ describe('resumenPropuesta', () => {
         // cubiertos/pendientes/cobertura_completa, añadido sobre el mismo resumen).
         expect(resumenPropuesta(filas)).toEqual({
             total_rodeos: 7, aceptados: 2, modificados: 1, pendientes: 1, sin_propuesta: 1, no_evaluables: 1, sin_jurado_actual: 1,
+            confirmados: 2, pendientes_revision: 1, sin_jurado: 7, con_advertencias_motor: 0,
             cupos_cubiertos: 0, cupos_pendientes: 7, cobertura_completa: false
         });
     });
@@ -282,6 +290,7 @@ describe('resumenPropuesta', () => {
     test('propuesta vacía', () => {
         expect(resumenPropuesta([])).toEqual({
             total_rodeos: 0, aceptados: 0, modificados: 0, pendientes: 0, sin_propuesta: 0, no_evaluables: 0, sin_jurado_actual: 0,
+            confirmados: 0, pendientes_revision: 0, sin_jurado: 0, con_advertencias_motor: 0,
             cupos_cubiertos: 0, cupos_pendientes: 0, cobertura_completa: false
         });
     });

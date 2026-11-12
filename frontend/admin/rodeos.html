@@ -401,6 +401,7 @@
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
 <script src="/js/rodeoDesignarResumen.js"></script>
+<script src="/js/historialDesignacionesUI.js"></script>
 <script src="/js/notasSecundariasSobrescritura.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
@@ -1077,7 +1078,11 @@ function htmlDetalle(r) {
         <div><strong>Origen:</strong> ${r.origen}</div>
     </div>
     <div class="divider"></div>
-    <div class="card-titulo">Personas asignadas (${asigs.length})</div>
+    <div class="card-titulo" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span>Personas asignadas (${asigs.length})</span>
+        ${(() => { const rol = api.getUsuario()?.rol_evaluacion || null; return (rol === null || rol === 'director')
+            ? `<button class="btn btn-pequeño btn-outline" onclick="hdAbrirHistorialRodeo('${r.id}')" title="Propuesta del motor, decisiones administrativas, aplicación, publicación, reemplazos y jurado vigente">📜 Historial de designaciones</button>` : ''; })()}
+    </div>
     ${asigs.length === 0 ? '<p class="texto-gris">Sin asignaciones</p>' : `
     <div class="tabla-wrap">
     <table>
