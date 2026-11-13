@@ -217,7 +217,7 @@ function calcularInforme({ desde, hasta, hoy }, ds, colleras, generadoEn = new D
         periodo: { desde: desdeEf, hasta: corte }
     }, cfg);
 
-    const juradosActivos = ds.usuarios.filter(u => u.activo !== false && u.estado_usuario !== 'inactivo');
+    const juradosActivos = ds.usuarios.filter(u => u.tipo_persona !== 'delegado_rentado' && u.activo !== false && u.estado_usuario !== 'inactivo');
     const dispo = rango => analizarDisponibilidad({ desde: rango.desde, hasta: rango.hasta, jurados: juradosActivos, disponibilidad: ds.disponibilidad, asignaciones: ds.asignaciones, rodeos: ds.rodeos });
     const disponibilidad = { periodo: dispo({ desde: desdeEf, hasta: corte }), acumulado_temporada: dispo({ desde: T.inicio, hasta: corte }) };
 

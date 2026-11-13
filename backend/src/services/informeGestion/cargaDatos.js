@@ -92,6 +92,19 @@ async function cargarDataset({ hasta }, db = supabase) {
         leerPaginado((d, h) => db.from('usuarios_pagados').select('id, nombre_completo, categoria, activo, estado_usuario, tipo_persona, es_prueba').eq('tipo_persona', 'jurado').range(d, h)),
         leerPaginado((d, h) => db.from('disponibilidad_usuarios').select('usuario_pagado_id, fecha').gte('fecha', inicio).lte('fecha', hasta).order('fecha').order('usuario_pagado_id').range(d, h))
     ]);
+    // Cambio de función (migración 100): quien actuó como jurado en estas
+    // designaciones pero hoy es Delegado Rentado se carga igual (solo para
+    // nombre/estado) — sus actuaciones históricas nunca quedan anónimas.
+    // informe.js excluye a estas personas del universo de disponibilidad.
+    {
+        const idsCargados = new Set(usuarios.map(u => u.id));
+        const faltantes = [...new Set(asignaciones.map(a => a.usuario_pagado_id).filter(id => id && !idsCargados.has(id)))];
+        if (faltantes.length > 0) {
+            const exJurados = await leerPorLotes(faltantes, lote => db.from('usuarios_pagados')
+                .select('id, nombre_completo, categoria, activo, estado_usuario, tipo_persona, es_prueba').in('id', lote));
+            exJurados.forEach(u => { if (!idsCargados.has(u.id)) { idsCargados.add(u.id); usuarios.push(u); } });
+        }
+    }
     // Cuentas de prueba de cualquier tipo (incluye delegados): solo para excluirlas y contarlas.
     const cuentasPrueba = await leerPaginado((d, h) => db.from('usuarios_pagados').select('id').eq('es_prueba', true).range(d, h));
     const notasJurado = await leerPorLotes(asignaciones.map(a => a.id), lote => db.from('notas_rodeo').select('asignacion_id, nota, fuente').in('asignacion_id', lote));

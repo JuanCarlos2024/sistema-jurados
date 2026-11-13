@@ -51,6 +51,46 @@ function soloUsuario(req, res, next) {
     });
 }
 
+// Middleware: revalida la FUNCIÓN VIGENTE (tipo_persona) del usuario pagado
+// contra la BD. Debe ir SIEMPRE después de soloUsuario.
+//
+// Motivo (migración 100 — cambio de función Jurado <-> Delegado Rentado):
+// el JWT lleva tipo_persona y dura hasta 8 h; varias rutas del portal
+// (cartilla-delegado, cartillas, adjuntos, resumen, capacitaciones,
+// material complementario) autorizan con ese claim. Sin esta revalidación,
+// una persona cambiada de función conservaría los permisos de la función
+// anterior hasta que su token expirara. Si el claim ya no coincide con la
+// BD (o la persona no existe), la sesión se invalida con 401 y el frontend
+// la cierra (api.js); al volver a ingresar, el login emite la función
+// vigente. No cambia nada para sesiones cuyo claim coincide.
+async function revalidarTipoPersonaUsuario(req, res, next) {
+    try {
+        const { data, error } = await supabase
+            .from('usuarios_pagados')
+            .select('tipo_persona')
+            .eq('id', req.usuario.id)
+            .maybeSingle();
+        if (error) {
+            console.error('[AUTH] error revalidando función de usuario:', error.message);
+            return res.status(503).json({ error: 'No fue posible validar la sesión. Intente nuevamente.' });
+        }
+        if (!data) {
+            return res.status(401).json({ error: 'Sesión inválida. Inicie sesión nuevamente.' });
+        }
+        if (data.tipo_persona !== req.usuario.tipo_persona) {
+            console.warn(`[AUTH] 401 función cambiada id="${req.usuario.id}": token="${req.usuario.tipo_persona}" vigente="${data.tipo_persona}"`);
+            return res.status(401).json({
+                error: 'Su función fue actualizada por la administración. Inicie sesión nuevamente.',
+                code: 'FUNCION_ACTUALIZADA'
+            });
+        }
+    } catch (e) {
+        console.error('[AUTH] error revalidando función de usuario:', e.message);
+        return res.status(503).json({ error: 'No fue posible validar la sesión. Intente nuevamente.' });
+    }
+    return next();
+}
+
 // Middleware: solo cuentas institucionales (Delegado de Asociación, Fase 1).
 // Mismo patrón que soloAdmin/soloUsuario: un tipo de token, sin mezclar con
 // `usuario_pagado` ni `administrador` — un token institucional nunca pasa
@@ -209,4 +249,4 @@ function soloNoComisionTecnica(req, res, next) {
     next();
 }
 
-module.exports = { verificarToken, soloAdmin, soloUsuario, soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloRolInstitucional, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };
+module.exports = { verificarToken, soloAdmin, soloUsuario, revalidarTipoPersonaUsuario,soloCuentaInstitucional, exigirCambioPasswordSiPrimerLogin, adminOPropioUsuario, generarToken, soloRolEvaluacion, soloRolInstitucional, soloNoMonitor, soloNoDirector, soloNoAnalista, soloNoComisionTecnica };

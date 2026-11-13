@@ -52,7 +52,7 @@ function calcularPeriodo({ año, mes, desde, hasta }) {
 async function obtenerDatosBase({ inicio, fin, tipo, incluirRut }) {
     let qAsigs = supabase
         .from('asignaciones')
-        .select('id, usuario_pagado_id, tipo_persona, estado_designacion, rodeos!inner(id, fecha, club, asociacion, tipo_rodeo_nombre)')
+        .select('id, usuario_pagado_id, tipo_persona, categoria_aplicada, estado_designacion, rodeos!inner(id, fecha, club, asociacion, tipo_rodeo_nombre)')
         .eq('estado', 'activo')
         .gte('rodeos.fecha', inicio)
         .lte('rodeos.fecha', fin);
@@ -68,6 +68,19 @@ async function obtenerDatosBase({ inicio, fin, tipo, incluirRut }) {
     if (tipo) qUsuarios = qUsuarios.eq('tipo_persona', tipo);
     const { data: usuarios, error: errUsuarios } = await qUsuarios;
     if (errUsuarios) throw new Error('usuarios_pagados: ' + errUsuarios.message);
+
+    // Cambio de función (migración 100): con filtro de tipo, quien participó
+    // con ESA función en el período pero hoy tiene la otra también se carga
+    // — sus salidas históricas nunca desaparecen de la matriz.
+    const idsCargados = new Set((usuarios || []).map(u => u.id));
+    const faltantes = [...new Set(todasAsigs.map(a => a.usuario_pagado_id).filter(id => id && !idsCargados.has(id)))];
+    let otrosUsuarios = [];
+    if (tipo && faltantes.length > 0) {
+        const { data: otros, error: errOtros } = await supabase
+            .from('usuarios_pagados').select(camposUsuario).in('id', faltantes).eq('activo', true);
+        if (errOtros) throw new Error('usuarios_pagados (cambio de función): ' + errOtros.message);
+        otrosUsuarios = (otros || []).filter(u => !idsCargados.has(u.id));
+    }
 
     const asigIds = todasAsigs.map(a => a.id);
     const notasCasosMap = {};
@@ -100,6 +113,7 @@ async function obtenerDatosBase({ inicio, fin, tipo, incluirRut }) {
 
     const usuariosMap = {};
     (usuarios || []).forEach(u => { usuariosMap[u.id] = u; });
+    otrosUsuarios.forEach(u => { usuariosMap[u.id] = { ...u, _solo_historico: true }; });
 
     return { todasAsigs, usuariosMap, notasCasosMap, notasSecMap };
 }
@@ -114,18 +128,31 @@ function construirPersonas({ todasAsigs, usuariosMap, notasCasosMap, notasSecMap
         const u = usuariosMap[a.usuario_pagado_id];
         if (!u) return;
         const uid = a.usuario_pagado_id;
-        const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-        if (!perUser[uid]) {
-            perUser[uid] = {
+        // Función con la que participó en ESTA designación (snapshot de la
+        // asignación). Para quien nunca cambió de función coincide con la
+        // vigente y el resultado es idéntico al anterior. Si hoy tiene otra
+        // función, la categoría sale de la designación (la vigente no aplica).
+        const funcion = a.tipo_persona || u.tipo_persona;
+        const clave = uid + '::' + funcion;
+        const cat = funcion === 'delegado_rentado'
+            ? 'DR'
+            : (u.tipo_persona === 'jurado' ? (u.categoria || '?') : (a.categoria_aplicada || '?'));
+        if (!perUser[clave]) {
+            perUser[clave] = {
                 usuario_pagado_id: uid, nombre: u.nombre_completo, rut: u.rut || '',
-                tipo_persona: u.tipo_persona, categoria: cat,
+                tipo_persona: funcion, categoria: cat, _fechaCat: '',
                 rodeos: [], _casos: [], _comision: [], _delegado: []
             };
+        }
+        const pu = perUser[clave];
+        if (funcion === 'jurado' && u.tipo_persona !== 'jurado' && (a.rodeos?.fecha || '') >= pu._fechaCat) {
+            pu.categoria = a.categoria_aplicada || pu.categoria;   // la más reciente del período
+            pu._fechaCat = a.rodeos?.fecha || '';
         }
         const rodeo = a.rodeos || {};
         const notaCasos = notasCasosMap[a.id] ?? null;
         const sec = notasSecMap[rodeo.id] || { nota_comision: null, nota_delegado: null };
-        perUser[uid].rodeos.push({
+        pu.rodeos.push({
             rodeo_id: rodeo.id, asignacion_id: a.id, fecha: rodeo.fecha,
             club: rodeo.club, asociacion: rodeo.asociacion, tipo_rodeo: rodeo.tipo_rodeo_nombre,
             nota: notaCasos,                    // alias legacy — mismo valor que nota_casos
@@ -133,17 +160,18 @@ function construirPersonas({ todasAsigs, usuariosMap, notasCasosMap, notasSecMap
             nota_comision: sec.nota_comision,
             nota_delegado: sec.nota_delegado
         });
-        if (notaCasos !== null)          perUser[uid]._casos.push(notaCasos);
-        if (sec.nota_comision !== null)  perUser[uid]._comision.push(sec.nota_comision);
-        if (sec.nota_delegado !== null)  perUser[uid]._delegado.push(sec.nota_delegado);
+        if (notaCasos !== null)          pu._casos.push(notaCasos);
+        if (sec.nota_comision !== null)  pu._comision.push(sec.nota_comision);
+        if (sec.nota_delegado !== null)  pu._delegado.push(sec.nota_delegado);
     });
 
     // Personas SIN ninguna salida en el período (siempre se calculan —
     // "Incluir sin salidas" solo decide si se MUESTRAN, ver aplicarFiltrosVisuales).
     Object.values(usuariosMap).forEach(u => {
-        if (perUser[u.id]) return;
+        if (u._solo_historico) return;            // ya no tiene esa función: solo cuentan sus salidas
+        if (perUser[u.id + '::' + u.tipo_persona]) return;
         const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-        perUser[u.id] = {
+        perUser[u.id + '::' + u.tipo_persona] = {
             usuario_pagado_id: u.id, nombre: u.nombre_completo, rut: u.rut || '',
             tipo_persona: u.tipo_persona, categoria: cat,
             rodeos: [], _casos: [], _comision: [], _delegado: []

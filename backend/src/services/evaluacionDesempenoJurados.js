@@ -30,7 +30,9 @@
 //     exclusivamente — se excluye fuente='manual', que es un valor
 //     histórico importado sin evaluación técnica real detrás, ver migración
 //     060). Grano nativo por jurado vía asignacion_id.
-//   - Categoría del jurado -> usuarios_pagados.categoria (A/B/C).
+//   - Categoría del jurado -> usuarios_pagados.categoria (A/B/C); para quien
+//     hoy es Delegado Rentado, la categoria_aplicada de su designación de
+//     jurado más reciente del período (migración 100).
 //
 // UNIVERSO vs FILAS VISIBLES (mismo criterio que Matriz de Participación):
 // el período SÍ acota el universo de cálculo; categoría y búsqueda por
@@ -68,13 +70,38 @@ async function obtenerDatosBase({ desde, hasta }) {
 
     const { data: asigs, error: errAsigs } = await supabase
         .from('asignaciones')
-        .select('id, usuario_pagado_id, estado_designacion, rodeos!inner(id, fecha)')
+        .select('id, usuario_pagado_id, estado_designacion, categoria_aplicada, rodeos!inner(id, fecha)')
         .eq('estado', 'activo')
         .eq('tipo_persona', 'jurado')
         .gte('rodeos.fecha', desde)
         .lte('rodeos.fecha', hasta);
     if (errAsigs) throw new Error('asignaciones: ' + errAsigs.message);
     const todasAsigs = (asigs || []).filter(a => a.estado_designacion !== 'rechazado' && a.usuario_pagado_id);
+
+    // Cambio de función (migración 100): quien actuó como JURADO en el
+    // período pero hoy es Delegado Rentado sigue siendo parte del universo
+    // del período — nunca desaparece del reporte histórico. Su categoría es
+    // la aplicada en su designación de jurado más reciente del período
+    // (la vigente ya no existe: un Delegado Rentado no tiene categoría).
+    const idsJurados = new Set((jurados || []).map(j => j.id));
+    const faltantes = [...new Set(todasAsigs.map(a => a.usuario_pagado_id).filter(id => !idsJurados.has(id)))];
+    const exJurados = [];
+    if (faltantes.length > 0) {
+        const { data: otros, error: errOtros } = await supabase
+            .from('usuarios_pagados')
+            .select('id, nombre_completo, categoria, tipo_persona')
+            .in('id', faltantes)
+            .eq('activo', true);
+        if (errOtros) throw new Error('usuarios_pagados (ex jurados): ' + errOtros.message);
+        const faltantesSet = new Set(faltantes);
+        (otros || []).forEach(u => {
+            if (!faltantesSet.has(u.id) || u.tipo_persona === 'jurado') return;
+            const propias = todasAsigs
+                .filter(a => a.usuario_pagado_id === u.id && ['A', 'B', 'C'].includes(a.categoria_aplicada))
+                .sort((a, b) => (b.rodeos?.fecha || '').localeCompare(a.rodeos?.fecha || ''));
+            exJurados.push({ id: u.id, nombre_completo: u.nombre_completo, categoria: propias[0]?.categoria_aplicada || null });
+        });
+    }
 
     const asignacionIds = todasAsigs.map(a => a.id);
     const rodeoIds = [...new Set(todasAsigs.map(a => a.rodeos?.id).filter(Boolean))];
@@ -129,7 +156,7 @@ async function obtenerDatosBase({ desde, hasta }) {
         (data || []).forEach(n => { notaADMap[n.asignacion_id] = parseFloat(n.nota); });
     }
 
-    return { jurados: jurados || [], todasAsigs, evalMap, notaDelegadoMap, notaComisionMap, notaADMap };
+    return { jurados: [...(jurados || []), ...exJurados], todasAsigs, evalMap, notaDelegadoMap, notaComisionMap, notaADMap };
 }
 
 // ─── Construye, para CADA jurado activo (tenga o no rodeos en el período),

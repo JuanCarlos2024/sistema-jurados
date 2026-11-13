@@ -325,6 +325,31 @@ router.get('/desempeno', async (req, res) => {
         const usuariosMap = {};
         (usuarios || []).forEach(u => { usuariosMap[u.id] = u; });
 
+        // Cambio de función (migración 100): con filtro de tipo, quien
+        // participó con ESA función en el período pero hoy tiene la otra
+        // también se carga — sus salidas históricas no desaparecen.
+        if (tipoFiltro) {
+            const faltantes = [...new Set(todasAsigs.map(a => a.usuario_pagado_id).filter(id => id && !usuariosMap[id]))];
+            if (faltantes.length > 0) {
+                const { data: otros } = await supabase
+                    .from('usuarios_pagados')
+                    .select('id, nombre_completo, categoria, tipo_persona')
+                    .in('id', faltantes)
+                    .eq('activo', true);
+                (otros || []).forEach(u => { if (!usuariosMap[u.id]) usuariosMap[u.id] = { ...u, _solo_historico: true }; });
+            }
+        }
+        // Función y categoría con las que participó en ESA designación. Para
+        // quien nunca cambió de función coincide con la vigente (resultado
+        // idéntico al anterior); si hoy tiene otra función, la categoría sale
+        // de la designación.
+        const funcionDe = (a, u) => a.tipo_persona || u.tipo_persona;
+        const categoriaDe = (a, u) => {
+            const f = funcionDe(a, u);
+            if (f === 'delegado_rentado') return 'DR';
+            return u.tipo_persona === 'jurado' ? (u.categoria || '?') : (a.categoria_aplicada || '?');
+        };
+
         // ── 3. Notas para esas asignaciones ─────────────────────────────
         const notasMap = {};
         if (asigIds.length > 0) {
@@ -342,13 +367,22 @@ router.get('/desempeno', async (req, res) => {
             const u = usuariosMap[a.usuario_pagado_id];
             if (!u) return;
             const uid = a.usuario_pagado_id;
-            const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
-            if (!perUser[uid]) {
-                perUser[uid] = { id: uid, nombre: u.nombre_completo, categoria: cat, tipo: u.tipo_persona, salidas: 0, notas: [] };
+            const funcion = funcionDe(a, u);
+            const clave = uid + '::' + funcion;
+            const cat = categoriaDe(a, u);
+            if (!perUser[clave]) {
+                perUser[clave] = { id: uid, nombre: u.nombre_completo, categoria: cat, tipo: funcion, salidas: 0, notas: [], _fechaCat: '' };
             }
-            perUser[uid].salidas++;
+            // Ex-jurado: su fila usa la categoría aplicada más reciente del
+            // período (mismo criterio que Matriz y Evaluación de Desempeño).
+            const fechaAsig = a.rodeos?.fecha || '';
+            if (funcion === 'jurado' && u.tipo_persona !== 'jurado' && fechaAsig >= perUser[clave]._fechaCat) {
+                perUser[clave].categoria = cat;
+                perUser[clave]._fechaCat = fechaAsig;
+            }
+            perUser[clave].salidas++;
             const nota = notasMap[a.id];
-            if (nota != null) perUser[uid].notas.push(nota);
+            if (nota != null) perUser[clave].notas.push(nota);
         });
 
         let stats = Object.values(perUser).map(u => ({
@@ -405,9 +439,9 @@ router.get('/desempeno', async (req, res) => {
             if (a.estado_designacion === 'rechazado') return;
             const u = usuariosMap[a.usuario_pagado_id];
             if (!u) return;
-            const uCat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
+            const uCat = categoriaDe(a, u);
             if (catFiltro && uCat !== catFiltro) return;
-            if (tipoFiltro && u.tipo_persona !== tipoFiltro) return;
+            if (tipoFiltro && funcionDe(a, u) !== tipoFiltro) return;
             const fecha = a.rodeos?.fecha;
             if (!fecha) return;
             const mKey = fecha.slice(0, 7);
@@ -448,10 +482,13 @@ router.get('/desempeno', async (req, res) => {
             .sort((a, b) => b.promedio_nota - a.promedio_nota).slice(0, 15).map(clean);
 
         // Usuarios activos con 0 salidas en el período
+        // Clave persona+función vigente: quien cambió de función y solo tiene
+        // salidas con la función anterior figura "sin salidas" en la actual.
         const usersConSalida = new Set(Object.keys(perUser));
         const sin_salidas = Object.values(usuariosMap)
             .filter(u => {
-                if (usersConSalida.has(u.id)) return false;
+                if (u._solo_historico) return false;
+                if (usersConSalida.has(u.id + '::' + u.tipo_persona)) return false;
                 const cat = u.tipo_persona === 'delegado_rentado' ? 'DR' : (u.categoria || '?');
                 if (catFiltro && cat !== catFiltro) return false;
                 if (tipoFiltro && u.tipo_persona !== tipoFiltro) return false;

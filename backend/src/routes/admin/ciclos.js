@@ -567,7 +567,7 @@ router.post('/:id/cerrar', async (req, res) => {
                 .eq('rodeo_id', ciclo.evaluacion.rodeo_id)
                 .eq('estado', 'activo')
                 .neq('estado_designacion', 'rechazado')
-                .eq('usuarios_pagados.tipo_persona', 'jurado');
+                .eq('tipo_persona', 'jurado'); // función con la que participó en ESA designación (no la vigente)
 
             const juradoIdsDA = (juradoAsigsDA || []).map(a => a.id);
             if (juradoIdsDA.length > 0) {
@@ -646,7 +646,7 @@ router.post('/:id/cerrar', async (req, res) => {
             .eq('rodeo_id', ciclo.evaluacion.rodeo_id)
             .eq('estado', 'activo')
             .neq('estado_designacion', 'rechazado')
-            .eq('usuarios_pagados.tipo_persona', 'jurado');
+            .eq('tipo_persona', 'jurado'); // función con la que participó en ESA designación (no la vigente)
 
         const juradoIds    = (juradoAsigs || []).map(a => a.id);
         const totalJurados = juradoIds.length;

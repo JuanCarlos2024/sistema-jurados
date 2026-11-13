@@ -600,7 +600,7 @@ router.get('/evaluaciones', async (req, res) => {
             .in('rodeo_id', rodeoIds)
             .eq('estado', 'activo')
             .neq('estado_designacion', 'rechazado')
-            .eq('usuarios_pagados.tipo_persona', 'jurado');
+            .eq('tipo_persona', 'jurado'); // función con la que participó en ESA designación (no la vigente)
 
         const juradosPorRodeo = {};
         (todasAsigs || []).forEach(a => {
@@ -698,7 +698,7 @@ router.get('/evaluaciones/exportar', async (req, res) => {
             .in('rodeo_id', rodeoIds)
             .eq('estado', 'activo')
             .neq('estado_designacion', 'rechazado')
-            .eq('usuarios_pagados.tipo_persona', 'jurado');
+            .eq('tipo_persona', 'jurado'); // función con la que participó en ESA designación (no la vigente)
 
         const juradosPorRodeo = {};
         (asigs || []).forEach(a => { juradosPorRodeo[a.rodeo_id] = (juradosPorRodeo[a.rodeo_id] || 0) + 1; });
@@ -767,7 +767,7 @@ router.get('/jurados', async (req, res) => {
             .in('rodeo_id', rodeoIds)
             .eq('estado', 'activo')
             .neq('estado_designacion', 'rechazado')
-            .eq('usuarios_pagados.tipo_persona', 'jurado');
+            .eq('tipo_persona', 'jurado'); // función con la que participó en ESA designación (no la vigente)
 
         if (aErr) throw new Error(aErr.message);
 
@@ -844,7 +844,7 @@ router.get('/jurados/exportar', async (req, res) => {
             .in('rodeo_id', rodeoIds)
             .eq('estado', 'activo')
             .neq('estado_designacion', 'rechazado')
-            .eq('usuarios_pagados.tipo_persona', 'jurado');
+            .eq('tipo_persona', 'jurado'); // función con la que participó en ESA designación (no la vigente)
 
         const asigIds = (asigs || []).map(a => a.id);
         const { data: respuestas } = await supabase

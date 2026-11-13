@@ -5,6 +5,9 @@ const supabase = require('../../config/supabase');
 const auditoria = require('../../services/auditoria');
 const { procesarRutInput } = require('../../services/rut');
 const { soloRolEvaluacion } = require('../../middleware/auth');
+const {
+    ETIQUETA_TIPO, validarSolicitudCambioFuncion, obtenerVerificacionCambioFuncion, mapearErrorRpcCambioFuncion
+} = require('../../services/cambioFuncionUsuario');
 const ExcelJS = require('exceljs');
 
 // Ampliación Hoja de Vida — cambios de estado/categoría/condiciones
@@ -234,74 +237,75 @@ router.patch('/:id', async (req, res) => {
     res.json(data);
 });
 
-// PATCH /api/admin/usuarios/:id/tipo-persona — cambio controlado de función.
-// No se ofrece en el PATCH genérico. La RPC registra el cambio y la
-// actualización de usuarios_pagados en una sola transacción.
-router.patch('/:id/tipo-persona', soloAdminOJefeDeportivo, async (req, res) => {
-    const { tipo_persona, categoria, motivo } = req.body || {};
-    if (!['jurado', 'delegado_rentado'].includes(tipo_persona)) {
-        return res.status(400).json({ error: 'Tipo de persona inválido' });
-    }
-    if (tipo_persona === 'jurado' && !['A', 'B', 'C'].includes(categoria)) {
-        return res.status(400).json({ error: 'Para cambiar a Jurado debe elegir categoría A, B o C' });
-    }
-    if (typeof motivo !== 'string' || !motivo.trim()) {
-        return res.status(400).json({ error: 'Debe indicar el motivo del cambio de función' });
-    }
+// ── Cambio de función Jurado <-> Delegado Rentado (migración 100) ─────────
+// Solo administrador pleno o Jefe Deportivo. Nunca se ofrece en el PATCH
+// genérico. La RPC bloquea la fila, valida designaciones vigentes/futuras y
+// cartillas pendientes, actualiza usuarios_pagados y registra el historial
+// en UNA transacción. Designaciones, cartillas, notas y pagos históricos no
+// se modifican (cada asignación conserva su tipo_persona/categoria_aplicada).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    const { data: anterior, error: errAnterior } = await supabase
-        .from('usuarios_pagados')
-        .select('id, nombre_completo, tipo_persona, categoria')
-        .eq('id', req.params.id)
-        .maybeSingle();
-    if (errAnterior) return res.status(500).json({ error: errAnterior.message });
-    if (!anterior) return res.status(404).json({ error: 'Usuario no encontrado' });
-    if (anterior.tipo_persona === tipo_persona) {
-        return res.status(409).json({ error: 'El usuario ya tiene esa función' });
+// GET /api/admin/usuarios/:id/tipo-persona/verificacion — solo lectura:
+// qué impediría el cambio y qué historial se conserva.
+router.get('/:id/tipo-persona/verificacion', soloAdminOJefeDeportivo, async (req, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Usuario no encontrado' });
+    try {
+        const verificacion = await obtenerVerificacionCambioFuncion(supabase, req.params.id);
+        if (!verificacion) return res.status(404).json({ error: 'Usuario no encontrado' });
+        res.json(verificacion);
+    } catch (err) {
+        res.status(500).json({ error: 'No fue posible verificar el cambio de función: ' + err.message });
     }
+});
+
+// PATCH /api/admin/usuarios/:id/tipo-persona
+router.patch('/:id/tipo-persona', soloAdminOJefeDeportivo, async (req, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const v = validarSolicitudCambioFuncion(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    const { tipo_persona, categoria, motivo } = v.datos;
 
     const { data, error } = await supabase.rpc('cambiar_tipo_persona_usuario_con_historial', {
         p_usuario_id: req.params.id,
         p_tipo_nuevo: tipo_persona,
-        p_categoria_nueva: tipo_persona === 'jurado' ? categoria : null,
+        p_categoria_nueva: categoria,
         p_actor_id: req.usuario.id,
         p_actor_nombre: req.usuario.nombre || null,
-        p_motivo: motivo.trim()
+        p_motivo: motivo
     });
-
     if (error) {
-        const msg = error.message || '';
-        if (msg.includes('DESIGNACIONES_VIGENTES_O_FUTURAS')) {
-            return res.status(409).json({ error: 'El usuario tiene designaciones vigentes o futuras. Regularice dichas designaciones antes de cambiar su función.' });
-        }
-        if (msg.includes('TIPO_PERSONA_SIN_CAMBIOS')) return res.status(409).json({ error: 'El usuario ya tiene esa función' });
-        if (msg.includes('USUARIO_INEXISTENTE')) return res.status(404).json({ error: 'Usuario no encontrado' });
-        if (msg.includes('CATEGORIA_INVALIDA') || msg.includes('TIPO_PERSONA_INVALIDO') || msg.includes('MOTIVO_REQUERIDO')) {
-            return res.status(400).json({ error: 'Datos de cambio de función inválidos' });
-        }
-        return res.status(500).json({ error: msg });
+        const { status, body } = mapearErrorRpcCambioFuncion(error);
+        if (status >= 500) console.error('[USUARIOS] cambio de función:', error.message);
+        return res.status(status).json(body);
     }
 
-    // Auditoría adicional de aplicación. El historial esencial ya se
-    // confirmó atómicamente en PostgreSQL, aunque este log adicional falle.
+    const usuario = data?.usuario || { id: req.params.id, tipo_persona, categoria };
+    const tipoAnterior = data?.tipo_anterior || null;
+
+    // Auditoría general de aplicación (complementaria: el historial
+    // administrativo ya quedó confirmado dentro de la transacción).
     try {
         await auditoria.registrar({
             tabla: 'usuarios_pagados',
             registro_id: req.params.id,
             accion: 'cambiar_tipo_persona',
-            datos_anteriores: { tipo_persona: anterior.tipo_persona, categoria: anterior.categoria },
-            datos_nuevos: { tipo_persona, categoria: tipo_persona === 'jurado' ? categoria : null, motivo: motivo.trim() },
+            datos_anteriores: { tipo_persona: tipoAnterior, categoria: data?.categoria_anterior ?? null },
+            datos_nuevos: { tipo_persona, categoria, motivo, fecha_efectiva: data?.fecha_efectiva || null },
             actor_id: req.usuario.id,
             actor_tipo: 'administrador',
-            descripcion: `Función de ${anterior.nombre_completo} cambiada de ${anterior.tipo_persona} a ${tipo_persona}`,
+            descripcion: `Función de ${usuario.nombre_completo || req.params.id} cambiada de ${ETIQUETA_TIPO[tipoAnterior] || tipoAnterior} a ${ETIQUETA_TIPO[tipo_persona]}`,
             ip_address: req.ip
         });
     } catch (err) {
-        console.error('[USUARIOS] Auditoría adicional de cambio de función:', err.message);
+        console.error('[USUARIOS] auditoría de cambio de función:', err.message);
     }
+
     res.json({
-        mensaje: 'Función actualizada. El usuario debe cerrar sesión e ingresar nuevamente.',
-        usuario: { id: data?.id || req.params.id, tipo_persona, categoria: tipo_persona === 'jurado' ? categoria : null }
+        mensaje: `Función actualizada a ${ETIQUETA_TIPO[tipo_persona]}. Las sesiones abiertas de la persona se cerrarán y deberá ingresar nuevamente.`,
+        usuario,
+        tipo_anterior: tipoAnterior,
+        categoria_anterior: data?.categoria_anterior ?? null,
+        fecha_efectiva: data?.fecha_efectiva || null
     });
 });
 

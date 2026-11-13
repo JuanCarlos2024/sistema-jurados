@@ -1,9 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { soloUsuario } = require('../../middleware/auth');
+const { soloUsuario, revalidarTipoPersonaUsuario } = require('../../middleware/auth');
 
 // Aplicar middleware de usuario pagado a todas las rutas de este grupo
 router.use(soloUsuario);
+// La función vigente (Jurado / Delegado Rentado) se revalida contra la BD:
+// un token emitido antes de un cambio de función no conserva los permisos
+// de la función anterior (migración 100).
+router.use(revalidarTipoPersonaUsuario);
 
 router.use('/perfil', require('./perfil'));
 router.use('/resumen', require('./resumen'));

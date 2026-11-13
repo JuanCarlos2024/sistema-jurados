@@ -143,6 +143,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
+<script src="/js/cambioFuncion.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
 const params   = new URLSearchParams(location.search);
@@ -693,54 +694,10 @@ async function hvConfirmarSuspension(e) {
     } catch (e2) { mostrarError(e2); }
 }
 
+// Cambio de función Jurado <-> Delegado Rentado: verificación previa,
+// motivo obligatorio y confirmación (lógica compartida en /js/cambioFuncion.js).
 function hvCambiarFuncion() {
-    const actual = _perfilActual?.tipo_persona;
-    const nuevo = actual === 'jurado' ? 'delegado_rentado' : 'jurado';
-    const etiqueta = nuevo === 'jurado' ? 'Jurado' : 'Delegado Rentado';
-    document.getElementById('modal-titulo').textContent = 'Cambiar función — ' + (_perfilActual?.nombre_completo || '');
-    document.getElementById('modal-contenido').innerHTML = `
-        <form onsubmit="hvGuardarCambioFuncion(event, '${nuevo}')">
-            <p style="margin-bottom:10px;">Nueva función: <strong>${etiqueta}</strong></p>
-            ${nuevo === 'jurado' ? `<div class="form-grupo">
-                <label class="form-label">Categoría <span class="req">*</span></label>
-                <select name="categoria" class="form-control" required>
-                    <option value="">Seleccione...</option><option value="A">A</option>
-                    <option value="B">B</option><option value="C">C</option>
-                </select>
-            </div>` : ''}
-            <div class="form-grupo">
-                <label class="form-label">Motivo administrativo <span class="req">*</span></label>
-                <textarea name="motivo" class="form-control" rows="3" required></textarea>
-            </div>
-            <p class="texto-gris" style="font-size:13px;">El historial se conserva. Designaciones activas o futuras bloquearán el cambio. El usuario deberá volver a ingresar.</p>
-            <div class="form-acciones">
-                <button type="submit" class="btn btn-primario">Guardar cambio</button>
-                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
-            </div>
-        </form>`;
-    document.getElementById('modal-overlay').classList.remove('oculto');
-}
-
-async function hvGuardarCambioFuncion(event, tipo) {
-    event.preventDefault();
-    const form = event.target;
-    const motivo = form.elements.motivo.value.trim();
-    const categoria = tipo === 'jurado' ? form.elements.categoria.value : null;
-    if (!motivo) { mostrarToast('Debe indicar un motivo', 'error'); return; }
-    if (tipo === 'jurado' && !['A', 'B', 'C'].includes(categoria)) {
-        mostrarToast('Seleccione categoría A, B o C', 'error'); return;
-    }
-    const label = tipo === 'jurado' ? 'Jurado' : 'Delegado Rentado';
-    if (!await confirmar(`¿Cambiar función de ${_perfilActual?.nombre_completo} a ${label}?`)) return;
-    const btn = form.querySelector('button[type=submit]');
-    btn.disabled = true;
-    try {
-        await api.patch(`/admin/usuarios/${userId}/tipo-persona`, { tipo_persona: tipo, categoria, motivo });
-        mostrarToast('Función actualizada; el usuario debe iniciar sesión nuevamente', 'success');
-        cerrarModal();
-        await cargar();
-    } catch (e) { mostrarError(e); }
-    finally { btn.disabled = false; }
+    abrirModalCambioFuncion(userId, { onExito: () => cargar() });
 }
 
 function hvCambiarCategoria() {
