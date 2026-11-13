@@ -406,6 +406,9 @@ function abrirAcciones(id) {
 
     document.getElementById('modal-contenido').innerHTML = `
         <div style="display:flex; flex-direction:column; gap:10px;">
+            <button class="btn btn-outline w-100" onclick="abrirCambioFuncion('${id}')">
+                ↔ Cambiar función (Jurado / Delegado Rentado)
+            </button>
             ${tipo === 'jurado' ? `
             <button class="btn btn-outline w-100" onclick="cambiarCategoria('${id}', '${categoria}')">
                 🏅 Cambiar categoría
@@ -421,6 +424,60 @@ function abrirAcciones(id) {
             ${btnEliminar}
         </div>`;
     document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+// Cambio de función separado del editor general; motivo obligatorio.
+function abrirCambioFuncion(id) {
+    const u = _usuariosMap[id];
+    if (!u) return;
+    const nuevo = u.tipo_persona === 'jurado' ? 'delegado_rentado' : 'jurado';
+    const nombreNuevo = nuevo === 'jurado' ? 'Jurado' : 'Delegado Rentado';
+    document.getElementById('modal-titulo').textContent = 'Cambiar función — ' + u.nombre_completo;
+    document.getElementById('modal-contenido').innerHTML = `
+        <form onsubmit="guardarCambioFuncion(event, '${id}', '${nuevo}')">
+            <p style="margin-bottom:12px;">Función actual: <strong>${u.tipo_persona === 'jurado' ? 'Jurado' : 'Delegado Rentado'}</strong></p>
+            <p style="margin-bottom:12px;">Nueva función: <strong>${nombreNuevo}</strong></p>
+            ${nuevo === 'jurado' ? `<div class="form-grupo">
+                <label class="form-label">Categoría de jurado <span class="req">*</span></label>
+                <select name="categoria" class="form-control" required>
+                    <option value="">Seleccione...</option>
+                    <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+                </select>
+            </div>` : ''}
+            <div class="form-grupo">
+                <label class="form-label">Motivo administrativo <span class="req">*</span></label>
+                <textarea name="motivo" class="form-control" required rows="3" placeholder="Ej.: Pasa a desempeñarse como Delegado Rentado"></textarea>
+            </div>
+            <p class="texto-gris" style="font-size:13px;">Se conserva su código, contraseña, historial y registros anteriores. Si existen designaciones vigentes o futuras, el cambio se bloqueará para revisarlas antes. La persona deberá volver a iniciar sesión.</p>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Confirmar cambio de función</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function guardarCambioFuncion(event, id, tipo) {
+    event.preventDefault();
+    const form = event.target;
+    const btn = form.querySelector('button[type=submit]');
+    const motivo = form.elements.motivo.value.trim();
+    if (!motivo) { mostrarToast('Debe indicar el motivo', 'error'); return; }
+    const categoria = tipo === 'jurado' ? form.elements.categoria.value : null;
+    if (tipo === 'jurado' && !['A', 'B', 'C'].includes(categoria)) {
+        mostrarToast('Seleccione categoría A, B o C', 'error'); return;
+    }
+    const u = _usuariosMap[id];
+    const label = tipo === 'jurado' ? 'Jurado' : 'Delegado Rentado';
+    if (!await confirmar(`¿Cambiar la función de ${u.nombre_completo} a ${label}? La persona deberá cerrar sesión e ingresar nuevamente.`)) return;
+    btn.disabled = true;
+    try {
+        await api.patch('/admin/usuarios/' + id + '/tipo-persona', { tipo_persona: tipo, categoria, motivo });
+        mostrarToast('Función actualizada. Solicite al usuario iniciar sesión nuevamente.', 'success');
+        cerrarModal();
+        cargar(paginaActual);
+    } catch (err) { mostrarError(err); }
+    finally { btn.disabled = false; }
 }
 
 // Fase 3 — formulario para MARCAR una condición bloqueante (motivo obligatorio).
