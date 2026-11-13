@@ -493,6 +493,9 @@ function _badgeEvento(tipo_cambio, valor_nuevo) {
     if (tipo_cambio === 'categoria') {
         return '<span class="badge badge-hist-cat">Categoría</span>';
     }
+    if (tipo_cambio === 'tipo_persona') {
+        return '<span class="badge">Cambio de función</span>';
+    }
     if (tipo_cambio === 'estado') {
         if (valor_nuevo === 'activo')   return '<span class="badge badge-activo">Activación</span>';
         if (valor_nuevo === 'receso')   return '<span class="badge badge-receso">Receso</span>';
@@ -516,6 +519,11 @@ function _resumenEvento(e) {
     }
     if (e.tipo_cambio === 'categoria') {
         return 'Categoría: ' + sanitizar(e.valor_anterior || '—') + ' → ' + sanitizar(e.valor_nuevo || '—');
+    }
+    if (e.tipo_cambio === 'tipo_persona') {
+        const tipos = { jurado: 'Jurado', delegado_rentado: 'Delegado Rentado' };
+        return 'Función: ' + (tipos[e.valor_anterior] || sanitizar(e.valor_anterior || '—')) +
+               ' → ' + (tipos[e.valor_nuevo] || sanitizar(e.valor_nuevo || '—'));
     }
     if (e.tipo_cambio === 'estado') {
         const LABELS = { activo: 'Activo', inactivo: 'Inactivo', receso: 'En receso', suspendido: 'Suspendido' };
@@ -624,6 +632,7 @@ function renderAccionesAdministrativas(perfil) {
         ? `<button class="btn btn-pequeño" style="background:#f5eef8;color:#6c3483;border:1px solid #d7bde2;" onclick="hvAbrirFormSuspender()">⏸ Suspender</button>` : '';
     const btnCategoria = perfil.tipo_persona === 'jurado'
         ? `<button class="btn btn-outline btn-pequeño" onclick="hvCambiarCategoria()">🏅 Cambiar categoría</button>` : '';
+    const btnTipoPersona = `<button class="btn btn-outline btn-pequeño" onclick="hvCambiarFuncion()">↔ Cambiar función</button>`;
     const btnNoCert = perfil.no_certificado
         ? `<button class="btn btn-pequeño" style="background:#eafaf1;color:#196f3d;border:1px solid #a9dfbf;" onclick="hvRevertirCondicion('no-certificado','No certificado')">↩ Revertir No certificado</button>`
         : `<button class="btn btn-pequeño" style="background:#fdecea;color:#943126;border:1px solid #f1948a;" onclick="hvAbrirFormCondicion('no-certificado','No certificado')">⚠ Marcar No certificado</button>`;
@@ -634,7 +643,7 @@ function renderAccionesAdministrativas(perfil) {
     return `<div class="seccion-bloque">
         <div class="seccion-titulo">Acciones administrativas</div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            ${btnCategoria}${btnEstado}${btnSuspender}${btnNoCert}${btnEnRetiro}
+            ${btnCategoria}${btnTipoPersona}${btnEstado}${btnSuspender}${btnNoCert}${btnEnRetiro}
         </div>
     </div>`;
 }
@@ -682,6 +691,56 @@ async function hvConfirmarSuspension(e) {
         cerrarModal();
         await cargar();
     } catch (e2) { mostrarError(e2); }
+}
+
+function hvCambiarFuncion() {
+    const actual = _perfilActual?.tipo_persona;
+    const nuevo = actual === 'jurado' ? 'delegado_rentado' : 'jurado';
+    const etiqueta = nuevo === 'jurado' ? 'Jurado' : 'Delegado Rentado';
+    document.getElementById('modal-titulo').textContent = 'Cambiar función — ' + (_perfilActual?.nombre_completo || '');
+    document.getElementById('modal-contenido').innerHTML = `
+        <form onsubmit="hvGuardarCambioFuncion(event, '${nuevo}')">
+            <p style="margin-bottom:10px;">Nueva función: <strong>${etiqueta}</strong></p>
+            ${nuevo === 'jurado' ? `<div class="form-grupo">
+                <label class="form-label">Categoría <span class="req">*</span></label>
+                <select name="categoria" class="form-control" required>
+                    <option value="">Seleccione...</option><option value="A">A</option>
+                    <option value="B">B</option><option value="C">C</option>
+                </select>
+            </div>` : ''}
+            <div class="form-grupo">
+                <label class="form-label">Motivo administrativo <span class="req">*</span></label>
+                <textarea name="motivo" class="form-control" rows="3" required></textarea>
+            </div>
+            <p class="texto-gris" style="font-size:13px;">El historial se conserva. Designaciones activas o futuras bloquearán el cambio. El usuario deberá volver a ingresar.</p>
+            <div class="form-acciones">
+                <button type="submit" class="btn btn-primario">Guardar cambio</button>
+                <button type="button" class="btn btn-secundario" onclick="cerrarModal()">Cancelar</button>
+            </div>
+        </form>`;
+    document.getElementById('modal-overlay').classList.remove('oculto');
+}
+
+async function hvGuardarCambioFuncion(event, tipo) {
+    event.preventDefault();
+    const form = event.target;
+    const motivo = form.elements.motivo.value.trim();
+    const categoria = tipo === 'jurado' ? form.elements.categoria.value : null;
+    if (!motivo) { mostrarToast('Debe indicar un motivo', 'error'); return; }
+    if (tipo === 'jurado' && !['A', 'B', 'C'].includes(categoria)) {
+        mostrarToast('Seleccione categoría A, B o C', 'error'); return;
+    }
+    const label = tipo === 'jurado' ? 'Jurado' : 'Delegado Rentado';
+    if (!await confirmar(`¿Cambiar función de ${_perfilActual?.nombre_completo} a ${label}?`)) return;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+        await api.patch(`/admin/usuarios/${userId}/tipo-persona`, { tipo_persona: tipo, categoria, motivo });
+        mostrarToast('Función actualizada; el usuario debe iniciar sesión nuevamente', 'success');
+        cerrarModal();
+        await cargar();
+    } catch (e) { mostrarError(e); }
+    finally { btn.disabled = false; }
 }
 
 function hvCambiarCategoria() {
