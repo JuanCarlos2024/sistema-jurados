@@ -1679,7 +1679,7 @@ const ETIQUETAS_CAUSA_JURADO = {
     DISPONIBILIDAD: 'Sin disponibilidad declarada', MISMA_ASOCIACION: 'Es de la misma asociación organizadora del rodeo',
     ASOCIACION_REPETIDA_TEMPORADA: 'Ya fue designado en esa asociación esta temporada',
     ASOCIACION_REPETIDA_INTERVALO: 'Repite esa asociación antes del intervalo mínimo configurado',
-    MISMO_FINDE: 'Ya tiene otro rodeo ese mismo fin de semana', FINDE_CONSECUTIVO: 'Trabajó el fin de semana inmediatamente anterior',
+    MISMO_FINDE: 'Ya tiene otro rodeo ese mismo fin de semana', FINDE_CONSECUTIVO: 'Tiene otro rodeo el fin de semana inmediatamente anterior o siguiente',
     CATEGORIA_INCOMPATIBLE: 'Categoría no habilitada para esta clasificación de rodeo',
     JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia excedida'
 };
@@ -2198,6 +2198,57 @@ let _rjRodeoId = null;
 let _rjAsigId = null;
 let _rjCandidatos = [];
 let rjBuscarTimer;
+// Hotfix (099) — aceptación EXPRESA de advertencias flexibles. Guarda la
+// lista exacta de causas que el administrador vio y aceptó, ligada al
+// candidato, rodeo y asignación concretos. Se limpia al cambiar cualquiera
+// de ellos; nunca se reutiliza para otra selección.
+let _rjSeleccion = null; // { id, rodeoId, asigId, causasAceptadas: string[] }
+
+function _rjCausasOrdenadas(causas) { return [...new Set(causas || [])].sort(); }
+function _rjLimpiarSeleccion() {
+    _rjSeleccion = null;
+    const usr = document.getElementById('rj-usr-id'); if (usr) usr.value = '';
+    const info = document.getElementById('rj-persona-sel'); if (info) info.classList.add('oculto');
+    actualizarBotonConfirmarReemplazo();
+}
+
+// Diálogo ESPECÍFICO de advertencias del reemplazo (mismo diseño que
+// confirmarDesignacionConAdvertencia): nombre del jurado, rodeo y cada causa
+// concreta; el botón solo se habilita al marcar la aceptación expresa.
+// Distinto del diálogo genérico de "¿Confirma el reemplazo?", que NUNCA
+// sustituye esta aceptación.
+function confirmarAdvertenciasReemplazo(nombre, causas, { detalleHtml = '', aviso = '' } = {}) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-confirmar" style="max-width:480px; text-align:left;">
+                <div style="font-size:16px; font-weight:700; color:#CC6600; margin-bottom:10px;">⚠ Advertencias del reemplazo</div>
+                ${aviso ? `<div class="alerta alerta-error" style="margin-bottom:10px; font-size:13px;">${aviso}</div>` : ''}
+                <div style="font-size:14px; margin-bottom:10px;"><strong>${sanitizar(nombre)}</strong> presenta ${causas.length > 1 ? 'las siguientes advertencias (preferencias flexibles, no restricciones obligatorias)' : 'la siguiente advertencia (preferencia flexible, no una restricción obligatoria)'}:</div>
+                <ul id="rj-adv-causas" style="margin:0 0 10px 18px; font-size:13px;">${causas.map(c => `<li data-causa="${c}">${sanitizar(_etiquetaCausaJurado(c))}</li>`).join('')}</ul>
+                ${detalleHtml}
+                <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
+                    <div style="font-size:13px; font-weight:600;">Rodeo:</div>
+                    <div style="font-size:12px; color:var(--gris);">${_filaRodeoAdvertencia(rodeoActual)}</div>
+                </div>
+                <label style="display:flex; align-items:flex-start; gap:8px; margin:16px 0 4px; font-size:13px; cursor:pointer;">
+                    <input type="checkbox" id="chk-adv-reemplazo" style="margin-top:2px;">
+                    <span>He revisado ${causas.length > 1 ? 'estas advertencias' : 'esta advertencia'} y acepto realizar el reemplazo como excepción administrativa. Quedará registrada en la bitácora con el motivo indicado.</span>
+                </label>
+                <div class="modal-acciones">
+                    <button class="btn btn-secundario" id="btn-adv-reemplazo-cancelar">Cancelar</button>
+                    <button class="btn btn-peligro" id="btn-adv-reemplazo-aceptar" disabled>Aceptar advertencias</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const chk = overlay.querySelector('#chk-adv-reemplazo');
+        const btnOk = overlay.querySelector('#btn-adv-reemplazo-aceptar');
+        chk.addEventListener('change', () => { btnOk.disabled = !chk.checked; });
+        btnOk.onclick = () => { overlay.remove(); resolve(true); };
+        overlay.querySelector('#btn-adv-reemplazo-cancelar').onclick = () => { overlay.remove(); resolve(false); };
+    });
+}
 
 async function abrirReemplazarJurado(asigId, rodeoId) {
     const asig = (rodeoActual?.asignaciones || []).find(a => a.id === asigId);
@@ -2205,6 +2256,7 @@ async function abrirReemplazarJurado(asigId, rodeoId) {
     rjAnteriorId = asig.usuarios_pagados?.id || null;
     _rjRodeoId = rodeoId;
     _rjAsigId = asigId;
+    _rjSeleccion = null;
 
     if (!rjMotivosCache) {
         try {
@@ -2304,9 +2356,7 @@ async function cargarCandidatosReemplazo() {
 // modal, ahora aplicado a la consulta enriquecida.
 function buscarJuradoReemplazo() {
     clearTimeout(rjBuscarTimer);
-    document.getElementById('rj-usr-id').value = '';
-    document.getElementById('rj-persona-sel').classList.add('oculto');
-    actualizarBotonConfirmarReemplazo();
+    _rjLimpiarSeleccion();
     rjBuscarTimer = setTimeout(cargarCandidatosReemplazo, 350);
 }
 
@@ -2321,9 +2371,21 @@ function renderCandidatosReemplazo() {
         const badgeCat = j.categoria
             ? `<span class="badge badge-${j.categoria.toLowerCase()}" style="margin-left:4px;">${j.categoria}</span>`
             : '';
-        const bloqueado = j.ya_asignado_en_rodeo || j.conflictos.length > 0 || !j.disponibilidad_declarada;
+        // Hotfix (099) — elegibilidad real del motor (mismo dato y mismas
+        // etiquetas que "Designar jurado"): NO_HABILITADO nunca es seleccionable.
+        const noHabilitado = j.estado_elegibilidad === 'NO_HABILITADO';
+        const bloqueado = j.ya_asignado_en_rodeo || j.conflictos.length > 0 || !j.disponibilidad_declarada || noHabilitado;
 
         let avisos = '';
+        if ((j.causas_obligatorias || []).length > 0) {
+            avisos += `<div style="font-size:12px; color:#922b21; font-weight:600; margin-top:4px;">🚫 Restricción obligatoria: ${j.causas_obligatorias.map(c => sanitizar(_etiquetaCausaJurado(c))).join(' · ')}</div>`;
+        }
+        if ((j.causas_relajables || []).length > 0) {
+            avisos += `<div style="font-size:12px; color:#CC6600; font-weight:600; margin-top:4px;">⚠ Advertencia (requiere aceptación expresa): ${j.causas_relajables.map(c => sanitizar(_etiquetaCausaJurado(c))).join(' · ')}</div>`;
+        }
+        if (j.estado_elegibilidad == null) {
+            avisos += `<div style="font-size:11px; color:var(--gris); margin-top:4px;">Elegibilidad completa no verificada en la lista; se revalidará al guardar.</div>`;
+        }
         if (j.ya_asignado_en_rodeo) {
             avisos += `<div style="color:#c0392b; font-size:12px; font-weight:600; margin-top:4px;">⛔ Ya asignado en este rodeo</div>`;
         }
@@ -2350,9 +2412,13 @@ function renderCandidatosReemplazo() {
                 ${j.historial.map(h => `<br>${rdrLineaHistorial(h)}`).join('')}
                </div>`
             : '';
+        const conAdvertencias = !bloqueado && (j.causas_relajables || []).length > 0;
+        const onclickSel = `onclick="seleccionarCandidatoReemplazo('${j.id}','${sanitizar(j.nombre_completo)}','${j.categoria||''}',${!!j.repite_asociacion})"`;
         const btnStyle = bloqueado
-            ? `class="btn btn-pequeño btn-outline" disabled`
-            : `class="btn btn-pequeño btn-primario" onclick="seleccionarCandidatoReemplazo('${j.id}','${sanitizar(j.nombre_completo)}','${j.categoria||''}',${!!j.repite_asociacion})"`;
+            ? `class="btn btn-pequeño btn-outline" disabled${noHabilitado ? ` title="No cumple una restricción obligatoria: ${sanitizar((j.causas_obligatorias || []).map(_etiquetaCausaJurado).join(', '))}"` : ''}`
+            : conAdvertencias
+                ? `class="btn btn-pequeño" style="background:#f39c12;color:white;" ${onclickSel}`
+                : `class="btn btn-pequeño btn-primario" ${onclickSel}`;
         return `
         <div style="padding:10px 14px; border-bottom:1px solid var(--gris-claro); display:flex; align-items:flex-start; justify-content:space-between; gap:8px;${bloqueado ? ' background:#fdf5f3;' : ''}">
             <div style="flex:1; min-width:0;">
@@ -2364,7 +2430,7 @@ function renderCandidatosReemplazo() {
                 ${avisos}
                 ${histHtml}
             </div>
-            <button ${btnStyle}>${bloqueado ? 'No disponible' : 'Seleccionar'}</button>
+            <button ${btnStyle}>${noHabilitado ? 'No habilitado' : (bloqueado ? 'No disponible' : 'Seleccionar')}</button>
         </div>`;
     }).join('');
 }
@@ -2375,7 +2441,21 @@ function renderCandidatosReemplazo() {
 // de fechas y "ya asignado en este rodeo" NUNCA llegan hasta aquí con el
 // botón habilitado (quedan deshabilitados arriba), por eso solo se revisa
 // la advertencia de asociación/fecha consecutiva.
+//
+// Hotfix (099) — si el motor informa advertencias flexibles
+// (CON_ADVERTENCIAS), se exige la aceptación EXPRESA de cada causa concreta
+// en el diálogo específico de reemplazo, y se guarda la lista exacta
+// aceptada; NO_HABILITADO nunca se selecciona. Si además repite asociación,
+// el detalle de /validar-historial (club/fecha) se muestra dentro del MISMO
+// diálogo específico, nunca como aceptación sustituta.
 async function seleccionarCandidatoReemplazo(id, nombre, categoria, repiteAsociacion) {
+    const cand = (_rjCandidatos || []).find(c => c.id === id) || null;
+    if (cand && cand.estado_elegibilidad === 'NO_HABILITADO') {
+        mostrarToast('Este jurado no cumple una restricción obligatoria para este rodeo y no puede ser reemplazante.', 'error');
+        return;
+    }
+    const causas = cand && cand.estado_elegibilidad === 'CON_ADVERTENCIAS' ? _rjCausasOrdenadas(cand.causas_relajables) : [];
+
     let val = null;
     if (repiteAsociacion) {
         try {
@@ -2386,24 +2466,41 @@ async function seleccionarCandidatoReemplazo(id, nombre, categoria, repiteAsocia
         } catch (e) {
             console.error('[seleccionarCandidatoReemplazo] error al validar historial:', e.message || e);
         }
-        if (val && (val.repite_asociacion || val.fecha_consecutiva)) {
-            const ok = await confirmarDesignacionConAdvertencia(
-                construirContenidoAdvertenciaDesignacion(nombre, val)
-            );
-            if (!ok) return;
-        }
     }
-    seleccionarJuradoReemplazo(id, nombre, categoria);
+    const hayDetalleHistorial = !!(val && (val.repite_asociacion || val.fecha_consecutiva));
+
+    if (causas.length > 0) {
+        const ok = await confirmarAdvertenciasReemplazo(nombre, causas, {
+            detalleHtml: hayDetalleHistorial ? construirContenidoAdvertenciaDesignacion(nombre, val) : ''
+        });
+        if (!ok) { _rjLimpiarSeleccion(); return; }
+    } else if (hayDetalleHistorial) {
+        // Aviso informativo existente (sin causa flexible del motor que aceptar).
+        const ok = await confirmarDesignacionConAdvertencia(construirContenidoAdvertenciaDesignacion(nombre, val));
+        if (!ok) { _rjLimpiarSeleccion(); return; }
+    }
+    _rjSeleccion = { id, rodeoId: _rjRodeoId, asigId: _rjAsigId, causasAceptadas: causas };
+    seleccionarJuradoReemplazo(id, nombre, categoria, causas);
 }
 
-function seleccionarJuradoReemplazo(id, nombre, cat) {
+function seleccionarJuradoReemplazo(id, nombre, cat, causasAceptadas) {
     document.getElementById('rj-usr-id').value = id;
     document.getElementById('rj-buscar').value = nombre;
     document.getElementById('rj-resultados').innerHTML = '';
     const info = document.getElementById('rj-persona-sel');
-    info.textContent = `Reemplazante: ${nombre}${cat ? ' (cat. ' + cat + ')' : ''} — el pago base se recalculará con su propia tarifa.`;
+    const advTxt = (causasAceptadas || []).length > 0
+        ? ` Advertencias aceptadas: ${causasAceptadas.map(_etiquetaCausaJurado).join(' · ')}.`
+        : '';
+    info.textContent = `Reemplazante: ${nombre}${cat ? ' (cat. ' + cat + ')' : ''} — el pago base se recalculará con su propia tarifa.${advTxt}`;
     info.classList.remove('oculto');
     actualizarBotonConfirmarReemplazo();
+}
+
+// Causas aceptadas válidas SOLO para el candidato/rodeo/asignación actuales.
+function _rjCausasAceptadasVigentes(usrId) {
+    if (!_rjSeleccion) return [];
+    if (_rjSeleccion.id !== usrId || _rjSeleccion.rodeoId !== _rjRodeoId || _rjSeleccion.asigId !== _rjAsigId) return [];
+    return _rjSeleccion.causasAceptadas || [];
 }
 
 // No permitir confirmaciones ambiguas: el botón solo se habilita con jurado Y motivo elegidos.
@@ -2415,6 +2512,36 @@ function actualizarBotonConfirmarReemplazo() {
     btn.disabled = !usrId || !motivo;
 }
 
+// El backend detectó advertencias distintas a las aceptadas (o ninguna
+// aceptación). Se descarta la aceptación anterior, se muestran las causas
+// ACTUALES y se exige una nueva aceptación expresa. NUNCA reintenta el
+// guardado automáticamente: el administrador debe volver a presionar
+// "Confirmar reemplazo".
+async function _rjReconfirmarAdvertencias(usrId, data) {
+    const causas = _rjCausasOrdenadas(data?.causas);
+    const nombre = document.getElementById('rj-buscar')?.value || '';
+    const cat = (_rjCandidatos || []).find(c => c.id === usrId)?.categoria || '';
+    if (_rjSeleccion) _rjSeleccion.causasAceptadas = null; // aceptación anterior inválida
+
+    if (causas.length === 0) {
+        _rjSeleccion = { id: usrId, rodeoId: _rjRodeoId, asigId: _rjAsigId, causasAceptadas: [] };
+        seleccionarJuradoReemplazo(usrId, nombre, cat, []);
+        mostrarToast('Las advertencias aceptadas ya no corresponden: el jurado hoy no presenta advertencias. Revise y presione "Confirmar reemplazo" nuevamente.', 'warning');
+        return;
+    }
+    const partes = [];
+    if ((data?.causas_nuevas || []).length) partes.push('Nuevas: ' + data.causas_nuevas.map(c => sanitizar(_etiquetaCausaJurado(c))).join(' · '));
+    if ((data?.causas_ya_no_existen || []).length) partes.push('Ya no aplican: ' + data.causas_ya_no_existen.map(c => sanitizar(_etiquetaCausaJurado(c))).join(' · '));
+    const aviso = data?.code === 'ADVERTENCIAS_CAMBIARON'
+        ? 'Las advertencias cambiaron desde que se seleccionó al jurado. ' + partes.join('. ')
+        : 'El reemplazo no se guardó: estas advertencias requieren su aceptación expresa.';
+    const ok = await confirmarAdvertenciasReemplazo(nombre, causas, { aviso });
+    if (!ok) { _rjLimpiarSeleccion(); mostrarToast('Reemplazo no guardado. Seleccione nuevamente al jurado reemplazante.', 'info'); return; }
+    _rjSeleccion = { id: usrId, rodeoId: _rjRodeoId, asigId: _rjAsigId, causasAceptadas: causas };
+    seleccionarJuradoReemplazo(usrId, nombre, cat, causas);
+    mostrarToast('Advertencias aceptadas. Presione "Confirmar reemplazo" para guardar.', 'info');
+}
+
 async function guardarReemplazoJurado(e, asigId, rodeoId) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type=submit]');
@@ -2424,7 +2551,13 @@ async function guardarReemplazoJurado(e, asigId, rodeoId) {
 
     if (!usrId) { mostrarToast('Seleccione el jurado reemplazante', 'error'); return; }
     if (!motivoCodigo) { mostrarToast('Seleccione un motivo', 'error'); return; }
-    if (!await confirmar('¿Confirma el reemplazo de jurado? Esta acción queda registrada en la bitácora y no se puede deshacer desde esta pantalla.')) return;
+    const causasAceptadas = _rjCausasAceptadasVigentes(usrId);
+    const textoAdv = causasAceptadas.length > 0
+        ? ` Se registrará como excepción administrativa con las advertencias aceptadas: ${causasAceptadas.map(c => sanitizar(_etiquetaCausaJurado(c))).join(' · ')}.`
+        : '';
+    // Confirmación GENERAL de la acción (irreversible desde esta pantalla) —
+    // nunca reemplaza la aceptación específica de advertencias de arriba.
+    if (!await confirmar('¿Confirma el reemplazo de jurado? Esta acción queda registrada en la bitácora y no se puede deshacer desde esta pantalla.' + textoAdv)) return;
 
     btn.disabled = true;
     try {
@@ -2432,19 +2565,26 @@ async function guardarReemplazoJurado(e, asigId, rodeoId) {
             usuario_pagado_id_nuevo: usrId,
             motivo_codigo: motivoCodigo,
             motivo_detalle: comentario || undefined,
-            usuario_pagado_id_anterior_esperado: rjAnteriorId || undefined
+            usuario_pagado_id_anterior_esperado: rjAnteriorId || undefined,
+            confirmar_advertencias: causasAceptadas.length > 0,
+            causas_aceptadas: causasAceptadas.length > 0 ? causasAceptadas : undefined
         });
+        _rjSeleccion = null;
         mostrarToast('Jurado reemplazado correctamente', 'success');
         verDetalle(rodeoId);
     } catch (err) {
-        if (err.data?.code === 'CONFLICTO_DESIGNACION_MODIFICADA') {
+        const code = err.data?.code;
+        if (code === 'CONFLICTO_DESIGNACION_MODIFICADA') {
             mostrarToast('La designación fue modificada por otro administrador mientras usted editaba. Vuelva a abrir el detalle del rodeo e intente de nuevo.', 'error');
             verDetalle(rodeoId);
+        } else if (code === 'REQUIERE_CONFIRMACION_ADVERTENCIAS' || code === 'ADVERTENCIAS_CAMBIARON') {
+            await _rjReconfirmarAdvertencias(usrId, err.data);
         } else {
             mostrarError(err);
         }
     } finally { btn.disabled = false; }
 }
+
 
 // ── GESTIONAR DESIGNACIÓN (admin sin restricción de fecha) ───────
 function abrirGestionarDesignacion(asigId, nombre, estadoActual, rodeoId) {

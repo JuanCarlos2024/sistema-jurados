@@ -21,6 +21,7 @@ const { calcularBloqueRodeo, contarSabadosEntre } = require('../../services/feri
 const { cargarDatosMotor } = require('../../services/motorPropuestaDesignacion');
 const { cargarConfiguracionDesignacionActiva } = require('../../services/configuracionDesignacionRepositorio');
 const { evaluarElegibilidadJurado, ESTADOS_ELEGIBILIDAD } = require('../../services/elegibilidadJurado');
+const { normalizarCausasAceptadas, compararCausas } = require('../../services/confirmacionAdvertencias');
 
 // ─── Helper: crea o actualiza bono de distancia (flujo admin) ──────────────────
 // Lógica idéntica al flujo usuario:
@@ -622,21 +623,27 @@ router.patch('/:id', async (req, res) => {
 //
 // body: { usuario_pagado_id_nuevo, motivo_codigo, motivo_detalle?,
 //          usuario_pagado_id_anterior_esperado?, tipo_movimiento?,
-//          fecha_efectiva?, operacion_id?, confirmar_advertencias? }
+//          fecha_efectiva?, operacion_id?, confirmar_advertencias?, causas_aceptadas? }
 // confirmar_advertencias (Corrección final de seguridad, sección 2) — true
 // SOLO cuando el administrador ya revisó y aceptó explícitamente una
 // advertencia de preferencia flexible del candidato nuevo para ESTE rodeo
 // (reemplazos urgentes) — nunca se asume, nunca tiene default true, y NUNCA
 // permite omitir una restricción obligatoria (ver gate más abajo).
+// causas_aceptadas (hotfix reemplazo con advertencias, migración 099) — la
+// lista EXACTA de causas relajables que el administrador vio y aceptó. Un
+// `true` genérico nunca basta: debe coincidir, como conjunto, con las causas
+// que el motor detecta al revalidar aquí; si cambió, 409 con el detalle.
 router.post('/:id/reemplazar', async (req, res) => {
     const {
         usuario_pagado_id_nuevo, motivo_codigo, motivo_detalle,
         usuario_pagado_id_anterior_esperado, tipo_movimiento, fecha_efectiva, operacion_id,
-        confirmar_advertencias
+        confirmar_advertencias, causas_aceptadas
     } = req.body;
 
     if (!usuario_pagado_id_nuevo) return res.status(400).json({ error: 'usuario_pagado_id_nuevo es requerido' });
     if (!motivo_codigo) return res.status(400).json({ error: 'motivo_codigo es requerido' });
+    const aceptadas = normalizarCausasAceptadas(causas_aceptadas);
+    if (!aceptadas.ok) return res.status(400).json({ error: aceptadas.error, code: 'CAUSAS_ACEPTADAS_INVALIDAS' });
 
     const { data: anterior } = await supabase
         .from('asignaciones')
@@ -695,10 +702,39 @@ router.post('/:id/reemplazar', async (req, res) => {
             code: 'RESTRICCION_OBLIGATORIA', estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_obligatorias
         });
     }
-    if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.CON_ADVERTENCIAS && confirmar_advertencias !== true) {
+    // Hotfix (099) — la confirmación debe ser EXPRESA y EXACTA. Las causas
+    // relajables actuales salen de la revalidación de arriba (motor y
+    // configuración vigentes), nunca de lo que diga el cliente.
+    const causasActuales = elegibilidad.estado === ESTADOS_ELEGIBILIDAD.CON_ADVERTENCIAS
+        ? [...(elegibilidad.causas_relajables || [])].sort()
+        : [];
+    let causasConfirmadas = null;
+    if (causasActuales.length > 0) {
+        if (confirmar_advertencias !== true || aceptadas.causas === null || aceptadas.causas.length === 0) {
+            return res.status(409).json({
+                error: 'El reemplazo tiene advertencias (preferencias flexibles) que deben confirmarse explícitamente antes de guardar',
+                code: 'REQUIERE_CONFIRMACION_ADVERTENCIAS', estado_elegibilidad: elegibilidad.estado,
+                causas: causasActuales, requiere_confirmacion: true
+            });
+        }
+        const cmp = compararCausas(causasActuales, aceptadas.causas);
+        if (!cmp.coincide) {
+            return res.status(409).json({
+                error: 'Las advertencias del jurado nuevo cambiaron desde que se confirmaron. Revise las advertencias actuales y vuelva a confirmar.',
+                code: 'ADVERTENCIAS_CAMBIARON', estado_elegibilidad: elegibilidad.estado,
+                causas: causasActuales, causas_nuevas: cmp.nuevas, causas_ya_no_existen: cmp.ya_no_existen,
+                requiere_confirmacion: true
+            });
+        }
+        causasConfirmadas = causasActuales;
+    } else if (aceptadas.causas && aceptadas.causas.length > 0) {
+        // Se aceptaron advertencias que hoy ya no existen: la decisión del
+        // administrador se tomó sobre un estado distinto al actual.
         return res.status(409).json({
-            error: 'El reemplazo tiene advertencias (preferencias flexibles) que deben confirmarse explícitamente antes de guardar',
-            code: 'REQUIERE_CONFIRMACION_ADVERTENCIAS', estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_relajables, requiere_confirmacion: true
+            error: 'Las advertencias confirmadas ya no corresponden: el jurado nuevo hoy no presenta advertencias. Revise y vuelva a confirmar el reemplazo.',
+            code: 'ADVERTENCIAS_CAMBIARON', estado_elegibilidad: elegibilidad.estado,
+            causas: [], causas_nuevas: [], causas_ya_no_existen: [...aceptadas.causas].sort(),
+            requiere_confirmacion: true
         });
     }
 
@@ -711,7 +747,7 @@ router.post('/:id/reemplazar', async (req, res) => {
         return res.status(500).json({ error: 'No se pudo calcular el pago: ' + err.message });
     }
 
-    const { data, error } = await supabase.rpc('reemplazar_jurado_asignacion_con_bitacora', {
+    const argsRpc = {
         p_asignacion_id: req.params.id,
         p_usuario_pagado_id_nuevo: usuario_pagado_id_nuevo,
         p_categoria_aplicada_nueva: calculo.categoria_aplicada,
@@ -724,10 +760,22 @@ router.post('/:id/reemplazar', async (req, res) => {
         p_motivo_detalle: motivo_detalle || null,
         p_fecha_efectiva: fecha_efectiva || null,
         p_operacion_id: operacion_id || null
-    });
+    };
+    // Solo se envía cuando hay una excepción confirmada: un reemplazo sin
+    // advertencias sigue siendo compatible con la firma anterior a 099.
+    if (causasConfirmadas) argsRpc.p_causas_confirmadas = causasConfirmadas;
+    const { data, error } = await supabase.rpc('reemplazar_jurado_asignacion_con_bitacora', argsRpc);
 
     if (error) {
         const msg = error.message || '';
+        if (msg.includes('CAUSAS_CONFIRMADAS_INVALIDAS') || msg.includes('CAUSA_CONFIRMADA_DESCONOCIDA')) {
+            return res.status(400).json({ error: 'Las causas confirmadas no son válidas: solo pueden aceptarse preferencias flexibles reconocidas. No se registró el reemplazo.', code: 'CAUSAS_CONFIRMADAS_INVALIDAS' });
+        }
+        // Excepción confirmada contra una BD sin la migración 099: falla
+        // cerrado (nunca se guarda una excepción sin registrar sus causas).
+        if (causasConfirmadas && (error.code === 'PGRST202' || msg.includes('p_causas_confirmadas'))) {
+            return res.status(409).json({ error: 'El registro de advertencias confirmadas en reemplazos aún no está habilitado en la base de datos (migración 099 pendiente). No se registró el reemplazo.', code: 'MIGRACION_099_PENDIENTE' });
+        }
         if (msg.includes('ASIGNACION_NO_ENCONTRADA')) return res.status(404).json({ error: 'Asignación no encontrada' });
         if (msg.includes('SOLO_JURADO')) return res.status(400).json({ error: 'Este reemplazo transaccional solo aplica a asignaciones de jurado' });
         if (msg.includes('ASIGNACION_ANULADA')) return res.status(400).json({ error: 'No se puede reemplazar una asignación anulada' });
@@ -765,10 +813,16 @@ router.post('/:id/reemplazar', async (req, res) => {
         registro_id: req.params.id,
         accion: 'editar',
         datos_anteriores: { usuario_pagado_id: data.usuario_pagado_id_anterior, nombre: data.nombre_anterior_snapshot },
-        datos_nuevos: { usuario_pagado_id: usuario_pagado_id_nuevo, nombre: nuevoJurado.nombre_completo, motivo: motivo_codigo },
+        datos_nuevos: {
+            usuario_pagado_id: usuario_pagado_id_nuevo, nombre: nuevoJurado.nombre_completo, motivo: motivo_codigo,
+            motivo_detalle: motivo_detalle || null,
+            excepcion_advertencias: !!causasConfirmadas,
+            causas_confirmadas: causasConfirmadas
+        },
         actor_id: req.usuario.id,
         actor_tipo: 'administrador',
-        descripcion: `Reemplazo transaccional de jurado (bitácora ${data.bitacora_id}) — motivo: ${motivo_codigo}`,
+        descripcion: `Reemplazo transaccional de jurado (bitácora ${data.bitacora_id}) — motivo: ${motivo_codigo}`
+            + (causasConfirmadas ? ` — excepción administrativa: advertencias aceptadas ${causasConfirmadas.join(', ')}` : ''),
         ip_address: req.ip
     });
 

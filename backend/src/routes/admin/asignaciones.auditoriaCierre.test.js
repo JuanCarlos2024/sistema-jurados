@@ -195,7 +195,7 @@ describe('Comprobación 2 (escritura) — CORREGIDO: POST /:id/reemplazar ahora 
         expect(supabase.rpc).not.toHaveBeenCalled();
     });
 
-    test('6) causa solo FLEXIBLE (DISTANCIA_EXCEDIDA) -> sin confirmar: 409 requiere confirmación, nunca llama a la RPC; con confirmar_advertencias:true (+ motivo, ya exigido siempre) -> se ejecuta el reemplazo', async () => {
+    test('6) causa solo FLEXIBLE (DISTANCIA_EXCEDIDA) -> sin confirmar: 409 requiere confirmación, nunca llama a la RPC; con confirmar_advertencias:true + causas_aceptadas exactas (hotfix 099) + motivo -> se ejecuta el reemplazo y las causas viajan a la RPC', async () => {
         crearSupabaseMock({
             asignaciones: [{ data: ASIGNACION_ACTUAL, error: null }, { data: [], error: null }],
             catalogo_motivos_designacion: { data: { id: 'mot-1', activo: true }, error: null },
@@ -223,10 +223,10 @@ describe('Comprobación 2 (escritura) — CORREGIDO: POST /:id/reemplazar ahora 
         supabase.rpc.mockResolvedValue({ data: { asignacion: { id: 'asig-1', usuario_pagado_id: 'jur-B' }, bitacora_id: 'bit-1', usuario_pagado_id_anterior: 'jur-A', nombre_anterior_snapshot: 'Jurado A' }, error: null });
         const confirmado = await llamarRuta({
             method: 'POST', url: '/asig-1/reemplazar', params: { id: 'asig-1' },
-            body: { usuario_pagado_id_nuevo: 'jur-B', motivo_codigo: 'emergencia_fuerza_mayor', confirmar_advertencias: true }
+            body: { usuario_pagado_id_nuevo: 'jur-B', motivo_codigo: 'emergencia_fuerza_mayor', confirmar_advertencias: true, causas_aceptadas: ['DISTANCIA_EXCEDIDA'] }
         });
         expect(confirmado.status).toBe(200);
-        expect(supabase.rpc).toHaveBeenCalledWith('reemplazar_jurado_asignacion_con_bitacora', expect.objectContaining({ p_usuario_pagado_id_nuevo: 'jur-B' }));
+        expect(supabase.rpc).toHaveBeenCalledWith('reemplazar_jurado_asignacion_con_bitacora', expect.objectContaining({ p_usuario_pagado_id_nuevo: 'jur-B', p_causas_confirmadas: ['DISTANCIA_EXCEDIDA'] }));
     });
 
     test('7) el reemplazo NO se invalida por "conflicto consigo mismo": evaluarElegibilidadJurado se llama con el CANDIDATO nuevo, nunca con el jurado anterior ni con el id de la asignación que se reemplaza', async () => {
