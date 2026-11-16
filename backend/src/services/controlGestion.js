@@ -104,6 +104,23 @@ const ESTADOS_VINCULACION_IMPORTABLES = ['Vinculado al reporte'];
 // restricción de columna.
 const LIMITE_TEXTO_COMENTARIO = 20000;
 
+// ─── Resultados de la Serie de Campeones (columnas OPCIONALES de
+// "Importación sistema") ─────────────────────────────────────────────────
+// No forman parte de ENCABEZADOS_IMPORTACION: un Excel CG-1.0 sin ellas se
+// importa exactamente igual que antes. Se guardan en datos_monitor_rodeo.
+// puntaje_oficial_1er/2do/3er (TEXT) vía la RPC de la migración 101 — nunca
+// como situaciones de Control de Gestión.
+const COLUMNAS_RESULTADOS_SERIE = [
+    { lugar: 1, nombre: '1° lugar puntaje', aliases: ['1° lugar puntaje', '1er lugar puntaje', 'Puntaje 1° lugar'] },
+    { lugar: 2, nombre: '2° lugar puntaje', aliases: ['2° lugar puntaje', '2do lugar puntaje', 'Puntaje 2° lugar'] },
+    { lugar: 3, nombre: '3° lugar puntaje', aliases: ['3° lugar puntaje', '3er lugar puntaje', 'Puntaje 3° lugar'] }
+];
+// Entero con cero o más desempates: 27, 27+8, 27-1, 30+12, 22+5+3.
+const REGEX_PUNTAJE_SERIE = /^\d+([+-]\d+)*$/;
+const LIMITE_PUNTAJE_SERIE = 30;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MOTIVO_RODEO_ID_INEXISTENTE = 'Rodeo ID no existe en el sistema.';
+
 // ─── Parser de fecha PROPIO de Control de Gestión — DD/MM/YYYY (formato
 // chileno) o YYYY-MM-DD (ISO), nunca M/D/Y ────────────────────────────────
 function parsearFechaCG(valor) {
@@ -221,7 +238,107 @@ function parsearWorkbook(buffer) {
         throw new Error(`Faltan columnas obligatorias en "${HOJA_IMPORTACION}": ${faltantes.join(', ')}.`);
     }
 
-    return { filasImportacion, filasSituaciones };
+    // Columnas opcionales de resultados: se leen CELDA A CELDA (no desde
+    // sheet_to_json) para detectar fórmulas y fechas que Excel haya
+    // fabricado a partir de un desempate ("=27+8" -> 35, "27-1" -> 27/ene).
+    const hojaImportacion = wb.Sheets[nombreHojaImportacion];
+    const columnasResultados = localizarColumnasResultados(hojaImportacion);
+    const resultadosSerie = filasImportacion.map(f =>
+        extraerResultadosSerie(hojaImportacion, columnasResultados, f.__rowNum__));
+
+    return { filasImportacion, filasSituaciones, columnasResultados, resultadosSerie };
+}
+
+// ─── Resultados Serie de Campeones (PURO) ────────────────────────────────
+// Comparación de encabezados tolerante a mayúsculas/tildes/espacios y al
+// ordinal "º" escrito en lugar del símbolo de grado "°".
+function claveEncabezadoResultado(s) {
+    return normalizar(String(s ?? '')).replace(/º/g, '°').replace(/\s+/g, '');
+}
+
+// Ubica las columnas de resultados en la fila de encabezados de la hoja.
+// @returns { presentes, columnas: {1: col|null, 2, 3}, duplicadas: [nombre] }
+function localizarColumnasResultados(hoja) {
+    const info = { presentes: false, columnas: { 1: null, 2: null, 3: null }, duplicadas: [] };
+    if (!hoja || !hoja['!ref']) return info;
+    const rango = XLSX.utils.decode_range(hoja['!ref']);
+    for (let c = rango.s.c; c <= rango.e.c; c++) {
+        const celda = hoja[XLSX.utils.encode_cell({ r: rango.s.r, c })];
+        if (!celda || celda.v === undefined || celda.v === null) continue;
+        const clave = claveEncabezadoResultado(celda.v);
+        for (const def of COLUMNAS_RESULTADOS_SERIE) {
+            if (!def.aliases.some(a => claveEncabezadoResultado(a) === clave)) continue;
+            if (info.columnas[def.lugar] !== null) info.duplicadas.push(def.nombre);
+            else info.columnas[def.lugar] = c;
+        }
+    }
+    info.presentes = Object.values(info.columnas).some(c => c !== null);
+    return info;
+}
+
+// Valida un puntaje escrito como texto. Vacío = no informado (null), NUNCA 0.
+// Los espacios se eliminan ("27 + 8" -> "27+8"); el valor sigue siendo texto.
+function validarPuntajeSerie(texto) {
+    const crudo = String(texto ?? '');
+    const s = crudo.replace(/\s+/g, '');
+    if (s === '') return { valor: null, error: null };
+    if (s.length > LIMITE_PUNTAJE_SERIE || !REGEX_PUNTAJE_SERIE.test(s)) {
+        return { valor: null, error: `"${crudo.trim().slice(0, 40)}" no tiene formato de puntaje (ej. 27, 27+8, 27-1, 22+5+3)` };
+    }
+    return { valor: s, error: null };
+}
+
+// Lee UNA celda de puntaje respetando su tipo real en el Excel.
+function leerCeldaPuntajeSerie(celda) {
+    if (!celda || celda.t === 'z') return { valor: null, error: null };
+    if (celda.f) return { valor: null, error: 'la celda contiene una fórmula; el puntaje debe venir como texto (ej. 27+8)' };
+    if (celda.t === 'd' || celda.v instanceof Date) {
+        return { valor: null, error: 'Excel interpretó el valor como fecha; el puntaje debe venir como texto (ej. 27-1)' };
+    }
+    if (celda.t === 'n') {
+        if (!Number.isInteger(celda.v) || celda.v < 0) return { valor: null, error: `"${celda.v}" no es un puntaje válido` };
+        return { valor: String(celda.v), error: null };
+    }
+    if (celda.t === 's') return validarPuntajeSerie(celda.v);
+    return { valor: null, error: 'tipo de celda no reconocido' };
+}
+
+// Extrae los 3 puntajes de una fila (rowNum = índice 0-based de la hoja).
+// @returns { columnas_presentes, valores: [p1|null, p2|null, p3|null], errores }
+function extraerResultadosSerie(hoja, info, rowNum) {
+    const valores = [null, null, null];
+    const errores = [];
+    if (!info || !info.presentes) return { columnas_presentes: false, valores, errores };
+    if (info.duplicadas.length > 0) {
+        errores.push(`Columna de resultados duplicada en "${HOJA_IMPORTACION}": ${[...new Set(info.duplicadas)].join(', ')}.`);
+        return { columnas_presentes: true, valores, errores };
+    }
+    for (const def of COLUMNAS_RESULTADOS_SERIE) {
+        const col = info.columnas[def.lugar];
+        if (col === null || rowNum === undefined) continue;
+        const { valor, error } = leerCeldaPuntajeSerie(hoja[XLSX.utils.encode_cell({ r: rowNum, c: col })]);
+        if (error) errores.push(`${def.nombre}: ${error}.`);
+        else valores[def.lugar - 1] = valor;
+    }
+    return { columnas_presentes: true, valores, errores };
+}
+
+const normalizarPuntajeComparable = (v) => (v === null || v === undefined) ? '' : String(v).replace(/\s+/g, '');
+
+// Compara lugar por lugar los valores del Excel con los registrados.
+// comparacion: 'no_informado' | 'nuevo' | 'igual' | 'conflicto'
+function compararResultadosSerie(valoresExcel, actuales) {
+    return [1, 2, 3].map(lugar => {
+        const excel = valoresExcel[lugar - 1];
+        const actualCrudo = actuales ? actuales[lugar - 1] : null;
+        const actual = normalizarPuntajeComparable(actualCrudo);
+        let comparacion;
+        if (excel === null) comparacion = 'no_informado';
+        else if (actual === '') comparacion = 'nuevo';
+        else if (actual === excel) comparacion = 'igual';
+        else comparacion = 'conflicto';
+        return { lugar, excel, actual: actual === '' ? null : actualCrudo, comparacion };
+    });
 }
 
 // ─── PASO 2 (PURO) — Validación + extracción de una fila de "Importación
@@ -515,7 +632,7 @@ async function matchearRodeo({ rodeoIdExcel, fecha, club, asociacion, juradoOfic
             .maybeSingle();
 
         if (error) return { estado: 'error', motivo: 'Error consultando el Rodeo ID: ' + error.message, rodeo: null };
-        if (!rodeo) return { estado: 'error', motivo: 'Rodeo ID no existe en el sistema.', rodeo: null };
+        if (!rodeo) return { estado: 'error', motivo: MOTIVO_RODEO_ID_INEXISTENTE, rodeo: null };
         if (rodeo.estado !== 'activo') return { estado: 'error', motivo: 'El rodeo referenciado está anulado.', rodeo: null };
 
         const coincide = rodeo.fecha === fecha
@@ -656,11 +773,221 @@ async function construirPlanFila(filaRaw, filasSituacionesRaw) {
     return { valores, estado: 'ok', errores: [], matching, situaciones: situacionesConFingerprint, comentarioNuevo };
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Resultados de la Serie de Campeones — vinculación EXCLUSIVA por Rodeo ID.
+// Independiente del flujo de comentario/situaciones: una fila con
+// Importar="No" o con errores en sus situaciones puede igualmente traer
+// resultados válidos; el flujo existente no cambia en nada.
+// ═════════════════════════════════════════════════════════════════════════
+async function obtenerPuntajesActuales(rodeoId) {
+    const { data, error } = await supabase
+        .from('datos_monitor_rodeo')
+        .select('puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er')
+        .eq('rodeo_id', rodeoId)
+        .maybeSingle();
+    if (error) throw new Error('No se pudieron leer los puntajes actuales del rodeo: ' + error.message);
+    return [data?.puntaje_oficial_1er ?? null, data?.puntaje_oficial_2do ?? null, data?.puntaje_oficial_3er ?? null];
+}
+
+// estado: 'sin_columnas' | 'sin_resultados' | 'error' | 'advertencia' |
+//         'sin_rodeo_id' | 'rodeo_no_encontrado' | 'duplicada' |
+//         'listo' | 'conflicto' | 'sin_cambios'
+// Solo 'listo' / 'conflicto' / 'sin_cambios' son aplicables.
+const ESTADOS_RESULTADOS_APLICABLES = ['listo', 'conflicto', 'sin_cambios'];
+
+async function construirPlanResultadosSerie(filasImportacion, resultadosSerie) {
+    const planes = filasImportacion.map((filaRaw, i) => {
+        const r = resultadosSerie[i];
+        const rodeoIdCrudo = leerCampo(filaRaw, 'Rodeo ID');
+        return {
+            fila_index: i,
+            columnas_presentes: r.columnas_presentes,
+            valores: r.valores,
+            rodeo_id_excel: rodeoIdCrudo === null ? null : String(rodeoIdCrudo).trim(),
+            rodeo_id: null,
+            lugares: compararResultadosSerie(r.valores, null).map(l => ({ ...l, comparacion: l.excel === null ? 'no_informado' : 'pendiente' })),
+            errores: [...r.errores],
+            estado: !r.columnas_presentes ? 'sin_columnas'
+                : r.errores.length > 0 ? 'error'
+                : r.valores.every(v => v === null) ? 'sin_resultados'
+                : null
+        };
+    });
+
+    // Rodeo ID repetido entre filas que traen resultados: si los valores son
+    // idénticos se aplica una sola vez; si difieren no se aplica ninguno
+    // (nunca se elige arbitrariamente cuál vale).
+    const grupos = new Map();
+    for (const p of planes) {
+        if (p.estado !== null || !p.rodeo_id_excel) continue;
+        const clave = p.rodeo_id_excel.toLowerCase();
+        if (!grupos.has(clave)) grupos.set(clave, []);
+        grupos.get(clave).push(p);
+    }
+    for (const grupo of grupos.values()) {
+        if (grupo.length < 2) continue;
+        const filasTxt = grupo.map(p => p.fila_index + 1).join(', '); // misma numeración que la previsualización
+        const mismos = grupo.every(p => p.valores.every((v, k) => v === grupo[0].valores[k]));
+        grupo.forEach((p, k) => {
+            if (!mismos) {
+                p.estado = 'error';
+                p.errores.push(`El mismo Rodeo ID aparece en las filas ${filasTxt} con resultados distintos — no se importa ninguno.`);
+            } else if (k > 0) {
+                p.estado = 'duplicada';
+                p.errores.push(`Resultados idénticos a la fila ${grupo[0].fila_index + 1} (mismo Rodeo ID) — se aplican una sola vez.`);
+            }
+        });
+    }
+
+    for (const p of planes) {
+        if (p.estado !== null) continue;
+        const filaRaw = filasImportacion[p.fila_index];
+        try {
+            const version = leerCampo(filaRaw, 'Versión formato');
+            if (version !== VERSION_FORMATO_SOPORTADA) {
+                p.estado = 'error';
+                p.errores.push(`Versión de formato no soportada: "${version}" (se espera "${VERSION_FORMATO_SOPORTADA}").`);
+                continue;
+            }
+            if (!p.rodeo_id_excel) {
+                p.estado = 'sin_rodeo_id';
+                p.errores.push('Sin Rodeo ID: los resultados solo se vinculan por Rodeo ID (no por Club, Asociación ni Jurado).');
+                continue;
+            }
+            if (!UUID_RE.test(p.rodeo_id_excel)) {
+                p.estado = 'rodeo_no_encontrado';
+                p.errores.push(`Rodeo ID "${p.rodeo_id_excel.slice(0, 60)}" no existe en el sistema (formato inválido).`);
+                continue;
+            }
+            const fechaRaw = leerCampo(filaRaw, 'Fecha rodeo');
+            const matching = await matchearRodeo({
+                rodeoIdExcel: p.rodeo_id_excel,
+                fecha: fechaRaw !== null ? parsearFechaCG(fechaRaw) : null,
+                club: leerCampo(filaRaw, 'Club'),
+                asociacion: leerCampo(filaRaw, 'Asociación'),
+                juradoOficial: leerCampo(filaRaw, 'Jurado Oficial')
+            });
+            if (matching.estado === 'error') {
+                p.estado = matching.motivo === MOTIVO_RODEO_ID_INEXISTENTE ? 'rodeo_no_encontrado' : 'error';
+                p.errores.push(matching.motivo);
+                continue;
+            }
+            if (matching.estado === 'advertencia') {
+                p.estado = 'advertencia';
+                p.errores.push(matching.motivo + ' Los resultados no se cargan hasta corregir el Excel.');
+                continue;
+            }
+            p.rodeo_id = matching.rodeo.id;
+            p.lugares = compararResultadosSerie(p.valores, await obtenerPuntajesActuales(p.rodeo_id));
+            const comps = p.lugares.map(l => l.comparacion);
+            p.estado = comps.includes('conflicto') ? 'conflicto' : comps.includes('nuevo') ? 'listo' : 'sin_cambios';
+        } catch (err) {
+            p.estado = 'error';
+            p.errores.push(err.message);
+        }
+    }
+    return planes;
+}
+
+// Resumen de previsualización de resultados (sin escribir nada).
+function resumirPlanesResultados(planes, columnasPresentes) {
+    const cuenta = (e) => planes.filter(p => p.estado === e).length;
+    return {
+        columnas_presentes: columnasPresentes,
+        filas_con_resultados: planes.filter(p => p.valores.some(v => v !== null)).length,
+        listos: cuenta('listo'),
+        conflictos: cuenta('conflicto'),
+        sin_cambios: cuenta('sin_cambios'),
+        sin_resultados: cuenta('sin_resultados'),
+        rodeo_id_no_encontrados: cuenta('rodeo_no_encontrado'),
+        sin_rodeo_id: cuenta('sin_rodeo_id'),
+        con_error: cuenta('error') + cuenta('advertencia'),
+        duplicadas: cuenta('duplicada')
+    };
+}
+
+const MENSAJES_ERROR_RPC_RESULTADOS = {
+    RODEO_NO_ENCONTRADO: 'Rodeo ID no existe en el sistema.',
+    RODEO_ANULADO: 'El rodeo referenciado está anulado.',
+    ESPERADOS_REQUERIDOS: 'Para reemplazar se requieren los valores vistos en la previsualización.',
+    SIN_RESULTADOS: 'La fila no trae resultados.'
+};
+function mensajeErrorRpcResultados(error) {
+    if (error?.code === 'PGRST202') return 'La migración 101 (resultados Serie de Campeones) aún no está aplicada en la base de datos.';
+    const codigo = String(error?.message || '').split(':')[0].trim();
+    return MENSAJES_ERROR_RPC_RESULTADOS[codigo] || ('No se pudieron guardar los resultados: ' + (error?.message || 'error desconocido'));
+}
+
+// Aplica los resultados de cada fila aplicable según la decisión del
+// administrador: 'completar' (solo lugares vacíos; conflictos se conservan),
+// 'reemplazar' (además reemplaza conflictos SOLO si el valor vigente sigue
+// siendo el que se vio en la previsualización) u 'omitir'. Sin decisión
+// explícita = omitir (seguro por defecto, igual que el flujo de comentario).
+async function aplicarResultadosSerie(planes, decisionesPorIndex, columnasPresentes, importacionId, actorId) {
+    const r = {
+        columnas_presentes: columnasPresentes,
+        rodeos_procesados: 0, importados_1: 0, importados_2: 0, importados_3: 0,
+        reemplazados: 0, iguales: 0, rodeos_sin_resultados: 0,
+        conflictos: 0, conflictos_conservados: 0,
+        rodeo_id_no_encontrados: 0, sin_rodeo_id: 0, con_error: 0, omitidos_por_usuario: 0,
+        detalle: []
+    };
+    for (const p of planes) {
+        const base = { fila_index: p.fila_index, rodeo_id: p.rodeo_id, rodeo_id_excel: p.rodeo_id_excel };
+        if (p.estado === 'sin_columnas') continue;
+        if (p.estado === 'sin_resultados') { r.rodeos_sin_resultados++; continue; }
+        if (p.estado === 'duplicada') { r.detalle.push({ ...base, resultado: 'duplicada', errores: p.errores }); continue; }
+        if (p.estado === 'rodeo_no_encontrado') { r.rodeo_id_no_encontrados++; r.detalle.push({ ...base, resultado: 'rodeo_no_encontrado', errores: p.errores }); continue; }
+        if (p.estado === 'sin_rodeo_id') { r.sin_rodeo_id++; r.detalle.push({ ...base, resultado: 'sin_rodeo_id', errores: p.errores }); continue; }
+        if (!ESTADOS_RESULTADOS_APLICABLES.includes(p.estado)) { r.con_error++; r.detalle.push({ ...base, resultado: 'error', errores: p.errores }); continue; }
+
+        if (p.estado === 'conflicto') r.conflictos++;
+        const decision = decisionesPorIndex.get(p.fila_index);
+        const accion = decision?.accion_resultados || 'omitir';
+        if (accion === 'omitir') {
+            r.omitidos_por_usuario++;
+            r.detalle.push({ ...base, resultado: 'omitida_por_usuario', lugares: p.lugares });
+            continue;
+        }
+        const reemplazar = accion === 'reemplazar';
+        const { data, error } = await supabase.rpc('aplicar_resultados_serie_campeones_rodeo', {
+            p_rodeo_id: p.rodeo_id,
+            p_puntajes: p.valores,
+            p_reemplazar: reemplazar,
+            p_esperados: reemplazar ? decision.resultados_actuales_vistos : null,
+            p_importacion_id: importacionId,
+            p_actor_id: actorId
+        });
+        if (error) {
+            const msg = mensajeErrorRpcResultados(error);
+            if (String(error.message || '').startsWith('RODEO_NO_ENCONTRADO')) r.rodeo_id_no_encontrados++;
+            else r.con_error++;
+            r.detalle.push({ ...base, resultado: 'error', errores: [msg] });
+            continue;
+        }
+        r.rodeos_procesados++;
+        const lugares = data?.lugares || [];
+        let huboConflictoNuevo = false;
+        for (const l of lugares) {
+            if (l.estado === 'importado' || l.estado === 'reemplazado') r[`importados_${l.lugar}`]++;
+            if (l.estado === 'reemplazado') r.reemplazados++;
+            if (l.estado === 'igual') r.iguales++;
+            if (l.estado === 'conflicto_conservado' || l.estado === 'conflicto_cambio_concurrente') r.conflictos_conservados++;
+            if (l.estado === 'conflicto_cambio_concurrente' && p.estado !== 'conflicto') huboConflictoNuevo = true;
+        }
+        if (huboConflictoNuevo) r.conflictos++;
+        r.detalle.push({ ...base, resultado: data?.cambio ? 'importado' : 'sin_cambios', lugares });
+    }
+    return r;
+}
+
 // ─── PREVIEW — NO escribe nada. Devuelve una fila de previsualización por
 // cada fila de "Importación sistema" (incluidas las omitidas por filtro,
 // para que el usuario vea el conteo completo) ────────────────────────────
 async function generarPreview(buffer) {
-    const { filasImportacion, filasSituaciones } = parsearWorkbook(buffer);
+    const { filasImportacion, filasSituaciones, columnasResultados, resultadosSerie } = parsearWorkbook(buffer);
+    // Sin columnas de resultados: cero consultas adicionales (CG-1.0 intacto).
+    const planesResultados = await construirPlanResultadosSerie(filasImportacion, resultadosSerie);
 
     const filas = [];
     for (let i = 0; i < filasImportacion.length; i++) {
@@ -684,7 +1011,19 @@ async function generarPreview(buffer) {
             comentario_nuevo: plan.comentarioNuevo,
             estado: plan.estado, // 'ok' | 'advertencia' | 'error' | 'omitida_por_filtro'
             errores: plan.errores,
-            accion_sugerida: plan.estado === 'ok' ? (comentarioActual ? 'agregar' : 'reemplazar') : 'omitir'
+            accion_sugerida: plan.estado === 'ok' ? (comentarioActual ? 'agregar' : 'reemplazar') : 'omitir',
+            resultados_serie: (() => {
+                const p = planesResultados[i];
+                return {
+                    estado: p.estado,
+                    columnas_presentes: p.columnas_presentes,
+                    rodeo_id: p.rodeo_id,
+                    lugares: p.lugares,
+                    errores: p.errores,
+                    // Por defecto NUNCA se reemplaza: 'completar' solo llena lugares vacíos.
+                    accion_sugerida: ESTADOS_RESULTADOS_APLICABLES.includes(p.estado) ? 'completar' : 'omitir'
+                };
+            })()
         });
     }
 
@@ -693,7 +1032,8 @@ async function generarPreview(buffer) {
         importables: filas.filter(f => f.estado === 'ok').length,
         omitidas_por_filtro: filas.filter(f => f.estado === 'omitida_por_filtro').length,
         con_advertencia: filas.filter(f => f.estado === 'advertencia').length,
-        con_error: filas.filter(f => f.estado === 'error').length
+        con_error: filas.filter(f => f.estado === 'error').length,
+        resultados_serie: resumirPlanesResultados(planesResultados, columnasResultados.presentes)
     };
 
     return { filas, resumen };
@@ -705,8 +1045,9 @@ async function generarPreview(buffer) {
 // RPC confirmar_control_gestion_rodeo() ─────────────────────────────────
 // @param decisiones [{ fila_index, accion: 'agregar'|'reemplazar'|'omitir' }]
 async function confirmarImportacion(buffer, decisiones, nombreArchivo, actorId) {
-    const { filasImportacion, filasSituaciones } = parsearWorkbook(buffer);
+    const { filasImportacion, filasSituaciones, columnasResultados, resultadosSerie } = parsearWorkbook(buffer);
     const decisionPorIndex = new Map((decisiones || []).map(d => [d.fila_index, d.accion]));
+    const decisionResultadosPorIndex = new Map((decisiones || []).map(d => [d.fila_index, d]));
 
     const resultado = { procesados: 0, exitosos: 0, omitidos: 0, duplicados: 0, errores: 0, detalle: [] };
     let totalSituacionesInsertadas = 0;
@@ -811,7 +1152,22 @@ async function confirmarImportacion(buffer, decisiones, nombreArchivo, actorId) 
         })
         .eq('id', importacion.id);
 
-    return { ...resultado, importacion_id: importacion.id, situaciones_insertadas: totalSituacionesInsertadas };
+    // Resultados Serie de Campeones: se revalidan desde cero contra la base
+    // (igual que el comentario) y se aplican rodeo por rodeo. Un fallo aquí
+    // nunca deshace ni altera lo ya importado del comentario/situaciones.
+    let resultadosSerieAplicados;
+    try {
+        const planesResultados = await construirPlanResultadosSerie(filasImportacion, resultadosSerie);
+        resultadosSerieAplicados = await aplicarResultadosSerie(
+            planesResultados, decisionResultadosPorIndex, columnasResultados.presentes, importacion.id, actorId);
+    } catch (err) {
+        resultadosSerieAplicados = { columnas_presentes: columnasResultados.presentes, error_general: err.message };
+    }
+
+    return {
+        ...resultado, importacion_id: importacion.id, situaciones_insertadas: totalSituacionesInsertadas,
+        resultados_serie: resultadosSerieAplicados
+    };
 }
 
 // ─── Lectura de detalle para "Ver detalle" (GET, solo lectura) ──────────
@@ -839,5 +1195,10 @@ module.exports = {
     cruzarSituacionesConFila, calcularFingerprint,
     formatearFechaCL, leerCampo, parsearFechaCG,
     matchearRodeo, obtenerComentarioActual, construirComentarioFinal,
-    construirPlanFila, generarPreview, confirmarImportacion, obtenerSituacionesDeRodeo
+    construirPlanFila, generarPreview, confirmarImportacion, obtenerSituacionesDeRodeo,
+    // Resultados Serie de Campeones (columnas opcionales)
+    COLUMNAS_RESULTADOS_SERIE, REGEX_PUNTAJE_SERIE,
+    localizarColumnasResultados, validarPuntajeSerie, leerCeldaPuntajeSerie,
+    extraerResultadosSerie, compararResultadosSerie,
+    construirPlanResultadosSerie, aplicarResultadosSerie, mensajeErrorRpcResultados
 };

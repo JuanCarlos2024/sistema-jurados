@@ -86,7 +86,8 @@
                 <div>
                     <strong>Excel generado a partir del chat de WhatsApp de los jurados.</strong><br>
                     Debe tener las hojas "Importación sistema" y "Situaciones detectadas", versión de formato <strong>CG-1.0</strong>.<br>
-                    Solo se consideran filas con <strong>Importar = Sí</strong> y <strong>Estado vinculación = Vinculado al reporte</strong>.
+                    Solo se consideran filas con <strong>Importar = Sí</strong> y <strong>Estado vinculación = Vinculado al reporte</strong>.<br>
+                    Opcional: columnas <strong>1° / 2° / 3° lugar puntaje</strong> (Serie de Campeones). Se vinculan solo por <strong>Rodeo ID</strong>, se guardan como texto (ej. 27+8) y nunca reemplazan un puntaje ya registrado sin su confirmación.
                 </div>
             </div>
 
@@ -184,6 +185,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/admin-nav.js"></script>
 <script src="/js/utils.js"></script>
+<script src="/js/cgResultadosSerie.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
 protegerRuta('administrador');
@@ -742,20 +744,21 @@ function cgRenderPreview() {
             <div class="res-item naranja"><div class="numero">${resumen.con_advertencia}</div><div class="texto">Advertencia</div></div>
             <div class="res-item rojo"><div class="numero">${resumen.con_error}</div><div class="texto">Con error</div></div>
             <div class="res-item"><div class="numero">${resumen.omitidas_por_filtro}</div><div class="texto">Omitidas (filtro)</div></div>
-        </div>`;
+        </div>${cgrsHtmlResumenPreview(resumen.resultados_serie)}`;
 
     document.getElementById('cg-preview-tabla').innerHTML = `<table>
         <thead><tr>
             <th>Fecha</th><th>Club</th><th>Asociación</th><th>Jurado</th><th>Rodeo ID</th>
             <th>N° sit.</th><th>Categorías</th><th>Comentario actual</th><th>Comentario nuevo</th>
-            <th>Estado</th><th>Acción</th>
+            <th>Resultados Serie de Campeones</th><th>Estado</th><th>Acción</th>
         </tr></thead>
         <tbody>
         ${filas.map((f, idx) => {
             if (f.estado === 'omitida_por_filtro') {
-                return `<tr style="opacity:0.5;">
-                    <td colspan="9" style="font-size:12px;">Fila ${f.fila_index + 1} — Importar/Estado vinculación no cumplen el filtro</td>
-                    <td>${CG_ETIQUETA_ESTADO[f.estado]}</td><td>—</td>
+                return `<tr>
+                    <td colspan="9" style="font-size:12px; opacity:0.5;">Fila ${f.fila_index + 1} — Importar/Estado vinculación no cumplen el filtro (comentario y situaciones no se importan)</td>
+                    <td>${cgrsHtmlCelda(f.resultados_serie, idx)}</td>
+                    <td style="opacity:0.5;">${CG_ETIQUETA_ESTADO[f.estado]}</td><td style="opacity:0.5;">—</td>
                 </tr>`;
             }
             const puedeElegir = f.estado === 'ok';
@@ -775,6 +778,7 @@ function cgRenderPreview() {
                 <td style="font-size:11px; max-width:160px;">${(f.categorias||[]).map(c => sanitizar(c)).join(', ')}</td>
                 <td style="font-size:11px; max-width:180px; white-space:pre-line;">${sanitizar(f.comentario_actual || '(sin comentario previo)')}</td>
                 <td style="font-size:11px; max-width:220px; white-space:pre-line;">${sanitizar(f.comentario_nuevo || '—')}</td>
+                <td>${cgrsHtmlCelda(f.resultados_serie, idx)}</td>
                 <td>${CG_ETIQUETA_ESTADO[f.estado]}${f.errores?.length ? `<div style="font-size:11px; color:#c0392b; margin-top:4px;">${f.errores.map(e=>sanitizar(e)).join('<br>')}</div>` : ''}</td>
                 <td>${accionSelect}</td>
             </tr>`;
@@ -794,13 +798,28 @@ async function cgConfirmar() {
     // Los <select id="cg-accion-N"> se generaron en cgRenderPreview() con N =
     // índice ORIGINAL dentro de cgPreviewData.filas (no del subconjunto
     // filtrado) — indexOf() recupera exactamente ese mismo índice.
+    //
+    // Comentario/situaciones: igual que antes (solo las filas 'ok' traen
+    // acción elegida). Las demás filas solo viajan si traen una decisión de
+    // resultados, con accion 'omitir' — que el backend ya ignoraba para
+    // filas que no son 'ok'.
+    // Resultados Serie de Campeones: decisión propia por fila (cg-res-accion-N).
     const decisiones = cgPreviewData.filas
-        .filter(f => f.estado === 'ok')
-        .map(f => {
-            const idxOriginal = cgPreviewData.filas.indexOf(f);
-            const sel = document.getElementById('cg-accion-' + idxOriginal);
-            return { fila_index: f.fila_index, accion: sel ? sel.value : 'omitir' };
-        });
+        .map((f, idxOriginal) => {
+            const sel = f.estado === 'ok' ? document.getElementById('cg-accion-' + idxOriginal) : null;
+            const selRes = document.getElementById('cg-res-accion-' + idxOriginal);
+            return {
+                fila_index: f.fila_index,
+                accion: sel ? sel.value : 'omitir',
+                _ok: f.estado === 'ok',
+                ...cgrsDecision(f.resultados_serie, selRes ? selRes.value : null)
+            };
+        })
+        .filter(d => d._ok || d.accion_resultados !== 'omitir')
+        .map(({ _ok, ...d }) => d);
+
+    const textoReemplazo = cgrsTextoConfirmacionReemplazo(cgPreviewData.filas, decisiones);
+    if (textoReemplazo && !(await confirmar(textoReemplazo))) { btn.disabled = false; return; }
 
     document.getElementById('cg-preview').classList.add('oculto');
     document.getElementById('cg-progreso-texto').textContent = 'Confirmando importación, por favor espere...';
@@ -834,7 +853,7 @@ function cgMostrarResultado(data) {
         </div>
         <div class="alerta ${data.errores > 0 ? 'alerta-advertencia' : 'alerta-exito'}" style="margin-top:16px;">
             ${data.errores > 0 ? `⚠️ ${data.errores} fila(s) con error — revise el detalle y vuelva a intentar.` : '✅ Importación completada correctamente.'}
-        </div>`;
+        </div>${cgrsHtmlResultadoFinal(data.resultados_serie)}`;
     document.getElementById('cg-resultado').classList.remove('oculto');
     document.getElementById('cg-resultado').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }

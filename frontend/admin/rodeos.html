@@ -1313,7 +1313,7 @@ async function guardarRodeo(e, confirmarFueraRango = false) {
 }
 
 async function guardarDatosMonitor(rodeoId) {
-    const REGEX_PUNTAJE = /^\d+(\s*[+-]\s*\d+)?$/;
+    const REGEX_PUNTAJE = /^\d+(\s*[+-]\s*\d+)*$/;
     const getTextPuntaje = (id) => {
         const v = document.getElementById(id)?.value.trim();
         return (!v || v === '') ? null : v;
@@ -1325,7 +1325,7 @@ async function guardarDatosMonitor(rodeoId) {
         .filter(([, v]) => v !== null && !REGEX_PUNTAJE.test(v))
         .map(([label]) => label);
     if (invalidos.length > 0) {
-        mostrarToast(`El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 o 23-2 (${invalidos.join(', ')})`, 'error');
+        mostrarToast(`El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5, 23-2 o 22+5+3 (${invalidos.join(', ')})`, 'error');
         return;
     }
     const body = {

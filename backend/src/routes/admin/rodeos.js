@@ -287,12 +287,14 @@ router.put('/:id/datos-monitor', async (req, res) => {
         return res.status(403).json({ error: 'Solo el Monitor o Administrador pueden guardar datos del monitor' });
     }
 
-    const REGEX_PUNTAJE = /^\d+(\s*[+-]\s*\d+)?$/;
+    // Uno o más desempates (30+5, 23-2, 22+5+3) — mismo criterio que la
+    // Importación de Control de Gestión (migración 101).
+    const REGEX_PUNTAJE = /^\d+(\s*[+-]\s*\d+)*$/;
     const validarPuntaje = (v) => v === null || v === undefined || v === '' || REGEX_PUNTAJE.test(String(v).trim());
     const normalizarPuntaje = (v) => {
         if (v === null || v === undefined || v === '') return null;
         const s = String(v).trim();
-        return s === '' ? null : s.replace(/\s*([+-])\s*/, '$1');
+        return s === '' ? null : s.replace(/\s*([+-])\s*/g, '$1');
     };
 
     const { puntaje_oficial_1er, puntaje_oficial_2do, puntaje_oficial_3er, comentario_monitor } = req.body;
@@ -305,7 +307,7 @@ router.put('/:id/datos-monitor', async (req, res) => {
 
     if (camposInvalidos.length > 0) {
         return res.status(400).json({
-            error: `El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5 o 23-2 (campos inválidos: ${camposInvalidos.join(', ')})`
+            error: `El puntaje debe ser un número entero o un puntaje de desempate con formato 30+5, 23-2 o 22+5+3 (campos inválidos: ${camposInvalidos.join(', ')})`
         });
     }
 

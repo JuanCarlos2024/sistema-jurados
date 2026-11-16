@@ -75,6 +75,21 @@ router.post('/confirmar', upload.single('archivo'), async (req, res) => {
     if (decisionesInvalidas.length > 0) {
         return res.status(400).json({ error: 'Cada decisión debe traer fila_index (número) y accion (agregar|reemplazar|omitir).' });
     }
+    // Resultados Serie de Campeones (opcional; ausente = omitir). Para
+    // 'reemplazar' se exigen los 3 valores vigentes que el administrador vio
+    // en la previsualización: la RPC solo reemplaza si siguen siendo esos.
+    const accionesResultados = ['completar', 'reemplazar', 'omitir'];
+    const esVisto = (v) => v === null || (typeof v === 'string' && v.length <= 100);
+    const decisionesResultadosInvalidas = decisiones.filter(d => {
+        if (d.accion_resultados === undefined) return false;
+        if (!accionesResultados.includes(d.accion_resultados)) return true;
+        if (d.accion_resultados !== 'reemplazar') return false;
+        const vistos = d.resultados_actuales_vistos;
+        return !Array.isArray(vistos) || vistos.length !== 3 || !vistos.every(esVisto);
+    });
+    if (decisionesResultadosInvalidas.length > 0) {
+        return res.status(400).json({ error: 'accion_resultados debe ser completar|reemplazar|omitir; "reemplazar" requiere resultados_actuales_vistos (3 valores).' });
+    }
 
     try {
         const resultado = await confirmarImportacion(req.file.buffer, decisiones, req.file.originalname, req.usuario.id);
