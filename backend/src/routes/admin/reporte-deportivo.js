@@ -132,7 +132,14 @@ async function obtenerDatos(q, paginar = true) {
         .neq('estado_designacion', 'rechazado');
 
     const juradosPorRodeo = {}, delegadosPorRodeo = {};
+    // Nombre por usuario_pagado_id (mismas asignaciones ya leídas, sin otra
+    // consulta) — solo para rotular comentarios de falta de VARIAS cartillas
+    // del mismo rodeo (ver cartilla_faltas_comentarios).
+    const nombrePorUsuario = {};
     for (const a of (asigs || [])) {
+        if (a.usuarios_pagados?.id && a.usuarios_pagados.nombre_completo) {
+            nombrePorUsuario[a.usuarios_pagados.id] = a.usuarios_pagados.nombre_completo;
+        }
         const nombre = a.usuarios_pagados?.nombre_completo || a.nombre_importado;
         if (!nombre) continue;
         if (a.tipo_persona === 'jurado') {
@@ -231,7 +238,7 @@ async function obtenerDatos(q, paginar = true) {
     const cartillasPorRodeo = {};
     if (rodeoIds.length > 0) {
         const { data: cartillas } = await supabase.from('cartillas_jurado')
-            .select('id, rodeo_id, estado, datos, enviada_en, storage_path_pdf').in('rodeo_id', rodeoIds).eq('es_actual', true);
+            .select('id, rodeo_id, usuario_pagado_id, estado, datos, enviada_en, storage_path_pdf').in('rodeo_id', rodeoIds).eq('es_actual', true);
         for (const c of (cartillas || [])) {
             if (!cartillasPorRodeo[c.rodeo_id]) cartillasPorRodeo[c.rodeo_id] = [];
             cartillasPorRodeo[c.rodeo_id].push(c);
@@ -312,6 +319,30 @@ async function obtenerDatos(q, paginar = true) {
         // Reporte Cartillas Jurado (reporte-cartillas.js: helper siNo()).
         const datosCartilla = cartillaEnviada?.datos || {};
         const _siNo = (v) => v === 'si' ? 'Sí' : v === 'no' ? 'No' : null;
+
+        // Comentarios de "Faltas disciplinarias/reglamentarias" de TODAS las
+        // cartillas enviadas del rodeo (no solo la primera, a diferencia de
+        // cartilla_hubo_faltas/cartilla_descripcion_faltas, que no cambian).
+        // Misma clave estructurada que el Reporte Cartillas Digitales —
+        // Jurados (reporte-cartillas.js, campo_key 'hubo_faltas'): solo
+        // datos.hubo_faltas === 'si' con datos.descripcion_faltas no vacía.
+        // Sin duplicados (mismo texto con distinto espaciado = uno solo).
+        // Usado hoy solo por /export-fin-semana.
+        const vistosFaltas = new Set();
+        const cartilla_faltas_comentarios = carts
+            .filter(c => c.estado === 'enviada' && c.datos?.hubo_faltas === 'si'
+                && typeof c.datos.descripcion_faltas === 'string' && c.datos.descripcion_faltas.trim() !== '')
+            .sort((a, b) => String(a.enviada_en || '').localeCompare(String(b.enviada_en || '')))
+            .map(c => ({
+                jurado: nombrePorUsuario[c.usuario_pagado_id] || 'Jurado',
+                comentario: c.datos.descripcion_faltas.trim()
+            }))
+            .filter(x => {
+                const clave = x.comentario.replace(/\s+/g, ' ').toLowerCase();
+                if (vistosFaltas.has(clave)) return false;
+                vistosFaltas.add(clave);
+                return true;
+            });
 
         const po1 = dm?.puntaje_oficial_1er ?? null;
         const po2 = dm?.puntaje_oficial_2do ?? null;
@@ -420,6 +451,7 @@ async function obtenerDatos(q, paginar = true) {
             // sin transformar todavía; el formateo a texto ocurre en
             // /export-detalle, que es quien decide cómo mostrarlos.
             cartilla_descripcion_faltas: datosCartilla.descripcion_faltas || null,
+            cartilla_faltas_comentarios,
             cartilla_clasificacion_peso: datosCartilla.clasificacion_peso || null,
             cartilla_filas_ganado:       Array.isArray(datosCartilla.filas_ganado) ? datosCartilla.filas_ganado : [],
             cartilla_registros_rienda:   Array.isArray(datosCartilla.registros_rienda) ? datosCartilla.registros_rienda : []
@@ -1042,8 +1074,8 @@ router.get('/export-directorio', async (req, res) => {
     }
 });
 
-// ── Reporte Fin de Semana — 3 hojas fijas: "Reporte Fin de Semana" (12
-// columnas, A:L), "Detalle" (27 columnas, A:AA, idénticas a las de
+// ── Reporte Fin de Semana — 3 hojas fijas: "Reporte Fin de Semana" (14
+// columnas, A:N), "Detalle" (27 columnas, A:AA, idénticas a las de
 // /export-detalle) y "Colleras completas". Usa obtenerDatos() (mismos
 // filtros que el resto de este archivo) para la Hoja 1 y como base de la
 // Hoja 2. Endpoint independiente: /export, /export-detalle y
@@ -1065,7 +1097,14 @@ router.get('/export-directorio', async (req, res) => {
 //     resumen ni composición con otros datos (NUNCA la cadena consolidada
 //     "Rodeo:/Fecha:/N° situaciones:/Categorías:" que arma /export general)
 //     — vacío/NULL → celda vacía.
+//   Falta disciplinaria / reglamentaria: cartillas_jurado.datos.
+//     descripcion_faltas de TODAS las cartillas enviadas del rodeo con
+//     datos.hubo_faltas === 'si' (vínculo por cartillas_jurado.rodeo_id).
+//   Acciones Área Deportiva: rodeos.observacion ("Obs. Jefe Deportivo /
+//     Acciones Área Deportiva" del modal de Rodeos) — nunca Monitoreo.
 const ANCHO_OBS_MONITOR = 60;
+const ANCHO_FALTA_DISCIPLINARIA = 50;
+const ANCHO_ACCIONES_AREA = 45;
 
 router.get('/export-fin-semana', async (req, res) => {
     try {
@@ -1101,6 +1140,8 @@ router.get('/export-fin-semana', async (req, res) => {
             { header: 'Total Situaciones',                          key: 'total_situaciones', width: 15 },
             { header: 'Serie Campeones - 2 Vueltas',                 key: 'serie_campeones',  width: 20 },
             { header: 'Monitoreo',                                   key: 'obs_monitor',      width: ANCHO_OBS_MONITOR },
+            { header: 'Falta disciplinaria / reglamentaria',         key: 'falta_disciplinaria', width: ANCHO_FALTA_DISCIPLINARIA },
+            { header: 'Acciones Área Deportiva',                     key: 'acciones_area_deportiva', width: ANCHO_ACCIONES_AREA },
         ];
 
         ws1.getRow(1).eachCell(cell => {
@@ -1111,9 +1152,22 @@ router.get('/export-fin-semana', async (req, res) => {
         });
         ws1.getRow(1).height = 26;
         ws1.views = [{ state: 'frozen', ySplit: 1 }];
-        ws1.autoFilter = { from: 'A1', to: 'L1' };
+        ws1.autoFilter = { from: 'A1', to: 'N1' };
 
-        const WRAP_COLS = new Set(['descripcion_observado', 'obs_monitor']);
+        const WRAP_COLS = new Set(['descripcion_observado', 'obs_monitor', 'falta_disciplinaria', 'acciones_area_deportiva']);
+
+        // Falta disciplinaria / reglamentaria: comentarios de la cartilla
+        // digital del jurado (ver cartilla_faltas_comentarios en
+        // obtenerDatos). Uno solo → el comentario tal cual; varios → cada
+        // uno rotulado con su jurado, separados por una línea en blanco.
+        // Ninguno → celda vacía (nunca un texto de relleno).
+        const textoFaltas = (lista) => {
+            if (!lista || lista.length === 0) return null;
+            if (lista.length === 1) return lista[0].comentario;
+            return lista.map(x => `[${x.jurado}] ${x.comentario}`).join('\n\n');
+        };
+        const lineasTexto = (texto, ancho) => !texto ? 1 : texto.split(/\r?\n/)
+            .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / ancho)), 0);
 
         // Mismo formateo que /export-detalle (fmtP) para Puntaje Serie Campeones /
         // Revisión Puntaje — duplicado a propósito (ver comentario de cabecera).
@@ -1149,6 +1203,10 @@ router.get('/export-fin-semana', async (req, res) => {
 
             // comentario_monitor PURO (ver extraerComentarioMonitorPuro arriba); vacío/NULL → celda vacía.
             const obsMonitor = extraerComentarioMonitorPuro(f.obs_monitor);
+            const faltaDisciplinaria = textoFaltas(f.cartilla_faltas_comentarios);
+            // rodeos.observacion ("Obs. Jefe Deportivo / Acciones Área
+            // Deportiva" del modal de Rodeos) — vacío → celda vacía.
+            const accionesArea = (typeof f.obs_admin === 'string' && f.obs_admin.trim() !== '') ? f.obs_admin.trim() : null;
 
             const row = ws1.addRow({
                 fecha:            fmtFecha(f.fecha),
@@ -1163,6 +1221,8 @@ router.get('/export-fin-semana', async (req, res) => {
                 total_situaciones: f.c1_total + f.c2_total,
                 serie_campeones:   f.cartilla_serie_campeones_2_vueltas || '—',
                 obs_monitor:      obsMonitor,
+                falta_disciplinaria:     faltaDisciplinaria,
+                acciones_area_deportiva: accionesArea,
             });
 
             row.eachCell({ includeEmpty: true }, (cell, colNum) => {
@@ -1172,13 +1232,14 @@ router.get('/export-fin-semana', async (req, res) => {
             });
 
             // Altura explícita (como en el Directorio, mínimo 28) pero crecida
-            // según las líneas de Obs. Monitor para que no quede recortado;
-            // tope 409 = máximo de fila en Excel.
-            let lineasObs = 1;
-            if (obsMonitor) {
-                lineasObs = obsMonitor.split(/\r?\n/)
-                    .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / ANCHO_OBS_MONITOR)), 0);
-            }
+            // según la columna de texto más alta (Monitoreo, Falta
+            // disciplinaria o Acciones Área Deportiva) para que no quede
+            // recortado; tope 409 = máximo de fila en Excel.
+            const lineasObs = Math.max(
+                lineasTexto(obsMonitor, ANCHO_OBS_MONITOR),
+                lineasTexto(faltaDisciplinaria, ANCHO_FALTA_DISCIPLINARIA),
+                lineasTexto(accionesArea, ANCHO_ACCIONES_AREA)
+            );
             row.height = Math.min(409, Math.max(28, lineasObs * 14));
 
             if (f.resultados_alterados) row.getCell('resultado_alterado').font = ROJO_FONT;

@@ -55,14 +55,15 @@ const HEADERS_14 = [
     'Movimiento a la Rienda', 'Acciones Área Deportiva'
 ];
 
-// Hoja 1 "Reporte Fin de Semana" — EXACTAMENTE 12 columnas, A:L. Sin "Acciones
-// Área Deportiva" ni "Rodeo ID" (ninguna columna oculta); la última es
-// "Monitoreo" (comentario_monitor íntegro, sin composición).
+// Hoja 1 "Reporte Fin de Semana" — EXACTAMENTE 14 columnas, A:N. Sin "Rodeo
+// ID" (ninguna columna oculta). Después de "Monitoreo" (comentario_monitor
+// íntegro, sin composición) van "Falta disciplinaria / reglamentaria"
+// (cartilla digital del jurado) y "Acciones Área Deportiva" (rodeos.observacion).
 const HEADERS_FIN_SEMANA = [
     'Fecha', 'Club', 'Asociación', 'Tipo Rodeo', 'Jurado(s)', 'Resultado Alterado',
     'Puntaje Serie Campeones 1° - 2° - 3°', 'Revisión Puntaje 1° - 2° - 3°',
     'Descripción de lo observado', 'Total Situaciones', 'Serie Campeones - 2 Vueltas',
-    'Monitoreo'
+    'Monitoreo', 'Falta disciplinaria / reglamentaria', 'Acciones Área Deportiva'
 ];
 
 // Hoja 2 "Detalle" — EXACTAMENTE 27 columnas, A:AA, idénticas a "Reporte
@@ -170,18 +171,17 @@ describe('GET /export-fin-semana', () => {
         expect(nombres).toEqual(['Reporte Fin de Semana', 'Detalle', 'Colleras completas']);
     });
 
-    test('PRUEBA 2/3: HOJA 1 tiene exactamente 12 columnas A:L, en el orden exacto pedido; sin Acciones Área Deportiva ni Rodeo ID oculta', async () => {
+    test('PRUEBA 2/3: HOJA 1 tiene exactamente 14 columnas A:N, en el orden exacto pedido; sin Rodeo ID oculta', async () => {
         const { res, ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
         expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename="reporte_fin_semana_\d{4}-\d{2}-\d{2}\.xlsx"$/);
         expect(ws1).toBeDefined();
 
         const headers = ws1.getRow(1).values.slice(1);
-        expect(headers.length).toBe(12);
+        expect(headers.length).toBe(14);
         expect(headers).toEqual(HEADERS_FIN_SEMANA);
-        expect(headers).not.toContain('Acciones Área Deportiva');
         expect(headers).not.toContain('Rodeo ID');
         expect(headers).not.toContain('Obs. Monitor');
-        expect(ws1.columns.length).toBe(12);
+        expect(ws1.columns.length).toBe(14);
 
         const fila = ws1.getRow(2).values.slice(1);
         expect(fila[1]).toBe('SAN CARLOS');
@@ -313,9 +313,9 @@ describe('GET /export-fin-semana', () => {
         expect(ws1.getColumn(12).width).toBeGreaterThanOrEqual(50);
     });
 
-    test('autoFilter cubre A:L (las 12 columnas visibles, sin ninguna oculta)', async () => {
+    test('autoFilter cubre A:N (las 14 columnas visibles, sin ninguna oculta)', async () => {
         const { ws1 } = await cargarHoja1('/export-fin-semana', 'Reporte Fin de Semana');
-        expect(ws1.autoFilter).toBe('A1:L1');
+        expect(ws1.autoFilter).toBe('A1:N1');
     });
 
     test('estilos: fila alterada recibe fill también en Monitoreo, con rojo/negrita en Resultado Alterado', async () => {
