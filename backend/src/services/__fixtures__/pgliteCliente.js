@@ -4,8 +4,13 @@ const path = require('path');
 const { spawn } = require('child_process');
 const readline = require('readline');
 
-function crearDb() {
-    const hijo = spawn(process.execPath, [path.join(__dirname, 'pgliteServidor.js')], { stdio: ['pipe', 'pipe', 'inherit'] });
+// opciones.extensiones: extensiones contrib de PGlite a cargar (p. ej.
+// ['unaccent']). Opcional: sin ella, idéntico a antes.
+function crearDb(opciones = {}) {
+    const env = { ...process.env };
+    if (Array.isArray(opciones.extensiones) && opciones.extensiones.length) env.PGLITE_EXTENSIONES = opciones.extensiones.join(',');
+    else delete env.PGLITE_EXTENSIONES;
+    const hijo = spawn(process.execPath, [path.join(__dirname, 'pgliteServidor.js')], { stdio: ['pipe', 'pipe', 'inherit'], env });
     const pendientes = new Map();
     let seq = 0;
     readline.createInterface({ input: hijo.stdout }).on('line', (l) => {

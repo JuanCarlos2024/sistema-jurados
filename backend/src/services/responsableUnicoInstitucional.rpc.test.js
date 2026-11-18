@@ -214,6 +214,90 @@ describe('reemplazar_delegado_institucional_rodeo — reemplazo administrativo a
         }
     );
 
+    // ── Cambio de Delegado de Asociación en Borrador (Admin → Rodeos) ──────
+    // Conservación ÍNTEGRA del borrador: la RPC solo toca delegado_asociacion_id,
+    // delegado_nombre, version y updated_at. Se compara la fila completa antes
+    // y después, excluyendo exactamente esas 4 columnas.
+    test('borrador COMPLETO -> conserva todas las respuestas (series, ganado, disciplina, accidentes, colleras, observaciones), estado Borrador y adjuntos; solo cambian responsable, nombre, versión y fecha', async () => {
+        const rodeoId = await crearRodeo();
+        await confirmar(rodeoId, ID.delA, 'Ana Soto');
+        const respuestas = {
+            series: [{ serie: 'Serie Caballos', ganado: 12, observacion: 'Ganado parejo' }],
+            ganado: { bajo_peso: true, detalle: [{ serie: 'Potros', cantidad: 2 }] },
+            informe_disciplinario: [{ nombre_infractor: 'Juan Pérez', rut: '11.111.111-1', tipo_falta: 'Grave', articulo: '45' }],
+            accidentes: [{ tipo: 'Jinete', descripcion: 'Caída en la quincha', atendido: true }],
+            colleras_invitadas: [{ caballo1: 'Lucero', caballo2: 'Estribo', jinetes: 'A / B' }],
+            corre_premios: { aplica: true, colleras: [{ caballo1: 'Rayo', puntaje: 12 }] },
+            deja_puntos_temporada: { aplica: true, colleras: [{ caballo1: 'Trueno', puntaje: 9 }] },
+            observaciones: 'Rodeo con lluvia; ñandú "N°1" — tildes áéíóú'
+        };
+        const cartilla = (await q(
+            `insert into cartillas_delegado (rodeo_id, delegado_asociacion_id, delegado_nombre, version, estado,
+                temporada, fecha_rodeo, delegado_telefono, secretario_jurado, secretario_numero_socio,
+                club_asociacion_organizador, tipo_rodeo, serie_campeones_dos_vueltas, incluye_informe_disciplinario,
+                incluye_informe_ganado_bajo_peso, certificacion_medialuna_comuna, respuestas_json)
+             values ($1,$2,'Ana Soto',4,'borrador','2026-2027','2026-11-14','+56911111111','Secretario X','123',
+                'VALPARAÍSO','Provincial',true,true,true,true,$3) returning *`,
+            [rodeoId, ID.delA, JSON.stringify(respuestas)]
+        ))[0];
+        await q(`insert into rodeo_adjuntos (rodeo_id, tipo_adjunto, nombre_archivo, storage_path, mime_type)
+                 values ($1,'cartilla_delegado','foto.jpg',$2,'image/jpeg')`, [rodeoId, `ruta/foto-${rodeoId}.jpg`]);
+
+        await reemplazar(rodeoId, ID.delB, 'Bruno Diaz', 'La asociación seleccionó por error al delegado equivocado');
+
+        const despues = (await q('select * from cartillas_delegado where id=$1', [cartilla.id]))[0];
+        const CAMBIAN = ['delegado_asociacion_id', 'delegado_nombre', 'version', 'updated_at'];
+        for (const col of Object.keys(cartilla)) {
+            if (CAMBIAN.includes(col)) continue;
+            expect({ col, valor: despues[col] }).toEqual({ col, valor: cartilla[col] });
+        }
+        expect(despues.respuestas_json).toEqual(respuestas);
+        expect(despues.estado).toBe('borrador');
+        expect(despues.delegado_asociacion_id).toBe(ID.delB);
+        expect(despues.delegado_nombre).toBe('Bruno Diaz');
+        expect(despues.version).toBe(5);
+        expect(new Date(despues.updated_at) >= new Date(cartilla.updated_at)).toBe(true);
+        const adj = await q('select count(*) c from rodeo_adjuntos where rodeo_id=$1', [rodeoId]);
+        expect(Number(adj[0].c)).toBe(1);
+        const total = await q('select count(*) c from cartillas_delegado where rodeo_id=$1', [rodeoId]);
+        expect(Number(total[0].c)).toBe(1);
+    });
+
+    test('auditoría del reemplazo: delegado anterior (id) y nuevo (id + nombre), rodeo (vía designación), administrador, fecha y motivo — en la misma transacción', async () => {
+        const rodeoId = await crearRodeo();
+        const desig = await confirmar(rodeoId, ID.delA, 'Ana Soto');
+        await q(`insert into cartillas_delegado (rodeo_id, delegado_asociacion_id, delegado_nombre, version, estado)
+                 values ($1,$2,'Ana Soto',1,'borrador')`, [rodeoId, ID.delA]);
+        await reemplazar(rodeoId, ID.delB, 'Bruno Diaz', 'Error de la asociación');
+        const ev = (await q("select * from auditoria where accion='reemplazar_responsable_institucional' and registro_id=$1", [desig.id]))[0];
+        expect(ev.datos_anteriores).toEqual({ delegado_asociacion_id: ID.delA });
+        expect(ev.datos_nuevos).toMatchObject({ delegado_asociacion_id: ID.delB, delegado_nombre: 'Bruno Diaz', motivo: 'Error de la asociación' });
+        expect(ev.actor_id).toBe(ID.admin);
+        expect(ev.actor_tipo).toBe('administrador');
+        expect(ev.created_at).toBeTruthy();
+        const fila = (await q('select rodeo_id from rodeos_delegado_institucional where id=$1', [desig.id]))[0];
+        expect(fila.rodeo_id).toBe(rodeoId);
+        // registros históricos previos intactos: el evento de confirmación sigue igual
+        const conf = await q("select * from auditoria where accion='confirmar_responsable_institucional' and registro_id=$1", [desig.id]);
+        expect(conf).toHaveLength(1);
+        expect(conf[0].datos_nuevos.delegado_nombre).toBe('Ana Soto');
+    });
+
+    test('Delegado Rentado NO afectado: su cartilla del mismo rodeo queda idéntica', async () => {
+        const rodeoId = await crearRodeo();
+        await confirmar(rodeoId, ID.delA, 'Ana Soto');
+        const up = (await q("insert into usuarios_pagados (tipo_persona, nombre_completo) values ('delegado_rentado','Rentado Uno') returning id"))[0].id;
+        const rentado = (await q(
+            `insert into cartillas_delegado (rodeo_id, delegado_id, delegado_nombre, version, estado, respuestas_json)
+             values ($1,$2,'Rentado Uno',3,'borrador','{"x":1}') returning *`, [rodeoId, up]
+        ))[0];
+        await q(`insert into cartillas_delegado (rodeo_id, delegado_asociacion_id, delegado_nombre, version, estado)
+                 values ($1,$2,'Ana Soto',1,'borrador')`, [rodeoId, ID.delA]);
+        await reemplazar(rodeoId, ID.delB, 'Bruno Diaz', 'motivo');
+        const despues = (await q('select * from cartillas_delegado where id=$1', [rentado.id]))[0];
+        expect(despues).toEqual(rentado);
+    });
+
     test('cartilla en estado "observada" -> SÍ permite el reemplazo (no es un estado terminal)', async () => {
         const rodeoId = await crearRodeo();
         await confirmar(rodeoId, ID.delA, 'Ana Soto');

@@ -403,6 +403,7 @@
 <script src="/js/rodeoDesignarResumen.js"></script>
 <script src="/js/historialDesignacionesUI.js"></script>
 <script src="/js/notasSecundariasSobrescritura.js"></script>
+<script src="/js/cambioDelegadoAsociacion.js"></script>
 <script src="/js/sidebar-toggle.js"></script>
 <script>
 protegerRuta('administrador');
@@ -3147,7 +3148,9 @@ async function verCartillaDelegadoDigital(cartillaId) {
             <table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:#fafafa;border-radius:6px;overflow:hidden;border:1px solid #eee;">
                 ${fila('Temporada', fld(c.temporada))}
                 ${fila('Fecha del Rodeo', c.fecha_rodeo ? new Date(c.fecha_rodeo + 'T12:00:00').toLocaleDateString('es-CL') : '—')}
-                ${fila('Delegado Oficial', fld(c.delegado_nombre))}
+                ${fila('Delegado Oficial', fld(c.delegado_nombre) + (cdaPuedeCambiar(c, _rolEvalRodeos)
+                    ? ` <button class="btn btn-outline btn-pequeño" style="margin-left:8px;" onclick="abrirCambioDelegadoAsociacion('${c.id}', '${c.rodeo_id}')">Cambiar delegado</button>`
+                    : ''))}
                 ${fila('Teléfono', fld(c.delegado_telefono))}
                 ${fila('Veterinario, Técnico u otro', fld(c.respuestas_json?.informe_veterinario?.nombre))}
                 ${fila('RUT (Veterinario/Técnico)', fld(c.respuestas_json?.informe_veterinario?.rut))}
@@ -3821,6 +3824,128 @@ function renderHistorialObsCd(c) {
         <div style="border:1px solid #e0e8f5;border-radius:6px;padding:4px 14px;">${items}</div>`;
 }
 
+// ─── Cambio de Delegado de Asociación (cartilla en Borrador) ────────────────
+// Corrige una designación equivocada SIN tocar las respuestas del borrador:
+// el backend (POST /admin/rodeos/:id/reemplazar-delegado-institucional, RPC
+// 069) solo actualiza el responsable, delegado_asociacion_id,
+// delegado_nombre, version y updated_at. Lógica pura en
+// /js/cambioDelegadoAsociacion.js.
+let _cdaOpciones = null;
+let _cdaCartillaId = null;
+
+function _cdaModal() {
+    let m = document.getElementById('modal-cambio-delegado-asoc');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'modal-cambio-delegado-asoc';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1300;align-items:center;justify-content:center;padding:16px;';
+    m.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;">
+        <div style="padding:14px 20px;background:#1a3c6e;color:#fff;border-radius:10px 10px 0 0;font-weight:700;font-size:15px;">CAMBIAR DELEGADO DE ASOCIACIÓN</div>
+        <div id="cda-body" style="padding:18px 20px;"></div>
+    </div>`;
+    document.body.appendChild(m);
+    return m;
+}
+
+function cerrarCambioDelegadoAsociacion() {
+    const m = document.getElementById('modal-cambio-delegado-asoc');
+    if (m) m.style.display = 'none';
+    _cdaOpciones = null;
+}
+
+async function abrirCambioDelegadoAsociacion(cartillaId, rodeoId) {
+    _cdaCartillaId = cartillaId;
+    const m = _cdaModal();
+    const body = document.getElementById('cda-body');
+    m.style.display = 'flex';
+    body.innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner"></div></div>';
+    try {
+        const op = await api.get(`/admin/rodeos/${rodeoId}/delegado-institucional/opciones`);
+        _cdaOpciones = op;
+        const r = op.rodeo || {};
+        const fechaTxt = r.fecha ? new Date(r.fecha + 'T12:00:00').toLocaleDateString('es-CL') : '—';
+        const info = `<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;">
+            <tr><td style="padding:4px 0;color:#555;font-weight:600;width:45%;">Asociación organizadora</td><td>${sanitizar(r.asociacion || '—')}</td></tr>
+            <tr><td style="padding:4px 0;color:#555;font-weight:600;">Club organizador</td><td>${sanitizar(r.club || '—')}</td></tr>
+            <tr><td style="padding:4px 0;color:#555;font-weight:600;">Fecha</td><td>${sanitizar(fechaTxt)}</td></tr>
+            <tr><td style="padding:4px 0;color:#555;font-weight:600;">Delegado actualmente asignado</td><td><strong>${sanitizar(op.designacion?.delegado_nombre || '—')}</strong></td></tr>
+        </table>`;
+
+        if (!op.puede_cambiar) {
+            body.innerHTML = info + `<div style="padding:10px 12px;background:#fdecea;border:1px solid #f5c6cb;border-radius:6px;font-size:13px;color:#a94442;">${sanitizar(op.bloqueo?.error || 'El cambio no está disponible para esta cartilla.')}</div>
+                <div class="form-acciones" style="margin-top:14px;"><button class="btn btn-secundario" onclick="cerrarCambioDelegadoAsociacion()">Cerrar</button></div>`;
+            return;
+        }
+
+        const opciones = cdaOpcionesElegibles(op.delegados, op.designacion?.delegado_asociacion_id);
+        const select = opciones.length
+            ? `<select id="cda-nuevo" class="form-control"><option value="">— Seleccione —</option>${opciones.map(d => `<option value="${sanitizar(d.id)}">${sanitizar(d.nombre)}</option>`).join('')}</select>`
+            : `<p style="font-size:13px;color:#a94442;margin:0;">No hay otros delegados activos y certificados en ${sanitizar(op.asociacion?.nombre || 'esta asociación')}.</p>`;
+
+        body.innerHTML = info + `
+            <div class="form-grupo" style="margin-bottom:12px;">
+                <label class="form-label">Nuevo Delegado Oficial <span style="color:red">*</span></label>
+                ${select}
+                <div style="font-size:11px;color:#888;margin-top:4px;">Solo delegados activos y certificados de ${sanitizar(op.asociacion?.nombre || 'la asociación organizadora')}.</div>
+            </div>
+            <div class="form-grupo" style="margin-bottom:12px;">
+                <label class="form-label">Motivo del cambio <span style="color:red">*</span></label>
+                <textarea id="cda-motivo" class="form-control" rows="3" maxlength="1000" placeholder="Ej: La asociación seleccionó por error al delegado equivocado"></textarea>
+            </div>
+            <p style="font-size:11px;color:#777;margin:0 0 6px;">Las respuestas ya ingresadas en el borrador se conservan. El cambio queda registrado en el historial de responsables.</p>
+            <div id="cda-error" style="display:none;margin:8px 0;padding:8px 10px;background:#fdecea;border:1px solid #f5c6cb;border-radius:6px;font-size:12px;color:#a94442;"></div>
+            <div class="form-acciones" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+                <button class="btn btn-secundario" onclick="cerrarCambioDelegadoAsociacion()">Cancelar</button>
+                <button id="cda-confirmar" class="btn btn-primario" onclick="confirmarCambioDelegadoAsociacion()" ${opciones.length ? '' : 'disabled'}>Confirmar cambio de delegado</button>
+            </div>`;
+    } catch (e) {
+        body.innerHTML = `<p style="font-size:13px;color:#c0392b;">${sanitizar(e.message || 'Error al cargar los delegados de la asociación.')}</p>
+            <div class="form-acciones" style="margin-top:14px;"><button class="btn btn-secundario" onclick="cerrarCambioDelegadoAsociacion()">Cerrar</button></div>`;
+    }
+}
+
+async function confirmarCambioDelegadoAsociacion() {
+    const op = _cdaOpciones;
+    if (!op) return;
+    const errorEl = document.getElementById('cda-error');
+    const mostrarError = (msg) => { errorEl.textContent = msg; errorEl.style.display = 'block'; };
+    errorEl.style.display = 'none';
+
+    const nuevoId = document.getElementById('cda-nuevo')?.value || '';
+    const motivo = document.getElementById('cda-motivo')?.value || '';
+    const actualId = op.designacion?.delegado_asociacion_id || null;
+    const err = cdaValidar({ nuevoId, motivo, actualId });
+    if (err) return mostrarError(err);
+
+    const nuevo = (op.delegados || []).find(d => d.id === nuevoId);
+    const texto = cdaTextoConfirmacion({ anterior: op.designacion?.delegado_nombre, nuevo: nuevo?.nombre, rodeo: op.rodeo });
+    // confirmar() usa .modal-overlay (z-index 1000), por debajo de este modal
+    // (1300) y del informe (1200): se ocultan mientras se pide confirmación.
+    const modalCda = document.getElementById('modal-cambio-delegado-asoc');
+    const modalInforme = document.getElementById('modal-cartilla-delegado');
+    const informeVisible = modalInforme && modalInforme.style.display !== 'none';
+    modalCda.style.display = 'none';
+    if (informeVisible) modalInforme.style.display = 'none';
+    const ok = await confirmar(sanitizar(texto).replace(/\n/g, '<br>'));
+    modalCda.style.display = 'flex';
+    if (informeVisible) modalInforme.style.display = 'flex';
+    if (!ok) return;
+
+    const btn = document.getElementById('cda-confirmar');
+    btn.disabled = true; btn.textContent = 'Guardando...';
+    try {
+        const r = await api.post(`/admin/rodeos/${op.rodeo.id}/reemplazar-delegado-institucional`, cdaCuerpoSolicitud(op, nuevoId, motivo));
+        mostrarToast(r.mensaje || 'Delegado Oficial actualizado.', 'success');
+        cerrarCambioDelegadoAsociacion();
+        // Refresca el informe (nuevo Delegado Oficial + historial) y el listado.
+        if (_cdaCartillaId) await verCartillaDelegadoDigital(_cdaCartillaId);
+        if (typeof cargar === 'function') cargar(paginaActual);
+    } catch (e) {
+        mostrarError(e.message || 'No fue posible cambiar el delegado.');
+        btn.disabled = false; btn.textContent = 'Confirmar cambio de delegado';
+    }
+}
+
 // ─── Historial de responsables de la cartilla (Fase 3.5.1) ──────────────────
 // Exclusivo de cartillas institucionales (delegado_asociacion_id presente) —
 // las de Delegado Rentado nunca pasan por aquí, ni siquiera con un bloque
@@ -3865,7 +3990,11 @@ function renderHistorialResponsablesCd(c) {
             nombreActual = ev.datos_nuevos?.delegado_nombre || nombreActual;
             detalle = `<div style="font-size:12px;color:#555;margin-top:3px;">Delegado original: <strong>${sanitizar(nombreActual || '—')}</strong></div>`;
         } else if (ev.accion === 'reemplazar_responsable_institucional') {
-            const anterior = nombreActual;
+            // Responsable anterior: el que registró la propia auditoría
+            // (migración 102: datos_anteriores.delegado_nombre); para eventos
+            // de la 069 (solo id), el reconstruido de los eventos previos o,
+            // si no hay, el resuelto por el backend desde el catálogo.
+            const anterior = ev.datos_anteriores?.delegado_nombre || nombreActual || ev.delegado_anterior_nombre || null;
             nombreActual = ev.datos_nuevos?.delegado_nombre || nombreActual;
             const autorizante = ev.actor_nombre || (ev.actor_id ? `Administrador (ID ${ev.actor_id})` : '—');
             detalle = `<div style="font-size:12px;color:#555;margin-top:3px;padding:6px 8px;background:#fff;border-radius:4px;border:1px solid #e0e0e0;">

@@ -3,7 +3,15 @@
 const readline = require('readline');
 const { PGlite } = require('@electric-sql/pglite');
 
-const db = new PGlite();
+// Extensiones contrib OPCIONALES (p. ej. PGLITE_EXTENSIONES=unaccent), solo
+// para las suites que las piden vía crearDb({ extensiones }). Sin la variable,
+// el comportamiento es idéntico al de siempre.
+const extensiones = {};
+for (const nombre of (process.env.PGLITE_EXTENSIONES || '').split(',').map(s => s.trim()).filter(Boolean)) {
+    if (!/^[a-z_]+$/.test(nombre)) throw new Error('Extensión PGlite inválida: ' + nombre);
+    extensiones[nombre] = require(`@electric-sql/pglite/contrib/${nombre}`)[nombre];
+}
+const db = new PGlite(Object.keys(extensiones).length ? { extensions: extensiones } : undefined);
 const rl = readline.createInterface({ input: process.stdin });
 let cola = Promise.resolve();
 

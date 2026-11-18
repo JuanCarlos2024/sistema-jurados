@@ -882,27 +882,18 @@ router.post('/:id/publicar-designaciones', soloNoMonitor, soloNoAnalista, soloNo
     });
 });
 
-// POST /api/admin/rodeos/:id/reemplazar-delegado-institucional
-// Fase 3.5 — único camino autorizado para reemplazar al Delegado de
-// Asociación responsable YA CONFIRMADO de un rodeo (institucional/rodeos.js
-// POST /:rodeo_id/seleccionar-delegado bloquea cualquier cambio directo
-// desde el portal). Requiere motivo explícito; la designación anterior
-// nunca se borra ni se duplica, solo queda superada — el historial real
-// (nunca fabricado) se construye después, a partir de auditoria, vía
-// services/historialResponsableInstitucional.js. La RPC (migración 069)
-// ya bloquea el reemplazo si la cartilla está enviada/reenviada/aprobada/
-// cerrada (procedimiento no definido todavía — ver su propio comentario).
-router.post('/:id/reemplazar-delegado-institucional', soloNoMonitor, soloNoAnalista, soloNoComisionTecnica, async (req, res) => {
-    const { nuevo_delegado_asociacion_id, motivo } = req.body || {};
-    if (!nuevo_delegado_asociacion_id) return res.status(400).json({ error: 'nuevo_delegado_asociacion_id es requerido.' });
-    if (!motivo || String(motivo).trim() === '') return res.status(422).json({ error: 'El motivo del reemplazo es obligatorio.' });
-
+// ─── Cambio de Delegado de Asociación (corrección de designación) ─────────
+// Helpers compartidos por GET /:id/delegado-institucional/opciones y POST
+// /:id/reemplazar-delegado-institucional — una sola lectura del contexto
+// (rodeo, asociación REAL vía catálogo+alias, designación confirmada y
+// cartilla institucional), nunca dos lógicas paralelas.
+async function cargarContextoCambioDelegado(rodeoId) {
     const { data: rodeo } = await supabase
         .from('rodeos')
         .select('id, club, asociacion, fecha')
-        .eq('id', req.params.id)
+        .eq('id', rodeoId)
         .maybeSingle();
-    if (!rodeo) return res.status(404).json({ error: 'Rodeo no encontrado.' });
+    if (!rodeo) return { error: { status: 404, body: { error: 'Rodeo no encontrado.' } } };
 
     // Resolver la asociación REAL del rodeo (mismo catálogo+alias que el
     // resto del sistema, nunca ILIKE) — el admin no está acotado a una sola
@@ -914,48 +905,190 @@ router.post('/:id/reemplazar-delegado-institucional', soloNoMonitor, soloNoAnali
     ]);
     const indice = construirIndiceCatalogo(catalogo || [], alias || []);
     const asoc = resolverAsociacion(rodeo.asociacion, indice);
-    if (!asoc) return res.status(409).json({ error: 'No fue posible resolver la asociación real de este rodeo en el catálogo.' });
+    if (!asoc) return { error: { status: 409, body: { error: 'No fue posible resolver la asociación real de este rodeo en el catálogo.', code: 'ASOCIACION_NO_RESUELTA' } } };
 
-    const { data: delegado } = await supabase
-        .from('delegados_asociacion')
-        .select('id, nombre, asociacion_id, activo, certificado')
-        .eq('id', nuevo_delegado_asociacion_id)
+    const { data: designacion } = await supabase
+        .from('rodeos_delegado_institucional')
+        .select('id, rodeo_id, delegado_asociacion_id')
+        .eq('rodeo_id', rodeo.id)
         .maybeSingle();
-    if (!delegado || !delegado.activo || !delegado.certificado || delegado.asociacion_id !== asoc.id) {
-        return res.status(403).json({ error: 'El delegado indicado no es válido para la asociación real de este rodeo.' });
+
+    // Misma cartilla que bloquea la RPC (069): la de origen institucional
+    // del rodeo (delegado_asociacion_id IS NOT NULL). Las de Delegado
+    // Rentado nunca entran en este flujo.
+    const { data: cartilla } = await supabase
+        .from('cartillas_delegado')
+        .select('id, estado, version, delegado_asociacion_id, delegado_nombre')
+        .eq('rodeo_id', rodeo.id)
+        .not('delegado_asociacion_id', 'is', null)
+        .maybeSingle();
+
+    return { rodeo, asoc, designacion: designacion || null, cartilla: cartilla || null };
+}
+
+// Este flujo SOLO corrige borradores: cualquier estado con versión oficial
+// (enviada/reenviada/aprobada/cerrada) o en revisión (observada/reabierta)
+// requiere otro procedimiento. La RPC 069 bloquea por sí misma los
+// terminales; observada/reabierta se bloquean aquí.
+const ETIQUETA_ESTADO_CARTILLA = {
+    enviada: 'enviada', reenviada: 'reenviada', observada: 'observada', reabierta: 'reabierta',
+    aprobada: 'aprobada', cerrada: 'cerrada'
+};
+function bloqueoPorEstadoCartilla(cartilla) {
+    if (!cartilla || cartilla.estado === 'borrador') return null;
+    const etiqueta = ETIQUETA_ESTADO_CARTILLA[cartilla.estado] || cartilla.estado;
+    return {
+        error: `La cartilla de este rodeo está ${etiqueta}. El cambio de Delegado de Asociación solo está habilitado para cartillas en Borrador; no se realizó ningún cambio.`,
+        code: 'CARTILLA_NO_BORRADOR',
+        estado: cartilla.estado
+    };
+}
+
+// GET /api/admin/rodeos/:id/delegado-institucional/opciones
+// Datos para el modal "Cambiar delegado de asociación": responsable vigente,
+// estado/versión de la cartilla y la nómina ELEGIBLE (misma asociación real,
+// activo, certificado, distinto del vigente). Reutiliza la tabla
+// delegados_asociacion del catálogo administrativo (misma fuente que GET
+// /admin/delegados-asociacion/:asociacionId) pero resolviendo la asociación
+// desde el rodeo en el backend — el frontend solo conoce su nombre visible.
+router.get('/:id/delegado-institucional/opciones', soloRolEvaluacion(), async (req, res) => {
+    try {
+        const ctx = await cargarContextoCambioDelegado(req.params.id);
+        if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
+        const { rodeo, asoc, designacion, cartilla } = ctx;
+
+        const { data: delegados, error } = await supabase
+            .from('delegados_asociacion')
+            .select('id, nombre, activo, certificado')
+            .eq('asociacion_id', asoc.id)
+            .order('nombre');
+        if (error) return res.status(500).json({ error: error.message });
+
+        const actualId = designacion?.delegado_asociacion_id || null;
+        const actual = (delegados || []).find(d => d.id === actualId);
+        const bloqueo = !designacion
+            ? { error: 'Este rodeo todavía no tiene un Delegado de Asociación confirmado.', code: 'SIN_DESIGNACION_PREVIA' }
+            : bloqueoPorEstadoCartilla(cartilla);
+
+        res.json({
+            rodeo,
+            asociacion: { id: asoc.id, nombre: asoc.nombre },
+            designacion: designacion ? {
+                id: designacion.id,
+                delegado_asociacion_id: actualId,
+                delegado_nombre: cartilla?.delegado_nombre || actual?.nombre || null
+            } : null,
+            cartilla: cartilla ? { id: cartilla.id, estado: cartilla.estado, version: cartilla.version, delegado_nombre: cartilla.delegado_nombre } : null,
+            puede_cambiar: !bloqueo,
+            bloqueo,
+            delegados: (delegados || [])
+                .filter(d => d.activo && d.certificado && d.id !== actualId)
+                .map(d => ({ id: d.id, nombre: d.nombre }))
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/admin/rodeos/:id/reemplazar-delegado-institucional
+// Fase 3.5 — único camino autorizado para reemplazar al Delegado de
+// Asociación responsable YA CONFIRMADO de un rodeo (institucional/rodeos.js
+// POST /:rodeo_id/seleccionar-delegado bloquea cualquier cambio directo
+// desde el portal). Requiere motivo explícito; la designación anterior
+// nunca se borra ni se duplica, solo queda superada — el historial real
+// (nunca fabricado) se construye después, a partir de auditoria, vía
+// services/historialResponsableInstitucional.js. Antes usaba la RPC 069
+// (reemplazar_delegado_institucional_rodeo, que sigue existiendo sin
+// cambios); ahora usa la 102, más estricta (ver abajo).
+//
+// Corrección de designación desde "Informe del Delegado Oficial del Rodeo"
+// (migración 102 — cambiar_delegado_asociacion_borrador):
+//   - Solo Administrador pleno (rol_evaluacion NULL): antes bastaba con no
+//     ser Monitor/Analista/Comisión Técnica, lo que dejaba pasar a Director
+//     (solo lectura), Jefe de Área y Capacitador.
+//   - TODA la integridad se valida DENTRO de la transacción de la RPC 102,
+//     con bloqueos de fila (nunca solo aquí, para no dejar ventana de
+//     carrera): cartilla en 'borrador' (cualquier otro estado se rechaza),
+//     versión de la cartilla = cartilla_version vista, responsable vigente =
+//     delegado_actual_id visto (dos administradores con información
+//     desactualizada nunca se pisan), nuevo ≠ vigente, nuevo activo/
+//     certificado/de la asociación real del rodeo.
+//   - La asociación real se resuelve aquí (catálogo + alias, nunca ILIKE) y
+//     se pasa a la RPC, que la compara contra el delegado bloqueado.
+//   - Un único evento de auditoría con nombres anterior y nuevo, escrito por
+//     la RPC en la misma transacción que el cambio (nunca una auditoría
+//     aparte que pudiera quedar contradictoria o faltar).
+// La RPC escribe exactamente lo mismo que la 069 (designación +
+// delegado_asociacion_id/delegado_nombre/version/updated_at de la cartilla)
+// — el resto del borrador no se toca. La 069 queda sin cambios.
+const ERRORES_RPC_CAMBIO_DELEGADO = [
+    ['MOTIVO_REQUERIDO', 422, 'El motivo del cambio es obligatorio.'],
+    ['MOTIVO_DEMASIADO_LARGO', 422, 'El motivo no puede superar los 1000 caracteres.'],
+    ['SIN_DESIGNACION_PREVIA', 409, 'Este rodeo todavía no tiene un Delegado de Asociación confirmado — no hay nada que reemplazar. Use la confirmación inicial desde el portal institucional.'],
+    ['RESPONSABLE_CAMBIO_CONCURRENTE', 409, 'El Delegado Oficial de este rodeo cambió mientras tenía abierta la ventana. Recargue el informe para ver el responsable vigente; no se realizó ningún cambio.'],
+    ['MISMO_DELEGADO', 422, 'El nuevo Delegado Oficial debe ser distinto del actual.'],
+    ['VERSION_DESACTUALIZADA', 409, 'La cartilla fue modificada mientras tenía abierta la ventana. Recargue el informe y vuelva a intentarlo; no se realizó ningún cambio.'],
+    ['DELEGADO_NO_VALIDO', 403, 'El delegado indicado no es válido para la asociación real de este rodeo (debe estar activo y certificado).'],
+    ['RODEO_NO_ENCONTRADO', 404, 'Rodeo no encontrado.'],
+    ['ASOCIACION_NO_RESUELTA', 409, 'No fue posible resolver en el catálogo la asociación organizadora de este rodeo; no se realizó ningún cambio.'],
+    ['ASOCIACION_AMBIGUA', 409, 'La asociación organizadora de este rodeo coincide con más de una asociación del catálogo (nombre y alias); corrija el catálogo antes de cambiar el delegado. No se realizó ningún cambio.'],
+    ['ASOCIACION_NO_COINCIDE', 409, 'La asociación organizadora del rodeo cambió o no coincide con la indicada. Recargue el informe; no se realizó ningún cambio.']
+];
+
+router.post('/:id/reemplazar-delegado-institucional', soloRolEvaluacion(), async (req, res) => {
+    const { nuevo_delegado_asociacion_id, motivo, delegado_actual_id, cartilla_version } = req.body || {};
+    if (!nuevo_delegado_asociacion_id) return res.status(400).json({ error: 'nuevo_delegado_asociacion_id es requerido.' });
+    if (!motivo || String(motivo).trim() === '') return res.status(422).json({ error: 'El motivo del cambio es obligatorio.', code: 'MOTIVO_REQUERIDO' });
+    if (String(motivo).trim().length > 1000) return res.status(422).json({ error: 'El motivo no puede superar los 1000 caracteres.', code: 'MOTIVO_DEMASIADO_LARGO' });
+    if (!delegado_actual_id) return res.status(400).json({ error: 'delegado_actual_id es requerido (responsable que se está reemplazando).' });
+    if (cartilla_version !== undefined && cartilla_version !== null && !Number.isInteger(Number(cartilla_version))) {
+        return res.status(400).json({ error: 'cartilla_version inválida.' });
     }
 
-    const { data, error } = await supabase.rpc('reemplazar_delegado_institucional_rodeo', {
+    const ctx = await cargarContextoCambioDelegado(req.params.id);
+    if (ctx.error) return res.status(ctx.error.status).json(ctx.error.body);
+    const { rodeo, asoc } = ctx;
+
+    const { data, error } = await supabase.rpc('cambiar_delegado_asociacion_borrador', {
         p_rodeo_id: rodeo.id,
-        p_nuevo_delegado_asociacion_id: delegado.id,
-        p_nuevo_delegado_nombre: delegado.nombre,
+        p_asociacion_id: asoc.id,
+        p_delegado_actual_id: delegado_actual_id,
+        p_nuevo_delegado_asociacion_id: nuevo_delegado_asociacion_id,
+        p_cartilla_version: (cartilla_version === undefined || cartilla_version === null) ? null : Number(cartilla_version),
         p_administrador_id: req.usuario.id,
         p_motivo: String(motivo).trim()
     });
 
     if (error) {
-        if (error.message?.includes('MOTIVO_REQUERIDO')) {
-            return res.status(422).json({ error: 'El motivo del reemplazo es obligatorio.', code: 'MOTIVO_REQUERIDO' });
-        }
-        if (error.message?.includes('SIN_DESIGNACION_PREVIA')) {
-            return res.status(409).json({
-                error: 'Este rodeo todavía no tiene un Delegado de Asociación confirmado — no hay nada que reemplazar. Use la confirmación inicial desde el portal institucional.',
-                code: 'SIN_DESIGNACION_PREVIA'
+        const msg = error.message || '';
+        // La función no existe todavía (migración 102 sin aplicar): nada se
+        // modificó; se informa claramente en vez de un 500 genérico.
+        if (error.code === 'PGRST202' || /cambiar_delegado_asociacion_borrador/.test(msg) && /(not find|does not exist|no existe)/i.test(msg)) {
+            return res.status(503).json({
+                error: 'El cambio de delegado aún no está disponible: falta aplicar la migración 102 en la base de datos. No se realizó ningún cambio.',
+                code: 'MIGRACION_102_PENDIENTE'
             });
         }
-        if (error.message?.includes('REEMPLAZO_REQUIERE_PROCEDIMIENTO_ESPECIAL')) {
+        const estadoNoBorrador = msg.match(/CARTILLA_NO_BORRADOR:\s*(\w+)/);
+        if (estadoNoBorrador || msg.includes('CARTILLA_NO_BORRADOR')) {
+            const est = estadoNoBorrador ? estadoNoBorrador[1] : null;
             return res.status(409).json({
-                error: 'La cartilla de este rodeo ya fue enviada/aprobada/cerrada. El reemplazo de responsable sobre una cartilla en ese estado requiere un procedimiento específico, todavía no definido ni autorizado — no se realizó ningún cambio.',
-                code: 'REEMPLAZO_REQUIERE_PROCEDIMIENTO_ESPECIAL'
+                ...bloqueoPorEstadoCartilla({ estado: est || 'desconocido' }),
+                estado: est
             });
         }
-        return res.status(500).json({ error: error.message });
+        const conocido = ERRORES_RPC_CAMBIO_DELEGADO.find(([codigo]) => msg.includes(codigo));
+        if (conocido) return res.status(conocido[1]).json({ error: conocido[2], code: conocido[0] });
+        return res.status(500).json({ error: msg });
     }
 
     const resultado = Array.isArray(data) ? data[0] : data;
     res.json({
         mensaje: `Delegado de Asociación reemplazado correctamente para ${rodeo.club} - ${rodeo.fecha}.`,
-        designacion: resultado
+        designacion: { id: resultado?.designacion_id, rodeo_id: rodeo.id, delegado_asociacion_id: resultado?.delegado_nuevo?.id },
+        cartilla: resultado?.cartilla_id ? { id: resultado.cartilla_id, version: resultado.cartilla_version } : null,
+        delegado_anterior: resultado?.delegado_anterior || null,
+        delegado_nuevo: resultado?.delegado_nuevo || null
     });
 });
 

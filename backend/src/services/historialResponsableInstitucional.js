@@ -65,6 +65,29 @@ async function obtenerHistorialResponsables(supabase, { designacionId = null, ca
         }
     }
 
+    // Cambio de Delegado de Asociación — el evento de reemplazo de la RPC 069
+    // guarda el delegado ANTERIOR solo por id (datos_anteriores.
+    // delegado_asociacion_id). Se agrega `delegado_anterior_nombre` resuelto
+    // desde el catálogo real (delegados_asociacion), en UNA consulta batched y
+    // solo si hay reemplazos. Si el id no resuelve → null (nunca inventado).
+    // Los eventos de la migración 102 ya traen datos_anteriores.delegado_nombre
+    // (se usa ese, nunca se consulta de nuevo).
+    for (const ev of eventos) {
+        if (ev.accion === 'reemplazar_responsable_institucional' && ev.datos_anteriores?.delegado_nombre) {
+            ev.delegado_anterior_nombre = ev.datos_anteriores.delegado_nombre;
+        }
+    }
+    const reemplazos = eventos.filter(e => e.accion === 'reemplazar_responsable_institucional'
+        && e.datos_anteriores?.delegado_asociacion_id && !e.datos_anteriores?.delegado_nombre);
+    if (reemplazos.length > 0) {
+        const idsDelegados = [...new Set(reemplazos.map(e => e.datos_anteriores.delegado_asociacion_id))];
+        const { data: delegados } = await supabase.from('delegados_asociacion').select('id, nombre').in('id', idsDelegados);
+        const nombreDelegado = new Map((delegados || []).map(d => [d.id, d.nombre]));
+        for (const ev of reemplazos) {
+            ev.delegado_anterior_nombre = nombreDelegado.get(ev.datos_anteriores.delegado_asociacion_id) || null;
+        }
+    }
+
     return eventos;
 }
 

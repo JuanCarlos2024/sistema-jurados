@@ -86,12 +86,17 @@ router.get('/:id', async (req, res) => {
         // rodeos_delegado_institucional). Nunca fabrica eventos: si no hay
         // designación asociada, el servicio devuelve [] directamente.
         let historialResponsables = [];
+        // Cambio de Delegado de Asociación: el modal administrativo solo ofrece
+        // "Cambiar delegado" si existe la designación confirmada (misma fila
+        // que ya se lee aquí para el historial — sin consulta adicional).
+        let designacionInstitucional = null;
         if (data.delegado_asociacion_id) {
             const { data: designacion } = await supabase
                 .from('rodeos_delegado_institucional')
-                .select('id')
+                .select('id, delegado_asociacion_id')
                 .eq('rodeo_id', data.rodeo_id)
                 .maybeSingle();
+            designacionInstitucional = designacion ? { id: designacion.id, delegado_asociacion_id: designacion.delegado_asociacion_id } : null;
             historialResponsables = await obtenerHistorialResponsables(supabase, {
                 designacionId: designacion?.id || null,
                 cartillaId: data.id
@@ -102,7 +107,8 @@ router.get('/:id', async (req, res) => {
         res.json({
             ...data,
             origen: data.delegado_asociacion_id ? 'delegado_asociacion' : 'delegado_rentado',
-            historial_responsables: historialResponsables
+            historial_responsables: historialResponsables,
+            designacion_institucional: designacionInstitucional
         });
     } catch (err) {
         console.error('[CARTILLAS-DELEGADO detalle]', err.message);

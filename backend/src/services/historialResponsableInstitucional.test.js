@@ -92,6 +92,39 @@ describe('obtenerHistorialResponsables', () => {
             expect(r[0].actor_nombre).toBeNull();
         });
 
+        test('reemplazo -> agrega delegado_anterior_nombre desde el catálogo (una consulta batched); id que no resuelve -> null', async () => {
+            const eventos = [
+                { id: 'a1', accion: 'reemplazar_responsable_institucional', actor_tipo: 'cuenta_x', datos_anteriores: { delegado_asociacion_id: 'del-pablo' }, created_at: '2026-11-15T10:00:00Z' },
+                { id: 'a2', accion: 'reemplazar_responsable_institucional', actor_tipo: 'cuenta_x', datos_anteriores: { delegado_asociacion_id: 'del-borrado' }, created_at: '2026-11-16T10:00:00Z' },
+                { id: 'a3', accion: 'guardar', actor_tipo: 'cuenta_x', created_at: '2026-11-17T10:00:00Z' }
+            ];
+            let consultas = 0, ids = null;
+            const supabase = {
+                from: jest.fn((tabla) => {
+                    if (tabla === 'delegados_asociacion') {
+                        consultas += 1;
+                        return { select: () => ({ in: (_c, v) => { ids = v; return Promise.resolve({ data: [{ id: 'del-pablo', nombre: 'Pablo Bijit' }], error: null }); } }) };
+                    }
+                    return crearChain(eventos);
+                })
+            };
+            const r = await obtenerHistorialResponsables(supabase, { designacionId: 'd1' });
+            expect(consultas).toBe(1);
+            expect(ids).toEqual(['del-pablo', 'del-borrado']);
+            expect(r.find(e => e.id === 'a1').delegado_anterior_nombre).toBe('Pablo Bijit');
+            expect(r.find(e => e.id === 'a2').delegado_anterior_nombre).toBeNull();
+            expect(r.find(e => e.id === 'a3').delegado_anterior_nombre).toBeUndefined();
+        });
+
+        test('evento de la migración 102 (trae datos_anteriores.delegado_nombre) -> usa ese nombre y NO consulta el catálogo', async () => {
+            const eventos = [{ id: 'a1', accion: 'reemplazar_responsable_institucional', actor_tipo: 'cuenta_x',
+                datos_anteriores: { delegado_asociacion_id: 'del-pablo', delegado_nombre: 'Pablo Bijit' }, created_at: '2026-11-17T10:00:00Z' }];
+            const supabase = { from: jest.fn(() => crearChain(eventos)) };
+            const r = await obtenerHistorialResponsables(supabase, { designacionId: 'd1' });
+            expect(r[0].delegado_anterior_nombre).toBe('Pablo Bijit');
+            expect(supabase.from).not.toHaveBeenCalledWith('delegados_asociacion');
+        });
+
         test('varios eventos del MISMO administrador -> una sola consulta con ids únicos (nunca una por evento)', async () => {
             const eventos = [
                 { id: 'a1', actor_id: 'admin-1', actor_tipo: 'administrador', created_at: '2026-09-03T10:00:00Z' },

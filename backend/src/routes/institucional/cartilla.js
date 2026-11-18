@@ -413,6 +413,22 @@ router.patch('/:id', async (req, res) => {
         if (!chk.valido) return res.status(422).json({ error: chk.error, campos: chk.camposInvalidos });
     }
 
+    // Cambio de Delegado de Asociación por el Administrador: si el formulario
+    // quedó abierto con el responsable ANTERIOR (nombre/id desactualizados) y
+    // además su versión ya no es la vigente, no es un intento de editar el
+    // responsable sino una pantalla vieja — se pide recargar (mismo código
+    // VERSION_DESACTUALIZADA que ya devuelve la RPC), en vez del 403 de
+    // abajo. Nada se guarda en ningún caso: el nombre anterior nunca vuelve.
+    const responsableDesactualizado =
+        (req.body.delegado_asociacion_id !== undefined && req.body.delegado_asociacion_id !== cartilla.delegado_asociacion_id) ||
+        (req.body.delegado_nombre !== undefined && req.body.delegado_nombre !== cartilla.delegado_nombre);
+    if (responsableDesactualizado && Number(req.body.version) !== cartilla.version) {
+        return res.status(409).json({
+            error: 'La cartilla fue actualizada mientras la tenía abierta (por ejemplo, el Administrador cambió el Delegado Oficial). Recargue la cartilla antes de guardar; sus respuestas ya guardadas se conservan.',
+            code: 'VERSION_DESACTUALIZADA'
+        });
+    }
+
     // Fase 3.5 — regla oficial: el responsable confirmado es inmutable por
     // esta vía. Un guardado normal YA NO puede cambiar delegado_asociacion_id
     // (ni delegado_nombre, su snapshot) — el único camino es el reemplazo

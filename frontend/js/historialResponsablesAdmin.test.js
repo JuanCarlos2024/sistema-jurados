@@ -72,6 +72,27 @@ describe('renderHistorialResponsablesCd — cartilla institucional CON historial
         expect(html_).not.toMatch(/Administrador \(ID/); // tenía nombre resuelto, nunca debió caer al fallback por id
     });
 
+    test('sin confirmación previa en el historial -> el anterior sale de delegado_anterior_nombre (resuelto por el backend desde el catálogo)', () => {
+        const fn = extraerFuncion('renderHistorialResponsablesCd', STUB);
+        const html_ = fn({ delegado_asociacion_id: 'del-2', delegado_nombre: 'Pedro Soto', historial_responsables: [
+            { accion: 'reemplazar_responsable_institucional', actor_nombre: 'Admin', delegado_anterior_nombre: 'Pablo Bijit',
+              datos_nuevos: { delegado_nombre: 'Pedro Soto', motivo: 'Error de la asociación' }, created_at: '2026-11-17T09:00:00Z' }
+        ] });
+        expect(html_).toMatch(/De\s*<strong>Pablo Bijit<\/strong>\s*a\s*<strong>Pedro Soto<\/strong>/);
+        expect(html_).toMatch(/Responsable vigente:<\/strong> Pedro Soto/);
+    });
+
+    test('evento de la migración 102: el anterior es el registrado en la auditoría (datos_anteriores.delegado_nombre), aunque el historial previo diga otra cosa', () => {
+        const fn = extraerFuncion('renderHistorialResponsablesCd', STUB);
+        const html_ = fn({ delegado_asociacion_id: 'del-2', delegado_nombre: 'Pedro Soto', historial_responsables: [
+            { accion: 'confirmar_responsable_institucional', datos_nuevos: { delegado_nombre: 'Nombre Antiguo' }, created_at: '2026-11-01T09:00:00Z' },
+            { accion: 'reemplazar_responsable_institucional', actor_nombre: 'Admin',
+              datos_anteriores: { delegado_asociacion_id: 'del-pablo', delegado_nombre: 'Pablo Bijit' },
+              datos_nuevos: { delegado_nombre: 'Pedro Soto', motivo: 'Error' }, created_at: '2026-11-17T09:00:00Z' }
+        ] });
+        expect(html_).toMatch(/De\s*<strong>Pablo Bijit<\/strong>\s*a\s*<strong>Pedro Soto<\/strong>/);
+    });
+
     test('administrador SIN nombre resuelto -> cae al fallback "Administrador (ID ...)", nunca se inventa un nombre', () => {
         const fn = extraerFuncion('renderHistorialResponsablesCd', STUB);
         const eventosSinNombre = EVENTOS.map(e => e.accion === 'reemplazar_responsable_institucional' ? { ...e, actor_nombre: null } : e);

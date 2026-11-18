@@ -524,6 +524,15 @@ describe('PATCH /institucional/cartilla/:id (guardar — concurrencia optimista)
         expect(res.jsonBody.code).toBe('RESPONSABLE_YA_CONFIRMADO');
     });
 
+    test('Cambio de Delegado por el Administrador — formulario abierto con el nombre ANTERIOR y versión vieja -> 409 VERSION_DESACTUALIZADA (recargar), nunca guarda el nombre anterior', async () => {
+        respuestas.cartillas_delegado.maybeSingle = { data: { ...CARTILLA_INST, delegado_nombre: 'Pedro Soto', version: CARTILLA_INST.version + 1 }, error: null };
+        const res = await llamar('PATCH', '/cart-1', { version: CARTILLA_INST.version, delegado_nombre: 'Pablo Bijit', respuestas_json: { x: 1 } }, auth(ASOC_OSORNO));
+        expect(res.statusCode).toBe(409);
+        expect(res.jsonBody.code).toBe('VERSION_DESACTUALIZADA');
+        expect(res.jsonBody.error).toMatch(/Recargue/);
+        expect(supabase.rpc).not.toHaveBeenCalledWith('actualizar_cartilla_institucional_con_auditoria', expect.anything());
+    });
+
     test('Fase 3.5 — enviar delegado_nombre IGUAL al ya confirmado (sin cambio real) -> permitido, nunca bloquea un guardado normal', async () => {
         respuestas.cartillas_delegado.maybeSingle = { data: CARTILLA_INST, error: null };
         respuestas.cartillas_delegado.updateResult = { data: { ...CARTILLA_INST, version: 4 }, error: null };
