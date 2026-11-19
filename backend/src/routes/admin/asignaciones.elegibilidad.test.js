@@ -111,7 +111,8 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
         expect(status).toBe(201);
         expect(body.creadas).toHaveLength(1);
         expect(body.errores).toHaveLength(0);
-        expect(evaluarElegibilidadJurado).toHaveBeenCalledWith({ _contextoFake: true }, 'R1', 'J1', { _fake: true });
+        // Corrección 2026-11-19: "Designar jurado" evalúa con el flujo manual.
+        expect(evaluarElegibilidadJurado).toHaveBeenCalledWith({ _contextoFake: true }, 'R1', 'J1', { _fake: true }, { flujo: 'designacion_manual' });
     });
 
     test('NO_HABILITADO (ej. MISMA_ASOCIACION) -> nunca se crea la designación, el error reporta la causa obligatoria', async () => {
@@ -164,7 +165,9 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
         });
         evaluarElegibilidadJurado.mockReturnValue({ estado: 'CON_ADVERTENCIAS', causas: ['DISTANCIA_EXCEDIDA'], causas_obligatorias: [], causas_relajables: ['DISTANCIA_EXCEDIDA'], distancia_km: 800 });
 
-        const { body } = await llamarPost([{ usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true }]);
+        // causas_aceptadas exacta (corrección 2026-11-19): sin ella el rechazo
+        // ocurre antes (REQUIERE_CONFIRMACION_ADVERTENCIAS); aquí se aísla el motivo.
+        const { body } = await llamarPost([{ usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['DISTANCIA_EXCEDIDA'] }]);
 
         expect(body.creadas).toHaveLength(0);
         expect(body.errores[0]).toEqual(expect.objectContaining({ requiere_motivo: true, causas: ['DISTANCIA_EXCEDIDA'] }));
@@ -184,7 +187,7 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
         supabase.rpc.mockResolvedValue({ data: { asignacion: { id: 'asig-1', usuario_pagado_id: 'J1' }, bitacora_id: 'bit-1' }, error: null });
 
         const { status, body } = await llamarPost([{
-            usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true,
+            usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['DISTANCIA_EXCEDIDA'],
             motivo_codigo: 'criterio_tecnico_area_deportiva', motivo_detalle: 'Único disponible en la zona'
         }]);
 
@@ -213,9 +216,10 @@ describe('POST / — elegibilidad real de jurados (Etapa A)', () => {
         });
         evaluarElegibilidadJurado.mockReturnValue({ estado: 'CON_ADVERTENCIAS', causas: ['DISTANCIA_EXCEDIDA'], causas_obligatorias: [], causas_relajables: ['DISTANCIA_EXCEDIDA'], distancia_km: 800 });
 
-        const { body } = await llamarPost([{ usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true, motivo_codigo: 'inexistente' }]);
+        const { body } = await llamarPost([{ usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['DISTANCIA_EXCEDIDA'], motivo_codigo: 'inexistente' }]);
 
         expect(body.creadas).toHaveLength(0);
+        expect(body.errores[0].error).toBe('motivo_codigo inválido o inactivo');
         expect(supabase.rpc).not.toHaveBeenCalled();
     });
 

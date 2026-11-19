@@ -67,7 +67,8 @@ test('candidato DISPONIBLE_Y_HABILITADO -> estado_elegibilidad y distancia_km se
         id: 'J1', estado_elegibilidad: 'DISPONIBLE_Y_HABILITADO', causas_obligatorias: [], causas_relajables: [], distancia_km: 120
     }));
     expect(cargarDatosMotor).toHaveBeenCalledWith(['R-DEST']);
-    expect(evaluarElegibilidadJurado).toHaveBeenCalledWith({ _contextoFake: true }, 'R-DEST', 'J1', { _fake: true });
+    // Corrección 2026-11-19: "Designar jurado" evalúa con el flujo manual.
+    expect(evaluarElegibilidadJurado).toHaveBeenCalledWith({ _contextoFake: true }, 'R-DEST', 'J1', { _fake: true }, { flujo: 'designacion_manual' });
 });
 
 test('candidato NO_HABILITADO (ej. MISMA_ASOCIACION) -> NUNCA se excluye de la lista, pero queda marcado y ordenado al final', async () => {
@@ -100,6 +101,38 @@ test('candidato CON_ADVERTENCIAS (ej. DISTANCIA_EXCEDIDA) -> queda marcado con l
     expect(r.body.jurados[0]).toEqual(expect.objectContaining({
         estado_elegibilidad: 'CON_ADVERTENCIAS', causas_relajables: ['DISTANCIA_EXCEDIDA'], distancia_km: 750
     }));
+});
+
+// Corrección 2026-11-19 — aviso de repetición de asociación desde el MISMO
+// cálculo del motor (repeticion_asociacion), no desde la consulta sin fechas.
+describe('aviso de repetición de asociación (repeticion_asociacion)', () => {
+    // Historial crudo en COLCHAGUA (la consulta antigua lo marcaría "repite"),
+    // pero que el motor no considera efectivo (p. ej. rechazado).
+    const HIST_CRUDO = [{ id: 'A-H', usuario_pagado_id: 'J1', rodeo_id: 'R-PREV', estado: 'activo', estado_designacion: 'rechazado', created_at: '1',
+        'rodeos.asociacion': 'COLCHAGUA', rodeos: { fecha: '2026-10-24', duracion_dias: 1, club: 'RANCAGUA', asociacion: 'COLCHAGUA' } }];
+    const REP = { asociacion: 'COLCHAGUA', intervalo_activo: true, meses: 2, desde: '2026-09-07', hasta: '2027-01-07', intervalo_cumplido: true,
+        antecedentes: [{ fecha: '2026-05-01', club: 'RANCAGUA', asociacion: 'COLCHAGUA', posterior: false, dentro_intervalo: false }] };
+
+    test('con antecedente efectivo -> repite_asociacion:true y el detalle cumplido/incumplido se expone tal cual', async () => {
+        preparar({ usuarios_pagados: [jurado('J1')], disponibilidad_usuarios: dispCompleta('J1') });
+        evaluarElegibilidadJurado.mockReturnValue({ estado: 'DISPONIBLE_Y_HABILITADO', causas: [], causas_obligatorias: [], causas_relajables: [], detalle_advertencias: [], repeticion_asociacion: REP, distancia_km: 5 });
+        const r = await buscar();
+        expect(r.body.jurados[0]).toEqual(expect.objectContaining({ repite_asociacion: true, repeticion_asociacion: REP, estado_elegibilidad: 'DISPONIBLE_Y_HABILITADO' }));
+    });
+
+    test('historial NO efectivo: el motor no ve antecedente -> repite_asociacion:false (sin falso conflicto), aunque la consulta antigua lo marcaría', async () => {
+        preparar({ usuarios_pagados: [jurado('J1')], disponibilidad_usuarios: dispCompleta('J1'), asignaciones: HIST_CRUDO });
+        evaluarElegibilidadJurado.mockReturnValue({ estado: 'DISPONIBLE_Y_HABILITADO', causas: [], causas_obligatorias: [], causas_relajables: [], detalle_advertencias: [], repeticion_asociacion: null, distancia_km: 5 });
+        const r = await buscar();
+        expect(r.body.jurados[0]).toEqual(expect.objectContaining({ repite_asociacion: false, repeticion_asociacion: null }));
+    });
+
+    test('configuración no disponible -> respaldo con la consulta previa (sin fechas), repeticion_asociacion null', async () => {
+        preparar({ usuarios_pagados: [jurado('J1')], disponibilidad_usuarios: dispCompleta('J1'), asignaciones: HIST_CRUDO });
+        cargarConfiguracionDesignacionActiva.mockResolvedValue({ error: 'CONFIGURACION_DESIGNACION_NO_RESUELTA' });
+        const r = await buscar();
+        expect(r.body.jurados[0]).toEqual(expect.objectContaining({ repite_asociacion: true, repeticion_asociacion: null, estado_elegibilidad: null }));
+    });
 });
 
 test('configuración de designación no resuelta -> degrada con gracia (estado_elegibilidad null, la lista sigue funcionando igual que antes de esta corrección)', async () => {

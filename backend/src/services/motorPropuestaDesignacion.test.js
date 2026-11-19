@@ -1399,12 +1399,13 @@ describe('Motor — ASOCIACION_REPETIDA_INTERVALO (schema_version=4, repetición
 
     // Independencia explícita (sección 4 del pedido): ambas reglas pueden
     // configurarse por separado (cada una con su propio toggle) y conviven
-    // activas a la vez — ninguna sustituye a la otra. Dicho esto, por
-    // diseño (ver comentario en evaluarCandidato), un repeat DENTRO de la
-    // temporada vigente SIEMPRE cuenta también como "demasiado pronto" para
-    // la regla de intervalo (criterio conservador: nunca permite relajar el
-    // intervalo solo porque el repeat ya estaba cubierto por la regla de
-    // temporada) — por eso j1 aparece en AMBOS contadores. j2, en cambio,
+    // activas a la vez — ninguna sustituye a la otra. CORRECCIÓN 2026-11-19
+    // (designación manual con excepciones): antes, un repeat DENTRO de la
+    // temporada vigente contaba SIEMPRE también como "demasiado pronto" para
+    // la regla de intervalo, aunque el plazo ya se hubiera cumplido. Ahora el
+    // intervalo decide solo por fechas reales: j1 (01/05, 6,5 meses antes del
+    // 14/11 con intervalo de 6) lo descarta únicamente la regla de temporada,
+    // nunca la de intervalo. j2, en cambio,
     // SOLO tiene antecedente fuera de la temporada vigente (historial real,
     // detectado vía fechas) — demuestra que la regla de intervalo funciona
     // por sí sola, sin depender de la regla de temporada. j3 no tiene
@@ -1440,7 +1441,10 @@ describe('Motor — ASOCIACION_REPETIDA_INTERVALO (schema_version=4, repetición
         const res = ejecutarSimulacion(ctx, 5, config);
         expect(res.resultados[0].estado).toBe('SIN_PROPUESTA');
         expect(res.resultados[0].descartes.ASOCIACION_REPETIDA_TEMPORADA).toBe(1); // solo j1 (j2 queda fuera de la temporada vigente)
-        expect(res.resultados[0].descartes.ASOCIACION_REPETIDA_INTERVALO).toBe(2); // j1 (conservador) + j2 (detectado solo por fechas)
+        expect(res.resultados[0].descartes.ASOCIACION_REPETIDA_INTERVALO).toBe(1); // solo j2 (por fechas); j1 ya cumplió el plazo
+        const descartadoJ1 = res.resultados[0].descartados.find(d => d.jurado_id === 'j1');
+        expect(descartadoJ1.causas).toContain('ASOCIACION_REPETIDA_TEMPORADA');
+        expect(descartadoJ1.causas).not.toContain('ASOCIACION_REPETIDA_INTERVALO');
         // j3 está descartado (DISPONIBILIDAD, ajeno a esta prueba) pero NUNCA
         // por ninguna de las 2 causas de repetición de asociación — nunca tuvo
         // antecedente real en ninguna de las dos fuentes.

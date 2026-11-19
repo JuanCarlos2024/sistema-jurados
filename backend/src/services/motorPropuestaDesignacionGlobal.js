@@ -99,7 +99,8 @@ const {
     cargarDatosMotor, ejecutarSimulacion, evaluarCandidato, construirEstadoDesdeBD,
     construirMatrizPorClasificacionDesdeConfiguracion, construirMatrizZonaExtremaDesdeConfiguracion,
     resolverMatrizParaRodeo, construirComparadorJerarquico, construirTrasladosPorJuradoBD,
-    cargarRendimientoTemporada, construirRendimientoPorJurado, cargarHistorialRecienteBatch
+    cargarRendimientoTemporada, construirRendimientoPorJurado, cargarHistorialRecienteBatch,
+    registrarFechaAsociacionLote, retirarFechaAsociacionLote
 } = require('./motorPropuestaDesignacion');
 const { resolverComuna } = require('./geografia');
 const { normalizarAsociacion } = require('./asociaciones');
@@ -197,9 +198,11 @@ function resolverAsignacionGlobal(contexto, configuracion, rodeosConMatriz, opci
     // sección 3: un jurado que debía quedar SIN_PROPUESTA (única vía posible
     // viola el intervalo obligatorio de 6 meses) terminaba propuesto de
     // todas formas por el nivel ESTRICTO, que nunca vio la causa.
+    const fechasAsociacionLotePorJurado = new Map();
     const estado = {
         asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado,
-        ultimaFechaAsociacionPorJurado: contexto.ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado: contexto.notaTecnicaPorJurado
+        ultimaFechaAsociacionPorJurado: contexto.ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado: contexto.notaTecnicaPorJurado,
+        fechasAsociacionPorJurado: contexto.fechasAsociacionPorJurado, fechasAsociacionLotePorJurado
     };
 
     const comparador = construirComparadorJerarquico(configuracion.ordenCriterios, configuracion.umbral_lejania_km);
@@ -268,12 +271,14 @@ function resolverAsignacionGlobal(contexto, configuracion, rodeosConMatriz, opci
                 agregoAsociacion = true;
             }
         }
+        registrarFechaAsociacionLote(fechasAsociacionLotePorJurado, juradoId, rodeo);
         return agregoAsociacion;
     }
     function desasignarTemporal(juradoId, rodeo, agregoAsociacion) {
         designacionesPorJurado.get(juradoId).delete(rodeo.id);
         bloquesPorJurado.get(juradoId).pop();
         if (agregoAsociacion) asociacionesPorJurado.get(juradoId).delete(normalizarAsociacion(rodeo.asociacion));
+        retirarFechaAsociacionLote(fechasAsociacionLotePorJurado, juradoId, rodeo);
     }
 
     function backtrack() {
@@ -479,9 +484,11 @@ function resolverPrioridadDeportiva(contexto, configuracion, rodeosBuscables, co
     const { designacionesPorJurado, bloquesPorJurado, asociacionesPorJurado } = construirEstadoDesdeBD(contexto.asignacionesTemporada);
     const trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     const trasladosTemporalesPorJurado = new Map();
+    const fechasAsociacionLotePorJurado = new Map();
     const estado = {
         asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado,
-        ultimaFechaAsociacionPorJurado: contexto.ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado: contexto.notaTecnicaPorJurado
+        ultimaFechaAsociacionPorJurado: contexto.ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado: contexto.notaTecnicaPorJurado,
+        fechasAsociacionPorJurado: contexto.fechasAsociacionPorJurado, fechasAsociacionLotePorJurado
     };
     const comparador = construirComparadorJerarquico(configuracion.ordenCriterios, configuracion.umbral_lejania_km);
 
@@ -513,12 +520,14 @@ function resolverPrioridadDeportiva(contexto, configuracion, rodeosBuscables, co
             const asocNorm = normalizarAsociacion(rodeo.asociacion);
             if (!asociacionesPorJurado.get(juradoId).has(asocNorm)) { asociacionesPorJurado.get(juradoId).add(asocNorm); agregoAsociacion = true; }
         }
+        registrarFechaAsociacionLote(fechasAsociacionLotePorJurado, juradoId, rodeo);
         return agregoAsociacion;
     }
     function desasignarTemporal(juradoId, rodeo, agregoAsociacion) {
         designacionesPorJurado.get(juradoId).delete(rodeo.id);
         bloquesPorJurado.get(juradoId).pop();
         if (agregoAsociacion) asociacionesPorJurado.get(juradoId).delete(normalizarAsociacion(rodeo.asociacion));
+        retirarFechaAsociacionLote(fechasAsociacionLotePorJurado, juradoId, rodeo);
     }
 
     function backtrack() {
@@ -707,6 +716,7 @@ function construirCandidatosEstaticosAmbosNiveles(contexto, configuracion, rodeo
     estadoSoloBD.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     estadoSoloBD.trasladosTemporalesPorJurado = new Map();
     estadoSoloBD.ultimaFechaAsociacionPorJurado = contexto.ultimaFechaAsociacionPorJurado;
+    estadoSoloBD.fechasAsociacionPorJurado = contexto.fechasAsociacionPorJurado;
     estadoSoloBD.notaTecnicaPorJurado = contexto.notaTecnicaPorJurado;
 
     const estricto = new Map(), permisivo = new Map();
@@ -738,6 +748,7 @@ function construirCandidatosEstaticosPorRodeo(contexto, configuracion, rodeosCon
     // Misma corrección que construirCandidatosEstaticosAmbosNiveles() —
     // ver su comentario de cabecera.
     estadoSoloBD.ultimaFechaAsociacionPorJurado = contexto.ultimaFechaAsociacionPorJurado;
+    estadoSoloBD.fechasAsociacionPorJurado = contexto.fechasAsociacionPorJurado;
     estadoSoloBD.notaTecnicaPorJurado = contexto.notaTecnicaPorJurado;
 
     const porRodeo = new Map();

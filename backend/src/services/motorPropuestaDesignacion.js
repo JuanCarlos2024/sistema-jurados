@@ -424,25 +424,26 @@ function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPor
     const repiteAsociacionTemporada = !!asociacionesUsadas && asociacionesUsadas.has(asocNorm);
     if (configuracion.regla_no_repetir_asociacion_activa && repiteAsociacionTemporada) causas.push('ASOCIACION_REPETIDA_TEMPORADA');
 
-    // Regla NUEVA (schema_version=4) — repetición de asociación por
-    // INTERVALO configurable (default 6 meses), independiente de la regla
-    // de temporada arriba: mira TODO el historial real (incluidas
-    // temporadas anteriores) vía estado.ultimaFechaAsociacionPorJurado
-    // (construirUltimaFechaAsociacionPorJurado, estático, nunca mutado
-    // durante la búsqueda) + cualquier repetición DENTRO de este mismo lote
-    // (repiteAsociacionTemporada ya cubre eso, sin fechas — un repeat en el
-    // mismo lote se trata siempre como "demasiado pronto", igual criterio
-    // que la regla de temporada). Nunca confundir con MISMA_ASOCIACION
-    // (prohibición de juzgar el propio rodeo de la asociación del jurado —
-    // conflicto de interés real, obligatoria, nunca se relaja).
-    const ultimaFechaHistorica = estado.ultimaFechaAsociacionPorJurado?.get(jurado.id)?.get(asocNorm) || null;
-    const limiteIntervalo = configuracion.regla_repeticion_asociacion_intervalo_activa
-        ? restarMeses(rodeo.fecha, configuracion.repeticion_asociacion_meses)
+    // Regla (schema_version=4) — repetición de asociación por INTERVALO
+    // configurable, independiente de la regla de temporada arriba. Decide
+    // EXCLUSIVAMENTE por fechas reales (buscarConflictoIntervalo): las
+    // designaciones efectivas del historial (cualquier temporada) y las
+    // propuestas temporales de ESTE mismo lote, cada una con su fecha.
+    //
+    // CORRECCIÓN (designación manual con excepciones, 2026-11-19): antes se
+    // sumaba `|| repiteAsociacionTemporada` — cualquier repetición dentro de
+    // la temporada vigente contaba como "demasiado pronto" aunque el plazo
+    // ya se hubiera cumplido y aunque la regla de toda la temporada
+    // estuviera desactivada (caso real: designación en mayo bloqueaba otra
+    // en noviembre con intervalo de 2 meses). Las repeticiones dentro del
+    // lote siguen controladas, ahora comparando sus fechas (nunca se
+    // debilita: una propuesta del lote dentro del plazo sigue bloqueando).
+    // Nunca confundir con MISMA_ASOCIACION (conflicto de interés real).
+    const conflictoIntervalo = configuracion.regla_repeticion_asociacion_intervalo_activa
+        ? buscarConflictoIntervalo(jurado.id, rodeo, asocNorm, configuracion.repeticion_asociacion_meses, estado)
         : null;
-    const dentroDeIntervalo = !!ultimaFechaHistorica && !!limiteIntervalo
-        && ultimaFechaHistorica >= limiteIntervalo && ultimaFechaHistorica < rodeo.fecha;
-    const repiteAsociacionIntervalo = dentroDeIntervalo || repiteAsociacionTemporada;
-    if (configuracion.regla_repeticion_asociacion_intervalo_activa && repiteAsociacionIntervalo) causas.push('ASOCIACION_REPETIDA_INTERVALO');
+    const repiteAsociacionIntervalo = !!conflictoIntervalo;
+    if (repiteAsociacionIntervalo) causas.push('ASOCIACION_REPETIDA_INTERVALO');
 
     // Regla 3/4 — mismo fin de semana / fin de semana consecutivo (secciones
     // 9/10) — dos flags INDEPENDIENTES; bloquesSonConsecutivos()/feriados.js
@@ -526,9 +527,91 @@ function evaluarCandidato(jurado, rodeo, matriz, disponibilidad, comunaJuradoPor
     return {
         jurado, causas, elegible: causas.length === 0,
         distanciaKm, comunaJurado, categoriaOrdenPreferencia, categoriaCompatible,
-        disponible, mismaAsoc, repiteAsociacionTemporada, repiteAsociacionIntervalo, mismoFinde, findeConsecutivo,
+        disponible, mismaAsoc, repiteAsociacionTemporada, repiteAsociacionIntervalo, conflictoIntervalo, mismoFinde, findeConsecutivo,
         designacionesAntes, trasladosTemporada, notaTecnica
     };
+}
+
+// ─── Repetición de asociación por intervalo — búsqueda por FECHAS ─────────
+// Ventana [fecha - N meses, fecha + N meses] alrededor del rodeo evaluado:
+// una designación en la misma asociación dentro de ese plazo (antes o
+// después) es una repetición "demasiado pronto". Fuentes, ambas con fecha:
+//   - historial efectivo (estado.fechasAsociacionPorJurado, de
+//     construirFechasAsociacionPorJurado — cualquier temporada, estático);
+//   - propuestas temporales de ESTE lote (estado.fechasAsociacionLotePor
+//     Jurado, mutado por registrar/retirarFechaAsociacionLote). Un lote se
+//     procesa en orden de dificultad, no cronológico: por eso la ventana es
+//     simétrica — una propuesta posterior del lote también cuenta.
+// El propio rodeo evaluado nunca genera conflicto consigo mismo (rodeo_id).
+// Compatibilidad: si un llamador solo trae ultimaFechaAsociacionPorJurado
+// (sin la lista completa de fechas), se usa con el criterio histórico
+// exacto (solo la última fecha, anterior al rodeo).
+//
+// antecedentesAsociacionIntervalo() es la ÚNICA implementación: lista TODOS
+// los antecedentes (efectivos) del jurado en esa asociación y marca cada uno
+// dentro/fuera de la ventana. buscarConflictoIntervalo() (la regla, usada por
+// evaluarCandidato) y el aviso informativo de "Designar jurado" salen de ella
+// — nunca dos cálculos distintos de la misma ventana.
+// @param meses — null/0 = regla inactiva: antecedentes con dentro_intervalo null.
+// @returns { desde, hasta, antecedentes: [{ fecha, rodeo_id, club, asociacion, origen, dentro_intervalo }] }
+function antecedentesAsociacionIntervalo(juradoId, rodeo, asocNorm, meses, estado) {
+    const activo = !!rodeo.fecha && !!meses;
+    const desde = activo ? restarMeses(rodeo.fecha, meses) : null;
+    const hasta = activo ? sumarMeses(rodeo.fecha, meses) : null;
+    const dentro = f => (activo ? f >= desde && f <= hasta : null);
+    const antecedentes = [];
+    const historial = estado.fechasAsociacionPorJurado?.get(juradoId)?.get(asocNorm);
+    if (historial) {
+        for (const h of historial) {
+            if (h.rodeo_id && h.rodeo_id === rodeo.id) continue;
+            antecedentes.push({ ...h, origen: 'historial', dentro_intervalo: dentro(h.fecha) });
+        }
+    } else {
+        const ultima = estado.ultimaFechaAsociacionPorJurado?.get(juradoId)?.get(asocNorm) || null;
+        if (ultima) {
+            antecedentes.push({
+                fecha: ultima, rodeo_id: null, club: null, asociacion: null, origen: 'historial',
+                dentro_intervalo: activo ? ultima >= desde && ultima < rodeo.fecha : null
+            });
+        }
+    }
+    for (const l of (estado.fechasAsociacionLotePorJurado?.get(juradoId)?.get(asocNorm) || [])) {
+        if (l.rodeo_id === rodeo.id) continue;
+        antecedentes.push({ ...l, origen: 'lote', dentro_intervalo: dentro(l.fecha) });
+    }
+    return { desde, hasta, antecedentes };
+}
+
+// @returns { fecha, rodeo_id, club, asociacion, origen: 'historial'|'lote', desde, hasta } | null
+function buscarConflictoIntervalo(juradoId, rodeo, asocNorm, meses, estado) {
+    if (!rodeo.fecha || !meses) return null;
+    const { desde, hasta, antecedentes } = antecedentesAsociacionIntervalo(juradoId, rodeo, asocNorm, meses, estado);
+    const candidatos = antecedentes.filter(a => a.dentro_intervalo);
+    if (candidatos.length === 0) return null;
+    const distancia = f => Math.abs(Date.parse(f + 'T00:00:00Z') - Date.parse(rodeo.fecha + 'T00:00:00Z'));
+    candidatos.sort((a, b) => distancia(a.fecha) - distancia(b.fecha) || (a.fecha < b.fecha ? -1 : 1));
+    const { dentro_intervalo, ...conflicto } = candidatos[0]; // eslint-disable-line no-unused-vars
+    return { ...conflicto, desde, hasta };
+}
+
+// Registra/retira una propuesta temporal del lote (con su fecha) para la
+// regla de intervalo — única forma de mutar fechasAsociacionLotePorJurado,
+// usada por el motor local y por el global (incluido su backtracking).
+function registrarFechaAsociacionLote(mapaLote, juradoId, rodeo) {
+    if (!mapaLote || !rodeo.asociacion) return;
+    const asocNorm = normalizarAsociacion(rodeo.asociacion);
+    if (!mapaLote.has(juradoId)) mapaLote.set(juradoId, new Map());
+    const porAsoc = mapaLote.get(juradoId);
+    if (!porAsoc.has(asocNorm)) porAsoc.set(asocNorm, []);
+    porAsoc.get(asocNorm).push({ fecha: rodeo.fecha, rodeo_id: rodeo.id, club: rodeo.club || null, asociacion: rodeo.asociacion });
+}
+function retirarFechaAsociacionLote(mapaLote, juradoId, rodeo) {
+    if (!mapaLote || !rodeo.asociacion) return;
+    const lista = mapaLote.get(juradoId)?.get(normalizarAsociacion(rodeo.asociacion));
+    if (!lista) return;
+    for (let i = lista.length - 1; i >= 0; i--) {
+        if (lista[i].rodeo_id === rodeo.id) { lista.splice(i, 1); return; }
+    }
 }
 
 // ─── Carga de traslados de temporada — RELATIVA a un rodeo objetivo ───────
@@ -730,6 +813,10 @@ function restarMeses(fechaISO, meses) {
     fecha.setUTCMonth(fecha.getUTCMonth() - meses);
     return fecha.toISOString().slice(0, 10);
 }
+// Simétrica de restarMeses() — mismo criterio de normalización de Date.
+function sumarMeses(fechaISO, meses) {
+    return restarMeses(fechaISO, -meses);
+}
 
 // ─── Última fecha real (histórica, cualquier temporada) de designación
 // EFECTIVA de cada jurado en cada asociación organizadora — mejora
@@ -762,6 +849,29 @@ function construirUltimaFechaAsociacionPorJurado(asignacionesHistoricas) {
         const porAsociacion = resultado.get(a.usuario_pagado_id);
         const actual = porAsociacion.get(asocNorm);
         if (!actual || fecha > actual) porAsociacion.set(asocNorm, fecha);
+    }
+    return resultado;
+}
+
+// ─── TODAS las fechas reales (cualquier temporada) de designación EFECTIVA
+// de cada jurado en cada asociación — fuente de buscarConflictoIntervalo().
+// Complementa a construirUltimaFechaAsociacionPorJurado(): guardar solo la
+// ÚLTIMA fecha no basta cuando el jurado ya tiene una designación posterior
+// al rodeo evaluado en la misma asociación (la última sería la futura y
+// ocultaría una anterior dentro del plazo). Mismo filtro esAsignacionEfectiva().
+// @returns Map(jurado_id -> Map(asociacion_normalizada -> [{ fecha, rodeo_id, club, asociacion }]))
+function construirFechasAsociacionPorJurado(asignacionesHistoricas) {
+    const resultado = new Map();
+    for (const a of (asignacionesHistoricas || [])) {
+        if (!esAsignacionEfectiva(a)) continue;
+        const asociacion = a.rodeos?.asociacion;
+        const fecha = a.rodeos?.fecha;
+        if (!asociacion || !fecha) continue;
+        const asocNorm = normalizarAsociacion(asociacion);
+        if (!resultado.has(a.usuario_pagado_id)) resultado.set(a.usuario_pagado_id, new Map());
+        const porAsociacion = resultado.get(a.usuario_pagado_id);
+        if (!porAsociacion.has(asocNorm)) porAsociacion.set(asocNorm, []);
+        porAsociacion.get(asocNorm).push({ fecha, rodeo_id: a.rodeo_id || null, club: a.rodeos?.club || null, asociacion });
     }
     return resultado;
 }
@@ -823,6 +933,7 @@ function evaluarCandidatoDirecto(contexto, rodeoId, juradoId, configuracion = co
     estado.trasladosPorJuradoBD = construirTrasladosPorJuradoBD(contexto.asignacionesTemporada, comunaJuradoPorId);
     estado.trasladosTemporalesPorJurado = new Map(); // sin corrida encima — evaluación directa contra estado real de BD únicamente
     estado.ultimaFechaAsociacionPorJurado = contexto.ultimaFechaAsociacionPorJurado;
+    estado.fechasAsociacionPorJurado = contexto.fechasAsociacionPorJurado;
     estado.notaTecnicaPorJurado = contexto.notaTecnicaPorJurado;
 
     return {
@@ -949,7 +1060,7 @@ async function cargarDatosMotor(rodeoIdsInput) {
         while (true) {
             const { data, error } = await supabase
                 .from('asignaciones')
-                .select('id, usuario_pagado_id, rodeo_id, estado, estado_designacion, rodeos!inner(fecha, duracion_dias, asociacion, comunas_chile(latitud, longitud))')
+                .select('id, usuario_pagado_id, rodeo_id, estado, estado_designacion, rodeos!inner(fecha, duracion_dias, asociacion, club, comunas_chile(latitud, longitud))')
                 .eq('tipo_persona', 'jurado')
                 .neq('estado', 'anulado')
                 .range(offset, offset + PAGINA - 1);
@@ -975,6 +1086,7 @@ async function cargarDatosMotor(rodeoIdsInput) {
     // para todo lo demás). Pura, calculada una sola vez acá.
     const asignacionesHistoricas = asignacionesRaw.filter(esAsignacionEfectiva);
     const ultimaFechaAsociacionPorJurado = construirUltimaFechaAsociacionPorJurado(asignacionesHistoricas);
+    const fechasAsociacionPorJurado = construirFechasAsociacionPorJurado(asignacionesHistoricas);
 
     return {
         idsSolicitados: idsUnicos,
@@ -986,6 +1098,7 @@ async function cargarDatosMotor(rodeoIdsInput) {
         asignacionesTemporada,
         asignacionesHistoricas,
         ultimaFechaAsociacionPorJurado,
+        fechasAsociacionPorJurado,
         _queriesAproximadas: queries
     };
 }
@@ -1043,7 +1156,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     const val = validarConfiguracion(configuracion);
     if (!val.valido) throw new Error(`Configuración de designación inválida: ${val.error}`);
 
-    const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada, ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado } = contexto;
+    const { idsSolicitados, temporada, rodeosPorId, jurados, catalogoComunas, disponibilidad, asignacionesTemporada, ultimaFechaAsociacionPorJurado, fechasAsociacionPorJurado, notaTecnicaPorJurado } = contexto;
     const matrizPorClasificacion = construirMatrizPorClasificacionDesdeConfiguracion(configuracion.matriz);
     // Mejora "Zonas Extremas" — derivada UNA vez por corrida (pura, sin BD,
     // sección 15 del pedido); resolverMatrizParaRodeo() decide por rodeo si
@@ -1073,6 +1186,9 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // persistir nada). Ambos son baratos: arrays ya en memoria, sin BD nueva.
     const trasladosPorJuradoBD = construirTrasladosPorJuradoBD(asignacionesTemporada, comunaJuradoPorId);
     const trasladosTemporalesPorJurado = new Map(); // jurado_id -> [{distanciaKm}, ...]
+    // Regla de intervalo — propuestas de ESTA corrida con su fecha (ver
+    // buscarConflictoIntervalo). Vacío en la pasada de dificultad.
+    const fechasAsociacionLotePorJurado = new Map();
 
     // Snapshot de designaciones SOLO-BD por jurado (antes de cualquier
     // propuesta de esta corrida) — para el resumen final de distribución
@@ -1105,6 +1221,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
             if (!asociacionesPorJurado.has(juradoId)) asociacionesPorJurado.set(juradoId, new Set());
             asociacionesPorJurado.get(juradoId).add(normalizarAsociacion(rodeo.asociacion));
         }
+        registrarFechaAsociacionLote(fechasAsociacionLotePorJurado, juradoId, rodeo);
 
         if (!trasladosTemporalesPorJurado.has(juradoId)) trasladosTemporalesPorJurado.set(juradoId, []);
         trasladosTemporalesPorJurado.get(juradoId).push({ distanciaKm: distanciaKm ?? null });
@@ -1156,7 +1273,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // Es la MISMA función evaluarCandidato() que se usa en la evaluación real
     // más abajo — no hay una segunda versión de las reglas, solo se le pasa
     // un snapshot de estado distinto (sin mutaciones de esta corrida todavía).
-    const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado, ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado };
+    const estadoSoloBD = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado, ultimaFechaAsociacionPorJurado, fechasAsociacionPorJurado, fechasAsociacionLotePorJurado, notaTecnicaPorJurado };
     for (const rodeo of rodeosEvaluables) {
         // Zona Extrema (sección 14 del pedido): la dificultad se estima con la
         // MISMA matriz efectiva (normal o especial) que usará la evaluación
@@ -1179,7 +1296,7 @@ function ejecutarSimulacion(contexto, topN = 5, configuracion = construirConfigu
     // A partir de aquí, `estadoActual` sí se muta (registrarAsignacionTemporal
     // agrega a las mismas Map/Set que arriba) — cada rodeo que se procesa ve
     // las propuestas ya hechas a rodeos anteriores en esta misma corrida.
-    const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado, ultimaFechaAsociacionPorJurado, notaTecnicaPorJurado };
+    const estadoActual = { asociacionesPorJurado, bloquesPorJurado, designacionesPorJurado, trasladosPorJuradoBD, trasladosTemporalesPorJurado, ultimaFechaAsociacionPorJurado, fechasAsociacionPorJurado, fechasAsociacionLotePorJurado, notaTecnicaPorJurado };
     for (const rodeo of rodeosEvaluables) {
         // Zona Extrema — mismo resolver que la dificultad de arriba (sección
         // 14/15 del pedido: un único punto de decisión, nunca dos).
@@ -1794,5 +1911,8 @@ module.exports = {
     construirMatrizZonaExtremaDesdeConfiguracion, resolverMatrizParaRodeo, construirExplicacionZonaExtrema,
     // Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
     // (schema_version=4) — funciones puras nuevas.
-    restarMeses, construirUltimaFechaAsociacionPorJurado
+    restarMeses, sumarMeses, construirUltimaFechaAsociacionPorJurado,
+    // Corrección designación manual (2026-11-19) — intervalo por fechas reales.
+    construirFechasAsociacionPorJurado, buscarConflictoIntervalo, antecedentesAsociacionIntervalo,
+    registrarFechaAsociacionLote, retirarFechaAsociacionLote
 };

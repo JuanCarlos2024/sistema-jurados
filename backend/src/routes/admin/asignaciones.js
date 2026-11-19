@@ -314,7 +314,11 @@ router.post('/', async (req, res) => {
                 });
                 continue;
             }
-            const elegibilidad = evaluarElegibilidadJurado(contextoElegibilidad, rodeo_id, usuario_pagado_id, configuracionElegibilidad);
+            // Designación MANUAL (corrección 2026-11-19): misma clasificación
+            // que el listado de "Designar jurado" — la repetición por
+            // intervalo es una advertencia excepcionable SOLO aquí (con
+            // confirmación expresa + motivo + bitácora), nunca en el motor.
+            const elegibilidad = evaluarElegibilidadJurado(contextoElegibilidad, rodeo_id, usuario_pagado_id, configuracionElegibilidad, { flujo: 'designacion_manual' });
             if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.NO_HABILITADO) {
                 erroresCreacion.push({
                     error: 'El jurado no cumple una restricción obligatoria para este rodeo' + (elegibilidad.causas_obligatorias.length ? ' (' + elegibilidad.causas_obligatorias.join(', ') + ')' : ''),
@@ -322,11 +326,47 @@ router.post('/', async (req, res) => {
                 });
                 continue;
             }
+            // Revalidación de la confirmación (corrección 2026-11-19): toda
+            // designación con advertencias excepcionables exige la lista
+            // EXACTA de causas aceptadas (causas_aceptadas), que debe
+            // coincidir como conjunto con las que el motor detecta ahora —
+            // mismo criterio que el reemplazo (confirmacionAdvertencias.js).
+            // Un `confirmar_advertencias: true` genérico enviado directamente
+            // por HTTP nunca basta: ausente, incompleta, con sobrantes,
+            // duplicada o desactualizada -> rechazo, nada se crea.
+            const aceptadasCreacion = normalizarCausasAceptadas(p.causas_aceptadas);
+            if (!aceptadasCreacion.ok) {
+                erroresCreacion.push({ error: aceptadasCreacion.error, usuario_pagado_id, code: 'CAUSAS_ACEPTADAS_INVALIDAS' });
+                continue;
+            }
+            const causasActualesCreacion = elegibilidad.estado === ESTADOS_ELEGIBILIDAD.CON_ADVERTENCIAS
+                ? [...(elegibilidad.causas_relajables || [])].sort()
+                : [];
+            if (aceptadasCreacion.causas !== null && aceptadasCreacion.causas.length > 0) {
+                const cmp = compararCausas(causasActualesCreacion, aceptadasCreacion.causas);
+                if (!cmp.coincide) {
+                    erroresCreacion.push({
+                        error: 'Las advertencias de este jurado cambiaron desde que se confirmaron. Revise las advertencias actuales y vuelva a confirmar.',
+                        usuario_pagado_id, code: 'ADVERTENCIAS_CAMBIARON', estado_elegibilidad: elegibilidad.estado,
+                        causas: causasActualesCreacion, causas_nuevas: cmp.nuevas, causas_ya_no_existen: cmp.ya_no_existen,
+                        detalle_advertencias: elegibilidad.detalle_advertencias || [], requiere_confirmacion: true
+                    });
+                    continue;
+                }
+            }
             if (elegibilidad.estado === ESTADOS_ELEGIBILIDAD.CON_ADVERTENCIAS) {
                 if (p.confirmar_advertencias !== true) {
                     erroresCreacion.push({
                         error: 'Esta designación tiene advertencias (preferencias flexibles) que deben confirmarse explícitamente antes de guardar',
                         usuario_pagado_id, estado_elegibilidad: elegibilidad.estado, causas: elegibilidad.causas_relajables, requiere_confirmacion: true
+                    });
+                    continue;
+                }
+                if (!(aceptadasCreacion.causas && aceptadasCreacion.causas.length > 0)) {
+                    erroresCreacion.push({
+                        error: 'Esta designación requiere confirmar expresamente cada advertencia (causas_aceptadas) antes de guardar',
+                        usuario_pagado_id, code: 'REQUIERE_CONFIRMACION_ADVERTENCIAS', estado_elegibilidad: elegibilidad.estado,
+                        causas: causasActualesCreacion, detalle_advertencias: elegibilidad.detalle_advertencias || [], requiere_confirmacion: true
                     });
                     continue;
                 }
@@ -354,7 +394,8 @@ router.post('/', async (req, res) => {
                 excepcionConfirmadaPorPersona.set(usuario_pagado_id, {
                     motivoCatalogoId: motivoExcepcion.id,
                     motivoDetalle: p.motivo_detalle || null,
-                    causasConfirmadas: elegibilidad.causas_relajables
+                    causasConfirmadas: elegibilidad.causas_relajables,
+                    detalleAdvertencias: elegibilidad.detalle_advertencias || []
                 });
             }
         }
@@ -412,6 +453,13 @@ router.post('/', async (req, res) => {
                         erroresCreacion.push({ error: 'El jurado ya está designado vigente en este mismo rodeo', usuario_pagado_id });
                     } else if (msg.includes('CRUCE_DISPONIBILIDAD')) {
                         erroresCreacion.push({ error: 'El jurado ya está asignado a otro rodeo en fechas que se cruzan', usuario_pagado_id });
+                    } else if (msg.includes('CAUSA_CONFIRMADA_DESCONOCIDA') && (excepcion.causasConfirmadas || []).includes('ASOCIACION_REPETIDA_INTERVALO')) {
+                        // La BD todavía no reconoce esta excepción (migración
+                        // 104 pendiente): la RPC revirtió todo, nada se creó.
+                        erroresCreacion.push({
+                            error: 'La base de datos aún no admite registrar la excepción por repetición de asociación dentro del intervalo (migración 104 pendiente). No se creó la designación.',
+                            usuario_pagado_id, code: 'MIGRACION_104_PENDIENTE'
+                        });
                     } else {
                         // Mensaje comprensible para cualquier otro rechazo de
                         // la RPC (p.ej. CAUSAS_CONFIRMADAS_REQUERIDAS,
@@ -435,7 +483,8 @@ router.post('/', async (req, res) => {
                     accion: 'crear',
                     datos_nuevos: {
                         rodeo_id, usuario_pagado_id, tipo_persona, pago_base_calculado: calculo.pago_base_calculado,
-                        excepcion_confirmada: true, causas_relajables: excepcion.causasConfirmadas, motivo_codigo: p.motivo_codigo
+                        excepcion_confirmada: true, causas_relajables: excepcion.causasConfirmadas, motivo_codigo: p.motivo_codigo,
+                        detalle_advertencias: excepcion.detalleAdvertencias
                     },
                     actor_id: req.usuario.id,
                     actor_tipo: 'administrador',

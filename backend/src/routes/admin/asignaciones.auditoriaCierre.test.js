@@ -128,7 +128,7 @@ describe('Comprobación 1 — trazabilidad de excepciones (confirmar_advertencia
         base();
         const sinMotivo = await llamarRuta({
             method: 'POST', url: '/',
-            body: { rodeo_id: 'R1', personas: [{ usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true }] }
+            body: { rodeo_id: 'R1', personas: [{ usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['DISTANCIA_EXCEDIDA'] }] }
         });
         expect(sinMotivo.body.creadas).toHaveLength(0);
         expect(sinMotivo.body.errores[0].requiere_motivo).toBe(true);
@@ -142,7 +142,7 @@ describe('Comprobación 1 — trazabilidad de excepciones (confirmar_advertencia
             method: 'POST', url: '/',
             body: {
                 rodeo_id: 'R1', personas: [{
-                    usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true,
+                    usuario_pagado_id: 'J1', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['DISTANCIA_EXCEDIDA'],
                     motivo_codigo: 'criterio_tecnico_area_deportiva', motivo_detalle: 'Único disponible en la zona'
                 }]
             }

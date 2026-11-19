@@ -111,7 +111,7 @@ function llamarFelipe() {
         body: {
             rodeo_id: 'R1',
             personas: [{
-                usuario_pagado_id: 'felipe-id', tipo_persona: 'jurado', confirmar_advertencias: true,
+                usuario_pagado_id: 'felipe-id', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['FINDE_CONSECUTIVO'],
                 motivo_codigo: 'jurado_no_disponible', motivo_detalle: 'Único disponible esa fecha'
             }]
         }
@@ -201,8 +201,8 @@ describe('CORRECCIÓN URGENTE — éxito parcial explícito con dos excepciones 
             body: {
                 rodeo_id: 'R1',
                 personas: [
-                    { usuario_pagado_id: 'jur-ok', tipo_persona: 'jurado', confirmar_advertencias: true, motivo_codigo: 'otro' },
-                    { usuario_pagado_id: 'jur-mal', tipo_persona: 'jurado', confirmar_advertencias: true, motivo_codigo: 'otro' }
+                    { usuario_pagado_id: 'jur-ok', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['FINDE_CONSECUTIVO'], motivo_codigo: 'otro' },
+                    { usuario_pagado_id: 'jur-mal', tipo_persona: 'jurado', confirmar_advertencias: true, causas_aceptadas: ['FINDE_CONSECUTIVO'], motivo_codigo: 'otro' }
                 ]
             }
         });

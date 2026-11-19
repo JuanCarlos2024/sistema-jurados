@@ -1404,8 +1404,13 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
         const cargaConfig = await cargarConfiguracionDesignacionActiva();
         if (!cargaConfig.error) {
             const contextoElegibilidad = await cargarDatosMotor([req.params.id]);
+            // Designación MANUAL (corrección 2026-11-19): clasificación propia
+            // de este flujo — la repetición por intervalo se presenta como
+            // advertencia con excepción administrativa (checkbox + motivo +
+            // bitácora), nunca como bloqueo absoluto; el motor automático no
+            // cambia. Mismo criterio que revalida POST /admin/asignaciones.
             for (const id of idsDisp) {
-                estadoElegibilidadPorId.set(id, evaluarElegibilidadJurado(contextoElegibilidad, req.params.id, id, cargaConfig.configuracion));
+                estadoElegibilidadPorId.set(id, evaluarElegibilidadJurado(contextoElegibilidad, req.params.id, id, cargaConfig.configuracion, { flujo: 'designacion_manual' }));
             }
         }
     } catch (err) {
@@ -1414,6 +1419,13 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
 
     const resultado = juradosDisp.map(j => {
         const elegibilidad = estadoElegibilidadPorId.get(j.id) || null;
+        // Aviso de repetición de asociación (corrección 2026-11-19): cuando
+        // la elegibilidad se evaluó, sale del MISMO cálculo del motor
+        // (antecedentes efectivos + ventana ±N meses, cumplido/incumplido);
+        // _repiteAsociacionSet queda solo como respaldo si la configuración
+        // no pudo cargarse (comportamiento previo, sin fechas).
+        const repeticionEvaluada = !!elegibilidad && !elegibilidad.error && Object.prototype.hasOwnProperty.call(elegibilidad, 'repeticion_asociacion');
+        const repeticion = repeticionEvaluada ? elegibilidad.repeticion_asociacion : null;
         return {
             id:                   j.id,
             nombre_completo:      j.nombre_completo,
@@ -1423,11 +1435,13 @@ router.get('/:id/jurados-disponibles', soloNoAnalista, soloNoComisionTecnica, as
             comuna:               j.comuna || null,
             designaciones:        designacionesMap[j.id] ? designacionesMap[j.id].size : 0,
             ya_asignado:          yaAsignadosSet.has(j.id),
-            repite_asociacion:    repiteAsocSet.has(j.id),
+            repite_asociacion:    repeticionEvaluada ? !!repeticion : repiteAsocSet.has(j.id),
+            repeticion_asociacion: repeticion,
             historial:            historialMap[j.id] || [],
             estado_elegibilidad:  elegibilidad?.estado ?? null,
             causas_obligatorias:  elegibilidad?.causas_obligatorias ?? [],
             causas_relajables:    elegibilidad?.causas_relajables ?? [],
+            detalle_advertencias: elegibilidad?.detalle_advertencias ?? [],
             distancia_km:         elegibilidad?.distancia_km ?? null
         };
     });

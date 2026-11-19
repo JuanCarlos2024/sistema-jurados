@@ -1625,7 +1625,7 @@ async function abrirDesignarJurado(rodeoId) {
                 <option value="C">Cat. C</option>
                 <option value="D">Cat. D</option>
             </select>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;" title="Oculta a quienes ya tienen una designación efectiva en la asociación de este rodeo (con intervalo cumplido o no)">
                 <input type="checkbox" id="dj-ocultar-repite" onchange="renderJuradosDesignacion()">
                 Ocultar que repiten
             </label>
@@ -1679,12 +1679,66 @@ function filtrarJuradosDesignacion() {
 const ETIQUETAS_CAUSA_JURADO = {
     DISPONIBILIDAD: 'Sin disponibilidad declarada', MISMA_ASOCIACION: 'Es de la misma asociación organizadora del rodeo',
     ASOCIACION_REPETIDA_TEMPORADA: 'Ya fue designado en esa asociación esta temporada',
-    ASOCIACION_REPETIDA_INTERVALO: 'Repite esa asociación antes del intervalo mínimo configurado',
+    ASOCIACION_REPETIDA_INTERVALO: 'Repite esa asociación dentro del intervalo mínimo configurado',
     MISMO_FINDE: 'Ya tiene otro rodeo ese mismo fin de semana', FINDE_CONSECUTIVO: 'Tiene otro rodeo el fin de semana inmediatamente anterior o siguiente',
     CATEGORIA_INCOMPATIBLE: 'Categoría no habilitada para esta clasificación de rodeo',
     JURADO_SIN_COMUNA_RESOLVIBLE: 'No se pudo resolver su comuna contra el catálogo', DISTANCIA_EXCEDIDA: 'Distancia excedida'
 };
 function _etiquetaCausaJurado(codigo) { return ETIQUETAS_CAUSA_JURADO[codigo] || codigo; }
+
+// Designación manual con excepciones (corrección 2026-11-19) — detalle
+// concreto (fechas/asociaciones) de cada advertencia, tal como lo entrega el
+// backend en `detalle_advertencias` (elegibilidadJurado.js). Solo presenta;
+// nunca decide qué es excepcionable. Devuelve líneas ya sanitizadas.
+function _lineasDetalleAdvertencia(d) {
+    if (!d) return [];
+    const rodeoTxt = r => `${sanitizar(r.club || '—')} (${sanitizar(r.asociacion || '—')}) — ${formatFecha(r.fecha)}`;
+    const rodeos = (d.rodeos || []).filter(r => r && r.fecha);
+    if (d.causa === 'ASOCIACION_REPETIDA_INTERVALO') {
+        const lineas = rodeos.map(r => `Designado en ${sanitizar(r.asociacion || d.asociacion || '—')}: ${rodeoTxt(r)}`);
+        if (d.meses) lineas.push(`Intervalo mínimo configurado: ${sanitizar(String(d.meses))} ${Number(d.meses) === 1 ? 'mes' : 'meses'} entre designaciones en la misma asociación.`);
+        return lineas;
+    }
+    if (d.causa === 'FINDE_CONSECUTIVO') return rodeos.map(r => `Fin de semana contiguo: ${rodeoTxt(r)}`);
+    if (d.causa === 'ASOCIACION_REPETIDA_TEMPORADA') return rodeos.map(r => `Esta temporada: ${rodeoTxt(r)}`);
+    if (d.causa === 'DISTANCIA_EXCEDIDA' && d.distancia_km != null) {
+        return [`Distancia: ${sanitizar(String(Math.round(d.distancia_km)))} km${d.maxima_km != null ? ` (máximo configurado: ${sanitizar(String(d.maxima_km))} km)` : ''}`];
+    }
+    return [];
+}
+// Aviso de repetición de asociación (corrección 2026-11-19). Usa
+// `repeticion_asociacion` del backend (antecedentes efectivos marcados
+// dentro/fuera del intervalo por la MISMA función que la regla del motor):
+//   - intervalo cumplido  -> aviso informativo gris, sin bloqueo;
+//   - intervalo incumplido -> advertencia naranja (requiere autorización manual);
+//   - sin datos evaluados (configuración no disponible) -> etiqueta previa.
+function _htmlRepeticionAsociacion(j) {
+    const r = j.repeticion_asociacion;
+    if (!r) {
+        return j.repite_asociacion ? `<span style="color:#c0392b; font-size:11px; margin-left:6px;">⚠ repite asociación</span>` : '';
+    }
+    const ants = r.antecedentes || [];
+    const anterior = ants.find(a => !a.posterior);
+    const posteriores = ants.filter(a => a.posterior);
+    const posterior = posteriores.length ? posteriores[posteriores.length - 1] : null;
+    const txt = a => `${formatFecha(a.fecha)}${a.club ? ' (' + sanitizar(a.club) + ')' : ''}`;
+    const partes = [];
+    if (anterior) partes.push('última: ' + txt(anterior));
+    if (posterior) partes.push('próxima: ' + txt(posterior));
+    const plazo = r.meses ? `${sanitizar(String(r.meses))} ${Number(r.meses) === 1 ? 'mes' : 'meses'}` : '';
+    if (r.intervalo_activo && r.intervalo_cumplido === false) {
+        const dentro = ants.filter(a => a.dentro_intervalo).map(txt).join(', ');
+        return `<span style="color:#CC6600; font-size:11px; margin-left:6px;" data-repeticion="incumplido">⚠ Repite ${sanitizar(r.asociacion || 'asociación')} dentro del intervalo de ${plazo}: ${dentro} — requiere autorización manual</span>`;
+    }
+    const estadoPlazo = r.intervalo_activo ? ` · intervalo de ${plazo} cumplido` : '';
+    return `<span style="color:var(--gris); font-size:11px; margin-left:6px;" data-repeticion="${r.intervalo_activo ? 'cumplido' : 'informativo'}">ℹ Ya juzgó ${sanitizar(r.asociacion || 'esta asociación')} — ${partes.join(' · ')}${estadoPlazo}</span>`;
+}
+
+function _detallePorCausa(detalle) {
+    const m = {};
+    for (const d of (detalle || [])) if (d && d.causa) m[d.causa] = d;
+    return m;
+}
 
 function renderJuradosDesignacion() {
     const lista = document.getElementById('dj-lista');
@@ -1703,9 +1757,7 @@ function renderJuradosDesignacion() {
         const badgeCat = j.categoria
             ? `<span class="badge badge-${j.categoria.toLowerCase()}" style="margin-left:4px;">${j.categoria}</span>`
             : '';
-        const repiteHtml = j.repite_asociacion
-            ? `<span style="color:#c0392b; font-size:11px; margin-left:6px;">⚠ repite asociación</span>`
-            : '';
+        const repiteHtml = _htmlRepeticionAsociacion(j);
         const yaHtml = j.ya_asignado
             ? `<span style="color:var(--gris); font-size:11px; margin-left:6px;">ya asignado</span>`
             : '';
@@ -1731,8 +1783,12 @@ function renderJuradosDesignacion() {
         const causasObligatoriasHtml = (j.causas_obligatorias || []).length > 0
             ? `<div style="font-size:11px; color:#922b21; margin-top:3px;">🚫 ${j.causas_obligatorias.map(_etiquetaCausaJurado).join(' · ')}</div>`
             : '';
+        const detalleJ = _detallePorCausa(j.detalle_advertencias);
         const causasRelajablesHtml = (j.causas_relajables || []).length > 0
-            ? `<div style="font-size:11px; color:#CC6600; margin-top:3px;">⚠ ${j.causas_relajables.map(_etiquetaCausaJurado).join(' · ')}</div>`
+            ? `<div style="font-size:11px; color:#CC6600; margin-top:3px;">⚠ ${j.causas_relajables.map(c => {
+                    const lineas = _lineasDetalleAdvertencia(detalleJ[c]);
+                    return sanitizar(_etiquetaCausaJurado(c)) + (lineas.length ? `<div style="color:var(--gris); margin-left:12px;">${lineas.join('<br>')}</div>` : '');
+                }).join('')}</div>`
             : '';
         const btnStyle = j.ya_asignado
             ? `class="btn btn-pequeño btn-outline" disabled`
@@ -1827,11 +1883,22 @@ function construirContenidoAdvertenciaDesignacion(nombre, val) {
 // vía construirContenidoAdvertenciaDesignacion()/validar-historial — esto
 // cubre las que ese endpoint no conocía (sobre todo distancia), sin
 // duplicar lo que ya existe.
-function construirContenidoAdvertenciaCausas(nombre, causasRelajables) {
+function construirContenidoAdvertenciaCausas(nombre, causasRelajables, detalleAdvertencias) {
+    // Un ÚNICO modal para todas las advertencias del candidato (corrección
+    // 2026-11-19): cada causa con sus fechas/asociaciones concretas — el
+    // administrador nunca acepta dos veces la misma advertencia.
+    const detalle = _detallePorCausa(detalleAdvertencias);
+    const incluyeIntervalo = causasRelajables.includes('ASOCIACION_REPETIDA_INTERVALO');
     return `
         <div style="font-size:16px; font-weight:700; color:#CC6600; margin-bottom:10px;">⚠ Advertencia de designación</div>
-        <div style="font-size:14px; margin-bottom:10px;"><strong>${sanitizar(nombre)}</strong> presenta ${causasRelajables.length > 1 ? 'las siguientes advertencias (preferencias flexibles, no restricciones obligatorias)' : 'la siguiente advertencia (preferencia flexible, no una restricción obligatoria)'}:</div>
-        <ul style="margin:0 0 10px 18px; font-size:13px;">${causasRelajables.map(c => `<li>${sanitizar(_etiquetaCausaJurado(c))}</li>`).join('')}</ul>
+        <div style="font-size:14px; margin-bottom:10px;"><strong>${sanitizar(nombre)}</strong> presenta ${causasRelajables.length > 1 ? 'las siguientes advertencias' : 'la siguiente advertencia'}:</div>
+        <ul style="margin:0 0 10px 18px; font-size:13px;">${causasRelajables.map(c => {
+            const lineas = _lineasDetalleAdvertencia(detalle[c]);
+            return `<li data-causa="${sanitizar(c)}">${sanitizar(_etiquetaCausaJurado(c))}${lineas.length ? `<div style="font-size:12px; color:var(--gris);">${lineas.join('<br>')}</div>` : ''}</li>`;
+        }).join('')}</ul>
+        <div style="font-size:12px; color:var(--gris); margin-bottom:6px;">${incluyeIntervalo
+            ? 'La repetición dentro del intervalo no es aplicada nunca por la propuesta automática. Solo puede designarse aquí como <strong>excepción administrativa</strong>: requiere confirmar, indicar un motivo y queda registrada en la bitácora de designaciones.'
+            : 'Puede designarse como excepción administrativa justificada: requiere confirmar, indicar un motivo y queda registrada en la bitácora de designaciones.'}</div>
         <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--gris-borde);">
             <div style="font-size:13px; font-weight:600;">Nueva designación:</div>
             <div style="font-size:12px; color:var(--gris);">${_filaRodeoAdvertencia(rodeoActual)}</div>
@@ -1896,38 +1963,19 @@ async function designarJurado(usuarioId) {
         return;
     }
 
-    let confirmarAdvertencias = false;
+    // Designación manual con excepciones (corrección 2026-11-19): UNA sola
+    // confirmación para todas las advertencias del candidato (antes se
+    // pedía una segunda vez con /validar-historial para la misma
+    // repetición/fecha consecutiva). El detalle concreto (fechas y
+    // asociaciones) ya viene del backend en detalle_advertencias, calculado
+    // con el mismo motor que revalida al guardar.
+    let causasAceptadas = [];
     if (j && j.estado_elegibilidad === 'CON_ADVERTENCIAS' && (j.causas_relajables || []).length > 0) {
-        const ok = await confirmarDesignacionConAdvertencia(construirContenidoAdvertenciaCausas(nombre, j.causas_relajables));
+        const ok = await confirmarDesignacionConAdvertencia(construirContenidoAdvertenciaCausas(nombre, j.causas_relajables, j.detalle_advertencias));
         if (!ok) return;
-        confirmarAdvertencias = true;
+        causasAceptadas = [...j.causas_relajables].sort();
     }
-
-    // Validación con información actual (no depende únicamente del flag ya
-    // calculado en bloque al abrir el modal): reutiliza el mismo endpoint que
-    // ya usa la asignación manual genérica (asignaciones.js: /validar-historial),
-    // con el detalle RICO (club/fecha exactos) de repetición de asociación /
-    // fecha consecutiva — se mantiene como confirmación adicional, nunca
-    // reemplazada por la genérica de arriba.
-    let val = null;
-    try {
-        val = await api.post('/admin/asignaciones/validar-historial', {
-            usuario_pagado_id: usuarioId,
-            rodeo_id: _designarRodeoId
-        });
-    } catch (e) {
-        // Advertencia administrativa, no un bloqueo: si la validación falla,
-        // no se impide designar (mismo criterio ya usado en guardarAsignacion()).
-        console.error('[designarJurado] error al validar historial:', e.message || e);
-    }
-
-    if (val && (val.repite_asociacion || val.fecha_consecutiva)) {
-        const ok = await confirmarDesignacionConAdvertencia(
-            construirContenidoAdvertenciaDesignacion(nombre, val)
-        );
-        if (!ok) return;
-        confirmarAdvertencias = true;
-    }
+    const confirmarAdvertencias = causasAceptadas.length > 0;
 
     // Corrección final de seguridad, sección 3 — toda excepción confirmada
     // ahora exige un motivo del catálogo (el backend la rechaza sin él).
@@ -1942,6 +1990,9 @@ async function designarJurado(usuarioId) {
             rodeo_id: _designarRodeoId,
             personas: [{
                 usuario_pagado_id: usuarioId, tipo_persona: 'jurado', confirmar_advertencias: confirmarAdvertencias,
+                // Lista EXACTA de advertencias aceptadas: el backend la compara
+                // con su revalidación y rechaza si cambiaron.
+                causas_aceptadas: confirmarAdvertencias ? causasAceptadas : undefined,
                 motivo_codigo: motivo?.motivo_codigo, motivo_detalle: motivo?.motivo_detalle
             }]
         });
@@ -1949,7 +2000,18 @@ async function designarJurado(usuarioId) {
         mostrarToast(`${nombre} designado correctamente`, 'success');
         cerrarModal();
         verDetalle(_designarRodeoId);
-    } catch(err) { mostrarError(err); }
+    } catch(err) {
+        // La elegibilidad cambió entre la carga de la lista y el guardado:
+        // nada se creó; se recarga la lista para que el administrador vea
+        // las advertencias actuales y vuelva a decidir.
+        const cambio = (err?.data?.errores || []).find(e => e.code === 'ADVERTENCIAS_CAMBIARON' || e.code === 'REQUIERE_CONFIRMACION_ADVERTENCIAS');
+        if (cambio) {
+            mostrarToast('Las advertencias de este jurado cambiaron desde que se cargó la lista. No se guardó la designación; revise la información actualizada.', 'error');
+            if (typeof cargarJuradosDesignacion === 'function') cargarJuradosDesignacion();
+            return;
+        }
+        mostrarError(err);
+    }
 }
 
 // ── Publicar designaciones del rodeo (hace visibles al jurado/delegado las ──
