@@ -142,9 +142,9 @@
                 </select>
             </div>
             <div class="form-group">
-                <label class="form-label">Comentario <span style="color:var(--rojo);">*</span></label>
+                <label class="form-label">Observación de la Comisión (opcional)</label>
                 <textarea id="dec-comision-comentario" class="form-control" rows="4"
-                    placeholder="Fundamente la resolución..." maxlength="2000"></textarea>
+                    placeholder="Si lo desea, fundamente la resolución..." maxlength="2000"></textarea>
                 <div id="dec-comision-error" class="form-error oculto"></div>
             </div>
         </div>
@@ -424,12 +424,7 @@
         const comentario = document.getElementById('dec-comision-comentario').value.trim();
         const errEl      = document.getElementById('dec-comision-error');
 
-        if (!comentario) {
-            errEl.textContent = 'El comentario es obligatorio.';
-            errEl.classList.remove('oculto');
-            return;
-        }
-        errEl.classList.add('oculto');
+        errEl.classList.add('oculto');   // la observación es opcional (106)
 
         try {
             const res = await api.post(`/admin/casos/${casoId}/decision-comision`, {

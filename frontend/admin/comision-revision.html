@@ -315,8 +315,8 @@ function htmlDecision(d) {
             <button type="button" class="crc-opcion error" id="opt-error" onclick="elegir('error')"><span class="nombre">ERROR</span>${sanitizar(CR.explicacionDecision(d.tipo, 'error', desc))}</button>
             <button type="button" class="crc-opcion acierto" id="opt-acierto" onclick="elegir('acierto')"><span class="nombre">ACIERTO</span>${sanitizar(CR.explicacionDecision(d.tipo, 'acierto', desc))}</button>
         </div>
-        <label class="form-label" for="crc-observacion" style="font-size:15px;">Observación de la Comisión (obligatoria)</label>
-        <textarea id="crc-observacion" class="form-control" rows="4" maxlength="2000" style="font-size:15px;" placeholder="Explique brevemente el fundamento de la decisión..."></textarea>
+        <label class="form-label" for="crc-observacion" style="font-size:15px;">Observación de la Comisión (opcional)</label>
+        <textarea id="crc-observacion" class="form-control" rows="4" maxlength="2000" style="font-size:15px;" placeholder="Si lo desea, explique brevemente el fundamento de la decisión..."></textarea>
         <div id="crc-error-decision" class="alerta alerta-error oculto" style="margin-top:10px;"></div>
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
             <button class="btn btn-primario crc-btn-grande" id="crc-btn-registrar" onclick="registrarDecision()">Registrar decisión</button>

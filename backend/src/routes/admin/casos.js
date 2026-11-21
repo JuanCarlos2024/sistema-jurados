@@ -505,14 +505,16 @@ router.post('/:id/decision-comision', soloRolEvaluacion('comision_tecnica', 'jef
     if (!decision) {
         return res.status(400).json({ error: 'decision inválida (ERROR o ACIERTO)' });
     }
-    if (!observacion || !String(observacion).trim()) {
-        return res.status(400).json({ error: 'La observación de la Comisión es obligatoria' });
+    // La observación de la Comisión es opcional (106): vacía se guarda como NULL.
+    const obs = String(observacion ?? '').trim();
+    if (obs.length > 2000) {
+        return res.status(400).json({ error: 'La observación no puede superar 2000 caracteres.' });
     }
 
     const { data, error } = await supabase.rpc('resolver_caso_derivado_comision', {
         p_caso_id:     req.params.id,
         p_decision:    decision,
-        p_observacion: String(observacion).trim(),
+        p_observacion: obs,
         p_actor_id:    req.usuario.id
     });
     if (error) {

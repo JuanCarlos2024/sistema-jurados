@@ -210,8 +210,25 @@ describe('resolver ERROR / ACIERTO', () => {
         expect(rpcLlamadas[0]).toEqual(['B', { p_caso_id: 'K2', p_decision: 'acierto', p_observacion: 'El jurado actuó bien', p_actor_id: 'COM-1' }]);
     });
 
-    test('sin observación, decisión inválida o etiquetas antiguas → 400 sin llamar a ninguna RPC', async () => {
-        expect((await resolver('resultado_alterado', 'RA-NOV1', { decision: 'error', observacion: '   ' })).statusCode).toBe(400);
+    test('observación OPCIONAL (106): ERROR y ACIERTO sin observación llaman a la RPC con texto vacío (se guarda NULL)', async () => {
+        const a = await resolver('resultado_alterado', 'RA-NOV1', { decision: 'error', observacion: '   ' });
+        expect(a.statusCode).toBe(200);
+        const b = await resolver('video_derivado', 'K2', { decision: 'acierto' });
+        expect(b.statusCode).toBe(200);
+        expect(rpcLlamadas).toEqual([
+            ['A', { p_revision_id: 'RA-NOV1', p_decision: 'error', p_observacion: '', p_actor_id: 'COM-1' }],
+            ['B', { p_caso_id: 'K2', p_decision: 'acierto', p_observacion: '', p_actor_id: 'COM-1' }]
+        ]);
+    });
+
+    test('sigue obligatoria la decisión: sin ERROR/ACIERTO → 400 sin llamar a ninguna RPC', async () => {
+        expect((await resolver('resultado_alterado', 'RA-NOV1', { observacion: 'x' })).statusCode).toBe(400);
+        expect((await resolver('video_derivado', 'K2', {})).statusCode).toBe(400);
+        expect(rpcLlamadas).toEqual([]);
+    });
+
+    test('decisión inválida, etiquetas antiguas u observación > 2000 → 400 sin llamar a ninguna RPC', async () => {
+        expect((await resolver('resultado_alterado', 'RA-NOV1', { decision: 'error', observacion: 'x'.repeat(2001) })).statusCode).toBe(400);
         expect((await resolver('resultado_alterado', 'RA-NOV1', { decision: 'aprobar', observacion: 'x' })).statusCode).toBe(400);
         expect((await resolver('video_derivado', 'K2', { decision: 'rechaza_apelacion', observacion: 'x' })).statusCode).toBe(400);
         expect(rpcLlamadas).toEqual([]);

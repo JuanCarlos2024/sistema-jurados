@@ -47,10 +47,14 @@ describe('textos para la Comisión', () => {
         expect(t).toMatch(/última revisión pendiente.*publicarse automáticamente/);
         expect(CR.textoConfirmacion({ ...d, es_ultima_pendiente: false }, 'error')).not.toMatch(/última revisión/);
     });
-    test('validación: decisión obligatoria y observación obligatoria', () => {
+    test('validación: decisión obligatoria; observación OPCIONAL (106), solo con largo máximo', () => {
         expect(CR.validarDecision(null, 'x')).toMatch(/ERROR o ACIERTO/);
-        expect(CR.validarDecision('error', '   ')).toMatch(/observación/);
+        expect(CR.validarDecision(null, '')).toMatch(/ERROR o ACIERTO/);
+        expect(CR.validarDecision('error', '   ')).toBeNull();
+        expect(CR.validarDecision('acierto', '')).toBeNull();
+        expect(CR.validarDecision('acierto', undefined)).toBeNull();
         expect(CR.validarDecision('acierto', 'ok')).toBeNull();
+        expect(CR.validarDecision('error', 'x'.repeat(2001))).toMatch(/2000/);
     });
     test('consulta: estado por defecto "pendientes"; "todos/todas" no se envían', () => {
         expect(CR.construirQuery({})).toBe('estado=pendientes');

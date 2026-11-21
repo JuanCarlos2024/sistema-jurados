@@ -54,7 +54,7 @@ router.post('/revisiones/:tipo/:id/resolver', async (req, res) => {
     const observacion = String(req.body?.observacion || '').trim();
     if (![TIPO_A, TIPO_B].includes(tipo)) return res.status(400).json({ error: 'Tipo de revisión inválido.' });
     if (!['error', 'acierto'].includes(decision)) return res.status(400).json({ error: 'Seleccione ERROR o ACIERTO.' });
-    if (!observacion) return res.status(400).json({ error: 'Escriba una observación que fundamente la decisión.' });
+    // La observación es opcional (106): vacía se guarda como NULL.
     if (observacion.length > 2000) return res.status(400).json({ error: 'La observación no puede superar 2000 caracteres.' });
 
     const rpc = tipo === TIPO_A

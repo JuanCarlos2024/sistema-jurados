@@ -110,8 +110,8 @@
 
     function validarDecision(decision, observacion) {
         if (!['error', 'acierto'].includes(decision)) return 'Elija ERROR o ACIERTO.';
-        if (!String(observacion || '').trim()) return 'Escriba una observación que fundamente la decisión.';
-        if (String(observacion).trim().length > 2000) return 'La observación no puede superar 2000 caracteres.';
+        // La observación es opcional (106); solo se limita su largo.
+        if (String(observacion || '').trim().length > 2000) return 'La observación no puede superar 2000 caracteres.';
         return null;
     }
 

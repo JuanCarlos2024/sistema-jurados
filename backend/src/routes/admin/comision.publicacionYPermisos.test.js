@@ -119,6 +119,20 @@ describe('caminos alternativos cerrados', () => {
         expect(r.statusCode).toBe(200);
         expect(rpcs.find(x => x[0] === 'resolverB')[1]).toEqual({ p_caso_id: 'KD', p_decision: 'acierto', p_observacion: 'Bien jurado', p_actor_id: 'COM' });
     });
+
+    test('/casos/:id/decision-comision: observación OPCIONAL (106) — sin comentario llama a la RPC con texto vacío; sin decisión → 400', async () => {
+        base({ tablas: { evaluacion_casos: [{ ...derivado }] } });
+        const r = await llamarRouter(casos, { metodo: 'POST', url: '/KD/decision-comision', params: { id: 'KD' },
+            body: { decision: 'rechaza_apelacion', comentario_comision: '   ' }, usuario: { id: 'COM', rol_evaluacion: 'comision_tecnica' } });
+        expect(r.statusCode).toBe(200);
+        expect(rpcs.find(x => x[0] === 'resolverB')[1]).toEqual({ p_caso_id: 'KD', p_decision: 'error', p_observacion: '', p_actor_id: 'COM' });
+
+        base({ tablas: { evaluacion_casos: [{ ...derivado }] } });
+        const sinDecision = await llamarRouter(casos, { metodo: 'POST', url: '/KD/decision-comision', params: { id: 'KD' },
+            body: { comentario_comision: 'x' }, usuario: { id: 'COM', rol_evaluacion: 'comision_tecnica' } });
+        expect(sinDecision.statusCode).toBe(400);
+        expect(rpcs.filter(x => x[0] === 'resolverB')).toEqual([]);
+    });
 });
 
 describe('cierre del Ciclo 1 genera la revisión de resultados alterados', () => {
