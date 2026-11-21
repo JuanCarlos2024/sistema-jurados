@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloRolEvaluacion } = require('../../middleware/auth');
+const { soloRolEvaluacion, soloNoComisionTecnica } = require('../../middleware/auth');
 const { intentarAutoPublicar } = require('../../services/publicacion');
 
 // GET / — lista de casos por evaluacion_id (con join a ciclo para el frontend)
@@ -155,7 +155,7 @@ router.patch('/:id', soloRolEvaluacion('analista', 'jefe_area'), async (req, res
 });
 
 // DELETE /:id — eliminar caso con cascade seguro
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', soloNoComisionTecnica, async (req, res) => {
     const { confirmacion } = req.body || {};
 
     const { data: caso } = await supabase
@@ -197,7 +197,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // PATCH /:id/anular — anulación lógica (soft delete) del caso
-router.patch('/:id/anular', async (req, res) => {
+router.patch('/:id/anular', soloNoComisionTecnica, async (req, res) => {
     const { motivo, comentario } = req.body;
     if (!motivo || !motivo.trim()) {
         return res.status(400).json({ error: 'El motivo de anulación es obligatorio' });
@@ -291,7 +291,7 @@ router.patch('/:id/anular', async (req, res) => {
 });
 
 // POST /:id/guardar-en-banco — guardar caso en Banco de Situaciones
-router.post('/:id/guardar-en-banco', async (req, res) => {
+router.post('/:id/guardar-en-banco', soloNoComisionTecnica, async (req, res) => {
     const { comentario_banco } = req.body;
     if (!comentario_banco || !comentario_banco.trim()) {
         return res.status(400).json({ error: 'El comentario es obligatorio para guardar en el Banco de Situaciones' });
@@ -346,7 +346,7 @@ router.post('/:id/guardar-en-banco', async (req, res) => {
 });
 
 // POST /:id/decision-analista
-router.post('/:id/decision-analista', async (req, res) => {
+router.post('/:id/decision-analista', soloNoComisionTecnica, async (req, res) => {
     const { decision, comentario_analista } = req.body;
 
     if (!decision || !['mantener', 'revertir', 'derivar_comision'].includes(decision)) {
@@ -398,7 +398,9 @@ router.post('/:id/decision-analista', async (req, res) => {
         }
     }
 
-    const { error: updErr } = await supabase
+    // Condicional al estado leído: si el caso cambió entretanto (p. ej. el
+    // cierre del ciclo ya lo resolvió), no se pisa — se informa 409.
+    const { data: actualizados, error: updErr } = await supabase
         .from('evaluacion_casos')
         .update({
             decision_analista:   decision,
@@ -409,9 +411,14 @@ router.post('/:id/decision-analista', async (req, res) => {
             resolucion_final,
             updated_at:          now
         })
-        .eq('id', req.params.id);
+        .eq('id', req.params.id)
+        .eq('estado', caso.estado)
+        .select('id');
 
     if (updErr) return res.status(500).json({ error: updErr.message });
+    if (!actualizados || actualizados.length === 0) {
+        return res.status(409).json({ error: 'El caso cambió mientras lo revisaba. Recargue la evaluación e intente nuevamente.' });
+    }
 
     await supabase.from('evaluacion_auditoria').insert({
         evaluacion_id: caso.evaluacion_id,
@@ -480,117 +487,46 @@ router.post('/:id/decision-analista', async (req, res) => {
 });
 
 // POST /:id/decision-comision — solo comision_tecnica o jefe_area o admin pleno
+// Migración 103: la decisión se registra con la RPC transaccional
+// resolver_caso_derivado_comision (caso + auditoría en una transacción, con
+// la evaluación bloqueada). Decisión visible ERROR/ACIERTO; se siguen
+// aceptando los valores históricos de esta ruta (Bandeja de Comisión):
+//   error   = rechaza_apelacion → se mantiene el descuento
+//   acierto = aprueba_apelacion → el descuento se excluye
+const DECISION_VISIBLE_CASO = { error: 'error', acierto: 'acierto', rechaza_apelacion: 'error', aprueba_apelacion: 'acierto' };
+const { continuarTrasDecisionComision } = require('../../services/publicacion');
+const { mensajeErrorComision } = require('../../services/erroresComision');
+
 router.post('/:id/decision-comision', soloRolEvaluacion('comision_tecnica', 'jefe_area'), async (req, res) => {
     // Acepta 'decision' o 'decision_comision' por compatibilidad con distintos clientes
-    const decision = req.body.decision || req.body.decision_comision;
-    const { comentario_comision } = req.body;
+    const decision = DECISION_VISIBLE_CASO[req.body.decision || req.body.decision_comision];
+    const observacion = req.body.observacion ?? req.body.comentario_comision;
 
-    if (!decision || !['aprueba_apelacion', 'rechaza_apelacion'].includes(decision)) {
-        return res.status(400).json({ error: 'decision inválida (aprueba_apelacion|rechaza_apelacion)' });
+    if (!decision) {
+        return res.status(400).json({ error: 'decision inválida (ERROR o ACIERTO)' });
     }
-    if (!comentario_comision || !comentario_comision.trim()) {
-        return res.status(400).json({ error: 'comentario_comision es obligatorio' });
-    }
-
-    const { data: caso, error: casoErr } = await supabase
-        .from('evaluacion_casos')
-        .select('id, ciclo_id, evaluacion_id, estado')
-        .eq('id', req.params.id)
-        .single();
-
-    if (casoErr) return res.status(404).json({ error: 'Caso no encontrado' });
-    if (caso.estado !== 'derivado_comision') {
-        return res.status(409).json({ error: `El caso debe estar en derivado_comision (actual: ${caso.estado})` });
+    if (!observacion || !String(observacion).trim()) {
+        return res.status(400).json({ error: 'La observación de la Comisión es obligatoria' });
     }
 
-    const now             = new Date().toISOString();
-    const resolucion_final = decision === 'aprueba_apelacion' ? 'apelacion_acogida' : 'apelacion_rechazada';
+    const { data, error } = await supabase.rpc('resolver_caso_derivado_comision', {
+        p_caso_id:     req.params.id,
+        p_decision:    decision,
+        p_observacion: String(observacion).trim(),
+        p_actor_id:    req.usuario.id
+    });
+    if (error) {
+        const m = mensajeErrorComision(error);
+        return res.status(m.status).json({ error: m.mensaje, code: m.code });
+    }
+    const r = Array.isArray(data) ? data[0] : data;
 
-    const { error: updErr } = await supabase
-        .from('evaluacion_casos')
-        .update({
-            decision_comision:   decision,
-            comentario_comision: comentario_comision.trim(),
-            comision_decidio_en: now,
-            comision_miembro_id: req.usuario.id,
-            estado:              'resuelto',
-            resolucion_final,
-            updated_at:          now
-        })
-        .eq('id', req.params.id);
-
-    if (updErr) return res.status(500).json({ error: updErr.message });
-
-    await supabase.from('evaluacion_auditoria').insert({
-        evaluacion_id: caso.evaluacion_id,
-        ciclo_id:      caso.ciclo_id,
-        caso_id:       req.params.id,
-        accion:        'decision_comision',
-        detalle:       { decision, resolucion_final },
-        actor_id:      req.usuario.id,
-        actor_tipo:    'administrador',
-        actor_nombre:  req.usuario.nombre,
-        ip_address:    req.ip
+    const tras = await continuarTrasDecisionComision({
+        evaluacion_id: r.evaluacion_id, ciclo_id: r.ciclo_id,
+        actor_id: req.usuario.id, actor_nombre: req.usuario.nombre, ip: req.ip
     });
 
-    let ciclo_cerrado        = false;
-    let evaluacion_actualizada = null;
-
-    // Auto-cerrar ciclo si todos los casos están resueltos
-    const { data: noResueltos } = await supabase
-        .from('evaluacion_casos')
-        .select('id')
-        .eq('ciclo_id', caso.ciclo_id)
-        .neq('estado', 'resuelto');
-
-    if (!noResueltos || noResueltos.length === 0) {
-        await supabase
-            .from('evaluacion_ciclos')
-            .update({ estado: 'cerrado', fecha_cierre: now, updated_at: now })
-            .eq('id', caso.ciclo_id)
-            .neq('estado', 'cerrado');
-        ciclo_cerrado = true;
-
-        // Intentar auto-publicar si ambos ciclos quedaron cerrados
-        const autoPublicado = await intentarAutoPublicar(
-            caso.evaluacion_id, req.usuario.id, req.usuario.nombre, req.ip
-        );
-        if (autoPublicado && !evaluacion_actualizada) {
-            const { data: evAct } = await supabase
-                .from('evaluaciones')
-                .select('id, estado, nota_final, puntaje_final')
-                .eq('id', caso.evaluacion_id)
-                .single();
-            evaluacion_actualizada = evAct;
-        }
-    }
-
-    // Si la evaluacion estaba en pendiente_comision y ya no quedan derivados → volver a en_proceso
-    const { data: ev } = await supabase
-        .from('evaluaciones')
-        .select('estado')
-        .eq('id', caso.evaluacion_id)
-        .single();
-
-    if (ev && ev.estado === 'pendiente_comision') {
-        const { count: derivadoCount } = await supabase
-            .from('evaluacion_casos')
-            .select('id', { count: 'exact', head: true })
-            .eq('evaluacion_id', caso.evaluacion_id)
-            .eq('estado', 'derivado_comision');
-
-        if (!derivadoCount || derivadoCount === 0) {
-            const { data: evAct } = await supabase
-                .from('evaluaciones')
-                .update({ estado: 'en_proceso', updated_at: now })
-                .eq('id', caso.evaluacion_id)
-                .select()
-                .single();
-            evaluacion_actualizada = evAct;
-        }
-    }
-
-    res.json({ ciclo_cerrado, evaluacion_actualizada });
+    res.json({ ciclo_cerrado: tras.ciclo_cerrado, evaluacion_actualizada: tras.evaluacion, publicado: tras.publicado });
 });
 
 module.exports = router;

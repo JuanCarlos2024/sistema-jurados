@@ -47,6 +47,7 @@ router.use('/cartillas-delegado', require('./cartillas-delegado'));
 router.use('/disponibilidad', require('./disponibilidad'));
 router.use('/hojavida', require('./hojavida'));
 router.use('/evaluaciones', require('./evaluaciones'));
+router.use('/comision', require('./comision'));
 router.use('/evaluacion-banco-situaciones', require('./evaluacion-banco-situaciones'));
 router.use('/ciclos', require('./ciclos'));
 router.use('/casos', require('./casos'));

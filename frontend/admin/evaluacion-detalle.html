@@ -910,6 +910,12 @@ function renderAccionesEval(ev) {
         items.push(`<button class="btn btn-peligro btn-pequeño" onclick="abrirModalDevolver()">Devolver al analista</button>`);
     }
 
+    // Migración 103: salida EXCEPCIONAL solo para Administrador pleno, cuando la
+    // Comisión no responde (página propia, distinta del cierre normal).
+    if (rolEval === null && !['aprobado', 'publicado', 'cerrado'].includes(ev.estado)) {
+        items.push(`<a href="/admin/evaluacion-cierre-excepcional.html?id=${ev.id}" class="btn btn-pequeño" style="background:#4a148c;color:#fff;border:1px solid #4a148c;" title="Solo cuando la Comisión no responde">CIERRE EXCEPCIONAL — ADMINISTRADOR</a>`);
+    }
+
     if (items.length === 0) return '';
     return `<div class="acciones-card">${items.join('')}</div>`;
 }

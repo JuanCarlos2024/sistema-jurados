@@ -134,10 +134,11 @@
             <input type="hidden" id="dec-comision-caso-id">
             <div id="dec-comision-contexto" style="margin-bottom:14px;"></div>
             <div class="form-group" style="margin-bottom:14px;">
-                <label class="form-label">Resolución de la comisión</label>
+                <label class="form-label">Decisión de la Comisión</label>
+                <!-- Migración 103: solo ERROR / ACIERTO visibles (los valores internos no cambian). -->
                 <select id="dec-comision-valor" class="form-control">
-                    <option value="aprueba_apelacion">Revertir descuento — El descuento NO se aplica</option>
-                    <option value="rechaza_apelacion">Confirmar descuento — El descuento SÍ se aplica</option>
+                    <option value="rechaza_apelacion">ERROR — Hubo error del jurado: el descuento SÍ se aplica</option>
+                    <option value="aprueba_apelacion">ACIERTO — El jurado actuó correctamente: el descuento NO se aplica</option>
                 </select>
             </div>
             <div class="form-group">
@@ -369,8 +370,8 @@
         // Decisión de comisión ya tomada
         if (yaDecidio) {
             const decLabel = {
-                aprueba_apelacion: 'Aprueba apelación',
-                rechaza_apelacion: 'Rechaza apelación'
+                aprueba_apelacion: 'ACIERTO',
+                rechaza_apelacion: 'ERROR'
             };
             html += `<div class="decision-comision-tomada">
                 <strong>Resolución comisión: ${decLabel[caso.decision_comision] || caso.decision_comision}</strong>
@@ -393,7 +394,7 @@
     window.abrirModalDecision = function(datos) {
         document.getElementById('dec-comision-caso-id').value = datos.id;
         document.getElementById('modal-dec-comision-titulo').textContent = `Caso #${datos.numero} — Resolución comisión`;
-        document.getElementById('dec-comision-valor').value = datos.decisionComision || 'aprueba_apelacion';
+        document.getElementById('dec-comision-valor').value = datos.decisionComision || 'rechaza_apelacion';
         document.getElementById('dec-comision-comentario').value = datos.comentarioComision || '';
         document.getElementById('dec-comision-error').classList.add('oculto');
 

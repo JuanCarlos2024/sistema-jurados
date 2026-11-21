@@ -60,6 +60,18 @@ function crearSupabaseMemoria({ tablas = {}, unicos = {}, rpc = {} } = {}) {
             gte(k, v) { filtro('gte', f => f[k] >= v, k, v); return api; },
             lte(k, v) { filtro('lte', f => f[k] <= v, k, v); return api; },
             is(k, v) { filtro('is', f => (f[k] ?? null) === v, k, v); return api; },
+        // .not(col, 'in', '(a,b)') / .not(col, 'is', null) — misma sintaxis que PostgREST.
+        not(k, op, v) {
+            if (op === 'in') {
+                const lista = Array.isArray(v) ? v : String(v).replace(/^\(|\)$/g, '').split(',').filter(Boolean);
+                filtro('not.in', f => !lista.includes(f[k]), k, lista);
+            } else if (op === 'is') {
+                filtro('not.is', f => (f[k] ?? null) !== v, k, v);
+            } else {
+                filtro('not.' + op, f => f[k] !== v, k, v);
+            }
+            return api;
+        },
             ilike() { return api; }, or() { return api; },
             order(k, o) { q.orden = { k, asc: !(o && o.ascending === false) }; return api; },
             range(d, h) { q.desde = d; q.hasta = h; return api; },

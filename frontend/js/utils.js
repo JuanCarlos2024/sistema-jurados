@@ -170,6 +170,8 @@ function _ajustarMenuPorRol(rol) {
             if ((rol === 'analista' || rol === 'comision_tecnica') && href.endsWith('rodeos.html')) a.style.display = 'none';
             // Informe de Gestión: solo admin pleno, director y jefe de área (mismo criterio del backend)
             if ((rol === 'analista' || rol === 'comision_tecnica') && href.endsWith('informe-gestion.html')) a.style.display = 'none';
+            // Portal de Comisión (103): solo Comisión Técnica, Jefe de Área y admin pleno (mismo criterio del backend)
+            if (rol === 'analista' && href.endsWith('comision-revision.html')) a.style.display = 'none';
         }
     });
     // Ocultar nav-seccion vacías (sin items visibles debajo)

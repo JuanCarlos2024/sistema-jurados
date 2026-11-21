@@ -38,6 +38,7 @@
         { href: '/admin/analisis-preguntas.html',          icon: '📊', label: 'Análisis de Preguntas' },
         { s: 'Evaluación Técnica' },
         { href: '/admin/evaluaciones.html',                    icon: '📝', label: 'Análisis de Casos' },
+        { href: '/admin/comision-revision.html',               icon: '⚖️', label: 'Revisión Comisión' },
         { href: '/admin/evaluacion-dashboard.html',            icon: '📊', label: 'Dashboard Eval.' },
         { href: '/admin/evaluacion-reportes.html',             icon: '📌', label: 'Reportes Eval.' },
         { href: '/admin/evaluacion-banco-situaciones.html',    icon: '⭐', label: 'Banco de Situaciones' },

@@ -4,8 +4,8 @@ const supabase     = require('../../config/supabase');
 const multer       = require('multer');
 const XLSX         = require('xlsx');
 const emailService = require('../../services/emailService');
-const { intentarAutoPublicar } = require('../../services/publicacion');
-const { soloRolEvaluacion }    = require('../../middleware/auth');
+const { intentarAutoPublicar, generarRevisionResultadoAlterado } = require('../../services/publicacion');
+const { soloRolEvaluacion, soloNoComisionTecnica } = require('../../middleware/auth');
 
 // Calcula el próximo día-de-semana a partir de una fecha, con hora específica
 function calcFechaLimite(fechaApertura, diaLimiteStr, horaLimiteStr) {
@@ -51,7 +51,7 @@ const uploadExcel = multer({
 });
 
 // POST /:id/abrir — abrir ciclo al jurado
-router.post('/:id/abrir', async (req, res) => {
+router.post('/:id/abrir', soloNoComisionTecnica, async (req, res) => {
     const { data: ciclo, error: cicloErr } = await supabase
         .from('evaluacion_ciclos')
         .select('*, evaluacion:evaluaciones(id, estado, rodeo_id, rodeo:rodeos(id, club, fecha, asociacion))')
@@ -148,7 +148,7 @@ router.post('/:id/abrir', async (req, res) => {
 });
 
 // POST /:id/reenviar-notificacion — reenviar correo a jurados
-router.post('/:id/reenviar-notificacion', async (req, res) => {
+router.post('/:id/reenviar-notificacion', soloNoComisionTecnica, async (req, res) => {
     const { data: ciclo, error: cicloErr } = await supabase
         .from('evaluacion_ciclos')
         .select('*, evaluacion:evaluaciones(id, rodeo_id, rodeo:rodeos(id, club, fecha, asociacion))')
@@ -205,7 +205,7 @@ router.post('/:id/reenviar-notificacion', async (req, res) => {
 });
 
 // POST /:id/reabrir — reabrir ciclo cerrado/en_revision
-router.post('/:id/reabrir', async (req, res) => {
+router.post('/:id/reabrir', soloNoComisionTecnica, async (req, res) => {
     const { motivo } = req.body;
 
     if (!motivo || !motivo.trim()) {
@@ -283,7 +283,7 @@ router.post('/:id/reabrir', async (req, res) => {
 });
 
 // POST /:id/abrir-sin-casos — abrir ciclo sin casos (solo modo descuento_automatico)
-router.post('/:id/abrir-sin-casos', async (req, res) => {
+router.post('/:id/abrir-sin-casos', soloNoComisionTecnica, async (req, res) => {
     const { comentario_sin_casos } = req.body;
 
     if (!comentario_sin_casos || !comentario_sin_casos.trim()) {
@@ -419,12 +419,20 @@ router.post('/:id/habilitar-respuesta-jurado', soloRolEvaluacion(), async (req, 
     }
 
     // Obtener todos los casos del ciclo
-    const { data: casos, error: casosErr } = await supabase
+    const { data: casosTodos, error: casosErr } = await supabase
         .from('evaluacion_casos')
-        .select('id')
+        .select('*')
         .eq('ciclo_id', req.params.id);
 
     if (casosErr) return res.status(500).json({ error: casosErr.message });
+
+    // Migración 103: nunca se reabren (ni se les borra la resolución) los casos
+    // con decisión de la Comisión o decisión administrativa excepcional, ni los
+    // derivados a la Comisión aún pendientes — esas decisiones no se deshacen
+    // en silencio al habilitar de nuevo las respuestas del jurado.
+    const casos = (casosTodos || []).filter(c =>
+        !c.decision_comision && !c.decision_admin_excepcional &&
+        !(c.estado === 'derivado_comision' && c.decision_analista === 'derivar_comision'));
 
     const casoIds = (casos || []).map(c => c.id);
 
@@ -507,7 +515,10 @@ router.post('/:id/habilitar-respuesta-jurado', soloRolEvaluacion(), async (req, 
 });
 
 // POST /:id/cerrar — cerrar ciclo manualmente
-router.post('/:id/cerrar', async (req, res) => {
+// Cierre NORMAL de un ciclo (mismo procedimiento de siempre). Extraído como
+// función con nombre (cuerpo sin cambios) para que el CIERRE EXCEPCIONAL —
+// ADMINISTRADOR cierre ciclos exactamente con estas mismas reglas.
+async function cerrarCicloNormal(req, res) {
     const { motivo_cierre } = req.body;
 
     const { data: ciclo, error: cicloErr } = await supabase
@@ -620,6 +631,9 @@ router.post('/:id/cerrar', async (req, res) => {
             ip_address:    req.ip
         });
 
+        // Migración 103: al cerrar el Ciclo 1 con resultados alterados nace la
+        // revisión obligatoria de la Comisión (idempotente).
+        if (ciclo.numero_ciclo === 1) await generarRevisionResultadoAlterado(ciclo.evaluacion_id, req.usuario.id, 'cierre_ciclo_1');
         await intentarAutoPublicar(ciclo.evaluacion_id, req.usuario.id, req.usuario.nombre, req.ip);
         return res.json(cicloActDA);
     }
@@ -783,6 +797,8 @@ router.post('/:id/cerrar', async (req, res) => {
 
     // Si el ciclo quedó completamente cerrado, intentar auto-publicar la evaluación
     if (estadoCiclo === 'cerrado') {
+        // Migración 103: revisión de resultados alterados al cerrar el Ciclo 1.
+        if (ciclo.numero_ciclo === 1) await generarRevisionResultadoAlterado(ciclo.evaluacion_id, req.usuario.id, 'cierre_ciclo_1');
         await intentarAutoPublicar(
             ciclo.evaluacion_id,
             req.usuario.id,
@@ -792,7 +808,21 @@ router.post('/:id/cerrar', async (req, res) => {
     }
 
     res.json(cicloAct);
-});
+}
+router.post('/:id/cerrar', soloNoComisionTecnica, cerrarCicloNormal);
+
+// Ejecuta el cierre normal desde código (sin HTTP) y devuelve { status, body }.
+function cerrarCicloInterno({ cicloId, usuario, motivo_cierre = null, ip = null }) {
+    return new Promise((resolve, reject) => {
+        const req = { params: { id: cicloId }, body: { motivo_cierre }, usuario, ip };
+        const res = {
+            statusCode: 200,
+            status(c) { this.statusCode = c; return this; },
+            json(b) { resolve({ status: this.statusCode, body: b }); return this; }
+        };
+        cerrarCicloNormal(req, res).catch(reject);
+    });
+}
 
 async function getDescuentos() {
     const { data } = await supabase
@@ -808,7 +838,7 @@ async function getDescuentos() {
 }
 
 // POST /:id/casos — agregar caso al ciclo
-router.post('/:id/casos', async (req, res) => {
+router.post('/:id/casos', soloNoComisionTecnica, async (req, res) => {
     const { tipo_caso, descripcion, video_url } = req.body;
 
     if (!tipo_caso || !['interpretativa', 'reglamentaria', 'informativo'].includes(tipo_caso)) {
@@ -907,7 +937,7 @@ router.get('/:id/plantilla', async (req, res) => {
 });
 
 // POST /:id/importar — importar casos desde Excel (?preview=true para previsualizar sin insertar)
-router.post('/:id/importar', uploadExcel.single('archivo'), async (req, res) => {
+router.post('/:id/importar', soloNoComisionTecnica, uploadExcel.single('archivo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
 
     const preview = req.query.preview === 'true';
@@ -1089,3 +1119,4 @@ router.use((err, req, res, next) => {
 });
 
 module.exports = router;
+module.exports.cerrarCicloInterno = cerrarCicloInterno;

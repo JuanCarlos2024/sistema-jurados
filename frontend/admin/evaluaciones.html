@@ -96,7 +96,30 @@
                     <label style="font-size:11px;display:block;margin-bottom:2px;color:var(--gris);">Fecha hasta</label>
                     <input type="date" id="fil-fecha-hasta" onchange="cargarEvaluaciones(1)">
                 </div>
+                <!-- Migración 103: filtros de resultados alterados y Comisión -->
+                <select id="fil-alterados" onchange="cargarEvaluaciones(1)" title="Resultados alterados">
+                    <option value="">Resultados alterados: Todos</option>
+                    <option value="si">Resultados alterados: Sí</option>
+                    <option value="no">Resultados alterados: No</option>
+                </select>
+                <select id="fil-derivado" onchange="cargarEvaluaciones(1)" title="Derivado a Comisión">
+                    <option value="">Derivado a Comisión: Todos</option>
+                    <option value="si">Derivado a Comisión: Sí</option>
+                    <option value="no">Derivado a Comisión: No</option>
+                </select>
+                <select id="fil-estado-comision" onchange="cargarEvaluaciones(1)" title="Estado Comisión">
+                    <option value="">Estado Comisión: Todos</option>
+                    <option value="pendiente">Estado Comisión: Pendiente</option>
+                    <option value="en_revision">Estado Comisión: En revisión</option>
+                    <option value="resuelto">Estado Comisión: Resuelto</option>
+                </select>
+                <select id="fil-resolucion" onchange="cargarEvaluaciones(1)" title="Resolución">
+                    <option value="">Resolución: Todas</option>
+                    <option value="error">Resolución: Error</option>
+                    <option value="acierto">Resolución: Acierto</option>
+                </select>
                 <button class="btn btn-secundario btn-pequeño" onclick="limpiarFiltros()">Limpiar</button>
+                <button class="btn btn-success btn-pequeño" id="btn-exportar-analisis" onclick="exportarAnalisisExcel()">Exportar Excel</button>
             </div>
 
             <!-- Tabla -->
@@ -113,14 +136,16 @@
                                 <th>Faltas</th>
                                 <th>Nota final</th>
                                 <th>Ciclo 1 — Primeros 3</th>
+                                <th>Resultados alterados</th>
                                 <th>Ciclo 2 — Campeones</th>
+                                <th>Comisión</th>
                                 <th>Estado</th>
                                 <th>Creada</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="tbody-evaluaciones">
-                            <tr><td colspan="12" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
+                            <tr><td colspan="14" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -372,28 +397,47 @@ function labelRol(rol) {
     return M[rol] || rol;
 }
 
+// ── Filtros activos (los usan la tabla Y la exportación Excel) ─────
+function filtrosListadoQuery() {
+    const v = (id) => (document.getElementById(id)?.value || '').trim();
+    const pares = [
+        ['estado', v('fil-estado')], ['analista_id', v('fil-analista')], ['buscar', v('fil-buscar')],
+        ['respuesta_estado', v('fil-respuesta')], ['fecha_desde', v('fil-fecha-desde')], ['fecha_hasta', v('fil-fecha-hasta')],
+        ['resultados_alterados', v('fil-alterados')], ['derivado_comision', v('fil-derivado')],
+        ['estado_comision', v('fil-estado-comision')], ['resolucion', v('fil-resolucion')]
+    ];
+    return pares.filter(([, val]) => val).map(([k, val]) => `&${k}=${encodeURIComponent(val)}`).join('');
+}
+
+// Celda "Comisión": No derivado / Pendiente 0/3 / En revisión 1/3 / Revisado 3/3
+function renderComisionResumen(c) {
+    if (!c || c.estado === 'no_derivado') return '<span class="texto-gris">No derivado</span>';
+    const color = { pendiente: '#9a5b00', en_revision: '#1a5276', resuelto: '#1e8449' }[c.estado] || '#333';
+    return `<span style="font-weight:600;color:${color};">${sanitizar(c.etiqueta)}</span>`;
+}
+
+async function exportarAnalisisExcel() {
+    const btn = document.getElementById('btn-exportar-analisis');
+    btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+        await api.descargar('/admin/evaluaciones/exportar?' + filtrosListadoQuery().replace(/^&/, ''),
+            `analisis_casos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+        mostrarToast(e.message || 'Error al exportar', 'error');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Exportar Excel';
+    }
+}
+
 // ── Cargar tabla ──────────────────────────────────────────────────
 async function cargarEvaluaciones(pagina) {
     pagina = pagina || 1;
     paginaActual = pagina;
 
-    const estado      = document.getElementById('fil-estado').value;
-    const analista    = document.getElementById('fil-analista').value;
-    const respuesta   = document.getElementById('fil-respuesta').value;
-    const fechaDesde  = document.getElementById('fil-fecha-desde').value;
-    const fechaHasta  = document.getElementById('fil-fecha-hasta').value;
-
-    const buscar = document.getElementById('fil-buscar').value.trim();
-    let url = `/admin/evaluaciones?page=${pagina}&limit=20`;
-    if (estado)      url += `&estado=${estado}`;
-    if (analista)    url += `&analista_id=${analista}`;
-    if (buscar)      url += `&buscar=${encodeURIComponent(buscar)}`;
-    if (respuesta)   url += `&respuesta_estado=${respuesta}`;
-    if (fechaDesde)  url += `&fecha_desde=${fechaDesde}`;
-    if (fechaHasta)  url += `&fecha_hasta=${fechaHasta}`;
+    const url = `/admin/evaluaciones?page=${pagina}&limit=20` + filtrosListadoQuery();
 
     const tbody = document.getElementById('tbody-evaluaciones');
-    tbody.innerHTML = '<tr><td colspan="10" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="texto-centrado"><div class="spinner-wrap"><div class="spinner"></div></div></td></tr>';
 
     try {
         const res = await api.get(url);
@@ -402,7 +446,7 @@ async function cargarEvaluaciones(pagina) {
         const totalPaginas = Math.ceil(total / 20);
 
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="12" class="texto-centrado texto-gris" style="padding:24px;">Sin evaluaciones</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="14" class="texto-centrado texto-gris" style="padding:24px;">Sin evaluaciones</td></tr>';
         } else {
             tbody.innerHTML = items.map(ev => {
                 const rodeo = ev.rodeos || ev.rodeo || {};
@@ -433,7 +477,9 @@ async function cargarEvaluaciones(pagina) {
                     <td style="font-size:12px;">${faltasTexto}</td>
                     <td style="text-align:center;">${notaFinal}</td>
                     <td style="font-size:12px;">${renderCicloResumen(ev.ciclo1)}</td>
+                    <td style="text-align:center;">${ev.resultados_alterados ? '<strong style="color:#922b21;">Sí</strong>' : 'No'}</td>
                     <td style="font-size:12px;">${renderCicloResumen(ev.ciclo2)}</td>
+                    <td style="font-size:12px;">${renderComisionResumen(ev.comision)}</td>
                     <td>${estadoBadge}</td>
                     <td>${formatFecha(ev.created_at)}</td>
                     <td><div class="tabla-acciones">
@@ -452,7 +498,7 @@ async function cargarEvaluaciones(pagina) {
         // Paginación
         renderPaginacion(pagina, totalPaginas);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="12"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14"><div class="alerta alerta-error">${sanitizar(e.message)}</div></td></tr>`;
     }
 }
 
@@ -530,6 +576,7 @@ function limpiarFiltros() {
     document.getElementById('fil-respuesta').value = '';
     document.getElementById('fil-fecha-desde').value = '';
     document.getElementById('fil-fecha-hasta').value = '';
+    ['fil-alterados', 'fil-derivado', 'fil-estado-comision', 'fil-resolucion'].forEach(id => { document.getElementById(id).value = ''; });
     cargarEvaluaciones(1);
 }
 

@@ -1,14 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloRolEvaluacion } = require('../../middleware/auth');
-const { intentarAutoPublicar } = require('../../services/publicacion');
+const { soloRolEvaluacion, soloNoComisionTecnica } = require('../../middleware/auth');
+const { intentarAutoPublicar, generarRevisionResultadoAlterado, contarPendientesComision } = require('../../services/publicacion');
+const { mensajeErrorComision } = require('../../services/erroresComision');
+const { resumenComisionPorEvaluacion, filtroEvaluacionesPorComision } = require('../../services/revisionesComision');
 const { normalizarCasosWhatsapp } = require('../../services/casosWhatsapp');
 const { cargarConfiguracion, crearEvaluacion } = require('../../services/evaluacionCreacion');
 
-// GET / — lista paginada con filtros, jurados y resumen de faltas
-router.get('/', async (req, res) => {
-    const { estado, analista_id, buscar, respuesta_estado, fecha_desde, fecha_hasta, page = 1, limit = 20 } = req.query;
+// ─── Listado de Análisis de Casos (pantalla y exportación) ────────────────
+// Una sola función para ambos: la exportación Excel respeta EXACTAMENTE los
+// mismos filtros que la pantalla. Filtros nuevos (migración 103):
+//   resultados_alterados = si|no          (evaluaciones.resultados_alterados real)
+//   derivado_comision    = si|no          (tiene o no revisiones de Comisión)
+//   estado_comision      = pendiente|en_revision|resuelto
+//   resolucion           = error|acierto  (al menos una decisión con ese valor)
+// paginar=false → todas las filas que cumplen (por lotes, sin el tope de 1000
+// filas de PostgREST), sin paginar.
+async function listarEvaluaciones(q, { paginar = true } = {}) {
+    const {
+        estado, analista_id, buscar, respuesta_estado, fecha_desde, fecha_hasta, page = 1, limit = 20,
+        resultados_alterados, derivado_comision, estado_comision, resolucion
+    } = q;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     // Pre-queries para búsqueda textual cruzada
@@ -45,33 +58,19 @@ router.get('/', async (req, res) => {
         if (fecha_hasta) fq = fq.lte('fecha', fecha_hasta);
         const { data: rodeosF } = await fq;
         rodeoIdsFecha = (rodeosF || []).map(r => r.id);
-        if (rodeoIdsFecha.length === 0) return res.json({ evaluaciones: [], total: 0 });
+        if (rodeoIdsFecha.length === 0) return { evaluaciones: [], total: 0 };
     }
 
-    // Cuando hay filtro por respuesta_estado, cargamos un lote amplio y filtramos en memoria
-    const hasRespFiltro = !!respuesta_estado;
+    // Filtros de Comisión (migración 103) → ids a incluir/excluir.
+    const filtroComision = await filtroEvaluacionesPorComision({
+        derivado: derivado_comision === 'si' || derivado_comision === 'no' ? derivado_comision : null,
+        estado_comision: ['pendiente', 'en_revision', 'resuelto'].includes(estado_comision) ? estado_comision : null,
+        resolucion: ['error', 'acierto'].includes(resolucion) ? resolucion : null
+    });
+    if (filtroComision.incluir && filtroComision.incluir.length === 0) return { evaluaciones: [], total: 0 };
 
-    let query = supabase
-        .from('evaluaciones')
-        .select(`
-            id, estado, created_at, analista_id, rodeo_id, nota_final,
-            rodeo:rodeos(id, club, fecha, asociacion),
-            analista:analista_id(id, nombre_completo)
-        `, { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .eq('anulada', false)
-        .eq('es_historica_importacion', false);       // el listado operativo no incluye los registros históricos (solo Casos por WhatsApp)
-
-    if (!hasRespFiltro) {
-        query = query.range(offset, offset + parseInt(limit) - 1);
-    } else {
-        query = query.limit(300);
-    }
-
-    if (estado)             query = query.eq('estado', estado);
-    if (analista_id)        query = query.eq('analista_id', analista_id);
-    if (rodeoIdsFecha !== null) query = query.in('rodeo_id', rodeoIdsFecha);
-
+    // Búsqueda textual (OR) — se arma una vez y se reutiliza en cada lote.
+    let orBuscar = null;
     if (buscar) {
         const b = buscar.trim();
         const orParts = [];
@@ -83,22 +82,63 @@ router.get('/', async (req, res) => {
         const estadoMatch = ['borrador','en_proceso','pendiente_comision','pendiente_aprobacion','devuelto','aprobado','publicado','cerrado']
             .find(e => e.includes(b.toLowerCase()));
         if (estadoMatch) orParts.push(`estado.eq.${estadoMatch}`);
-        if (orParts.length > 0) query = query.or(orParts.join(','));
-        else return res.json({ evaluaciones: [], total: 0 });
+        if (orParts.length > 0) orBuscar = orParts.join(',');
+        else return { evaluaciones: [], total: 0 };
     }
 
-    const { data, error, count } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    // Cuando hay filtro por respuesta_estado, cargamos un lote amplio y filtramos en memoria
+    const hasRespFiltro = !!respuesta_estado;
+
+    const construir = () => {
+        let query = supabase
+            .from('evaluaciones')
+            .select(`
+                id, estado, created_at, analista_id, rodeo_id, nota_final, resultados_alterados,
+                rodeo:rodeos(id, club, fecha, asociacion),
+                analista:analista_id(id, nombre_completo)
+            `, { count: 'exact' })
+            .order('created_at', { ascending: false })
+            .eq('anulada', false)
+            .eq('es_historica_importacion', false);       // el listado operativo no incluye los registros históricos (solo Casos por WhatsApp)
+
+        if (estado)             query = query.eq('estado', estado);
+        if (analista_id)        query = query.eq('analista_id', analista_id);
+        if (rodeoIdsFecha !== null) query = query.in('rodeo_id', rodeoIdsFecha);
+        if (resultados_alterados === 'si') query = query.eq('resultados_alterados', true);
+        if (resultados_alterados === 'no') query = query.eq('resultados_alterados', false);
+        if (filtroComision.incluir) query = query.in('id', filtroComision.incluir);
+        if (filtroComision.excluir && filtroComision.excluir.length > 0)
+            query = query.not('id', 'in', `(${filtroComision.excluir.join(',')})`);
+        if (orBuscar) query = query.or(orBuscar);
+        return query;
+    };
+
+    let data = [], count = 0;
+    if (paginar) {
+        const query = hasRespFiltro ? construir().limit(300) : construir().range(offset, offset + parseInt(limit) - 1);
+        const r = await query;
+        if (r.error) return { error: r.error };
+        data = r.data || []; count = r.count || 0;
+    } else {
+        const LOTE = 1000;
+        for (let desde = 0; ; desde += LOTE) {
+            const r = await construir().range(desde, desde + LOTE - 1);
+            if (r.error) return { error: r.error };
+            data.push(...(r.data || []));
+            count = r.count ?? data.length;
+            if (!r.data || r.data.length < LOTE) break;
+        }
+    }
 
     const evaluaciones = data || [];
     if (evaluaciones.length === 0) {
-        return res.json({ evaluaciones: [], total: count || 0 });
+        return { evaluaciones: [], total: count || 0 };
     }
 
     const evalIds  = evaluaciones.map(e => e.id);
     const rodeoIds = [...new Set(evaluaciones.map(e => e.rodeo_id))];
 
-    const [{ data: casos }, { data: asigs }, { data: ciclosData }] = await Promise.all([
+    const [{ data: casos }, { data: asigs }, { data: ciclosData }, comisionPorEval] = await Promise.all([
         supabase
             .from('evaluacion_casos')
             .select('evaluacion_id, tipo_caso')
@@ -113,7 +153,8 @@ router.get('/', async (req, res) => {
             .from('evaluacion_ciclos')
             .select('id, evaluacion_id, numero_ciclo, estado, fecha_limite_respuesta, notificacion_enviada_at')
             .in('evaluacion_id', evalIds)
-            .order('numero_ciclo')
+            .order('numero_ciclo'),
+        resumenComisionPorEvaluacion(evalIds)
     ]);
 
     const casosPorEval = {};
@@ -199,7 +240,8 @@ router.get('/', async (req, res) => {
             jurados,
             resumen_faltas: casosPorEval[ev.id] || null,
             ciclo1: enrichCiclo(ciclosPorEval[ev.id]?.[1], jurados),
-            ciclo2: enrichCiclo(ciclosPorEval[ev.id]?.[2], jurados)
+            ciclo2: enrichCiclo(ciclosPorEval[ev.id]?.[2], jurados),
+            comision: comisionPorEval[ev.id]
         };
     });
 
@@ -224,10 +266,92 @@ router.get('/', async (req, res) => {
         });
     }
 
+    if (!paginar) return { evaluaciones: resultado, total: resultado.length };
+
     const totalFinal = hasRespFiltro ? resultado.length : (count || 0);
     const pageData   = hasRespFiltro ? resultado.slice(offset, offset + parseInt(limit)) : resultado;
 
-    res.json({ evaluaciones: pageData, total: totalFinal });
+    return { evaluaciones: pageData, total: totalFinal };
+}
+
+// GET / — lista paginada con filtros, jurados y resumen de faltas
+router.get('/', async (req, res) => {
+    try {
+        const r = await listarEvaluaciones(req.query, { paginar: true });
+        if (r.error) return res.status(500).json({ error: r.error.message });
+        res.json({ evaluaciones: r.evaluaciones, total: r.total });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /exportar — Excel del listado con los MISMOS filtros activos.
+// Exactamente 9 columnas en este orden (encabezados repetidos a propósito):
+//   A Club · B Asociación · C Fecha · D Analista (nombre si está designado) ·
+//   E Estado (vacía) · F Asociación (repite B) · G Analista (vacía) ·
+//   H Estado (vacía) · I N° de collera (vacía).
+// Una fila por evaluación (la consulta base nunca se multiplica por casos,
+// videos ni revisiones). Las celdas indicadas quedan realmente vacías.
+const ENCABEZADOS_EXPORTACION_ANALISIS = ['Club', 'Asociación', 'Fecha', 'Analista', 'Estado', 'Asociación', 'Analista', 'Estado', 'N° de collera'];
+
+function filasExportacionAnalisis(evaluaciones) {
+    const fmtFecha = (f) => {
+        if (!f) return null;
+        const [y, m, d] = String(f).split('T')[0].split('-');
+        return d && m && y ? `${d}/${m}/${y}` : null;
+    };
+    const vistos = new Set();
+    const filas = [];
+    for (const ev of evaluaciones) {
+        if (vistos.has(ev.id)) continue;
+        vistos.add(ev.id);
+        filas.push([
+            ev.rodeo?.club || null,
+            ev.rodeo?.asociacion || null,
+            fmtFecha(ev.rodeo?.fecha),
+            ev.analista?.nombre_completo || null,
+            null,
+            ev.rodeo?.asociacion || null,
+            null,
+            null,
+            null
+        ]);
+    }
+    return filas;
+}
+
+router.get('/exportar', async (req, res) => {
+    try {
+        const r = await listarEvaluaciones(req.query, { paginar: false });
+        if (r.error) return res.status(500).json({ error: r.error.message });
+
+        const ExcelJS = require('exceljs');
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Sistema Jurados - Rodeo Chileno';
+        const ws = wb.addWorksheet('Análisis de Casos');
+        ws.addRow(ENCABEZADOS_EXPORTACION_ANALISIS);
+        ws.getRow(1).eachCell(c => {
+            c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e3a5f' } };
+            c.alignment = { horizontal: 'center', vertical: 'middle' };
+        });
+        for (const fila of filasExportacionAnalisis(r.evaluaciones)) {
+            const row = ws.addRow(fila);
+            // Columnas vacías por definición: sin valor alguno (ni '', ni guion).
+            [5, 7, 8, 9].forEach(n => { row.getCell(n).value = null; });
+            if (fila[3] === null) row.getCell(4).value = null;
+        }
+        [26, 22, 12, 28, 14, 22, 18, 14, 14].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+        ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+        const fecha = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="analisis_casos_${fecha}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // POST / — crear evaluación (solo jefe_area o admin pleno)
@@ -404,7 +528,7 @@ router.patch('/:id/analista', soloRolEvaluacion('jefe_area'), async (req, res) =
 });
 
 // POST /:id/enviar-aprobacion
-router.post('/:id/enviar-aprobacion', async (req, res) => {
+router.post('/:id/enviar-aprobacion', soloNoComisionTecnica, async (req, res) => {
     const { data: ev, error: evErr } = await supabase
         .from('evaluaciones')
         .select('id, estado')
@@ -443,13 +567,17 @@ router.post('/:id/enviar-aprobacion', async (req, res) => {
 // Resuelve casos que ya tienen decisión en evaluacion_respuestas_jurado pero
 // siguen en pendiente_analista/derivado_comision en evaluacion_casos (datos previos al fix).
 async function _sincronizarCasosAntesDePublicar(evalId, now) {
-    const { data: casos } = await supabase
+    const { data: casosRaw } = await supabase
         .from('evaluacion_casos')
-        .select('id, ciclo_id, tipo_caso, descuento_puntos, estado')
+        .select('id, ciclo_id, tipo_caso, descuento_puntos, estado, decision_analista, decision_comision')
         .eq('evaluacion_id', evalId)
         .in('estado', ['pendiente_analista', 'derivado_comision']);
 
-    if (!casos || casos.length === 0) return;
+    // Migración 103: un caso que el ANALISTA derivó a la Comisión solo se
+    // resuelve con la decisión de la Comisión — nunca aquí (antes se marcaba
+    // como descuento confirmado sin pasar por ella).
+    const casos = (casosRaw || []).filter(c => !(c.decision_analista === 'derivar_comision' && !c.decision_comision));
+    if (casos.length === 0) return;
 
     const casoIds = casos.map(c => c.id);
     const { data: resps } = await supabase
@@ -538,6 +666,8 @@ router.post('/:id/aprobar', soloRolEvaluacion('jefe_area'), async (req, res) => 
         if (msg.includes('evaluacion_no_encontrada')) return res.status(404).json({ error: 'Evaluación no encontrada' });
         if (msg.includes('estado_invalido'))          return res.status(409).json({ error: 'La evaluación no está en estado pendiente_aprobacion' });
         if (msg.includes('casos_pendientes'))         return res.status(409).json({ error: 'Existen casos sin resolver' });
+        if (msg.includes('revisiones_comision_pendientes')) return res.status(409).json({ error: 'Existen revisiones de la Comisión Técnica pendientes; la nota no puede publicarse todavía.', code: 'REVISIONES_COMISION_PENDIENTES' });
+        if (msg.includes('revision_resultado_alterado_requerida')) return res.status(409).json({ error: 'Los resultados alterados deben ser revisados por la Comisión Técnica antes de publicar la nota.', code: 'REVISION_RESULTADO_ALTERADO_REQUERIDA' });
         if (msg.includes('sin_jurados'))              return res.status(409).json({ error: 'No hay jurados activos para este rodeo' });
         return res.status(500).json({ error: error.message });
     }
@@ -594,7 +724,7 @@ router.post('/:id/devolver', soloRolEvaluacion('jefe_area'), async (req, res) =>
 // PATCH /:id/datos-deportivos — guardar análisis del analista
 // Monitor usa PUT /rodeos/:id/datos-monitor para puntajes oficiales y comentario_monitor
 // Este endpoint es solo para analista / jefe / admin pleno
-router.patch('/:id/datos-deportivos', async (req, res) => {
+router.patch('/:id/datos-deportivos', soloNoComisionTecnica, async (req, res) => {
     const rolEval = req.usuario.rol_evaluacion || null;
     const esMonitor = rolEval === 'monitor';
 
@@ -679,6 +809,28 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
     if (fundamento_jurado_publicado !== undefined) cambios.fundamento_jurado_publicado = !!fundamento_jurado_publicado;
     if (casosWs.cambia) cambios.casos_whatsapp = casosWs.valor;
 
+    // Migración 103 — desmarcar los resultados alterados: si existe una
+    // revisión de Comisión PENDIENTE se anula primero, con motivo y auditoría
+    // (RPC transaccional). Si la Comisión YA resolvió, no se permite.
+    if (resultados_alterados === false) {
+        const { data: actual } = await supabase
+            .from('evaluaciones').select('resultados_alterados').eq('id', req.params.id).single();
+        if (actual?.resultados_alterados) {
+            const { error: anErr } = await supabase.rpc('anular_revision_resultado_alterado', {
+                p_evaluacion_id: req.params.id,
+                p_actor_id:      req.usuario.id,
+                p_motivo:        'El analista desmarcó los resultados alterados antes de la resolución de la Comisión'
+            });
+            if (anErr) {
+                const m = mensajeErrorComision(anErr);
+                if (m.code === 'REVISION_YA_RESUELTA') {
+                    return res.status(409).json({ error: 'La Comisión ya revisó los resultados alterados de este rodeo: el indicador y su comentario no se pueden modificar.', code: 'ALTERACION_YA_REVISADA' });
+                }
+                if (m.code !== 'MIGRACION_103_PENDIENTE') return res.status(m.status).json({ error: m.mensaje, code: m.code });
+            }
+        }
+    }
+
     const { data, error } = await supabase
         .from('evaluaciones')
         .update(cambios)
@@ -686,7 +838,19 @@ router.patch('/:id/datos-deportivos', async (req, res) => {
         .select()
         .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+        const m = mensajeErrorComision(error);
+        if (['ALTERACION_YA_REVISADA', 'REVISION_PENDIENTE_SIN_ANULAR'].includes(m.code)) {
+            return res.status(m.status).json({ error: m.mensaje, code: m.code });
+        }
+        return res.status(500).json({ error: error.message });
+    }
+
+    // Migración 103 — marcar la alteración con el Ciclo 1 ya cerrado genera la
+    // revisión de Comisión (idempotente; si el ciclo sigue abierto, nacerá al cerrarlo).
+    if (data?.resultados_alterados) {
+        await generarRevisionResultadoAlterado(req.params.id, req.usuario.id, 'datos_deportivos');
+    }
     res.json(data);
 });
 
@@ -769,7 +933,7 @@ router.get('/:id/comision', async (req, res) => {
 });
 
 // PATCH /:id/anular — anulación lógica (cualquier admin)
-router.patch('/:id/anular', async (req, res) => {
+router.patch('/:id/anular', soloNoComisionTecnica, async (req, res) => {
     const { motivo } = req.body;
     if (!motivo || !motivo.trim()) {
         return res.status(400).json({ error: 'El motivo de anulación es obligatorio' });
@@ -869,6 +1033,200 @@ router.delete('/:id/definitivo', soloRolEvaluacion(), async (req, res) => {
     res.json({ mensaje: 'Evaluación eliminada definitivamente' });
 });
 
+// ─── CIERRE EXCEPCIONAL — ADMINISTRADOR ───────────────────────────────────
+// Salida excepcional, SOLO Administrador pleno (verificado aquí y dentro de
+// la RPC), cuando la Comisión no responde. No publica por sí mismo ni salta
+// controles: 1) la RPC transaccional trata formalmente los pendientes
+// (Tipo A → cierre excepcional sin puntos; Tipo B → ERROR/ACIERTO expreso
+// del Administrador por caso); 2) los ciclos elegidos se cierran con el
+// procedimiento NORMAL (cerrarCicloInterno, mismas reglas); 3) corre la
+// publicación automática habitual (publicar_evaluacion: mismo cálculo y
+// mismos controles). El resultado queda en el historial del cierre.
+const { datosCierreExcepcional } = require('../../services/revisionesComision');
+const { cerrarCicloInterno } = require('./ciclos');
+
+router.get('/:id/cierre-excepcional', soloRolEvaluacion(), async (req, res) => {
+    try {
+        const r = await datosCierreExcepcional(req.params.id);
+        if (r.error) return res.status(r.error.status).json({ error: r.error.mensaje });
+        res.json(r.datos);
+    } catch (e) {
+        res.status(500).json({ error: 'No fue posible cargar los datos del cierre excepcional.' });
+    }
+});
+
+// Pasos 2–4 del cierre excepcional, compartidos por la ejecución inicial y
+// por "Completar cierre excepcional" (reintento). NUNCA vuelve a aplicar
+// decisiones (eso lo hizo la RPC una sola vez). Cada paso usa el mecanismo
+// normal: cierre de ciclo = cerrarCicloInterno; publicación = intentarAuto-
+// Publicar → publicar_evaluacion (transición condicional + RPC que exige
+// pendiente_aprobacion: a lo sumo UNA publicación aunque se reintente o
+// haya llamadas simultáneas). Cualquier error se captura y queda en el
+// historial como intento incompleto, recuperable desde la pantalla.
+async function completarPasosCierreExcepcional({ evalId, cierreId, ciclosACerrar, usuario, ip, motivo, tipoIntento }) {
+    const ciclos = [];
+    let error = null;
+    try {
+        const { data: ciclosEval } = await supabase.from('evaluacion_ciclos').select('id, numero_ciclo, estado').eq('evaluacion_id', evalId);
+        for (const cicloId of ciclosACerrar) {
+            const c = (ciclosEval || []).find(x => x.id === cicloId);
+            if (c && c.estado === 'cerrado') { ciclos.push({ ciclo_id: cicloId, numero_ciclo: c.numero_ciclo, cerrado: true, estado: 'cerrado', error: null }); continue; }
+            const r = await cerrarCicloInterno({ cicloId, usuario, motivo_cierre: `Cierre excepcional del Administrador: ${motivo}`, ip });
+            ciclos.push({ ciclo_id: cicloId, numero_ciclo: c?.numero_ciclo ?? null, cerrado: r.status === 200 && r.body?.estado === 'cerrado',
+                          estado: r.body?.estado || c?.estado || null, error: r.status === 200 ? null : (r.body?.error || 'No se pudo cerrar') });
+        }
+        // Publicación habitual (la RPC decide; nunca se fuerza). El cierre normal
+        // del último ciclo ya puede haberla disparado: el resultado se lee del
+        // estado REAL final.
+        await intentarAutoPublicar(evalId, usuario.id, usuario.nombre, ip);
+    } catch (e) {
+        error = e.message || String(e);
+        console.error(`[CIERRE-EXCEPCIONAL] Paso posterior incompleto evaluacion_id=${evalId}:`, error);
+    }
+
+    const { data: evFinal } = await supabase.from('evaluaciones').select('id, estado, nota_final, puntaje_final').eq('id', evalId).single();
+    const publicado = evFinal?.estado === 'publicado';
+    let auditoriaPublicacionId = null;
+    if (publicado) {
+        const { data: aud } = await supabase.from('evaluacion_auditoria').select('id').eq('evaluacion_id', evalId)
+            .eq('accion', 'publicar_nota').order('created_at', { ascending: false }).limit(1);
+        auditoriaPublicacionId = aud?.[0]?.id || null;
+    }
+    const { data: ciclosDespues } = await supabase.from('evaluacion_ciclos').select('numero_ciclo, estado').eq('evaluacion_id', evalId);
+
+    const { data: cierreRow } = await supabase.from('evaluacion_cierres_excepcionales').select('resultado').eq('id', cierreId).maybeSingle();
+    const intentos = Array.isArray(cierreRow?.resultado?.intentos) ? cierreRow.resultado.intentos : [];
+    const intento = { n: intentos.length + 1, tipo: tipoIntento, en: new Date().toISOString(), por: usuario.id, ciclos_cerrados: ciclos, publicado, error };
+    const resultado = {
+        completo: publicado,
+        publicado,
+        estado_evaluacion: evFinal?.estado || null,
+        nota_final: publicado ? (evFinal?.nota_final ?? null) : null,
+        puntaje_final: publicado ? (evFinal?.puntaje_final ?? null) : null,
+        auditoria_publicacion_id: auditoriaPublicacionId,
+        ciclos_despues: (ciclosDespues || []).sort((a, b) => a.numero_ciclo - b.numero_ciclo),
+        ultimo_error: error,
+        intentos: [...intentos, intento]
+    };
+    await supabase.from('evaluacion_cierres_excepcionales').update({ resultado }).eq('id', cierreId);
+    await supabase.from('evaluacion_auditoria').insert({
+        evaluacion_id: evalId,
+        accion: tipoIntento === 'inicial' ? 'cierre_excepcional_resultado' : 'cierre_excepcional_reintento',
+        detalle: { cierre_id: cierreId, intento: intento.n, ciclos_cerrados: ciclos, publicado, nota_final: resultado.nota_final, error },
+        actor_id: usuario.id, actor_tipo: 'administrador', actor_nombre: usuario.nombre, ip_address: ip
+    });
+    return { ...resultado, ciclos_cerrados: ciclos };
+}
+
+// Revalida contra la BD que quien actúa sigue siendo Administrador pleno
+// (rol_evaluacion NULL) y ACTIVO. El JWT dura hasta 8 h y pudo emitirse antes
+// de una desactivación o de un cambio de rol: soloRolEvaluacion() solo mira
+// el token. La RPC cierre_excepcional_comision_admin ya hace esta misma
+// verificación dentro de su transacción; "completar" no pasa por esa RPC, así
+// que la hace aquí antes de cualquier lectura o escritura. Falla cerrado: si
+// no se puede consultar, no se actúa.
+async function revalidarAdministradorPleno(adminId) {
+    let data, error;
+    try {
+        ({ data, error } = await supabase.from('administradores').select('id, activo, rol_evaluacion').eq('id', adminId).maybeSingle());
+    } catch (e) {
+        error = e;
+    }
+    if (error) {
+        console.error(`[CIERRE-EXCEPCIONAL] No se pudo revalidar al administrador id=${adminId}:`, error.message || error);
+        return { status: 503, body: { error: 'No fue posible validar sus permisos. Intente nuevamente.', code: 'VALIDACION_ADMIN_NO_DISPONIBLE' } };
+    }
+    if (!data || data.activo !== true || (data.rol_evaluacion ?? null) !== null) {
+        console.warn(`[CIERRE-EXCEPCIONAL] 403 administrador no pleno o inactivo en BD id=${adminId}`);
+        return { status: 403, body: { error: 'Su cuenta ya no tiene permisos de Administrador pleno. Inicie sesión nuevamente.', code: 'ADMIN_NO_AUTORIZADO' } };
+    }
+    return null;
+}
+
+function mensajeResultadoCierre(r) {
+    if (r.publicado) return 'Cierre excepcional completo. Se cumplieron todos los requisitos y la nota fue publicada.';
+    if (r.ultimo_error) return 'Las revisiones quedaron tratadas, pero un paso posterior no se completó. Use "Completar cierre excepcional" para reintentarlo; no se repetirá ninguna decisión.';
+    return 'Cierre excepcional registrado. La nota todavía no se publica: falta cumplir otros requisitos (por ejemplo, cerrar el otro ciclo). Puede completarlo después desde esta misma pantalla.';
+}
+
+router.post('/:id/cierre-excepcional', soloRolEvaluacion(), async (req, res) => {
+    const evalId = req.params.id;
+    const { motivo, decisiones = [], ciclos_a_cerrar = [], confirmado } = req.body || {};
+    if (confirmado !== true) return res.status(400).json({ error: 'Debe confirmar expresamente el cierre excepcional.' });
+    if (!motivo || !String(motivo).trim()) return res.status(400).json({ error: 'El motivo (justificación) es obligatorio.', code: 'MOTIVO_REQUERIDO' });
+    if (!Array.isArray(decisiones) || !Array.isArray(ciclos_a_cerrar)) return res.status(400).json({ error: 'Formato inválido.' });
+
+    // Los ciclos a cerrar deben pertenecer a esta evaluación (nunca otros).
+    const { data: ciclosEval } = await supabase.from('evaluacion_ciclos').select('id').eq('evaluacion_id', evalId);
+    const idsCiclos = new Set((ciclosEval || []).map(c => c.id));
+    if (ciclos_a_cerrar.some(id => !idsCiclos.has(id))) return res.status(400).json({ error: 'Uno de los ciclos indicados no pertenece a esta evaluación.' });
+
+    // 1. Tratamiento formal de los pendientes (transaccional, UNA sola vez).
+    const { data, error } = await supabase.rpc('cierre_excepcional_comision_admin', {
+        p_evaluacion_id: evalId,
+        p_admin_id:      req.usuario.id,
+        p_motivo:        String(motivo).trim(),
+        p_decisiones:    decisiones.map(d => ({ caso_id: d?.caso_id, decision: String(d?.decision || '').toLowerCase() }))
+    });
+    if (error) {
+        const m = mensajeErrorComision(error);
+        return res.status(m.status).json({ error: m.mensaje, code: m.code });
+    }
+    const cierre = Array.isArray(data) ? data[0] : data;
+
+    // 2–4. Cierre normal de ciclos, publicación habitual e historial (recuperable).
+    const r = await completarPasosCierreExcepcional({
+        evalId, cierreId: cierre.cierre_id, ciclosACerrar: ciclos_a_cerrar, usuario: req.usuario, ip: req.ip,
+        motivo: String(motivo).trim(), tipoIntento: 'inicial'
+    });
+    res.json({
+        ok: true, cierre_id: cierre.cierre_id, tratamiento: cierre.tratamiento,
+        descuentos_considerados_total: cierre.descuentos_considerados_total,
+        ...r, mensaje: mensajeResultadoCierre(r)
+    });
+});
+
+// POST /:id/cierre-excepcional/completar — RECUPERACIÓN / reintento de un
+// cierre excepcional ya registrado cuya nota aún no se publicó (fallo
+// intermedio, o el otro ciclo todavía abierto). Idempotente: no aplica
+// decisiones (ya están), cierra los ciclos elegidos con el procedimiento
+// normal y deja que la publicación habitual decida; a lo sumo una
+// publicación. Cada intento queda auditado. Solo Administrador pleno.
+router.post('/:id/cierre-excepcional/completar', soloRolEvaluacion(), async (req, res) => {
+    const evalId = req.params.id;
+    const { ciclos_a_cerrar = [], confirmado } = req.body || {};
+    if (confirmado !== true) return res.status(400).json({ error: 'Debe confirmar expresamente la acción.' });
+    if (!Array.isArray(ciclos_a_cerrar)) return res.status(400).json({ error: 'Formato inválido.' });
+
+    const rechazo = await revalidarAdministradorPleno(req.usuario.id);
+    if (rechazo) return res.status(rechazo.status).json(rechazo.body);
+
+    const { data: ev } = await supabase.from('evaluaciones').select('id, estado').eq('id', evalId).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evaluación no encontrada.' });
+    if (['aprobado', 'publicado', 'cerrado'].includes(ev.estado)) {
+        return res.status(409).json({ error: 'La nota de esta evaluación ya fue publicada: no hay nada que completar.', code: 'EVALUACION_PUBLICADA' });
+    }
+    const { data: cierres } = await supabase.from('evaluacion_cierres_excepcionales').select('id, motivo, created_at')
+        .eq('evaluacion_id', evalId).order('created_at', { ascending: false }).limit(1);
+    const cierre = cierres?.[0];
+    if (!cierre) return res.status(409).json({ error: 'Esta evaluación no tiene un cierre excepcional registrado.', code: 'SIN_CIERRE_EXCEPCIONAL' });
+
+    // Si aparecieron NUEVAS revisiones pendientes después del cierre, no se
+    // completan por esta vía: requieren la Comisión o un nuevo cierre excepcional.
+    if (await contarPendientesComision(evalId) > 0) {
+        return res.status(409).json({ error: 'Hay revisiones de Comisión pendientes posteriores al cierre excepcional. Deben resolverse (o tratarse con un nuevo cierre excepcional) antes de completar.', code: 'PENDIENTES_NUEVOS' });
+    }
+    const { data: ciclosEval } = await supabase.from('evaluacion_ciclos').select('id').eq('evaluacion_id', evalId);
+    const idsCiclos = new Set((ciclosEval || []).map(c => c.id));
+    if (ciclos_a_cerrar.some(id => !idsCiclos.has(id))) return res.status(400).json({ error: 'Uno de los ciclos indicados no pertenece a esta evaluación.' });
+
+    const r = await completarPasosCierreExcepcional({
+        evalId, cierreId: cierre.id, ciclosACerrar: ciclos_a_cerrar, usuario: req.usuario, ip: req.ip,
+        motivo: cierre.motivo, tipoIntento: 'reintento'
+    });
+    res.json({ ok: true, cierre_id: cierre.id, ...r, mensaje: mensajeResultadoCierre(r) });
+});
+
 // POST /:id/finalizar — Jefe fuerza el cierre cuando hay casos trabados (fallback manual)
 router.post('/:id/finalizar', soloRolEvaluacion('jefe_area'), async (req, res) => {
     const evalId = req.params.id;
@@ -886,11 +1244,21 @@ router.post('/:id/finalizar', soloRolEvaluacion('jefe_area'), async (req, res) =
     }
 
     // Obtener todos los casos no resueltos
-    const { data: casos } = await supabase
+    const { data: casosNoResueltos } = await supabase
         .from('evaluacion_casos')
-        .select('id, ciclo_id, tipo_caso, descuento_puntos, estado')
+        .select('id, ciclo_id, tipo_caso, descuento_puntos, estado, decision_analista, decision_comision')
         .eq('evaluacion_id', evalId)
         .neq('estado', 'resuelto');
+
+    // Migración 103: los casos derivados por el analista esperan la decisión
+    // de la Comisión — "Finalizar" no puede resolverlos por ella.
+    const derivadosSinComision = (casosNoResueltos || []).filter(c => c.decision_analista === 'derivar_comision' && !c.decision_comision);
+    if (derivadosSinComision.length > 0) {
+        return res.status(409).json({
+            error: `Hay ${derivadosSinComision.length} caso(s) derivado(s) a la Comisión Técnica pendientes de su decisión. No se puede finalizar hasta que la Comisión los resuelva.`
+        });
+    }
+    const casos = casosNoResueltos;
 
     if (casos && casos.length > 0) {
         const casoIds = casos.map(c => c.id);

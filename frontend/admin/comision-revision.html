@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Revisión de Casos — Comisión</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .crc-indicadores { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:14px; margin-bottom:18px; }
+        .crc-ind { background:#fff; border:1px solid var(--gris-borde); border-radius:12px; padding:16px 18px; }
+        .crc-ind .t { font-size:13px; font-weight:700; color:var(--gris); text-transform:uppercase; letter-spacing:.4px; }
+        .crc-ind .n { font-size:34px; font-weight:800; color:#1a3c6e; line-height:1.1; margin:6px 0 2px; }
+        .crc-ind .s { font-size:14px; color:#333; }
+        .crc-ind.alerta { border-color:#e67e22; background:#fff8f0; }
+        .crc-aviso { background:#fff4e5; border:1px solid #f0b37e; color:#7a4a12; border-radius:10px; padding:12px 16px; margin-bottom:16px; font-size:15px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+        .crc-filtros { background:#fff; border:1px solid var(--gris-borde); border-radius:12px; padding:14px 16px; margin-bottom:16px; display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+        .crc-filtros label { display:block; font-size:13px; font-weight:600; color:#444; margin-bottom:4px; }
+        .crc-filtros .form-control { min-width:150px; font-size:15px; padding:8px 10px; }
+        .crc-lista { display:flex; flex-direction:column; gap:10px; }
+        .crc-item { background:#fff; border:1px solid var(--gris-borde); border-radius:12px; padding:14px 16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; }
+        .crc-item .club { font-size:17px; font-weight:700; color:#1a3c6e; }
+        .crc-item .meta { font-size:14px; color:#555; margin-top:2px; }
+        .crc-badge { display:inline-block; padding:4px 10px; border-radius:12px; font-size:13px; font-weight:700; margin-right:6px; }
+        .crc-badge.tipo-resultado_alterado { background:#fdebd0; color:#784212; }
+        .crc-badge.tipo-video_derivado { background:#e8f1fb; color:#1a5276; }
+        .crc-badge.estado-pendiente { background:#fef5e7; color:#9a5b00; }
+        .crc-badge.estado-resuelto { background:#e9f7ef; color:#1e8449; }
+        .crc-badge.dec-error { background:#fadbd8; color:#922b21; }
+        .crc-badge.dec-acierto { background:#d5f5e3; color:#1e8449; }
+        .crc-btn-grande { font-size:17px; padding:12px 26px; border-radius:10px; font-weight:700; }
+        .crc-vacio { text-align:center; padding:36px; color:var(--gris); background:#fff; border:1px dashed var(--gris-borde); border-radius:12px; font-size:16px; }
+        .crc-bloque { background:#fff; border:1px solid var(--gris-borde); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+        .crc-bloque h3 { margin:0 0 10px; font-size:16px; color:#1a3c6e; }
+        .crc-dl { display:grid; grid-template-columns:max-content 1fr; gap:6px 14px; font-size:15px; }
+        .crc-dl dt { font-weight:600; color:#555; }
+        .crc-dl dd { margin:0; }
+        .crc-tabla { width:100%; border-collapse:collapse; font-size:15px; }
+        .crc-tabla th, .crc-tabla td { padding:8px; border-bottom:1px solid var(--gris-borde); text-align:left; }
+        .crc-dif-distinta { color:#922b21; font-weight:700; }
+        .crc-texto { white-space:pre-wrap; background:#f8f9fa; border-radius:8px; padding:10px 12px; font-size:15px; }
+        .crc-video { border:1px solid var(--gris-borde); border-radius:10px; padding:12px; margin-bottom:12px; }
+        .crc-video-frame { position:relative; width:100%; max-width:720px; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; }
+        .crc-video-frame iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+        .crc-decision { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; margin:12px 0; }
+        .crc-opcion { border:3px solid var(--gris-borde); border-radius:12px; padding:16px; cursor:pointer; background:#fff; text-align:left; font-size:15px; }
+        .crc-opcion .nombre { font-size:24px; font-weight:800; letter-spacing:1px; display:block; margin-bottom:6px; }
+        .crc-opcion.error .nombre { color:#922b21; }
+        .crc-opcion.acierto .nombre { color:#1e8449; }
+        .crc-opcion.sel.error { border-color:#c0392b; background:#fdf2f1; }
+        .crc-opcion.sel.acierto { border-color:#27ae60; background:#f0faf4; }
+        .crc-resuelto { background:#f0faf4; border:1px solid #a9dfbf; border-radius:12px; padding:14px 16px; font-size:15px; }
+        @media (max-width: 640px) { .crc-dl { grid-template-columns:1fr; } .crc-ind .n { font-size:28px; } }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav" data-active="/admin/comision-revision.html"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <h1>REVISIÓN DE CASOS — COMISIÓN</h1>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- ═══ LISTADO ═══ -->
+            <section id="vista-listado">
+                <div class="crc-indicadores" id="crc-indicadores"></div>
+                <div id="crc-aviso"></div>
+
+                <div class="crc-filtros">
+                    <div><label for="f-desde">Fecha del rodeo desde</label><input type="date" id="f-desde" class="form-control"></div>
+                    <div><label for="f-hasta">Fecha del rodeo hasta</label><input type="date" id="f-hasta" class="form-control"></div>
+                    <div><label for="f-tipo">Tipo de revisión</label>
+                        <select id="f-tipo" class="form-control">
+                            <option value="todos">Todos</option>
+                            <option value="resultado_alterado">Resultados alterados</option>
+                            <option value="video_derivado">Videos derivados</option>
+                        </select></div>
+                    <div><label for="f-estado">Estado</label>
+                        <select id="f-estado" class="form-control">
+                            <option value="pendientes">Pendientes</option>
+                            <option value="resueltos">Resueltos</option>
+                            <option value="todos">Todos</option>
+                        </select></div>
+                    <div><label for="f-resolucion">Resolución</label>
+                        <select id="f-resolucion" class="form-control">
+                            <option value="todas">Todas</option>
+                            <option value="error">Error</option>
+                            <option value="acierto">Acierto</option>
+                        </select></div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primario" onclick="aplicarFiltros()">Buscar</button>
+                        <button class="btn btn-secundario" onclick="quitarFechas()">Quitar fechas</button>
+                    </div>
+                </div>
+
+                <div class="crc-lista" id="crc-lista"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+            </section>
+
+            <!-- ═══ VER CASO ═══ -->
+            <section id="vista-detalle" class="oculto">
+                <button class="btn btn-secundario crc-btn-grande" style="margin-bottom:14px;" onclick="volverAlListado()">← Volver al listado</button>
+                <div id="crc-detalle"></div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script src="/js/comisionRevision.js"></script>
+<script>
+const CR = window.ComisionRevision;
+let _detalle = null;
+let _decision = null;
+
+(function iniciar() {
+    if (!protegerRuta('administrador')) return;
+    const u = api.getUsuario();
+    const rol = u?.rol_evaluacion || null;
+    if (!(rol === null || rol === 'comision_tecnica' || rol === 'jefe_area')) {
+        window.location.href = '/admin/evaluaciones.html';
+        return;
+    }
+    document.getElementById('nombre-admin').textContent = u?.nombre_completo || '';
+    cargarListado();
+})();
+
+function filtrosActuales() {
+    return {
+        desde: document.getElementById('f-desde').value || null,
+        hasta: document.getElementById('f-hasta').value || null,
+        tipo: document.getElementById('f-tipo').value,
+        estado: document.getElementById('f-estado').value,
+        resolucion: document.getElementById('f-resolucion').value
+    };
+}
+function aplicarFiltros() { cargarListado(); }
+function quitarFechas() {
+    document.getElementById('f-desde').value = '';
+    document.getElementById('f-hasta').value = '';
+    cargarListado();
+}
+
+async function cargarListado() {
+    const lista = document.getElementById('crc-lista');
+    lista.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        const r = await api.get('/admin/comision/revisiones?' + CR.construirQuery(filtrosActuales()));
+        pintarIndicadores(r.contadores);
+        pintarLista(r.items);
+    } catch (e) {
+        lista.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'No fue posible cargar las revisiones.')}</div>`;
+    }
+}
+
+function pintarIndicadores(c) {
+    const p = c.periodo;
+    const ind = (titulo, numero, sub, alerta) => `<div class="crc-ind${alerta ? ' alerta' : ''}">
+        <div class="t">${sanitizar(titulo)}</div><div class="n">${numero}</div><div class="s">${sanitizar(sub)}</div></div>`;
+    document.getElementById('crc-indicadores').innerHTML =
+        ind('Resultados alterados', p.resultado_alterado.pendientes, 'pendientes · ' + CR.textoIndicador(p.resultado_alterado), p.resultado_alterado.pendientes > 0) +
+        ind('Videos derivados', p.video_derivado.pendientes, 'pendientes · ' + CR.textoIndicador(p.video_derivado), p.video_derivado.pendientes > 0) +
+        ind('Pendientes totales', c.pendientes_totales, 'de todos los períodos', c.pendientes_totales > 0) +
+        ind('Revisadas del período', p.resueltas, `de ${p.total} en el período`, false);
+
+    const aviso = CR.textoAdvertenciaAnteriores(c.pendientes_anteriores);
+    document.getElementById('crc-aviso').innerHTML = aviso
+        ? `<div class="crc-aviso">⚠️ <span>${sanitizar(aviso)}</span>
+             <button class="btn btn-secundario" onclick="quitarFechas()">Ver todas las pendientes</button></div>`
+        : '';
+}
+
+function pintarLista(items) {
+    const lista = document.getElementById('crc-lista');
+    if (!items.length) {
+        const f = filtrosActuales();
+        lista.innerHTML = `<div class="crc-vacio">${f.estado === 'pendientes' ? '✅ No hay revisiones pendientes con estos filtros.' : 'No hay revisiones con estos filtros.'}</div>`;
+        return;
+    }
+    lista.innerHTML = items.map(i => `
+        <div class="crc-item">
+            <div style="flex:1;min-width:220px;">
+                <div class="club">${sanitizar(i.club || '—')} — ${sanitizar(i.asociacion || '—')}</div>
+                <div class="meta">Fecha del rodeo: <strong>${CR.fmtFecha(i.fecha_rodeo)}</strong> · Jurado(s): ${sanitizar((i.jurados || []).join(', ') || '—')}</div>
+                <div style="margin-top:6px;">
+                    <span class="crc-badge tipo-${i.tipo}">${CR.ETIQUETA_TIPO[i.tipo]}</span>
+                    <span class="crc-badge estado-${i.estado}">${CR.ETIQUETA_ESTADO[i.estado]}</span>
+                    ${i.decision ? `<span class="crc-badge dec-${i.decision}">${CR.ETIQUETA_DECISION[i.decision]}</span>` : ''}
+                    ${i.resuelto_por_tipo && i.resuelto_por_tipo !== 'comision' ? `<span class="crc-badge" style="background:#ede7f6;color:#4a148c;">${sanitizar(CR.ETIQUETA_RESUELTO_POR[i.resuelto_por_tipo] || '')}</span>` : ''}
+                </div>
+            </div>
+            <button class="btn btn-primario crc-btn-grande" onclick="verCaso('${i.tipo}','${i.id}')">Ver</button>
+        </div>`).join('');
+}
+
+function volverAlListado() {
+    document.getElementById('vista-detalle').classList.add('oculto');
+    document.getElementById('vista-listado').classList.remove('oculto');
+    _detalle = null; _decision = null;
+    cargarListado();
+    window.scrollTo(0, 0);
+}
+
+async function verCaso(tipo, id) {
+    document.getElementById('vista-listado').classList.add('oculto');
+    document.getElementById('vista-detalle').classList.remove('oculto');
+    const cont = document.getElementById('crc-detalle');
+    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    window.scrollTo(0, 0);
+    try {
+        _detalle = await api.get(`/admin/comision/revisiones/${tipo}/${id}`);
+        _decision = null;
+        cont.innerHTML = htmlDetalle(_detalle);
+    } catch (e) {
+        cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'No fue posible cargar la revisión.')}</div>`;
+    }
+}
+
+function htmlVideo(v, extra) {
+    const src = CR.youtubeEmbed(v.video_url);
+    const reproductor = src
+        ? `<div class="crc-video-frame"><iframe src="${sanitizar(src)}" title="Video del caso" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe></div>
+           <div style="font-size:13px;margin-top:4px;"><a href="${sanitizar(v.video_url)}" target="_blank" rel="noopener">Abrir el video en YouTube</a></div>`
+        : (v.video_url
+            ? `<div class="alerta alerta-advertencia">El video no se puede mostrar aquí. <a href="${sanitizar(v.video_url)}" target="_blank" rel="noopener">Abrir enlace</a></div>`
+            : '<div class="alerta alerta-advertencia">⚠️ Este caso no tiene video disponible.</div>');
+    return `<div class="crc-video">
+        <div style="font-size:15px;margin-bottom:8px;"><strong>Caso ${v.numero_caso ?? '—'}</strong> · Ciclo ${v.ciclo ?? '—'} · ${sanitizar(v.tipo_situacion || '—')}
+            · Descuento propuesto: <strong>${v.descuento_propuesto ?? 0}</strong>
+            ${v.derivado_a_comision && extra === 'tipoA' ? '<span class="crc-badge tipo-video_derivado" style="margin-left:6px;">También derivado: se resuelve aparte</span>' : ''}</div>
+        ${v.descripcion ? `<div class="crc-texto" style="margin-bottom:8px;">${sanitizar(v.descripcion)}</div>` : ''}
+        ${reproductor}
+        ${v.comentario_analista ? `<div style="margin-top:8px;"><strong>Comentario del analista:</strong><div class="crc-texto">${sanitizar(v.comentario_analista)}</div></div>` : ''}
+    </div>`;
+}
+
+function htmlDetalle(d) {
+    const e = d.encabezado;
+    const a = d.analisis;
+    const filasPuntajes = a.puntajes.map(p => `<tr>
+        <td>${p.lugar}° lugar</td><td>${sanitizar(p.oficial ?? '—')}</td><td>${sanitizar(p.revisado ?? '—')}</td>
+        <td class="${p.diferencia && !p.diferencia.igual ? 'crc-dif-distinta' : ''}">${sanitizar(p.diferencia ? p.diferencia.texto : '—')}</td></tr>`).join('');
+    const situaciones = a.situaciones.length
+        ? `<ul style="margin:4px 0 0 18px;">${a.situaciones.map(s => `<li><strong>${sanitizar(s.categoria || '—')}</strong>${s.descripcion ? ': ' + sanitizar(s.descripcion) : ''}</li>`).join('')}</ul>`
+        : '<span style="color:#888;">Sin situaciones registradas</span>';
+
+    let especifico = '';
+    if (d.tipo === 'resultado_alterado') {
+        const ra = d.resultado_alterado;
+        especifico = `<div class="crc-bloque"><h3>Resultados alterados (Ciclo 1 — Primeros 3)</h3>
+            <dl class="crc-dl"><dt>Indicador del analista</dt><dd><strong>${ra.indicador ? 'Sí, hay indicios de alteración' : 'No'}</strong></dd></dl>
+            <div style="margin-top:10px;"><strong>Comentario sobre la alteración:</strong><div class="crc-texto">${sanitizar(ra.comentario || 'Sin comentario')}</div></div>
+            <h3 style="margin-top:16px;">Videos del Ciclo 1 (${ra.videos_ciclo_1.length})</h3>
+            ${ra.videos_ciclo_1.length ? ra.videos_ciclo_1.map(v => htmlVideo(v, 'tipoA')).join('') : '<div class="alerta alerta-advertencia">⚠️ No hay videos registrados en el Ciclo 1.</div>'}
+        </div>`;
+    } else {
+        const v = d.video_derivado;
+        especifico = `<div class="crc-bloque"><h3>Video derivado por el analista</h3>
+            <dl class="crc-dl"><dt>Derivado el</dt><dd>${CR.fmtFechaHora(v.derivado_en)}</dd>
+            <dt>Jurado(s)</dt><dd>${sanitizar((e.jurados || []).join(', ') || '—')}</dd></dl>
+            <div style="margin-top:10px;">${htmlVideo(v, 'tipoB')}</div></div>`;
+    }
+
+    return `
+        <div class="crc-bloque">
+            <h3>${sanitizar(e.club || '—')} — ${sanitizar(e.asociacion || '—')}</h3>
+            <dl class="crc-dl">
+                <dt>Fecha</dt><dd>${CR.fmtFecha(e.fecha)}</dd>
+                <dt>Tipo de rodeo</dt><dd>${sanitizar(e.tipo_rodeo || '—')}</dd>
+                <dt>Analista</dt><dd>${sanitizar(e.analista || '—')}</dd>
+                <dt>Jurado(s)</dt><dd>${sanitizar((e.jurados || []).join(', ') || '—')}</dd>
+                <dt>Ciclo</dt><dd>${e.ciclo === 1 ? 'Ciclo 1 — Primeros 3' : e.ciclo === 2 ? 'Ciclo 2 — Campeones' : '—'}</dd>
+                <dt>Revisión</dt><dd><span class="crc-badge tipo-${d.tipo}">${CR.ETIQUETA_TIPO[d.tipo]}</span>
+                    <span class="crc-badge estado-${d.estado}">${CR.ETIQUETA_ESTADO[d.estado]}</span></dd>
+            </dl>
+        </div>
+        <div class="crc-bloque">
+            <h3>Análisis deportivo</h3>
+            <table class="crc-tabla"><thead><tr><th>Lugar</th><th>Oficial (monitor)</th><th>Revisado (analista)</th><th>Diferencia</th></tr></thead>
+                <tbody>${filasPuntajes}</tbody></table>
+            <dl class="crc-dl" style="margin-top:12px;">
+                <dt>Casos por WhatsApp</dt><dd>${a.casos_whatsapp ?? 0}</dd>
+                <dt>Situaciones y categorías</dt><dd>${situaciones}</dd>
+            </dl>
+            <div style="margin-top:10px;"><strong>Observación general del análisis:</strong><div class="crc-texto">${sanitizar(a.observacion_general || 'Sin observación')}</div></div>
+            <div style="margin-top:10px;"><strong>Comentario del monitor:</strong><div class="crc-texto">${sanitizar(a.comentario_monitor || 'Sin comentario')}</div></div>
+        </div>
+        ${especifico}
+        ${d.estado === 'pendiente' ? htmlDecision(d) : htmlResuelto(d)}`;
+}
+
+function htmlDecision(d) {
+    const desc = d.video_derivado?.descuento_propuesto;
+    return `<div class="crc-bloque" id="crc-zona-decision">
+        <h3>Decisión de la Comisión</h3>
+        ${d.otras_pendientes_del_rodeo > 0 ? `<p style="font-size:14px;color:#555;">Este rodeo tiene además ${d.otras_pendientes_del_rodeo} ${d.otras_pendientes_del_rodeo === 1 ? 'revisión pendiente' : 'revisiones pendientes'}. La nota no se publica hasta resolver todas.</p>` : ''}
+        <div class="crc-decision">
+            <button type="button" class="crc-opcion error" id="opt-error" onclick="elegir('error')"><span class="nombre">ERROR</span>${sanitizar(CR.explicacionDecision(d.tipo, 'error', desc))}</button>
+            <button type="button" class="crc-opcion acierto" id="opt-acierto" onclick="elegir('acierto')"><span class="nombre">ACIERTO</span>${sanitizar(CR.explicacionDecision(d.tipo, 'acierto', desc))}</button>
+        </div>
+        <label class="form-label" for="crc-observacion" style="font-size:15px;">Observación de la Comisión (obligatoria)</label>
+        <textarea id="crc-observacion" class="form-control" rows="4" maxlength="2000" style="font-size:15px;" placeholder="Explique brevemente el fundamento de la decisión..."></textarea>
+        <div id="crc-error-decision" class="alerta alerta-error oculto" style="margin-top:10px;"></div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-primario crc-btn-grande" id="crc-btn-registrar" onclick="registrarDecision()">Registrar decisión</button>
+            <button class="btn btn-secundario crc-btn-grande" onclick="volverAlListado()">Volver sin decidir</button>
+        </div>
+    </div>`;
+}
+
+function htmlResuelto(d) {
+    const r = d.resolucion || {};
+    const origen = CR.ETIQUETA_RESUELTO_POR[r.resuelto_por_tipo] || 'Resuelto';
+    const excepcional = r.resuelto_por_tipo === 'administracion' || r.resuelto_por_tipo === 'cierre_excepcional';
+    return `<div class="crc-resuelto"${excepcional ? ' style="background:#f6f2fc;border-color:#c9b6e8;"' : ''}>
+        <div style="font-size:17px;margin-bottom:6px;"><strong>${sanitizar(origen)}</strong></div>
+        ${r.decision ? `<div style="margin-bottom:6px;">Decisión: <span class="crc-badge dec-${r.decision}">${CR.ETIQUETA_DECISION[r.decision]}</span>${excepcional ? ' <span style="font-size:13px;color:#4a148c;">(decisión administrativa, no de la Comisión)</span>' : ''}</div>` : ''}
+        <div>${excepcional ? 'Administrador' : 'Resuelto por'}: <strong>${sanitizar(r.resuelto_por_nombre || '—')}</strong> · ${CR.fmtFechaHora(r.resuelto_en)}</div>
+        ${r.observacion ? `<div style="margin-top:8px;"><strong>${excepcional ? 'Motivo del cierre excepcional' : 'Observación'}:</strong><div class="crc-texto">${sanitizar(r.observacion)}</div></div>` : ''}
+        <p style="font-size:13px;color:#555;margin:10px 0 0;">${excepcional
+            ? 'La Comisión no respondió y el Administrador aplicó un cierre excepcional. Esta revisión ya no admite decisión de la Comisión.'
+            : 'Las decisiones registradas no se modifican desde esta pantalla.'}</p>
+    </div>`;
+}
+
+function elegir(decision) {
+    _decision = decision;
+    document.getElementById('opt-error').classList.toggle('sel', decision === 'error');
+    document.getElementById('opt-acierto').classList.toggle('sel', decision === 'acierto');
+}
+
+async function registrarDecision() {
+    const errEl = document.getElementById('crc-error-decision');
+    const obs = document.getElementById('crc-observacion').value;
+    const err = CR.validarDecision(_decision, obs);
+    if (err) { errEl.textContent = err; errEl.classList.remove('oculto'); return; }
+    errEl.classList.add('oculto');
+
+    const ok = await confirmar(sanitizar(CR.textoConfirmacion(_detalle, _decision)).replace(/\n/g, '<br>'));
+    if (!ok) return;
+
+    const btn = document.getElementById('crc-btn-registrar');
+    btn.disabled = true; btn.textContent = 'Registrando...';
+    try {
+        const r = await api.post(`/admin/comision/revisiones/${_detalle.tipo}/${_detalle.id}/resolver`, { decision: _decision, observacion: obs.trim() });
+        mostrarToast(r.nota_publicada ? 'Decisión registrada. Todas las revisiones del rodeo quedaron resueltas y la nota fue publicada.' : 'Decisión registrada.', 'success');
+        await verCaso(_detalle.tipo, _detalle.id);
+    } catch (e) {
+        errEl.textContent = e.message || 'No fue posible registrar la decisión.';
+        errEl.classList.remove('oculto');
+        btn.disabled = false; btn.textContent = 'Registrar decisión';
+    }
+}
+</script>
+</body>
+</html>

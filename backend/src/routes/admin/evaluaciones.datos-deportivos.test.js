@@ -166,8 +166,18 @@ describe('permisos (los mismos que ya tenía el análisis deportivo)', () => {
         expect(index).toMatch(/rol_evaluacion === 'capacitador' && !req\.path\.startsWith\('\/capacitaciones'\)/);
     });
 
-    test('el endpoint no agregó middlewares de rol nuevos (misma firma que antes)', () => {
+    // Migración 103 (autorizado): la Comisión Técnica revisa los antecedentes
+    // del analista en modo solo lectura — nunca puede modificarlos por API.
+    // Es el ÚNICO middleware de rol agregado; los demás roles no cambian.
+    test('Comisión Técnica recibe 403 y no se guarda nada (antecedentes del analista protegidos)', async () => {
+        const r = await patch({ puntaje_analista_1er: '99', casos_whatsapp: 5 }, 'comision_tecnica');
+        expect(r.statusCode).toBe(403);
+        expect(mockMutaciones).toEqual([]);
+        expect(evaluacion('E1').casos_whatsapp).toBe(2);
+    });
+
+    test('el endpoint solo agregó el bloqueo de Comisión Técnica (ningún otro middleware de rol)', () => {
         const fuente = fs.readFileSync(path.join(__dirname, 'evaluaciones.js'), 'utf8').replace(/\r\n/g, '\n');
-        expect(fuente).toMatch(/router\.patch\('\/:id\/datos-deportivos', async \(req, res\) => \{/);
+        expect(fuente).toMatch(/router\.patch\('\/:id\/datos-deportivos', soloNoComisionTecnica, async \(req, res\) => \{/);
     });
 });

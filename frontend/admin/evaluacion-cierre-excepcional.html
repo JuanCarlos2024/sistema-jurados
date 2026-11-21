@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cierre excepcional — Administrador</title>
+    <link rel="icon" type="image/png" href="/assets/logo_V2.png">
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .ce-banner { background:#4a148c; color:#fff; border-radius:12px; padding:16px 20px; margin-bottom:16px; }
+        .ce-banner h2 { margin:0 0 6px; font-size:20px; letter-spacing:.5px; }
+        .ce-banner p { margin:0; font-size:14px; opacity:.95; }
+        .ce-bloque { background:#fff; border:1px solid var(--gris-borde); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+        .ce-bloque h3 { margin:0 0 10px; font-size:16px; color:#1a3c6e; }
+        .ce-dl { display:grid; grid-template-columns:max-content 1fr; gap:6px 14px; font-size:15px; }
+        .ce-dl dt { font-weight:600; color:#555; } .ce-dl dd { margin:0; }
+        .ce-tabla { width:100%; border-collapse:collapse; font-size:14px; }
+        .ce-tabla th, .ce-tabla td { padding:8px; border-bottom:1px solid var(--gris-borde); text-align:left; }
+        .ce-caso { border:1px solid var(--gris-borde); border-radius:10px; padding:12px; margin-bottom:12px; }
+        .ce-frame { position:relative; width:100%; max-width:640px; aspect-ratio:16/9; background:#000; border-radius:8px; overflow:hidden; margin:8px 0; }
+        .ce-frame iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+        .ce-texto { white-space:pre-wrap; background:#f8f9fa; border-radius:8px; padding:8px 10px; font-size:14px; }
+        .ce-opciones { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; }
+        .ce-opcion { border:2px solid var(--gris-borde); border-radius:10px; padding:10px 14px; cursor:pointer; font-size:14px; display:flex; gap:8px; align-items:flex-start; max-width:340px; }
+        .ce-opcion input { margin-top:3px; }
+        .ce-opcion strong { font-size:16px; }
+        .ce-aviso { background:#fdecea; border:1px solid #f5c6cb; color:#922b21; border-radius:10px; padding:12px 14px; font-size:15px; margin:12px 0; }
+        .ce-resultado { border-radius:12px; padding:14px 16px; font-size:15px; margin-bottom:14px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="/assets/logo_V2.png" alt="Federación del Rodeo Chileno" style="width:72px;height:72px;object-fit:contain;margin-bottom:6px;">
+            <h2>Sistema de Jurados<br>Rodeo Chileno</h2>
+        </div>
+        <nav class="sidebar-nav" data-active="/admin/evaluaciones.html"></nav>
+        <div class="sidebar-footer">
+            <div class="sidebar-usuario" id="nombre-admin"></div>
+            <button class="btn btn-secundario btn-pequeño w-100" onclick="api.cerrarSesion()">Cerrar Sesión</button>
+        </div>
+    </aside>
+    <div class="main-content">
+        <div class="topbar">
+            <div class="flex items-center gap-12">
+                <button class="btn-menu-movil" onclick="document.getElementById('sidebar').classList.toggle('abierto')">☰</button>
+                <a id="link-volver" href="/admin/evaluaciones.html" class="btn btn-secundario btn-pequeño">← Volver al análisis</a>
+                <h1>CIERRE EXCEPCIONAL — ADMINISTRADOR</h1>
+            </div>
+        </div>
+        <div class="page-body">
+            <div class="ce-banner">
+                <h2>CIERRE EXCEPCIONAL — ADMINISTRADOR</h2>
+                <p>Úselo solo cuando la Comisión no haya respondido. NO es el cierre normal: queda registrado con su nombre, la fecha y la justificación,
+                   y las revisiones quedarán marcadas como cerradas por la Administración (nunca como decisiones de la Comisión).</p>
+            </div>
+            <div id="ce-resultado"></div>
+            <div id="ce-contenido"><div class="spinner-wrap"><div class="spinner"></div></div></div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin-nav.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/sidebar-toggle.js"></script>
+<script src="/js/comisionRevision.js"></script>
+<script src="/js/cierreExcepcional.js"></script>
+<script>
+const CR = window.ComisionRevision;
+const CE = window.CierreExcepcional;
+const _evalId = new URLSearchParams(location.search).get('id');
+let _datos = null;
+const _decisiones = {};
+
+(function iniciar() {
+    if (!protegerRuta('administrador')) return;
+    const u = api.getUsuario();
+    if (!CE.puedeCierreExcepcional(u?.rol_evaluacion)) { window.location.href = '/admin/evaluaciones.html'; return; }
+    document.getElementById('nombre-admin').textContent = u?.nombre_completo || '';
+    if (!_evalId) { window.location.href = '/admin/evaluaciones.html'; return; }
+    document.getElementById('link-volver').href = '/admin/evaluacion-detalle.html?id=' + encodeURIComponent(_evalId);
+    cargar();
+})();
+
+async function cargar() {
+    const cont = document.getElementById('ce-contenido');
+    cont.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
+    try {
+        _datos = await api.get(`/admin/evaluaciones/${encodeURIComponent(_evalId)}/cierre-excepcional`);
+        Object.keys(_decisiones).forEach(k => delete _decisiones[k]);
+        cont.innerHTML = htmlPantalla(_datos);
+    } catch (e) {
+        cont.innerHTML = `<div class="alerta alerta-error">${sanitizar(e.message || 'No fue posible cargar los datos.')}</div>`;
+    }
+}
+
+function video(url) {
+    const src = CR.youtubeEmbed(url);
+    if (src) return `<div class="ce-frame"><iframe src="${sanitizar(src)}" title="Video del caso" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe></div>`;
+    return url ? `<div class="alerta alerta-advertencia">Video no reproducible aquí. <a href="${sanitizar(url)}" target="_blank" rel="noopener">Abrir enlace</a></div>`
+               : '<div class="alerta alerta-advertencia">⚠️ Sin video disponible.</div>';
+}
+
+function htmlPantalla(d) {
+    const e = d.evaluacion;
+    const cab = `<div class="ce-bloque"><h3>${sanitizar(e.club || '—')} — ${sanitizar(e.asociacion || '—')}</h3>
+        <dl class="ce-dl"><dt>Fecha</dt><dd>${CR.fmtFecha(e.fecha)}</dd><dt>Tipo de rodeo</dt><dd>${sanitizar(e.tipo_rodeo || '—')}</dd>
+        <dt>Analista</dt><dd>${sanitizar(e.analista || '—')}</dd><dt>Jurado(s)</dt><dd>${sanitizar((e.jurados || []).join(', ') || '—')}</dd>
+        <dt>Estado de la evaluación</dt><dd>${sanitizar(e.estado || '—')}</dd></dl></div>`;
+
+    const ciclos = `<div class="ce-bloque"><h3>Ciclos</h3>
+        <p style="font-size:14px;color:#555;margin:0 0 8px;">Los ciclos marcados se cerrarán con el <strong>procedimiento normal</strong> (mismas reglas de siempre). La nota solo se publica si ambos ciclos quedan cerrados y se cumplen los demás requisitos.</p>
+        <table class="ce-tabla"><thead><tr><th>Ciclo</th><th>Estado</th><th>Cerrar ahora</th></tr></thead><tbody>
+        ${d.ciclos.map(c => `<tr><td>${c.numero_ciclo === 1 ? 'Ciclo 1 — Primeros 3' : 'Ciclo 2 — Campeones'}</td><td>${sanitizar(c.estado)}</td>
+            <td>${c.puede_cerrarse ? `<label><input type="checkbox" class="ce-ciclo" value="${sanitizar(c.ciclo_id)}" checked> Cerrar con el procedimiento normal</label>` : '<span class="texto-gris">—</span>'}</td></tr>`).join('')}
+        </tbody></table></div>`;
+
+    if (!d.puede_cerrar_excepcionalmente && d.cierre_por_completar) {
+        return cab + ciclos + htmlCompletar(d) + htmlHistorial(d);
+    }
+    if (!d.puede_cerrar_excepcionalmente) {
+        return cab + ciclos + `<div class="ce-bloque"><div class="alerta alerta-info">${d.total_pendientes === 0
+            ? 'No hay revisiones de Comisión pendientes en esta evaluación. Use el cierre normal.'
+            : 'La nota de esta evaluación ya fue publicada; no admite cierre excepcional.'}</div></div>` + htmlHistorial(d);
+    }
+
+    const pa = d.pendientes.resultado_alterado.map(r => `<div class="ce-caso">
+        <strong>Resultados alterados (Ciclo 1)</strong>
+        <div style="margin-top:6px;"><strong>Comentario del analista:</strong><div class="ce-texto">${sanitizar(r.comentario_alteracion || 'Sin comentario')}</div></div>
+        <div class="alerta alerta-info" style="margin-top:8px;">Se registrará como <strong>cierre excepcional del Administrador, sin resolución de Comisión</strong>. No genera descuento y el indicador del analista se conserva.</div>
+        <details style="margin-top:8px;"><summary style="cursor:pointer;">Ver videos del Ciclo 1 (${r.videos_ciclo_1.length})</summary>
+            ${r.videos_ciclo_1.map(v => `<div style="margin-top:8px;">Caso ${v.numero_caso} · ${sanitizar(v.tipo_situacion)}${video(v.video_url)}</div>`).join('')}
+        </details></div>`).join('');
+
+    const pb = d.pendientes.video_derivado.map(c => `<div class="ce-caso">
+        <strong>Video derivado — Caso ${c.numero_caso} (Ciclo ${c.ciclo})</strong> · ${sanitizar(c.tipo_situacion)} · Descuento propuesto: <strong>${c.descuento_propuesto}</strong>
+        ${video(c.video_url)}
+        ${c.comentario_analista ? `<div><strong>Comentario del analista:</strong><div class="ce-texto">${sanitizar(c.comentario_analista)}</div></div>` : ''}
+        <div style="margin-top:8px;font-weight:600;">Decisión administrativa (obligatoria):</div>
+        <div class="ce-opciones">
+            <label class="ce-opcion"><input type="radio" name="dec-${sanitizar(c.caso_id)}" value="error" onchange="decidir('${sanitizar(c.caso_id)}','error')">
+                <span><strong>ERROR</strong><br>Se mantiene el descuento propuesto (${c.descuento_propuesto}).</span></label>
+            <label class="ce-opcion"><input type="radio" name="dec-${sanitizar(c.caso_id)}" value="acierto" onchange="decidir('${sanitizar(c.caso_id)}','acierto')">
+                <span><strong>ACIERTO</strong><br>El descuento propuesto NO se aplica.</span></label>
+        </div></div>`).join('');
+
+    return cab + ciclos + `<div class="ce-bloque"><h3>Revisiones de Comisión pendientes (${d.total_pendientes})</h3>${pa}${pb}</div>
+        <div class="ce-bloque"><h3>Justificación (obligatoria)</h3>
+            <textarea id="ce-motivo" class="form-control" rows="4" maxlength="2000" placeholder="Explique por qué se realiza el cierre excepcional (por ejemplo: la Comisión no respondió dentro del plazo)."></textarea>
+            <div class="ce-aviso">⚠️ Este procedimiento puede producir la <strong>publicación definitiva de la nota</strong> si se cumplen todos los demás requisitos.</div>
+            <div id="ce-error" class="alerta alerta-error oculto"></div>
+            <button class="btn btn-peligro" style="font-size:16px;padding:12px 24px;" id="ce-btn" onclick="ejecutar()">Ejecutar cierre excepcional</button>
+        </div>` + htmlHistorial(d);
+}
+
+// Recuperación: un cierre excepcional ya registrado cuya nota aún no se
+// publicó. Completar NO repite decisiones: cierra los ciclos marcados con el
+// procedimiento normal y deja que la publicación habitual decida.
+function htmlCompletar(d) {
+    const c = d.cierre_por_completar;
+    const ultimoError = c.resultado?.ultimo_error;
+    return `<div class="ce-bloque" style="border-color:#c9b6e8;background:#faf7fe;">
+        <h3>Completar cierre excepcional</h3>
+        <p style="font-size:14px;margin:0 0 8px;">Este rodeo ya tiene un cierre excepcional registrado (${CR.fmtFechaHora(c.created_at)}, ${sanitizar(c.administrador || '—')}),
+           pero la nota todavía no se publicó. Las decisiones ya están guardadas y <strong>no se repetirán</strong>.</p>
+        <div style="font-size:14px;"><strong>Motivo registrado:</strong> ${sanitizar(c.motivo)}</div>
+        ${ultimoError ? `<div class="alerta alerta-advertencia" style="margin-top:8px;">Último intento incompleto: ${sanitizar(ultimoError)}</div>` : ''}
+        <p style="font-size:14px;margin:10px 0;">Marque arriba los ciclos que desea cerrar ahora con el procedimiento normal. Si quedan ambos ciclos cerrados y se cumplen los demás requisitos, la nota se publicará.</p>
+        <div class="ce-aviso">⚠️ Esta acción puede producir la <strong>publicación definitiva de la nota</strong>.</div>
+        <div id="ce-error" class="alerta alerta-error oculto"></div>
+        <button class="btn btn-peligro" style="font-size:16px;padding:12px 24px;" id="ce-btn-completar" onclick="completar()">Completar cierre excepcional</button>
+    </div>`;
+}
+
+async function completar() {
+    const errEl = document.getElementById('ce-error');
+    const ciclos = [...document.querySelectorAll('.ce-ciclo:checked')].map(i => i.value);
+    const ok = await confirmar(sanitizar(CE.textoConfirmacionCompletar(_datos, ciclos)).replace(/\n/g, '<br>'));
+    if (!ok) return;
+    const btn = document.getElementById('ce-btn-completar');
+    btn.disabled = true; btn.textContent = 'Completando...';
+    try {
+        const r = await api.post(`/admin/evaluaciones/${encodeURIComponent(_evalId)}/cierre-excepcional/completar`, { ciclos_a_cerrar: ciclos, confirmado: true });
+        document.getElementById('ce-resultado').innerHTML = `<div class="ce-resultado ${r.publicado ? 'alerta-info' : 'alerta-advertencia'}" style="border:1px solid var(--gris-borde);">
+            <strong>${sanitizar(r.mensaje)}</strong>
+            ${r.publicado ? `<div>Nota definitiva: <strong>${r.nota_final}</strong> (puntaje ${r.puntaje_final}).</div>` : ''}</div>`;
+        await cargar();
+        window.scrollTo(0, 0);
+    } catch (e) {
+        errEl.textContent = e.message || 'No fue posible completar el cierre.';
+        errEl.classList.remove('oculto');
+        btn.disabled = false; btn.textContent = 'Completar cierre excepcional';
+    }
+}
+
+function htmlHistorial(d) {
+    if (!d.cierres_anteriores?.length) return '';
+    return `<div class="ce-bloque"><h3>Historial de cierres excepcionales</h3>${d.cierres_anteriores.map(c => `
+        <div class="ce-caso"><div><strong>${CR.fmtFechaHora(c.created_at)}</strong> · ${sanitizar(c.administrador || '—')}</div>
+        <div style="margin-top:4px;"><strong>Motivo:</strong> ${sanitizar(c.motivo)}</div>
+        <div style="font-size:13px;color:#555;margin-top:4px;">Resultados alterados cerrados: ${(c.tratamiento?.resultado_alterado || []).length} ·
+            Videos derivados decididos: ${(c.tratamiento?.video_derivado || []).length} · Descuento considerado: ${c.tratamiento?.descuentos_considerados_total ?? 0}
+            ${c.resultado ? ` · ${c.resultado.publicado ? `Nota publicada: ${c.resultado.nota_final}` : 'Nota no publicada en ese momento'}` : ''}</div></div>`).join('')}</div>`;
+}
+
+function decidir(casoId, decision) { _decisiones[casoId] = decision; }
+
+async function ejecutar() {
+    const errEl = document.getElementById('ce-error');
+    const motivo = document.getElementById('ce-motivo').value;
+    const err = CE.validarCierre(_datos, _decisiones, motivo);
+    if (err) { errEl.textContent = err; errEl.classList.remove('oculto'); return; }
+    errEl.classList.add('oculto');
+    const ciclos = [...document.querySelectorAll('.ce-ciclo:checked')].map(i => i.value);
+
+    const ok = await confirmar(sanitizar(CE.textoConfirmacion(_datos, _decisiones, ciclos)).replace(/\n/g, '<br>'));
+    if (!ok) return;
+
+    const btn = document.getElementById('ce-btn');
+    btn.disabled = true; btn.textContent = 'Ejecutando...';
+    try {
+        const r = await api.post(`/admin/evaluaciones/${encodeURIComponent(_evalId)}/cierre-excepcional`, CE.cuerpoSolicitud(_datos, _decisiones, motivo, ciclos));
+        document.getElementById('ce-resultado').innerHTML = `<div class="ce-resultado ${r.publicado ? 'alerta-info' : 'alerta-advertencia'}" style="border:1px solid var(--gris-borde);">
+            <strong>${sanitizar(r.mensaje)}</strong>
+            ${r.publicado ? `<div>Nota definitiva: <strong>${r.nota_final}</strong> (puntaje ${r.puntaje_final}).</div>` : ''}
+            ${(r.ciclos_cerrados || []).filter(c => !c.cerrado).map(c => `<div>Ciclo ${c.numero_ciclo}: no se pudo cerrar — ${sanitizar(c.error || c.estado || '')}</div>`).join('')}
+        </div>`;
+        mostrarToast('Cierre excepcional registrado.', 'success');
+        await cargar();
+        window.scrollTo(0, 0);
+    } catch (e) {
+        errEl.textContent = e.message || 'No fue posible ejecutar el cierre excepcional.';
+        errEl.classList.remove('oculto');
+        btn.disabled = false; btn.textContent = 'Ejecutar cierre excepcional';
+    }
+}
+</script>
+</body>
+</html>

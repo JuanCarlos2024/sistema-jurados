@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../../config/supabase');
-const { soloRolEvaluacion } = require('../../middleware/auth');
+const { soloRolEvaluacion, soloNoComisionTecnica } = require('../../middleware/auth');
 const { intentarAutoPublicar } = require('../../services/publicacion');
 
 // Intenta resolver un caso en evaluacion_casos basándose en el estado
@@ -100,7 +100,7 @@ async function _marcarCasoResuelto(caso_id, resolucion_final, now) {
 }
 
 // POST /:id/decision-analista
-router.post('/:id/decision-analista', async (req, res) => {
+router.post('/:id/decision-analista', soloNoComisionTecnica, async (req, res) => {
     const { decision, comentario } = req.body;
 
     const DECISIONES_VALIDAS = ['apelacion_aceptada', 'apelacion_rechazada', 'derivada_comite'];

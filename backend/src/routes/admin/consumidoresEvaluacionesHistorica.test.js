@@ -116,7 +116,7 @@ describe('guarda de regresión: cada consulta a evaluaciones fue revisada semán
     // [archivo, consultas from('evaluaciones'), menciones de es_historica_importacion]. Si aparece una consulta nueva (o se quita un filtro),
     // este test falla y obliga a decidir si el consumidor debe (o no) ver los registros históricos.
     const ESPERADO = {
-        'routes/admin/evaluaciones.js': [19, 5],            // listado (filtra), rodeos-disponibles y crear-masivo (semántica propia); el resto opera por id/estado — incl. la lectura previa de fundamento_jurado/resultados_alterados vigentes al validar la publicación del fundamento al jurado (datos-deportivos)
+        'routes/admin/evaluaciones.js': [22, 5],            // listado (filtra; también lo usa GET /exportar), rodeos-disponibles y crear-masivo (semántica propia); el resto opera por id/estado — incl. la lectura previa de fundamento_jurado/resultados_alterados vigentes al validar la publicación del fundamento al jurado, (103) la lectura por id del indicador vigente antes de anular la revisión de Comisión al desmarcarlo (datos-deportivos) y (103) las lecturas por id del cierre excepcional y de su recuperación "completar" (la RPC rechaza históricas: EVALUACION_NO_APLICA; completar exige un cierre previo, que una histórica nunca tiene)
         'routes/admin/reportes.js': [2, 2],                 // dashboard/CSV: filtra
         'routes/admin/reporte-deportivo.js': [3, 1],        // reporte: filtra; la 2ª y 3ª leen comentario_jefe por id ya filtrado (export-detalle y export-fin-semana, misma semántica)
         'routes/admin/hojavida.js': [2, 2],                 // "Ver evaluación"/"Altera resultado": filtra; calcularSituacionesPorRodeo se extrajo a services/situacionesEvaluacion.js (misma lógica, ver esa entrada)
@@ -129,8 +129,9 @@ describe('guarda de regresión: cada consulta a evaluaciones fue revisada semán
         'services/motorPropuestaDesignacion.js': [1, 1],    // métricas de rendimiento: histórica ≠ "sin alteración"
         'services/evaluacionCreacion.js': [2, 3],           // creación/conversión: necesita ver la histórica
         'services/importacionHistorica.js': [1, 0],         // importación: DEBE ver históricas y normales para comparar Casos por WhatsApp
-        'routes/admin/casos.js': [7, 0], 'routes/admin/ciclos.js': [4, 0], 'routes/admin/respuestas-jurado.js': [4, 0],   // por id, sobre ciclos/casos que una histórica no tiene
-        'services/publicacion.js': [3, 0],                  // por id y estado (una histórica 'cerrado' nunca se autopublica)
+        'routes/admin/casos.js': [4, 0], 'routes/admin/ciclos.js': [4, 0], 'routes/admin/respuestas-jurado.js': [4, 0],   // por id, sobre ciclos/casos que una histórica no tiene (103: la decisión de Comisión pasó a la RPC resolver_caso_derivado_comision)
+        'services/publicacion.js': [6, 0],                  // por id y estado (una histórica 'cerrado' nunca se autopublica); 103: continuarTrasDecisionComision lee/actualiza por id y estado 'pendiente_comision'
+        'services/revisionesComision.js': [3, 2],           // 103: contexto de revisiones de Comisión — excluye explícitamente anuladas e históricas (nunca tienen revisiones); el detalle y los datos del cierre excepcional leen por id ya filtrado por ese contexto
         'services/rodeosListado.js': [1, 0]                 // solo nota_final (NULL en una histórica): sin efecto
     };
     test.each(Object.entries(ESPERADO))('%s', (archivo, [consultas, marcadores]) => {
