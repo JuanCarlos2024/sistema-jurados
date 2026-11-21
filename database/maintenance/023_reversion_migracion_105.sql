@@ -1,0 +1,189 @@
+-- ═════════════════════════════════════════════════════════════════════════
+-- 023: RECUPERACIÓN SELECTIVA de permisos de la migración 105.
+--      NO EJECUTAR salvo decisión expresa y autorizada.
+--
+-- ESTE ARCHIVO NO HACE NADA SI SE EJECUTA COMPLETO: todas sus sentencias
+-- están comentadas. Cada restauración requiere SELECCIÓN EXPLÍCITA.
+--
+-- CUÁNDO USARLO: solo si, tras aplicar la 105, un consumidor legítimo que
+-- usa la Data API con la clave publicable (anon) o authenticated deja de
+-- funcionar. Los registros del 12 al 19-11-2026 (~109.000 solicitudes) no
+-- muestran ninguno: el backend usa la clave secreta (service_role), que la
+-- 105 NO modifica. Si falla el BACKEND, la causa NO es la 105: no usar
+-- este archivo.
+--
+-- PROCEDIMIENTO (SQL Editor de Supabase):
+--   1. Identificar en los registros de PostgREST el objeto exacto rechazado
+--      (error 42501 "permission denied for table X" con la clave publicable).
+--   2. Seleccionar SOLO las líneas de ese objeto dentro de su bloque,
+--      descomentarlas (Ctrl+/ quita "-- " de cada línea) y ejecutar
+--      envueltas en BEGIN; ... COMMIT;.
+--   3. Ejecutar la verificación 022: los "false" deben corresponder
+--      únicamente al objeto restaurado.
+--   Las notas dentro de los bloques llevan doble prefijo ("-- -- ..."), así
+--   que siguen siendo comentarios aunque se descomenten junto a las líneas.
+--
+-- Cada línea restaura EXACTAMENTE el estado del 2026-11-19 de ese objeto
+-- (ACL tomadas con aclexplode, solo lectura). En las tablas que no tenían
+-- RLS, el acceso solo vuelve si se ejecutan AMBAS líneas (GRANT + DISABLE
+-- RLS); en las que ya tenían RLS sin políticas, el GRANT no da acceso a filas
+-- (igual que antes de la 105).
+--
+-- NUNCA SE RESTAURAN (no figuran en ningún bloque):
+--   · public.administradores (email, password_hash, rol_evaluacion): reabrirla
+--     es la vulnerabilidad misma. Ningún consumidor legítimo la necesita.
+--   · public.usuarios_pagados y public.usuario_observaciones_administrativas:
+--     ya no tenían privilegios para anon/authenticated antes de la 105; su
+--     RLS se mantiene.
+--   · EXECUTE de public.publicar_evaluacion para PUBLIC/anon/authenticated
+--     (también la cierra la 103): publicaría notas sin pasar por el backend.
+-- No hay datos de autenticación de Supabase en public (auth.users: 0 filas).
+-- Ningún bloque modifica datos.
+-- ═════════════════════════════════════════════════════════════════════════
+
+
+-- ┌─ BLOQUE A — CATÁLOGOS (configuración y datos de referencia, sin datos personales)
+-- -- Tablas que NO tenían RLS: GRANT + DISABLE RLS.
+-- GRANT ALL ON TABLE public.categorias_rodeo TO anon, authenticated;
+-- ALTER TABLE public.categorias_rodeo DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.tipos_rodeo TO anon, authenticated;
+-- ALTER TABLE public.tipos_rodeo DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.comunas_chile TO anon, authenticated;
+-- ALTER TABLE public.comunas_chile DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.clasificaciones_designacion TO anon, authenticated;
+-- ALTER TABLE public.clasificaciones_designacion DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.clasificacion_categoria_matriz TO anon, authenticated;
+-- ALTER TABLE public.clasificacion_categoria_matriz DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.club_ubicaciones TO anon, authenticated;
+-- ALTER TABLE public.club_ubicaciones DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.configuracion_tarifas TO anon, authenticated;
+-- ALTER TABLE public.configuracion_tarifas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.configuracion_retencion TO anon, authenticated;
+-- ALTER TABLE public.configuracion_retencion DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.bonos_config TO anon, authenticated;
+-- ALTER TABLE public.bonos_config DISABLE ROW LEVEL SECURITY;
+-- -- Tablas que ya tenían RLS sin políticas: solo GRANT (sin acceso a filas, como antes).
+-- GRANT ALL ON TABLE public.comunas_chile_alias TO anon, authenticated;
+-- GRANT ALL ON TABLE public.asociacion_alias TO anon, authenticated;
+-- GRANT ALL ON TABLE public.asociaciones TO anon, authenticated;
+-- GRANT ALL ON TABLE public.configuracion_designacion_matriz TO anon, authenticated;
+-- GRANT ALL ON TABLE public.configuracion_designacion_orden_criterios TO anon, authenticated;
+-- GRANT ALL ON TABLE public.configuracion_designacion_versiones TO anon, authenticated;
+-- GRANT ALL ON TABLE public.configuracion_designacion_zona_extrema_categorias TO anon, authenticated;
+-- GRANT ALL ON TABLE public.configuracion_designacion_zonas_extremas TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_escala_calificacion TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_escala_puntaje_nota TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_configuracion TO anon, authenticated;
+-- GRANT ALL ON TABLE public.temporadas TO anon, authenticated;
+-- -- Secuencias de este bloque.
+-- GRANT SELECT, UPDATE, USAGE ON SEQUENCE public.configuracion_designacion_numero_version_seq TO anon, authenticated;
+-- GRANT SELECT, UPDATE, USAGE ON SEQUENCE public.evaluacion_escala_puntaje_nota_id_seq TO anon, authenticated;
+-- GRANT SELECT, UPDATE, USAGE ON SEQUENCE public.evaluacion_configuracion_id_seq TO anon, authenticated;
+-- └─ FIN BLOQUE A
+
+
+-- ┌─ BLOQUE B — OPERACIÓN (rodeos, designaciones, disponibilidad, importaciones, capacitaciones)
+-- -- Tablas que NO tenían RLS: GRANT + DISABLE RLS.
+-- GRANT ALL ON TABLE public.rodeos TO anon, authenticated;
+-- ALTER TABLE public.rodeos DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.asignaciones TO anon, authenticated;
+-- ALTER TABLE public.asignaciones DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.disponibilidad_usuarios TO anon, authenticated;
+-- ALTER TABLE public.disponibilidad_usuarios DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.rodeo_links TO anon, authenticated;
+-- ALTER TABLE public.rodeo_links DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.rodeo_adjuntos TO anon, authenticated;
+-- ALTER TABLE public.rodeo_adjuntos DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.bonos_solicitados TO anon, authenticated;
+-- ALTER TABLE public.bonos_solicitados DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.importaciones TO anon, authenticated;
+-- ALTER TABLE public.importaciones DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.importaciones_pendientes TO anon, authenticated;
+-- ALTER TABLE public.importaciones_pendientes DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_alternativas TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_alternativas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_asignaciones TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_asignaciones DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_banco_alternativas TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_banco_alternativas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_banco_preguntas TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_banco_preguntas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_intentos TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_intentos DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_preguntas TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_preguntas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_pruebas TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_pruebas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.capacitacion_respuestas TO anon, authenticated;
+-- ALTER TABLE public.capacitacion_respuestas DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.evaluacion_banco_situaciones TO anon, authenticated;
+-- ALTER TABLE public.evaluacion_banco_situaciones DISABLE ROW LEVEL SECURITY;
+-- -- Tablas que ya tenían RLS sin políticas: solo GRANT (sin acceso a filas, como antes).
+-- GRANT ALL ON TABLE public.propuestas_designacion TO anon, authenticated;
+-- GRANT ALL ON TABLE public.propuestas_designacion_detalle TO anon, authenticated;
+-- GRANT ALL ON TABLE public.capacitacion_materiales TO anon, authenticated;
+-- GRANT ALL ON TABLE public.capacitacion_notas_manuales_historial TO anon, authenticated;
+-- GRANT ALL ON TABLE public.capacitacion_recalculos TO anon, authenticated;
+-- GRANT ALL ON TABLE public.capacitacion_recalculos_detalle TO anon, authenticated;
+-- GRANT ALL ON TABLE public.material_complementario TO anon, authenticated;
+-- GRANT ALL ON TABLE public.material_complementario_interacciones TO anon, authenticated;
+-- GRANT ALL ON TABLE public.historico_colleras_medicion TO anon, authenticated;
+-- GRANT ALL ON TABLE public.historico_rodeos_temporada TO anon, authenticated;
+-- GRANT ALL ON TABLE public.colleras_completas_snapshots TO anon, authenticated;
+-- GRANT ALL ON TABLE public.datos_monitor_rodeo TO anon, authenticated;
+-- -- Funciones de este bloque (todas SECURITY INVOKER).
+-- GRANT EXECUTE ON FUNCTION public.fn_bloquear_designacion_rentado_si_cartilla_institucional() TO PUBLIC, anon, authenticated;
+-- GRANT EXECUTE ON FUNCTION public.rpc_recalcular_intentos_capacitacion(uuid, uuid, text, uuid, text, uuid) TO anon, authenticated;
+-- GRANT EXECUTE ON FUNCTION public._cap_calc_resumen(uuid, jsonb, uuid, numeric, numeric, numeric, numeric) TO anon, authenticated;
+-- └─ FIN BLOQUE B
+
+
+-- ┌─ BLOQUE C — DATOS SENSIBLES (cartillas, evaluaciones y notas técnicas, auditoría, fichas, RUT)
+-- -- ⚠️ NO EJECUTAR EL BLOQUE COMPLETO. Seleccionar SOLO el objeto
+-- -- estrictamente necesario, con autorización expresa, y preferir que ese
+-- -- consumidor pase por el backend en lugar de reabrir el acceso.
+-- -- Tablas que NO tenían RLS: GRANT + DISABLE RLS.
+-- GRANT ALL ON TABLE public.cartillas_delegado TO anon, authenticated;
+-- ALTER TABLE public.cartillas_delegado DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.cartillas_jurado TO anon, authenticated;
+-- ALTER TABLE public.cartillas_jurado DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.evaluacion_comentarios_jurado_ciclo TO anon, authenticated;
+-- ALTER TABLE public.evaluacion_comentarios_jurado_ciclo DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.auditoria TO anon, authenticated;
+-- ALTER TABLE public.auditoria DISABLE ROW LEVEL SECURITY;
+-- GRANT ALL ON TABLE public.control_gestion_situaciones TO anon, authenticated;
+-- ALTER TABLE public.control_gestion_situaciones DISABLE ROW LEVEL SECURITY;
+-- -- Tablas que ya tenían RLS sin políticas: solo GRANT (sin acceso a filas, como antes).
+-- GRANT ALL ON TABLE public.cartillas_delegado_versiones TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluaciones TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_casos TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_ciclos TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_auditoria TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_comentarios_finales TO anon, authenticated;
+-- GRANT ALL ON TABLE public.evaluacion_respuestas_jurado TO anon, authenticated;
+-- GRANT ALL ON TABLE public.notas_rodeo TO anon, authenticated;
+-- GRANT ALL ON TABLE public.rodeo_notas_secundarias TO anon, authenticated;
+-- GRANT ALL ON TABLE public.usuario_historial_cambios TO anon, authenticated;
+-- GRANT ALL ON TABLE public.fichas_internas TO anon, authenticated;
+-- -- Vista con RUT y nombres de jurados (vuelve a ejecutarse con los permisos del dueño).
+-- GRANT ALL ON TABLE public.v_asignaciones_completas TO anon, authenticated;
+-- ALTER VIEW public.v_asignaciones_completas RESET (security_invoker);
+-- -- Secuencias y función de este bloque.
+-- GRANT SELECT, UPDATE, USAGE ON SEQUENCE public.rodeo_notas_secundarias_id_seq TO anon, authenticated;
+-- GRANT SELECT, UPDATE, USAGE ON SEQUENCE public.rodeo_notas_delegado_correcciones_id_seq TO anon, authenticated;
+-- GRANT SELECT, UPDATE, USAGE ON SEQUENCE public.seq_codigo_usuario TO anon, authenticated;
+-- GRANT EXECUTE ON FUNCTION public.generar_codigo_usuario() TO PUBLIC, anon, authenticated;
+-- └─ FIN BLOQUE C
+
+
+-- ┌─ BLOQUE D — PRIVILEGIOS POR DEFECTO DE OBJETOS NUEVOS (NO RECOMENDADO)
+-- -- Vuelve a abrir automáticamente cada tabla, secuencia y función FUTURA
+-- -- creada por postgres en public. No restaura ningún acceso existente:
+-- -- casi nunca es necesario para recuperar un servicio.
+-- ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES    TO anon, authenticated;
+-- ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated;
+-- ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated;
+-- └─ FIN BLOQUE D
+
+
+-- Tras cualquier restauración: NOTIFY pgrst, 'reload schema'; y ejecutar 022.
