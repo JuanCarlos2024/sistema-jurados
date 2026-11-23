@@ -5,7 +5,7 @@ const { soloRolEvaluacion, soloNoComisionTecnica } = require('../../middleware/a
 const { intentarAutoPublicar, generarRevisionResultadoAlterado, contarPendientesComision } = require('../../services/publicacion');
 const { mensajeErrorComision } = require('../../services/erroresComision');
 const { resumenComisionPorEvaluacion, filtroEvaluacionesPorComision } = require('../../services/revisionesComision');
-const { normalizarCasosWhatsapp } = require('../../services/casosWhatsapp');
+const { normalizarCasosWhatsapp, normalizarDesgloseWhatsapp, validarSumaDesglose } = require('../../services/casosWhatsapp');
 const { cargarConfiguracion, crearEvaluacion } = require('../../services/evaluacionCreacion');
 
 // ─── Listado de Análisis de Casos (pantalla y exportación) ────────────────
@@ -738,6 +738,8 @@ router.patch('/:id/datos-deportivos', soloNoComisionTecnica, async (req, res) =>
         resultados_alterados,
         comentario_resultados_alterados,
         casos_whatsapp,
+        casos_whatsapp_bien_jurado,
+        casos_whatsapp_mal_jurado,
         fundamento_jurado,
         fundamento_jurado_publicado
     } = req.body;
@@ -745,6 +747,26 @@ router.patch('/:id/datos-deportivos', soloNoComisionTecnica, async (req, res) =>
     // Casos por WhatsApp: dato informativo del análisis (entero >= 0). No es notas_rodeo.nota ni entra en cálculos.
     const casosWs = normalizarCasosWhatsapp(casos_whatsapp);
     if (!casosWs.ok) return res.status(400).json({ error: casosWs.error });
+
+    // Desglose Bien / Mal jurado (107): vacío = sin registrar; si se registra
+    // debe sumar el total. Se valida contra los valores EFECTIVOS (lo que viene
+    // en el PATCH o, si no viene, lo ya guardado), para que cambiar solo el
+    // total nunca deje un desglose inconsistente.
+    const desglose = normalizarDesgloseWhatsapp(casos_whatsapp_bien_jurado, casos_whatsapp_mal_jurado);
+    if (!desglose.ok) return res.status(400).json({ error: desglose.error });
+    if (casosWs.cambia || desglose.cambia) {
+        const { data: wsActual, error: wsErr } = await supabase
+            .from('evaluaciones')
+            .select('casos_whatsapp, casos_whatsapp_bien_jurado, casos_whatsapp_mal_jurado')
+            .eq('id', req.params.id)
+            .single();
+        if (wsErr || !wsActual) return res.status(404).json({ error: 'Evaluación no encontrada' });
+        const total = casosWs.cambia ? casosWs.valor : (wsActual.casos_whatsapp || 0);
+        const bien = desglose.cambia ? desglose.bien : (wsActual.casos_whatsapp_bien_jurado ?? null);
+        const mal  = desglose.cambia ? desglose.mal  : (wsActual.casos_whatsapp_mal_jurado ?? null);
+        const errSuma = validarSumaDesglose(bien, mal, total);
+        if (errSuma) return res.status(400).json({ error: errSuma });
+    }
 
     if (resultados_alterados === true && !comentario_resultados_alterados?.trim()) {
         return res.status(400).json({ error: 'El comentario de alteración es obligatorio cuando resultados_alterados = sí' });
@@ -808,6 +830,10 @@ router.patch('/:id/datos-deportivos', soloNoComisionTecnica, async (req, res) =>
     if (fundamento_jurado !== undefined) cambios.fundamento_jurado = fundamento_jurado || null;
     if (fundamento_jurado_publicado !== undefined) cambios.fundamento_jurado_publicado = !!fundamento_jurado_publicado;
     if (casosWs.cambia) cambios.casos_whatsapp = casosWs.valor;
+    if (desglose.cambia) {
+        cambios.casos_whatsapp_bien_jurado = desglose.bien;
+        cambios.casos_whatsapp_mal_jurado  = desglose.mal;
+    }
 
     // Migración 103 — desmarcar los resultados alterados: si existe una
     // revisión de Comisión PENDIENTE se anula primero, con motivo y auditoría

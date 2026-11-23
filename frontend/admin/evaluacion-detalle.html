@@ -2152,7 +2152,7 @@ function renderAnalisisDeportivo(ev) {
             </table>
         </div>
 
-        ${cwHtmlCampo(ev.casos_whatsapp, esAnalista)}
+        ${cwHtmlCampo(ev.casos_whatsapp, esAnalista, ev.casos_whatsapp_bien_jurado, ev.casos_whatsapp_mal_jurado)}
 
         <div class="form-group" style="margin-bottom:12px;">
             <label class="form-label">Observación general del análisis</label>
@@ -2296,6 +2296,14 @@ async function guardarAnalisisDeportivo() {
         if (!cw.ok) { mostrarToast(cw.error, 'error'); return; }
         casos_whatsapp = cw.valor;
     }
+    // Desglose Bien / Mal jurado (107): vacío = sin registrar; si se completa, debe sumar el total.
+    let desgloseWs;
+    const bienEl = document.getElementById('ad-casos_whatsapp_bien_jurado');
+    const malEl = document.getElementById('ad-casos_whatsapp_mal_jurado');
+    if (cwEl && bienEl && malEl) {
+        desgloseWs = cwLeerDesglose(bienEl.value, malEl.value, casos_whatsapp);
+        if (!desgloseWs.ok) { mostrarToast(desgloseWs.error, 'error'); return; }
+    }
 
     const p1 = getTextPuntaje('ad-puntaje_analista_1er');
     const p2 = getTextPuntaje('ad-puntaje_analista_2do');
@@ -2324,6 +2332,10 @@ async function guardarAnalisisDeportivo() {
         comentario_resultados_alterados
     };
     if (casos_whatsapp !== undefined) body.casos_whatsapp = casos_whatsapp;
+    if (desgloseWs) {
+        body.casos_whatsapp_bien_jurado = desgloseWs.bien;
+        body.casos_whatsapp_mal_jurado  = desgloseWs.mal;
+    }
 
     try {
         await api.patch(`/admin/evaluaciones/${evalId}/datos-deportivos`, body);

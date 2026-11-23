@@ -6,7 +6,8 @@
 // evaluacionDesempenoJurados.test.js) — solo la capa HTTP.
 jest.mock('../../config/supabase', () => ({ from: jest.fn(), rpc: jest.fn() }));
 jest.mock('../../services/evaluacionDesempenoJurados', () => ({
-    obtenerEvaluacionDesempeno: jest.fn()
+    obtenerEvaluacionDesempeno: jest.fn(),
+    textoDesglose: jest.requireActual('../../services/evaluacionDesempenoJurados').textoDesglose
 }));
 
 const supabase = require('../../config/supabase');

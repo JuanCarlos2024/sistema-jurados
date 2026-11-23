@@ -7,7 +7,7 @@ const express = require('express');
 const router = express.Router();
 const ExcelJS = require('exceljs');
 const supabase = require('../../config/supabase');
-const { obtenerEvaluacionDesempeno } = require('../../services/evaluacionDesempenoJurados');
+const { obtenerEvaluacionDesempeno, textoDesglose } = require('../../services/evaluacionDesempenoJurados');
 
 function parseQuery(req) {
     return {
@@ -70,7 +70,8 @@ router.get('/excel', async (req, res) => {
             { header: '% rodeos alterados 1-3 L.',    key: 'pct_alterado',     width: 18 },
             { header: '% alterado por categoría',     key: 'pct_categoria',    width: 18 },
             { header: 'Total consultas WSP',          key: 'wsp',              width: 18 },
-            { header: 'Mal jurado',                   key: 'mal_jurado',       width: 11 },
+            { header: 'Mal jurado',                   key: 'mal_jurado',       width: 16 },
+            { header: 'Bien jurado',                  key: 'bien_jurado',      width: 16 },
             { header: 'Nota prom. Delegado',          key: 'nota_delegado',    width: 16 },
             { header: 'Nota prom. Comisión',          key: 'nota_comision',    width: 16 },
             { header: 'Promedio D + Com.',            key: 'promedio_d_com',   width: 15 },
@@ -94,7 +95,11 @@ router.get('/excel', async (req, res) => {
                 pct_alterado: fmtNota(f.pct_alterado_individual),
                 pct_categoria: fmtNota(f.pct_alterado_categoria),
                 wsp: fmtWsp(f.consultas_wsp_total, f.consultas_wsp_rodeos),
-                mal_jurado: f.mal_jurado ?? '—',
+                // 107: del Análisis Deportivo (o el registro manual si el período no tiene desglose).
+                mal_jurado: f.mal_jurado_origen === 'manual'
+                    ? `${f.mal_jurado} (manual)`
+                    : textoDesglose(f.mal_jurado, f.mal_jurado_origen === 'analisis' ? f.wsp_rodeos_sin_desglose : 0),
+                bien_jurado: textoDesglose(f.bien_jurado, f.bien_jurado !== null ? f.wsp_rodeos_sin_desglose : 0),
                 nota_delegado: fmtNota(f.nota_delegado_promedio),
                 nota_comision: fmtNota(f.nota_comision_promedio),
                 promedio_d_com: fmtNota(f.promedio_d_com),

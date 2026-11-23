@@ -10,6 +10,13 @@
 //     tipo_persona='jurado', estado_designacion != 'rechazado') + rodeos +
 //     evaluaciones.resultados_alterados (anulada=false).
 //   - Consultas WhatsApp -> evaluaciones.casos_whatsapp (anulada=false).
+//   - Bien jurado / Mal jurado -> evaluaciones.casos_whatsapp_bien_jurado /
+//     casos_whatsapp_mal_jurado (migración 107; mismo grano POR RODEO y misma
+//     atribución que Consultas WhatsApp). NULL = sin registrar: nunca se cuenta
+//     como 0. Un rodeo con 0 consultas no necesita desglose. "Mal jurado" del
+//     análisis tiene prioridad; el valor MANUAL de evaluacion_desempeno_manual
+//     (081) se conserva intacto y se muestra solo si el período no tiene ningún
+//     desglose registrado.
 //     ATRIBUCIÓN CONFIRMADA POR EL USUARIO: evaluaciones.casos_whatsapp es
 //     un conteo POR RODEO (no por jurado individual) — se atribuye el total
 //     del rodeo a CADA jurado que participó en él, sin dividir. Por eso el
@@ -111,7 +118,7 @@ async function obtenerDatosBase({ desde, hasta }) {
     if (rodeoIds.length > 0) {
         const { data, error } = await supabase
             .from('evaluaciones')
-            .select('rodeo_id, resultados_alterados, casos_whatsapp')
+            .select('rodeo_id, resultados_alterados, casos_whatsapp, casos_whatsapp_bien_jurado, casos_whatsapp_mal_jurado')
             .in('rodeo_id', rodeoIds)
             .eq('anulada', false)
             .eq('es_historica_importacion', false);
@@ -174,6 +181,10 @@ function construirFilas({ jurados, todasAsigs, evalMap, notaDelegadoMap, notaCom
             _alteradoRodeoIds: new Set(),
             _wspTotal: 0,
             _wspRodeoIds: new Set(),
+            _wspBien: 0,
+            _wspMal: 0,
+            _wspRodeosConDesglose: 0,
+            _wspRodeosSinDesglose: 0,
             _delegado: [],
             _comision: [],
             _ad: []
@@ -195,6 +206,14 @@ function construirFilas({ jurados, todasAsigs, evalMap, notaDelegadoMap, notaCom
             const wsp = ev.casos_whatsapp || 0;
             p._wspTotal += wsp;
             if (wsp > 0) p._wspRodeoIds.add(rodeoId);
+            const bien = ev.casos_whatsapp_bien_jurado, mal = ev.casos_whatsapp_mal_jurado;
+            if (bien !== null && bien !== undefined && mal !== null && mal !== undefined) {
+                p._wspBien += bien;
+                p._wspMal += mal;
+                p._wspRodeosConDesglose++;
+            } else if (wsp > 0) {
+                p._wspRodeosSinDesglose++;   // hay consultas pero sin desglose: no se inventa 0
+            }
         }
 
         const nd = notaDelegadoMap[rodeoId];
@@ -234,6 +253,10 @@ function construirFilas({ jurados, todasAsigs, evalMap, notaDelegadoMap, notaCom
             pct_alterado_individual,
             consultas_wsp_total: p._wspTotal,
             consultas_wsp_rodeos: p._wspRodeoIds.size,
+            // null = ningún rodeo del período tiene desglose registrado ("Sin registrar").
+            wsp_bien_jurado: p._wspRodeosConDesglose > 0 ? p._wspBien : null,
+            wsp_mal_jurado:  p._wspRodeosConDesglose > 0 ? p._wspMal  : null,
+            wsp_rodeos_sin_desglose: p._wspRodeosSinDesglose,
             nota_delegado_promedio,
             nota_comision_promedio,
             promedio_d_com,
@@ -299,6 +322,27 @@ async function obtenerManual({ desde, hasta }, usuarioIds) {
     return map;
 }
 
+// Mal jurado del ANÁLISIS (107) tiene prioridad; si el período no tiene ningún
+// desglose, se usa el registro MANUAL (081), que nunca se modifica aquí.
+function combinarMalJurado(f, m) {
+    const manual = m && m.mal_jurado !== null && m.mal_jurado !== undefined ? m.mal_jurado : null;
+    const delAnalisis = f.wsp_mal_jurado !== null && f.wsp_mal_jurado !== undefined;
+    return {
+        mal_jurado: delAnalisis ? f.wsp_mal_jurado : manual,
+        mal_jurado_origen: delAnalisis ? 'analisis' : (manual !== null ? 'manual' : null),
+        mal_jurado_manual: manual,
+        bien_jurado: f.wsp_bien_jurado ?? null
+    };
+}
+
+// Texto para pantalla/Excel: "Sin registrar" sin inventar 0; si hay rodeos con
+// consultas sin desglose, se indica junto al valor parcial.
+function textoDesglose(valor, rodeosSinDesglose) {
+    const pend = rodeosSinDesglose > 0 ? ` (+${rodeosSinDesglose} rodeo${rodeosSinDesglose === 1 ? '' : 's'} sin registrar)` : '';
+    if (valor === null || valor === undefined) return 'Sin registrar';
+    return `${valor}${pend}`;
+}
+
 function aplicarFiltrosVisuales(filas, { categoria, search }) {
     let resultado = filas;
     if (categoria) resultado = resultado.filter(f => f.categoria === categoria);
@@ -327,6 +371,8 @@ const ORDENES = {
     wsp_rodeos_asc:         (a, b) => a.consultas_wsp_rodeos - b.consultas_wsp_rodeos,
     mal_jurado_desc:        (a, b) => (b.mal_jurado ?? -1)  - (a.mal_jurado ?? -1),
     mal_jurado_asc:         (a, b) => (a.mal_jurado ?? 999) - (b.mal_jurado ?? 999),
+    bien_jurado_desc:       (a, b) => (b.bien_jurado ?? -1)  - (a.bien_jurado ?? -1),
+    bien_jurado_asc:        (a, b) => (a.bien_jurado ?? 999) - (b.bien_jurado ?? 999),
     nota_delegado_desc:     (a, b) => (b.nota_delegado_promedio ?? -1)  - (a.nota_delegado_promedio ?? -1),
     nota_delegado_asc:      (a, b) => (a.nota_delegado_promedio ?? 999) - (b.nota_delegado_promedio ?? 999),
     nota_comision_desc:     (a, b) => (b.nota_comision_promedio ?? -1)  - (a.nota_comision_promedio ?? -1),
@@ -356,7 +402,7 @@ async function obtenerEvaluacionDesempeno({ desde, hasta, categoria, search, ord
         const m = manualMap[f.usuario_pagado_id];
         return {
             ...f,
-            mal_jurado: m && m.mal_jurado !== null && m.mal_jurado !== undefined ? m.mal_jurado : null,
+            ...combinarMalJurado(f, m),
             analisis_tecnico: m ? m.analisis_tecnico : null,
             // Token de concurrencia COMPARTIDO por ambos campos manuales (una sola
             // fila por jurado+período) — se reenvía tal cual al guardar cualquiera
@@ -378,6 +424,8 @@ module.exports = {
     promedio,
     calcularPeriodo,
     construirFilas,
+    combinarMalJurado,
+    textoDesglose,
     calcularBenchmarksCategoria,
     aplicarFiltrosVisuales,
     ordenar,

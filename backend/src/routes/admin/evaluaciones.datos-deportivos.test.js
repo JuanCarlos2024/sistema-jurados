@@ -181,3 +181,69 @@ describe('permisos (los mismos que ya tenía el análisis deportivo)', () => {
         expect(fuente).toMatch(/router\.patch\('\/:id\/datos-deportivos', soloNoComisionTecnica, async \(req, res\) => \{/);
     });
 });
+
+// ─── Migración 107: desglose Bien jurado / Mal jurado ──────────────────────
+describe('desglose Bien jurado / Mal jurado (107)', () => {
+    const desglose = (id = 'E1') => {
+        const e = evaluacion(id);
+        return [e.casos_whatsapp, e.casos_whatsapp_bien_jurado, e.casos_whatsapp_mal_jurado];
+    };
+
+    test('ejemplo del pedido: 20 = 5 bien + 15 mal → se guardan los tres', async () => {
+        const r = await patch({ casos_whatsapp: 20, casos_whatsapp_bien_jurado: 5, casos_whatsapp_mal_jurado: 15 });
+        expect(r.statusCode).toBe(200);
+        expect(desglose()).toEqual([20, 5, 15]);
+    });
+
+    test('la suma no coincide con el total → 400 y no se guarda nada', async () => {
+        const r = await patch({ casos_whatsapp: 20, casos_whatsapp_bien_jurado: 5, casos_whatsapp_mal_jurado: 14 });
+        expect(r.statusCode).toBe(400);
+        expect(r.body.error).toMatch(/igual al total/);
+        expect(mockMutaciones.filter(m => m.op === 'update')).toEqual([]);
+    });
+
+    test.each([[-1, 21], [2.5, 17.5], ['x', 20]])('valores inválidos %p / %p → 400', async (b, m) => {
+        expect((await patch({ casos_whatsapp: 20, casos_whatsapp_bien_jurado: b, casos_whatsapp_mal_jurado: m })).statusCode).toBe(400);
+        expect(mockMutaciones.filter(x => x.op === 'update')).toEqual([]);
+    });
+
+    test('uno vacío y el otro no → 400', async () => {
+        expect((await patch({ casos_whatsapp: 20, casos_whatsapp_bien_jurado: 5, casos_whatsapp_mal_jurado: null })).statusCode).toBe(400);
+    });
+
+    test('ambos vacíos → sin registrar (NULL), el total se guarda igual', async () => {
+        const r = await patch({ casos_whatsapp: 7, casos_whatsapp_bien_jurado: '', casos_whatsapp_mal_jurado: '' });
+        expect(r.statusCode).toBe(200);
+        expect(desglose()).toEqual([7, null, null]);
+    });
+
+    test('cambiar SOLO el total con un desglose ya guardado que deja de cuadrar → 400', async () => {
+        await patch({ casos_whatsapp: 20, casos_whatsapp_bien_jurado: 5, casos_whatsapp_mal_jurado: 15 });
+        mockMutaciones.length = 0;
+        const r = await patch({ casos_whatsapp: 21 });
+        expect(r.statusCode).toBe(400);
+        expect(desglose()).toEqual([20, 5, 15]);
+    });
+
+    test('guardar otros campos sin enviar el desglose NO lo modifica', async () => {
+        await patch({ casos_whatsapp: 20, casos_whatsapp_bien_jurado: 5, casos_whatsapp_mal_jurado: 15 });
+        mockMutaciones.length = 0;
+        expect((await patch({ observacion_general: 'otra' })).statusCode).toBe(200);
+        const upd = mockMutaciones.find(m => m.op === 'update');
+        expect(upd.payload).not.toHaveProperty('casos_whatsapp_bien_jurado');
+        expect(upd.payload).not.toHaveProperty('casos_whatsapp_mal_jurado');
+        expect(desglose()).toEqual([20, 5, 15]);
+    });
+
+    test('registro histórico sin desglose: editar otro campo no le agrega desglose ni ceros', async () => {
+        expect((await patch({ observacion_general: 'edición' }, 'analista', 'E-OLD')).statusCode).toBe(200);
+        const e = evaluacion('E-OLD');
+        expect(e).not.toHaveProperty('casos_whatsapp_bien_jurado');
+        expect(e).not.toHaveProperty('casos_whatsapp_mal_jurado');
+    });
+
+    test('total 0 con desglose 0/0 es válido', async () => {
+        expect((await patch({ casos_whatsapp: 0, casos_whatsapp_bien_jurado: 0, casos_whatsapp_mal_jurado: 0 })).statusCode).toBe(200);
+        expect(desglose()).toEqual([0, 0, 0]);
+    });
+});

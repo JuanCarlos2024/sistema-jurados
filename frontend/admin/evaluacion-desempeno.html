@@ -164,6 +164,7 @@ const COLUMNAS = [
     { key: 'pct_alterado_categoria', label: '% alterado por categoría',   ordKey: 'pct_categoria' },
     { key: 'wsp',                    label: 'Total consultas WSP',        ordKey: 'wsp_total' },
     { key: 'mal_jurado',             label: 'Mal jurado',                 ordKey: 'mal_jurado' },
+    { key: 'bien_jurado',            label: 'Bien jurado',                ordKey: 'bien_jurado' },
     { key: 'nota_delegado_promedio', label: 'Nota prom. Delegado',        ordKey: 'nota_delegado' },
     { key: 'nota_comision_promedio', label: 'Nota prom. Comisión',        ordKey: 'nota_comision' },
     { key: 'promedio_d_com',         label: 'Promedio D + Com.',          ordKey: 'promedio_d_com' },
@@ -248,7 +249,23 @@ function renderReporte(d) {
     const filasHtml = filas.map((f, i) => {
         const col = COLORES_CAT[f.categoria] || '#aaa';
         const wspTxt = `${f.consultas_wsp_total} (${f.consultas_wsp_rodeos} rodeo${f.consultas_wsp_rodeos === 1 ? '' : 's'})`;
-        const malJuradoTxt = f.mal_jurado ?? '<span class="ed-ni">Sin registrar</span>';
+        // 107: Bien / Mal jurado vienen del Análisis Deportivo (casos WSP por rodeo).
+        // Si el período no tiene ningún desglose, Mal jurado muestra el registro
+        // MANUAL (editable como antes); nunca se inventa un 0.
+        const pendTxt = f.wsp_rodeos_sin_desglose > 0
+            ? `<div class="ed-ni" style="font-size:10px;">+${f.wsp_rodeos_sin_desglose} rodeo${f.wsp_rodeos_sin_desglose === 1 ? '' : 's'} sin registrar</div>` : '';
+        const sinReg = '<span class="ed-ni">Sin registrar</span>';
+        const bienJuradoTxt = f.bien_jurado === null || f.bien_jurado === undefined ? sinReg : `${f.bien_jurado}${pendTxt}`;
+        let malJuradoCelda;
+        if (f.mal_jurado_origen === 'analisis') {
+            const tituloManual = f.mal_jurado_manual !== null && f.mal_jurado_manual !== undefined
+                ? ` title="Registro manual anterior conservado: ${f.mal_jurado_manual}"` : '';
+            malJuradoCelda = `<td style="text-align:center;"${tituloManual}>${f.mal_jurado}${pendTxt}</td>`;
+        } else {
+            const malTxt = f.mal_jurado_origen === 'manual'
+                ? `${f.mal_jurado}<div class="ed-ni" style="font-size:10px;">manual</div>` : sinReg;
+            malJuradoCelda = `<td class="ed-editable" style="text-align:center;" onclick='editarMalJurado(${JSON.stringify(f.usuario_pagado_id)}, ${f.mal_jurado_manual ?? 'null'}, ${JSON.stringify(f.manual_actualizado_en)}, this)'>${malTxt}</td>`;
+        }
         const analisisBtn = f.analisis_tecnico
             ? `<button class="btn btn-pequeño btn-outline" onclick='abrirModalAnalisis(${JSON.stringify(f.usuario_pagado_id)}, ${JSON.stringify(f.nombre)}, ${JSON.stringify(f.analisis_tecnico)}, ${JSON.stringify(f.manual_actualizado_en)})'>Modificar</button>`
             : `<button class="btn btn-pequeño btn-primario" onclick='abrirModalAnalisis(${JSON.stringify(f.usuario_pagado_id)}, ${JSON.stringify(f.nombre)}, null, ${JSON.stringify(f.manual_actualizado_en)})'>Ingresar</button>`;
@@ -267,7 +284,8 @@ function renderReporte(d) {
             <td style="text-align:center;">${fmtPct(f.pct_alterado_individual)}</td>
             <td style="text-align:center;">${fmtPct(f.pct_alterado_categoria)}</td>
             <td style="white-space:nowrap;">${wspTxt}</td>
-            <td class="ed-editable" style="text-align:center;" onclick='editarMalJurado(${JSON.stringify(f.usuario_pagado_id)}, ${f.mal_jurado ?? 'null'}, ${JSON.stringify(f.manual_actualizado_en)}, this)'>${malJuradoTxt}</td>
+            ${malJuradoCelda}
+            <td style="text-align:center;">${bienJuradoTxt}</td>
             <td style="text-align:center;">${fmtNota(f.nota_delegado_promedio)}</td>
             <td style="text-align:center;">${fmtNota(f.nota_comision_promedio)}</td>
             <td style="text-align:center;font-weight:600;">${fmtNota(f.promedio_d_com)}</td>
@@ -281,7 +299,7 @@ function renderReporte(d) {
 
     area.innerHTML = `
     <div class="ed-nota-metodologica">
-        <strong>Nota metodológica:</strong> "Altera resultado" y "Consultas WSP" provienen de un registro POR RODEO (no por jurado individual)
+        <strong>Nota metodológica:</strong> "Altera resultado", "Consultas WSP" y su desglose "Bien jurado" / "Mal jurado" provienen de un registro POR RODEO (no por jurado individual)
         y se atribuyen a cada jurado que participó en ese rodeo — no implican responsabilidad personal ni que la consulta fue dirigida a él.
         "Nota Delegado" también es una nota del rodeo completo, atribuida igual a cada participante. "Nota Comisión" y "Nota Área Deportiva"
         sí son evaluaciones individuales por jurado. "% alterado por categoría" se calcula según la metodología documentada en el pedido original

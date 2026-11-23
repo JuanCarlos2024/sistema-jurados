@@ -53,14 +53,14 @@ describe('evaluacion-detalle.html (guardas estáticas)', () => {
     test('carga el helper y muestra el campo dentro de Análisis deportivo, tras los puntajes y antes de la observación', () => {
         expect(html).toMatch(/<script src="\/js\/casosWhatsapp\.js"><\/script>/);
         const iPuntajes = html.indexOf("filasPuntajes('3er lugar'");
-        const iCampo = html.indexOf('cwHtmlCampo(ev.casos_whatsapp, esAnalista)');
+        const iCampo = html.indexOf('cwHtmlCampo(ev.casos_whatsapp, esAnalista');   // 107: + desglose bien/mal
         const iObs = html.indexOf('Observación general del análisis');
         expect(iPuntajes).toBeGreaterThan(0);
         expect(iCampo).toBeGreaterThan(iPuntajes);
         expect(iObs).toBeGreaterThan(iCampo);
     });
     test('el campo respeta el mismo permiso de edición del resto del análisis (esAnalista) y se guarda con el MISMO botón', () => {
-        expect(html).toMatch(/cwHtmlCampo\(ev\.casos_whatsapp, esAnalista\)/);
+        expect(html).toMatch(/cwHtmlCampo\(ev\.casos_whatsapp, esAnalista, ev\.casos_whatsapp_bien_jurado, ev\.casos_whatsapp_mal_jurado\)/);
         expect(html).toMatch(/onclick="guardarAnalisisDeportivo\(\)">Guardar análisis deportivo/);
         expect(html.match(/casos_whatsapp/g).length).toBeGreaterThan(2);
         expect(html).not.toMatch(/guardarCasosWhatsapp/);                      // no hay botón independiente
