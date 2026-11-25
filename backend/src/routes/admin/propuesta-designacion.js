@@ -36,6 +36,8 @@ const {
 // rodeos sin cubrir pudiendo cubrirlos. Nunca se activa por defecto — solo
 // cuando el body del dry-run pide explícitamente motor:'global'.
 const { generarSimulacionGlobal } = require('../../services/motorPropuestaDesignacionGlobal');
+// Incidente 2026-11-25 — errores internos del dry-run: detalle solo en logs.
+const { construirRespuestaErrorInterno } = require('../../services/erroresSeguros');
 const { claveClubAsociacion, sugerirComunaParaClub, normalizarClub, normalizarAsociacionClub } = require('../../services/clubUbicaciones');
 const { clasificarJurado } = require('../../services/diagnosticoJurados');
 // Auditoría de elegibilidad (Etapa B) — mismo estado de 3 niveles que ahora
@@ -745,8 +747,10 @@ router.post('/dry-run', async (req, res) => {
     try {
         cargaConfig = await cargarConfiguracionDesignacionActiva();
     } catch (err) {
-        console.error('[DRY-RUN] Error cargando configuración de designación:', err.message);
-        return res.status(500).json({ error: 'No se pudo cargar la configuración de designación: ' + err.message });
+        // Incidente 2026-11-25: el detalle técnico queda solo en el log del
+        // servidor (redactado); el navegador recibe un mensaje funcional + referencia.
+        const { cuerpo } = construirRespuestaErrorInterno('[DRY-RUN] Error cargando configuración de designación:', 'No se pudo cargar la configuración de designación', err);
+        return res.status(500).json(cuerpo);
     }
     if (cargaConfig.error) return responderConfiguracionNoResuelta(res, cargaConfig);
     const { configuracion, meta: configuracionMeta } = cargaConfig;
@@ -761,6 +765,16 @@ router.post('/dry-run', async (req, res) => {
         const resultado = usarMotorGlobal
             ? await generarSimulacionGlobal(rodeo_ids, 5, configuracion)
             : await generarSimulacion(rodeo_ids, 5, configuracion);
+
+        // Incidente 2026-11-25: ERROR_TECNICO del motor global responde 200
+        // con el mensaje de JavaScript dentro de `motivo` (la pantalla lo
+        // muestra). El detalle va al log; el navegador recibe un texto
+        // funcional + referencia. El estado ERROR_TECNICO no cambia.
+        if (resultado.optimizacion_global?.estado_busqueda === 'ERROR_TECNICO') {
+            const { referencia } = construirRespuestaErrorInterno('[DRY-RUN] Error técnico del motor global:', 'No se pudo completar el proceso de optimización global', resultado.optimizacion_global.motivo);
+            resultado.optimizacion_global.motivo = `No se pudo completar el proceso de optimización global por un error interno; revise el resultado antes de continuar. Si el problema persiste, informe la referencia ${referencia}.`;
+            resultado.optimizacion_global.referencia_error = referencia;
+        }
 
         // Enriquecer cada resultado con tipo de rodeo/clasificación/comuna —
         // mismo join que ya usa GET /propuestas/:id — para que la tarjeta de
@@ -809,8 +823,10 @@ router.post('/dry-run', async (req, res) => {
         // hardcodeados) — nunca se quita nada de lo que ya devolvía Etapa 3.
         res.json({ ...resultado, preview_token, fecha_corte_tecnica: fechaCorteTecnica, configuracion: { ...configuracionMeta, ...construirResumenParaUI(configuracion, configuracionMeta) } });
     } catch (err) {
-        console.error('[DRY-RUN] Error generando simulación:', err.message);
-        res.status(500).json({ error: 'No se pudo generar la simulación: ' + err.message });
+        // Incidente 2026-11-25: antes se devolvía err.message completo (p.ej.
+        // "...: TypeError: fetch failed"). Ahora solo va al log, redactado.
+        const { cuerpo } = construirRespuestaErrorInterno('[DRY-RUN] Error generando simulación:', 'No se pudo generar la simulación', err);
+        res.status(500).json(cuerpo);
     }
 });
 

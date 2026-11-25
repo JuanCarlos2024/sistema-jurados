@@ -637,7 +637,8 @@ describe('cargarRendimientoTemporada — batch, sin N+1', () => {
         supabase.from.mockImplementation((tabla) => {
             llamadas.push(tabla);
             const chain = {
-                select: () => chain, in: () => chain, eq: () => chain,
+                // order/range: paginación por lotes (consultaPorLotes.js, incidente 2026-11-25).
+                select: () => chain, in: () => chain, eq: () => chain, order: () => chain, range: () => chain,
                 then: (resolve) => Promise.resolve({ data: [], error: null }).then(resolve)
             };
             return chain;

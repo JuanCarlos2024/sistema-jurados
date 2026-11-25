@@ -26,6 +26,8 @@ const {
 // Mejora "Prioridad Deportiva + Nota Técnica + Repetición por Intervalo"
 // (schema_version=4) — fuente oficial única, ver notaTecnicaJurados.js.
 const { cargarNotaTecnicaPorJurado } = require('./notaTecnicaJurados');
+// Incidente 2026-11-25 — `.in()` por lotes para listas que crecen con la temporada.
+const { seleccionarPorLotes, normalizarIds } = require('./consultaPorLotes');
 
 // Etapa 2 — Configuración de Propuesta de Designación. Valor histórico
 // (equivalente a configuracion.distancia_maxima_km de la Versión 1) que se
@@ -1632,24 +1634,42 @@ async function cargarRendimientoTemporada(contexto) {
         return { asignacionesTemporada, notasPorAsignacion: new Map(), alteradoPorRodeo: new Map(), queriesAproximadas: 0 };
     }
 
-    const asigIds = asignacionesTemporada.map(a => a.id).filter(Boolean);
-    const rodeoIds = [...new Set(asignacionesTemporada.map(a => a.rodeo_id))];
+    const asigIds = normalizarIds(asignacionesTemporada.map(a => a.id));
+    const rodeoIds = normalizarIds(asignacionesTemporada.map(a => a.rodeo_id));
     let queries = 0;
 
-    const { data: notasRaw, error: errNotas } = await supabase
-        .from('notas_rodeo').select('asignacion_id, nota').in('asignacion_id', asigIds);
+    // Incidente 2026-11-25: ambas listas crecen con la temporada — un único
+    // `.in()` con ~390+ UUIDs desbordaba las cabeceras de la respuesta
+    // (UND_ERR_HEADERS_OVERFLOW). Se consulta por lotes (consultaPorLotes.js),
+    // mismas columnas y filtros; notas_rodeo.asignacion_id y
+    // evaluaciones.rodeo_id son UNIQUE, así que consolidar los lotes no
+    // duplica ni pisa nada y el orden de llegada no influye en los Map.
+    let notasRaw;
+    try {
+        notasRaw = await seleccionarPorLotes({
+            construirConsulta: (opcionesSelect) => supabase.from('notas_rodeo').select('asignacion_id, nota', opcionesSelect),
+            columna: 'asignacion_id', ids: asigIds, ordenarPor: 'asignacion_id'
+        });
+    } catch (err) {
+        throw new Error('No se pudieron cargar notas para métricas de rendimiento: ' + err.message);
+    }
     queries++;
-    if (errNotas) throw new Error('No se pudieron cargar notas para métricas de rendimiento: ' + errNotas.message);
     const notasPorAsignacion = new Map();
-    for (const n of (notasRaw || [])) notasPorAsignacion.set(n.asignacion_id, parseFloat(n.nota));
+    for (const n of notasRaw) notasPorAsignacion.set(n.asignacion_id, parseFloat(n.nota));
 
     // anulada=false — misma semántica ya documentada: evaluaciones.rodeo_id
     // es UNIQUE, así que como mucho hay 1 fila por rodeo; una evaluación
     // anulada se trata como "sin evaluación" (nunca como alteración=false).
-    const { data: evalsRaw, error: errEvals } = await supabase
-        .from('evaluaciones').select('rodeo_id, resultados_alterados').in('rodeo_id', rodeoIds).eq('anulada', false).eq('es_historica_importacion', false);   // histórica = sin análisis (no es "sin alteración")
+    let evalsRaw;
+    try {
+        evalsRaw = await seleccionarPorLotes({
+            construirConsulta: (opcionesSelect) => supabase.from('evaluaciones').select('rodeo_id, resultados_alterados', opcionesSelect).eq('anulada', false).eq('es_historica_importacion', false),   // histórica = sin análisis (no es "sin alteración")
+            columna: 'rodeo_id', ids: rodeoIds, ordenarPor: 'rodeo_id'
+        });
+    } catch (err) {
+        throw new Error('No se pudieron cargar evaluaciones para métricas de rendimiento: ' + err.message);
+    }
     queries++;
-    if (errEvals) throw new Error('No se pudieron cargar evaluaciones para métricas de rendimiento: ' + errEvals.message);
     const alteradoPorRodeo = new Map();
     for (const e of (evalsRaw || [])) alteradoPorRodeo.set(e.rodeo_id, !!e.resultados_alterados);
 

@@ -27,6 +27,7 @@
 // ausencia: ordena al final, nunca como si fuera la peor nota numérica real.
 // ═════════════════════════════════════════════════════════════════════════
 const supabase = require('../config/supabase');
+const { seleccionarPorLotes } = require('./consultaPorLotes');
 
 const PAGINA = 900; // mismo tamaño de página usado en el resto del proyecto
 
@@ -88,21 +89,24 @@ async function cargarNotaTecnicaPorJurado(juradoIds, fechaCorteISO) {
 
     const todosLosAsignacionIds = [...asignacionIdsPorJurado.values()].flat();
     const notaPorAsignacion = new Map(); // asignacion_id -> number
+    // Incidente 2026-11-25: esta lista crece con la temporada (todas las
+    // asignaciones efectivas de los jurados activos) — un único `.in()` ya
+    // generaba ~14,3 KB de cabecera de respuesta, cerca del límite de 16 KB
+    // de Node (UND_ERR_HEADERS_OVERFLOW). Por lotes (consultaPorLotes.js),
+    // mismo filtro fuente='evaluacion_tecnica' y misma paginación (PAGINA),
+    // ahora con orden por asignacion_id (UNIQUE) para que sea determinista.
     if (todosLosAsignacionIds.length > 0) {
-        let offset = 0;
-        while (true) {
-            const { data, error } = await supabase
-                .from('notas_rodeo')
-                .select('asignacion_id, nota')
-                .in('asignacion_id', todosLosAsignacionIds)
-                .eq('fuente', 'evaluacion_tecnica')
-                .range(offset, offset + PAGINA - 1);
-            if (error) throw new Error('No se pudo cargar notas_rodeo para nota técnica: ' + error.message);
-            const filas = data || [];
-            filas.forEach(n => notaPorAsignacion.set(n.asignacion_id, parseFloat(n.nota)));
-            if (filas.length < PAGINA) break;
-            offset += PAGINA;
+        let filas;
+        try {
+            filas = await seleccionarPorLotes({
+                construirConsulta: (opcionesSelect) => supabase.from('notas_rodeo').select('asignacion_id, nota', opcionesSelect).eq('fuente', 'evaluacion_tecnica'),
+                columna: 'asignacion_id', ids: todosLosAsignacionIds, ordenarPor: 'asignacion_id',
+                tamanoPagina: PAGINA
+            });
+        } catch (err) {
+            throw new Error('No se pudo cargar notas_rodeo para nota técnica: ' + err.message);
         }
+        filas.forEach(n => notaPorAsignacion.set(n.asignacion_id, parseFloat(n.nota)));
     }
 
     for (const juradoId of ids) {
